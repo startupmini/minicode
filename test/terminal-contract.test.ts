@@ -86,7 +86,7 @@ describe("terminal contract: tidak ada tulis setelah detach/endTurn", () => {
     bus.emit("turn:started", { turn: 1 })
     bus.emit("provider:extension", { kind: "reasoning", data: {} })
     await sleep(50)
-    expect(tty!.allErr()).toContain("💡")
+    expect(tty!.allErr()).toContain("✦")
     s.detach()
     status = null
     tty!.clear()
@@ -140,8 +140,8 @@ describe("terminal contract: ledger & streaming", () => {
     const lines = stripAnsi(ledger)
       .split("\n")
       .filter((l) => l.length > 0)
-    expect(lines.filter((l) => l.startsWith("  ✓ read_file a.ts"))).toHaveLength(2)
-    for (const l of lines) expect(l.indexOf("✓")).toBe(l.lastIndexOf("✓")) // tanpa dua marker sebaris
+    expect(lines.filter((l) => l.startsWith("  › read_file a.ts"))).toHaveLength(2)
+    for (const l of lines) expect(l.indexOf("›")).toBe(l.lastIndexOf("›")) // tanpa dua marker sebaris
     const out = tty!.all()
     expect(out.split("baris teks")).toHaveLength(3) // dua baris utuh, tidak menyatu
   })
@@ -164,10 +164,10 @@ describe("terminal contract: ledger & streaming", () => {
     for (const l of lines) {
       if (!l.trim()) continue
       expect(
-        l.startsWith("  ✓ ") || l.startsWith("  ✗ ") || l.startsWith("    "),
+        l.startsWith("  › ") || l.startsWith("  ✗ ") || l.startsWith("    "),
         `baris ledger tidak dikenal: ${JSON.stringify(l)}`,
       ).toBe(true)
-      expect(l.indexOf("✓"), l).toBe(l.lastIndexOf("✓"))
+      expect(l.indexOf("›"), l).toBe(l.lastIndexOf("›"))
     }
     // Setiap baris utuh diakhiri newline (tidak ada marker yang menempel).
     // Reset warna boleh datang SETELAH newline — periksa teks bersih.
@@ -191,10 +191,10 @@ describe("terminal contract: ledger & streaming", () => {
     }
     detach()
     const ledger = stripAnsi(tty!.allErr())
-    const markers = ledger.split("\n").filter((l) => l.startsWith("  ✓ read_file"))
+    const markers = ledger.split("\n").filter((l) => l.startsWith("  › read_file"))
     expect(markers).toHaveLength(36)
     for (const m of markers) {
-      expect(m.indexOf("✓"), m).toBe(m.lastIndexOf("✓"))
+      expect(m.indexOf("›"), m).toBe(m.lastIndexOf("›"))
     }
     // Tidak ada satu pun baris yang menggabungkan dua path tool.
     for (const l of markers) {

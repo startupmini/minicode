@@ -52,11 +52,11 @@ describe("statusline bun-windows guard", () => {
     installDetachedThrowingFake(recorded)
     const t = acquireTransientPaint("turn", () => {})
     expect(isTransientPainting()).toBe(true)
-    expect(() => paintWrite("\r💡")).not.toThrow()
+    expect(() => paintWrite("\r✦")).not.toThrow()
     // Tulis asing saat painter aktif (jalur wrapper) juga tidak melempar.
     expect(() => process.stderr.write("[warn] x\n")).not.toThrow()
     expect(() => t.release()).not.toThrow()
-    expect(recorded.join("")).toContain("💡")
+    expect(recorded.join("")).toContain("✦")
     expect(isTransientDisabled()).toBe(false)
   })
 

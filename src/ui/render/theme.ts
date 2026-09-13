@@ -291,10 +291,10 @@ export const glyphs = {
     return supportsUtf8() ? ["·", "··", "···"] : [".", "..", "..."]
   },
   get thinkingIcon() {
-    // Google Material Symbols: "emoji_objects" (lampu) — sesuai link
-    // https://fonts.googleapis.com/...&icon_names=emoji_objects
-    // Di terminal dirender sebagai emoji 💡 putih (fallback *).
-    return supportsUtf8() ? "💡" : "*"
+    // Sparkle ✦ (bintang) — indikator thinking yang "kelip-kelip": glyph
+    // monokrom, jadi warna ANSI (putih ↔ abu di turn-status) terlihat.
+    // Fallback * untuk terminal tanpa UTF-8.
+    return supportsUtf8() ? "✦" : "*"
   },
 }
 

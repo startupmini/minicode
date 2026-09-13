@@ -54,11 +54,11 @@ describe("turn-status: lifecycle deterministik", () => {
     bus.emit("turn:started", { turn: 1 })
     bus.emit("provider:extension", { kind: "reasoning", data: {} })
     await sleep(40)
-    expect(err()).toContain("💡")
+    expect(err()).toContain("✦")
     tty!.clear()
     bus.emit("provider:text", { text: "menjawab\n" })
     await sleep(60)
-    expect(err()).not.toContain("💡")
+    expect(err()).not.toContain("✦")
     // Tool baru dimulai SETELAH teks → garis harus hidup kembali (regresi:
     // dulu onText menghentikan interval dan tak pernah restart).
     bus.emit("execution:started", {
@@ -141,9 +141,9 @@ describe("turn-status: heartbeat", () => {
     bus.emit("turn:started", { turn: 1 })
     bus.emit("provider:extension", { kind: "reasoning", data: {} })
     await sleep(200)
-    // Ikon 💡 + titik animasi, tidak ada timer detik
-    expect(err()).toContain("💡")
-    expect(err()).toMatch(/💡·{1,3}/)
+    // Ikon ✦ + titik animasi, tidak ada timer detik
+    expect(err()).toContain("✦")
+    expect(err()).toMatch(/✦·{1,3}/)
     expect(err()).not.toMatch(/\d+s/)
     status.detach()
   }, 5000)

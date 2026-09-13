@@ -759,7 +759,7 @@ describe("simple logger (one-shot)", () => {
     })
     detach()
     const o = out()
-    expect(o).toContain("✓ read_file src/auth.ts")
+    expect(o).toContain("› read_file src/auth.ts")
     expect(o).not.toContain("rahasia implementasi")
     expect(o.endsWith("\n")).toBe(true)
   })
@@ -837,13 +837,13 @@ describe("simple logger (one-shot)", () => {
       await new Promise((r) => setTimeout(r, 900))
       status.detach()
       const raw = chunks.join("")
-      expect(stripAnsi(raw)).toContain("💡")
+      expect(stripAnsi(raw)).toContain("✦")
       expect(raw).not.toContain("model-rahasia-xyz")
       // Animasi titik eksplisit · → ·· → ··· (±300ms): minimal dua wujud
       // berbeda dalam 900ms, dan tak pernah bare tanpa titik.
-      const frames = new Set(stripAnsi(raw).match(/💡(·{1,3})/g) ?? [])
+      const frames = new Set(stripAnsi(raw).match(/✦(·{1,3})/g) ?? [])
       expect(frames.size).toBeGreaterThan(1)
-      expect(stripAnsi(raw)).not.toMatch(/💡(?!·)/)
+      expect(stripAnsi(raw)).not.toMatch(/✦(?!·)/)
     } finally {
       ;(process.stderr as unknown as { write: unknown }).write = prevWrite
     }
@@ -886,7 +886,7 @@ describe("simple logger (one-shot)", () => {
       },
     })
 
-    test("20 tool selesai beruntun: satu baris ✓ per tool, semua diakhiri newline, tanpa overlap", () => {
+    test("20 tool selesai beruntun: satu baris › per tool, semua diakhiri newline, tanpa overlap", () => {
       setCompactMode(true)
       const { bus, detach, out } = attach()
       for (let i = 0; i < 20; i++)
@@ -898,12 +898,12 @@ describe("simple logger (one-shot)", () => {
       expect(nonEmpty).toHaveLength(20)
       // Setiap baris utuh (bukan hasil tempel/overlap) — overlap lama tampil
       // sebagai dua marker dalam satu baris.
-      for (const l of nonEmpty) expect(l.startsWith("  ✓ read_file f"), l).toBe(true)
+      for (const l of nonEmpty) expect(l.startsWith("  › read_file f"), l).toBe(true)
       // Tanpa bocor isi file ke ledger compact.
       expect(out()).not.toContain("rahasia-")
     })
 
-    test("tool gagal lalu retry sukses: dua baris terpisah, urutan ✗ lalu ✓", () => {
+    test("tool gagal lalu retry sukses: dua baris terpisah, gagal dulu lalu sukses", () => {
       setCompactMode(true)
       const { bus, detach, out } = attach()
       bus.emit("execution:completed", toolDone("read_file", "a.ts", true))
@@ -911,8 +911,8 @@ describe("simple logger (one-shot)", () => {
       detach()
       setCompactMode(false)
       const o = out()
-      const x = o.indexOf("✗ read_file: gagal membaca")
-      const ok = o.indexOf("✓ read_file a.ts")
+      const x = o.indexOf("› read_file: gagal membaca")
+      const ok = o.indexOf("› read_file a.ts")
       expect(x).toBeGreaterThanOrEqual(0)
       expect(ok).toBeGreaterThan(x)
     })
@@ -925,8 +925,8 @@ describe("simple logger (one-shot)", () => {
       detach()
       setCompactMode(false)
       expect(tty!.all()).toContain("PESAN-RAHASIA-UNIK") // stdout = teks model
-      expect(tty!.all()).not.toContain("✓ read_file")
-      expect(tty!.allErr()).toContain("✓ read_file a.ts") // stderr = ledger
+      expect(tty!.all()).not.toContain("› read_file")
+      expect(tty!.allErr()).toContain("› read_file a.ts") // stderr = ledger
       expect(tty!.allErr()).not.toContain("PESAN-RAHASIA-UNIK")
     })
 
@@ -936,7 +936,7 @@ describe("simple logger (one-shot)", () => {
       bus.emit("execution:completed", toolDone("grep", "src", false))
       detach()
       expect(tty!.all()).toContain("hasil analisis")
-      expect(tty!.allErr()).toContain("✓ grep src")
+      expect(tty!.allErr()).toContain("› grep src")
     })
   })
 })

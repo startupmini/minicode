@@ -223,13 +223,17 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       if (!r.isError && typeof r.content === "string")
         rememberTurn(sanitizeAnsi(r.content).slice(0, 20000))
       if (r.isError) {
-        wErr(c.error(`  ✗ ${name}: ${sanitizeAnsi(String(r.content)).slice(0, 200)}\n`))
+        wErr(
+          c.error(`  ${glyphs.arrow} ${name}: ${sanitizeAnsi(String(r.content)).slice(0, 200)}\n`),
+        )
         return
       }
       const target = typeof args.path === "string" ? args.path : undefined
       if (name === "write_file" && target) {
         const size = typeof r.content === "string" ? `${(r.content as string).length} chars` : ""
-        wOut(c.success(`  ✓ write_file ${target}${size ? c.muted(` (${size})`) : ""}\n`))
+        wOut(
+          c.success(`  ${glyphs.arrow} write_file ${target}${size ? c.muted(` (${size})`) : ""}\n`),
+        )
         return
       }
       if ((name === "edit" || name === "apply_patch") && target) {
@@ -247,12 +251,15 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
           )
           return
         }
-        wOut(c.success(`  ✓ ${name} ${target}\n`))
+        wOut(c.success(`  ${glyphs.arrow} ${name} ${target}\n`))
         return
       }
       // todo_write: tampilkan daftarnya utuh — ini rencana kerja, bukan noise.
       if (name === "todo_write" || name === "todo_read") {
-        wErr(c.success(`  ✓ ${name}\n`) + c.muted(`${sanitizeAnsi(String(r.content))}\n`))
+        wErr(
+          c.success(`  ${glyphs.arrow} ${name}\n`) +
+            c.muted(`${sanitizeAnsi(String(r.content))}\n`),
+        )
         return
       }
       const cmdStr = (args.cmd as string) ?? (args.command as string)
@@ -264,7 +271,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
             lines.length > 3
               ? lines.slice(0, 3).join("\n    ") + c.muted(`\n    ... (${lines.length - 3} more)`)
               : lines.join("\n    ")
-          wErr(c.success(`  ✓ $ ${cmdLabel}\n`) + c.muted(`    ${preview}\n`))
+          wErr(c.success(`  ${glyphs.arrow} $ ${cmdLabel}\n`) + c.muted(`    ${preview}\n`))
           return
         }
         const maxLines = TOOL_OUT_MAX_LINES()
@@ -272,17 +279,17 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         const more =
           lines.length > maxLines ? c.muted(`\n    … (${lines.length - maxLines} more lines)`) : ""
         wErr(
-          c.success(`  ✓ $ ${cmdLabel}\n`) +
+          c.success(`  ${glyphs.arrow} $ ${cmdLabel}\n`) +
             (shown.length ? `${c.muted(shown.join("\n")) + more}\n` : ""),
         )
         return
       }
       // Tool penghasil KONTEN (isi berkas, hasil cari) di mode compact cukup
-      // satu baris ✓ + target — isinya milik model untuk dibaca, bukan untuk
+      // satu baris › + target — isinya milik model untuk dibaca, bukan untuk
       // membanjiri scrollback pengguna. Konten tetap bisa dilihat via expanded.
       if (detail.compact && CONTENT_TOOLS.has(name)) {
         const label = sanitizeAnsiLine(target ?? formatArgsPreview(args)).slice(0, 120)
-        wErr(c.success(`  ✓ ${name}${label ? ` ${label}` : ""}\n`))
+        wErr(c.success(`  ${glyphs.arrow} ${name}${label ? ` ${label}` : ""}\n`))
         return
       }
       if (!detail.compact && CONTENT_TOOLS.has(name)) {
@@ -299,19 +306,24 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
             ? c.muted(`\n    … (${lines.length - maxPreview} more lines)`)
             : ""
         const label = sanitizeAnsiLine(target ?? formatArgsPreview(args))
-        wErr(c.success(`  ✓ ${name} ${label}\n`) + (preview ? `${c.muted(preview) + more}\n` : ""))
+        wErr(
+          c.success(`  ${glyphs.arrow} ${name} ${label}\n`) +
+            (preview ? `${c.muted(preview) + more}\n` : ""),
+        )
         return
       }
-      // Sisa tool (compact & expanded): satu baris ✓ + label. WAJIB diakhiri
+      // Sisa tool (compact & expanded): satu baris › + label. WAJIB diakhiri
       // newline — tanpa itu baris berikutnya menempel (overlap di stderr log).
       const label = sanitizeAnsiLine(target ?? formatArgsPreview(args)).slice(0, 120)
       const first = sanitizeAnsi(String(r.content)).trim().split("\n")[0] ?? ""
       const preview = first.slice(0, 80)
       if (!detail.compact && preview) {
-        wErr(c.success(`  ✓ ${name}${label ? ` ${label}` : ""} ${c.muted(preview)}\n`))
+        wErr(
+          c.success(`  ${glyphs.arrow} ${name}${label ? ` ${label}` : ""} ${c.muted(preview)}\n`),
+        )
         return
       }
-      wErr(c.success(`  ✓ ${name}${label ? ` ${label}` : ""}\n`))
+      wErr(c.success(`  ${glyphs.arrow} ${name}${label ? ` ${label}` : ""}\n`))
     }),
   )
   offs.push(bus.on("context:compacted", (e) => wErr(c.warning(`  ── compacted: ${e.reason}\n`))))

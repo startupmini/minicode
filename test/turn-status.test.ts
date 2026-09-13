@@ -1,12 +1,13 @@
 // Lifecycle garis status turn (attachTurnStatus): Satu baris transient di
 // stderr selama turn berjalan. Yang DIKUNCI di sini adalah determinisme
 // transisi — bukan keindahan teks:
-//   - turn:started TIDAK langsung melukis (jendela pra-event polos agar tulis
-//     asing — mis. catatan [router] — tak pernah tertimpa garis ini)
-//   - reasoning → "Thinking" tampil
+//   - turn:started TIDAK langsung melukis; grace 250ms menutup keheningan
+//     total (jendela pra-event polos agar tulis asing tak tertimpa garis)
+//   - reasoning → "Thinking" tampil (kecuali fase menulis sudah dimulai)
 //   - tool berjalan → label tool (nama + target) menggantikan "Thinking"
-//   - teks model mengalir → garis HILANG (tidak menimpa area teks)
-//   - tool berikutnya SETELAH teks → garis HIDUP LAGI (dulu mati permanen)
+//   - teks model mengalir → garis HILANG + latch (reasoning susulan tetap
+//     sembunyi sampai tool berikutnya — anti-strobo)
+//   - tool berikutnya SETELAH teks → garis HIDUP LAGI + latch dibuka
 //   - turn selesai / endTurn() → garis dibersihkan dan tidak pernah muncul
 //     lagi (endTurn = jalur driver saat kernel TIDAK emit turn:completed,
 //     yaitu gagal/abort)
@@ -38,7 +39,7 @@ describe("turn-status: lifecycle deterministik", () => {
   test("turn:started belum melukis; reasoning/tool memulai lukisan", async () => {
     const { bus, status } = setup()
     bus.emit("turn:started", { turn: 1 })
-    await sleep(250) // beberapa tick interval seandainya bocor
+    await sleep(100) // jauh sebelum grace 250ms — hening total
     expect(err()).toBe("")
     // Tool mulai → lukisan dengan label tool (bukan "Thinking").
     bus.emit("execution:started", {
@@ -49,18 +50,31 @@ describe("turn-status: lifecycle deterministik", () => {
     status.detach()
   }, 4000)
 
-  test("reasoning ext menampilkan Thinking; teks menyembunyikan; tool berikutnya menghidupkan lagi", async () => {
+  test("grace 250ms: hening dulu, Thinking muncul tanpa event kerja", async () => {
+    const { bus, status } = setup()
+    bus.emit("turn:started", { turn: 1 })
+    await sleep(100)
+    expect(err()).toBe("")
+    await sleep(300) // total >250ms: grace melukis Thinking
+    expect(err()).toContain("✦")
+    status.detach()
+  }, 4000)
+
+  test("reasoning susulan saat menulis tetap sembunyi (anti-strobo latch)", async () => {
     const { bus, status } = setup()
     bus.emit("turn:started", { turn: 1 })
     bus.emit("provider:extension", { kind: "reasoning", data: {} })
     await sleep(40)
     expect(err()).toContain("✦")
-    tty!.clear()
     bus.emit("provider:text", { text: "menjawab\n" })
-    await sleep(60)
+    await sleep(40)
+    tty!.clear()
+    // Reasoning interleave DI TENGAH jawaban: garis harus TETAP mati.
+    // Tanpa latch, tiap chunk reasoning menyalakan garis lagi (strobo).
+    bus.emit("provider:extension", { kind: "reasoning", data: {} })
+    await sleep(200)
     expect(err()).not.toContain("✦")
-    // Tool baru dimulai SETELAH teks → garis harus hidup kembali (regresi:
-    // dulu onText menghentikan interval dan tak pernah restart).
+    // Tool baru membuka latch: thinking antar-tool tampil lagi.
     bus.emit("execution:started", {
       execution: { call: { name: "grep", args: { path: "src" } } },
     })
@@ -99,7 +113,7 @@ describe("turn-status: lifecycle deterministik", () => {
     // Turn berikutnya butuh event kerja baru untuk melukis lagi — state lama
     // tidak bocor (turnOn sudah false).
     bus.emit("turn:started", { turn: 2 })
-    await sleep(200)
+    await sleep(150) // di bawah grace 250ms — state lama tidak bocor
     expect(err()).toBe("")
     status.detach()
   }, 4000)
@@ -136,17 +150,30 @@ describe("turn-status: heartbeat", () => {
     expect(formatElapsed(-500)).toBe("0s")
   })
 
-  test("garis status ikon putih + titik animasi, tanpa timer", async () => {
+  test("garis status ikon putih + titik animasi spasi, tanpa timer", async () => {
     const { bus, status } = setup()
     bus.emit("turn:started", { turn: 1 })
     bus.emit("provider:extension", { kind: "reasoning", data: {} })
     await sleep(200)
-    // Ikon ✦ + titik animasi, tidak ada timer detik
+    // Ikon ✦ + titik spasi ("·", "· ·", "· · ·"), tidak ada timer detik
     expect(err()).toContain("✦")
-    expect(err()).toMatch(/✦·{1,3}/)
+    expect(err()).toMatch(/✦  ·( ·){0,2}/)
     expect(err()).not.toMatch(/\d+s/)
     status.detach()
   }, 5000)
+
+  test("kursor disembunyikan saat melukis, dikembalikan saat berhenti", async () => {
+    const { bus, status } = setup()
+    bus.emit("turn:started", { turn: 1 })
+    bus.emit("provider:extension", { kind: "reasoning", data: {} })
+    await sleep(60)
+    // Mentah (stripAnsi membuang sekuens privat): hide saat acquire...
+    expect(tty!.allErr()).toContain("\x1b[?25l")
+    status.endTurn()
+    // ...show saat berhenti. Tanpa ini kursor hilang permanen.
+    expect(tty!.allErr()).toContain("\x1b[?25h")
+    status.detach()
+  }, 4000)
 
   test("ikon hilang saat turn selesai", async () => {
     const { bus, status } = setup()

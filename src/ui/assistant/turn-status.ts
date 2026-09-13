@@ -11,14 +11,14 @@ import { acquireTransientPaint, paintWrite, registerStatusLine } from "../runtim
 // hidup" tanpa teks panjang. Tanpa ini turn yang stall terlihat mati diam.
 //
 // Lifecycle deterministik:
-//   turn:started          → state nyala, BELUM melukis. Lukisan baru mulai
-//                           pada reasoning/execution pertama — jendela
-//                           sebelum event pertama (mis. catatan [router] di
-//                           awal stream) dibiarkan polos agar tidak ada tulis
-//                           asing yang bisa tertimpa/terhapus garis ini.
-//   reasoning (extension) → "Thinking"
-//   execution:started     → label kerja nyata (nama tool + target)
-//   provider:text         → garis HILANG (teks mengalir)
+//   turn:started          → state nyala, BELUM melukis. Lukisan mulai pada
+//                           reasoning/execution pertama, ATAU grace 250ms bila
+//                           belum ada event (keheningan total terasa macet).
+//   reasoning (extension) → "Thinking", KECUALI fase menulis sudah dimulai
+//                           (latch textSeen) — interleave reasoning/teks model
+//                           reasoning takkan strobo on/off.
+//   execution:started     → label kerja nyata (nama tool + target), latch dibuka
+//   provider:text         → garis HILANG + latch (teks mengalir)
 //   execution:completed   → kembali "Thinking" bila masih fase sunyi
 //   turn:completed        → bersih + reset
 //   endTurn()             → bersih + reset, DIPANGGIL DRIVER setelah turn
@@ -27,6 +27,15 @@ import { acquireTransientPaint, paintWrite, registerStatusLine } from "../runtim
 //                           melukis di atas prompt idle setelah error/Ctrl+C)
 // Output lain memakai runWithoutStatus() (suspend sesaat → resume bila aturan
 // masih terpenuhi), jadi garis tidak pernah tertinggal di scrollback.
+// Kursor disembunyikan selama garis melukis agar tak terbaca sebagai bagian
+// indikator (pola spinner.ts). Didaftarkan sekali per proses — aman
+// dipanggil berulang karena tiap attach me-restore di stopPaint/endTurn.
+process.on("exit", () => {
+  try {
+    if (process.stderr.isTTY) process.stderr.write("\x1b[?25h")
+  } catch {}
+})
+
 export interface TurnStatusHandle {
   detach(): void
   /** Bersihkan + reset garis; aman dipanggil kapan pun (idempotent). */
@@ -71,6 +80,15 @@ export function attachTurnStatus(
   // State mesin garis — interval hanya menulis ulang label terkini.
   let turnOn = false
   let textOn = false
+  // Latch fase: sekali teks mengalir, reasoning susulan (interleave chunk
+  // model reasoning) TIDAK menghidupkan garis lagi sampai tool berikutnya.
+  // Tanpa ini garis strobo on/off mengikuti alternasi chunk — terlihat
+  // "kebalik": berisik saat menulis, padahal harusnya hening.
+  let textSeen = false
+  // Grace timer: turn:started tidak langsung melukis (jendela catatan router),
+  // tapi keheningan total >250ms terasa macet — tampilkan Thinking bila belum
+  // ada event kerja. Turn cepat (<250ms) tak pernah nge-flash.
+  let graceTimer: ReturnType<typeof setTimeout> | undefined
   let label = "Thinking"
   // Kecepatan reasoning: diukur dari frekuensi chunk reasoning yang masuk.
   // Interval animasi mengikuti — cepat bila model berpikir cepat.
@@ -87,19 +105,22 @@ export function attachTurnStatus(
       const s = opts.getStats?.()
       if (s) extra = ` · ${s}`
     } catch {}
-    // Titik animasi eksplisit · → ·· → ···, ganti tiap 2 tick (~300ms):
-    // sinyal "masih hidup" yang tak ambigu. Tak pernah bare: selalu ≥1 titik.
-    // Ikon thinking SPARKLE ✦ kelip-kelip: putih ↔ abu bergantian tiap tick
-    // (glow halus seperti bintang meredup) — glyph monokrom jadi warna ANSI
-    // terlihat; kecepatan refresh mengikuti intervalMs yang adaptif terhadap
-    // kecepatan reasoning model.
-    const dots = glyphs.dot.repeat(1 + (Math.floor(fi / 2) % 3))
+    // Titik animasi eksplisit, ganti tiap 3 tick (~0,4 detik pada 120ms):
+    // sinyal "masih hidup" yang tak ambigu tapi tenang. Tak pernah bare:
+    // selalu ≥1 titik. Titik dipisah spasi ("· · ·") agar tak mepet ikon.
+    // Ikon thinking SPARKLE ✦ kelip lambat: putih ↔ abu tiap 3 tick
+    // (glow halus, bukan strobo) — glyph monokrom jadi warna ANSI terlihat;
+    // kecepatan refresh mengikuti intervalMs yang adaptif terhadap
+    // kecepatan reasoning model (minimum 120ms).
+    const tickGroup = Math.floor(fi / 3)
+    const dots = Array(1 + (tickGroup % 3)).fill(glyphs.dot).join(" ")
     const cols = process.stdout.columns || 80
-    const thinkingIcon = fi % 2 === 0 ? c.white(glyphs.thinkingIcon) : c.gray(glyphs.thinkingIcon)
+    const thinkingIcon =
+      tickGroup % 2 === 0 ? c.white(glyphs.thinkingIcon) : c.gray(glyphs.thinkingIcon)
     const body =
       label === "Thinking"
-        ? `${thinkingIcon}${dots}`
-        : `${c.info(glyphs.spinnerFrames[fi % glyphs.spinnerFrames.length]!)} ${label}${dots}`
+        ? `${thinkingIcon}  ${dots}`
+        : `${c.info(glyphs.spinnerFrames[fi % glyphs.spinnerFrames.length]!)} ${label}  ${dots}`
     const full = body + extra
     // Terminal sangat sempit: potongan label bisa tinggal 1 huruf ("t") —
     // dalam kasus itu tampilkan titiknya saja daripada label rusak.
@@ -120,6 +141,11 @@ export function attachTurnStatus(
       intervalId = undefined
     }
     paintWrite("\r\x1b[2K")
+    // Kembalikan kursor yang disembunyikan saat acquire — tanpa ini terminal
+    // terlihat mati (kursor hilang permanen lebih buruk dari flicker).
+    try {
+      paintWrite("\x1b[?25h")
+    } catch {}
   }
   const restartInterval = () => {
     if (!intervalId) return
@@ -127,15 +153,27 @@ export function attachTurnStatus(
     intervalId = setInterval(paint, intervalMs)
   }
 
+  const clearGrace = () => {
+    if (graceTimer) {
+      clearTimeout(graceTimer)
+      graceTimer = undefined
+    }
+  }
   const startPaint = (next: string) => {
     label = next
     if (!shouldPaint()) return
+    clearGrace()
     if (!intervalId) {
       fi = 0
       // Repaint segera setelah tulis asing dikomit (lihat statusline.ts).
       owned = acquireTransientPaint("turn", () => {
         if (shouldPaint()) startPaint(label)
       })
+      // Sembunyikan kursor selama melukis agar tak terbaca sebagai bagian
+      // indikator ("✦···|"); dikembalikan di stopPaint.
+      try {
+        paintWrite("\x1b[?25l")
+      } catch {}
       paint()
       intervalId = setInterval(paint, intervalMs)
     } else paint()
@@ -143,10 +181,12 @@ export function attachTurnStatus(
   const resetTurn = () => {
     turnOn = false
     textOn = false
+    textSeen = false
     label = "Thinking"
     intervalMs = 150
     lastReasoningMs = null
     recentDeltas.length = 0
+    clearGrace()
     stopPaint()
   }
 
@@ -185,16 +225,32 @@ export function attachTurnStatus(
     bus.on("turn:started", () => {
       turnOn = true
       textOn = false
+      textSeen = false
       label = "Thinking"
-      // Sengaja tidak langsung melukis — lihat komentar lifecycle di atas.
+      // Sengaja tidak langsung melukis — jendela sebelum event pertama (mis.
+      // catatan [router] di awal stream) dibiarkan polos agar tidak ada tulis
+      // asing yang bisa tertimpa/terhapus garis ini. Grace 250ms menutup
+      // lubangnya: keheningan lebih lama terasa macet, bukan sopan.
+      clearGrace()
+      graceTimer = setTimeout(() => {
+        graceTimer = undefined
+        // Hanya bila belum ada yang melukis (tool duluan menang) dan masih
+        // dalam fase sunyi — jangan timpa label tool / fase teks.
+        if (!intervalId && shouldPaint() && label === "Thinking") startPaint("Thinking")
+      }, 250)
     }),
     bus.on("provider:text", () => {
       // Teks model = output utama; garis status tidak boleh menimpa area teks.
+      // Latch: reasoning susulan (interleave) tidak menghidupkan lagi.
       textOn = true
+      textSeen = true
+      clearGrace()
       stopPaint()
     }),
     bus.on("provider:extension", (e: { kind: string }) => {
       if (e.kind === "reasoning") {
+        // Fase menulis sudah dimulai → tetap sembunyi (anti-strobo).
+        if (textSeen) return
         // Adaptasi kecepatan: ukur jarak antar chunk reasoning
         const now = Date.now()
         if (lastReasoningMs != null) {
@@ -203,7 +259,7 @@ export function attachTurnStatus(
             recentDeltas.push(d)
             if (recentDeltas.length > 6) recentDeltas.shift()
             const avg = recentDeltas.reduce((a, b) => a + b, 0) / recentDeltas.length
-            const nextMs = avg < 80 ? 80 : avg < 180 ? 110 : avg < 350 ? 150 : avg < 700 ? 220 : 320
+            const nextMs = avg < 120 ? 120 : avg < 250 ? 150 : avg < 500 ? 220 : 320
             if (nextMs !== intervalMs) {
               intervalMs = nextMs
               restartInterval()
@@ -216,11 +272,14 @@ export function attachTurnStatus(
       } else if (e.kind === "error") stopPaint()
     }),
     bus.on("execution:started", (e: { execution: { call: { name: string; args?: unknown } } }) => {
+      // Fase kerja baru: latch teks dibuka lagi (thinking antar-tool tampil).
       textOn = false
+      textSeen = false
       startPaint(toolLabel(e))
     }),
     bus.on("execution:completed", () => {
       // Tool selesai: kembali ke "Thinking" selama model belum mengeluarkan teks.
+      textSeen = false
       if (shouldPaint()) startPaint("Thinking")
     }),
     bus.on("turn:completed", resetTurn),

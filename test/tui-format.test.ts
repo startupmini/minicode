@@ -430,6 +430,8 @@ describe("simple logger (one-shot)", () => {
     tty?.restore()
     tty = undefined
     setCompactMode(false)
+    setReasoningVisible(false)
+    delete process.env.MINICODE_MINIMIZE_TOOL
   })
 
   const attach = (verbose = false, rows = 24) => {
@@ -738,7 +740,7 @@ describe("simple logger (one-shot)", () => {
   })
 
   test("compact: execution:started SENYAP (progres = garis status, bukan baris)", () => {
-    // Baris "running x..." tanpa newline dulu menempel ke baris ✓ berikutnya
+    // Baris "running x..." tanpa newline dulu menempel ke baris › berikutnya
     // dan mencemari log non-interaktif; mode compact hanya menampilkan ledger
     // hasil (execution:completed), bukan start tool.
     setCompactMode(true)
@@ -748,7 +750,7 @@ describe("simple logger (one-shot)", () => {
     expect(out()).toBe("")
   })
 
-  test("compact: hasil tool konten = satu baris ✓ + target (tanpa bocor isi)", () => {
+  test("compact: hasil tool konten = satu baris › + target (tanpa bocor isi)", () => {
     setCompactMode(true)
     const { bus, detach, out } = attach()
     bus.emit("execution:completed", {

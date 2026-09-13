@@ -25,7 +25,7 @@ Ketik `/` di prompt → floating dropdown (max 10 item + `… N more`). `↑`/`�
 
 Alias (jalan, tidak diiklankan di `/help`): `/models` → `/model`, `/providers` → `/provider`, `/usage` & `/cost` → `/status`, `/resume [id]` → `/sessions [id]`, `/compact`.
 
-Catatan dropdown: Tab hanya menawarkan builtin + `/compact` agar pendek. `/mode` tak masuk dropdown (Tab/Shift+Tab sudah memutar mode). `/undo /redo /clear /copy /history` tidak masuk dropdown tapi ada di `/help`. `/thinking` dihapus — atur effort via picker Enter di `/model`.
+Catatan dropdown: Tab menawarkan builtin + `/compact` `/thinking` `/expand` `/minimize` agar pendek. `/mode` tak masuk dropdown (Tab/Shift+Tab sudah memutar mode). `/undo /redo /clear /copy /history` tidak masuk dropdown tapi ada di `/help`. `/thinking` = toggle tampilan reasoning (expand/minimize); effort via picker Enter di `/model`.
 
 Did-you-mean: typo `/sessoons` → `Did you mean /sessions?` (jarak ≤ 2).
 
@@ -38,6 +38,8 @@ Did-you-mean: typo `/sessoons` → `Did you mean /sessions?` (jarak ≤ 2).
 | `tab` | Lengkapi dari dropdown; di baris kosong = putar mode |
 | `↑` / `↓` | History, atau pilih item dropdown bila terbuka |
 | `ctrl+o` | Putar tool call compact/expanded (juga `/compact`) |
+| `ctrl+t` | Toggle tampilan reasoning expanded/minimized (juga `/thinking`) |
+| `+` / `-` | Saat turn berjalan: expand / minimize section aktif (thinking & tool) |
 | `ctrl+r` | Reverse-i-search history (substring; Esc/Ctrl+C/Ctrl+D batal, Ctrl+U hapus query) |
 | `ctrl+j` | Newline (multiline opt-in; Enter tetap submit) |
 | `←` / `→` | Geser kursor (editing tengah baris) |

@@ -157,7 +157,7 @@ Ketik `/` di prompt → floating dropdown (max 10 item + `… N more`), ter-look
 
 Alias yang juga dikenali (tidak muncul di `/help`): `/models` → `/model`, `/providers` → `/provider`, `/usage` & `/cost` → `/status`, `/resume [id]` → `/sessions [id]`, `/compact`.
 
-Catatan dropdown: Tab (dropdown) hanya menawarkan perintah **builtin + `/compact`** — tetap pendek dan minimalis. `/mode` tak masuk dropdown (Tab/Shift+Tab sudah memutar mode). `/thinking` dihapus — atur effort via picker `Enter` di `/model`. Perintah lain (`/undo`, `/redo`, `/clear`, `/copy`, `/history`) sengaja tidak masuk dropdown; semuanya terdaftar di `/help` (termasuk `/mode`).
+Catatan dropdown: Tab (dropdown) hanya menawarkan perintah **builtin + `/compact` `/thinking` `/expand` `/minimize`** — tetap pendek dan minimalis. `/mode` tak masuk dropdown (Tab/Shift+Tab sudah memutar mode). `/thinking` = toggle tampilan reasoning; effort via picker `Enter` di `/model`. Perintah lain (`/undo`, `/redo`, `/clear`, `/copy`, `/history`) sengaja tidak masuk dropdown; semuanya terdaftar di `/help` (termasuk `/mode`).
 
 ### Papan tombol (REPL)
 
@@ -168,6 +168,8 @@ Catatan dropdown: Tab (dropdown) hanya menawarkan perintah **builtin + `/compact
 | `tab` | Lengkapi perintah dari dropdown (menghormati item yang sedang dipilih); di baris kosong = putar mode (`auto` → `ask` → `plan` → `allowlist`, tanpa baris baru) |
 | `↑` / `↓` | Jelajahi history, atau pilih item dropdown bila terbuka |
 | `ctrl+o` | Putar tool call compact/expanded (juga `/compact`) |
+| `ctrl+t` | Toggle tampilan reasoning expanded/minimized (juga `/thinking`) |
+| `+` / `-` | Saat turn berjalan: expand / minimize section aktif (thinking & tool) |
 | `ctrl+r` | Reverse-i-search history (substring; Esc/Ctrl+C/Ctrl+D batal, Ctrl+U hapus query) |
 | `ctrl+j` | Sisipkan newline (multiline opt-in; Enter tetap submit) |
 | `←` / `→` | Geser kursor (editing di tengah baris) |

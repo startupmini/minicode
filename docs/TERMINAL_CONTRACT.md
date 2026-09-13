@@ -17,8 +17,8 @@ menghapus diri sendiri.
 
 | Stream | Isi | Catatan |
 |---|---|---|
-| stdout | Output PROGRAM yang bermakna: teks model, receipt perubahan (`✓ write_file …`), daftar/artefak perintah | Harus bersih dari cursor-control pada non-TTY |
-| stderr | Human-facing progress/diagnostic: ledger tool (`✓/✗ …`), reasoning (verbose), warning, error | Boleh transient rendering bila stderr TTY |
+| stdout | Output PROGRAM yang bermakna: teks model, receipt perubahan (`› write_file …`), daftar/artefak perintah | Harus bersih dari cursor-control pada non-TTY |
+| stderr | Human-facing progress/diagnostic: ledger tool (`› …` hijau/merah), reasoning (verbose), warning, error | Boleh transient rendering bila stderr TTY |
 | keduanya | Warna hanya bila stream TTY (`stdout.isTTY`); `NO_COLOR` menang; TERM/COLORTERM env TIDAK menyalakan warna pada pipe/redirect | Lihat `src/ui/render/theme.ts` `colorLevel()` |
 
 Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 animasi spinner,
@@ -56,8 +56,10 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 animasi spinner,
    SIGINT / retry / detach / session end (`endTurn` di driver; kernel hanya
    emit `turn:completed` di jalur sukses — lihat lifecycle turn-status.ts).
 6. Non-TTY: 0 cursor control / spinner animation / ANSI tak diperlukan.
-7. Tool activity default compact; ledger compact `✓ nama target` satu baris,
-   tanpa bocor isi file; isi hanya di expanded/verbose.
+7. Tool activity default compact; ledger compact `› nama target` satu baris,
+   tanpa bocor isi file; isi hanya di expanded/verbose. Section besar
+   (thinking/bash/edit/content) default minimize: satu baris `  + label`,
+   isi di-buffer untuk `/expand`.
 8. Streaming tanpa duplicate output / overlap / stale spinner-status.
 9. Foreign stderr writers boleh mentah di layer non-UI; arbitrator menjaga
    output mereka (tidak hilang, tidak merusak transient).
@@ -69,14 +71,17 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 animasi spinner,
 ## Grammar (ringkas)
 
 prompt `minicode <mode> ›` · activity: garis transient stderr (`✦···`
-putih↔abu kelip-kelip tiap tick, ·→··→··· ±300ms adaptif + `label-tool···`,
-tak pernah bare; kecepatan mengikuti reasoning) · section collapse:
-thinking/bash/edit/content MINIMIZED default (stderr) — satu baris
-`  + label`, isi di-buffer (cap 200KB) untuk `/expand`; `+`/`-`/Ctrl+T saat
-turn (raw mode) expand/minimize live, toggle menambah baris header baru
-(`  − label` / `  + label`) · startup: `⠋ Checking for updates…`
-(TTY, max 1.8s, hilang tanpa jejak) · `/thinking` atau Ctrl+T: toggle
-reasoning expanded/minimized (`MINICODE_SHOW_THINKING`) ·
+putih↔abu kelip-kelip tiap tick, ·→··→··· interval 80–320ms adaptif +
+`label-tool···`, tak pernah bare; kecepatan mengikuti reasoning) · section
+collapse: thinking + tool (bash/edit/content) MINIMIZED default (stderr) —
+satu baris `  + label`, isi di-buffer (200KB/entry, 500KB total) untuk
+`/expand` (sekali pakai, lalu buffer dikosongkan); `+`/`=`/`-`/`_`/Ctrl+T
+saat turn TTY (raw mode) expand/minimize live dengan feedback transient;
+toggle thinking menambah baris header (`  − thinking` / `  + thinking`),
+toggle tool flip mode untuk completion berikutnya; pipe/CI tanpa tombol live ·
+startup: `⠋ Checking for updates…` (TTY, max 1.8s, hilang tanpa jejak) ·
+`/thinking` atau Ctrl+T: toggle reasoning expanded/minimized
+(`MINICODE_SHOW_THINKING`) · `/minimize`: tool minimize (thinking tak tersentuh) ·
 ledger tool `  › name target` (hijau) / `  › name: …` (merah, stderr, indent 2) ·
 model text (stdout, wrapped per baris, fence 2-spasi) ·
 error: `✗ pesan actionable` sekali per kegagalan (`takePendingError`).

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { attachSimpleLogger } from "../src/ui/assistant/simple.ts"
 import { attachTurnStatus, type TurnStatusHandle } from "../src/ui/assistant/turn-status.ts"
 import { setCompactMode } from "../src/ui/render/detail.ts"
+import { setReasoningVisible } from "../src/ui/render/reasoning.ts"
 import { stripAnsi } from "../src/ui/render/theme.ts"
 import { acquireTransientPaint, isTransientPainting } from "../src/ui/runtime/statusline.ts"
 import { createFakeBus, type FakeTty, installFakeTty } from "./helpers/tui-harness.ts"
@@ -22,6 +23,10 @@ afterEach(() => {
   status?.detach()
   status = null
   setCompactMode(false)
+  setReasoningVisible(false)
+  // Section collapse dibaca per-event dari env — bocor antar test dalam
+  // file yang sama akan mengubah cabang › vs + secara diam-diam.
+  delete process.env.MINICODE_MINIMIZE_TOOL
   tty?.restore()
   tty = undefined
 })
@@ -164,7 +169,7 @@ describe("terminal contract: ledger & streaming", () => {
     for (const l of lines) {
       if (!l.trim()) continue
       expect(
-        l.startsWith("  › ") || l.startsWith("  ✗ ") || l.startsWith("    "),
+        l.startsWith("  › ") || l.startsWith("    "),
         `baris ledger tidak dikenal: ${JSON.stringify(l)}`,
       ).toBe(true)
       expect(l.indexOf("›"), l).toBe(l.lastIndexOf("›"))

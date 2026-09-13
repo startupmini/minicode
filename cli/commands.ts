@@ -89,7 +89,7 @@ const KEYBOARD_HELP: [string, string][] = [
   ["+ / -", "during turn: expand / minimize thinking & tool output"],
   ["ctrl+t", "toggle expand/minimize thinking output"],
   ["esc", "close dropdown / picker / cancel empty prompt"],
-  ["ctrl+c", "stop turn when busy; cancel prompt when idle (twice = exit)"],
+  ["ctrl+c", "stop turn when busy; cancel prompt when idle (2x exit)"],
   ["ctrl+d", "cancel prompt like ctrl+c"],
   ["\\ at end of line", "continue input on the next line"],
 ]

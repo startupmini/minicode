@@ -599,6 +599,33 @@ describe("REPL linier: did-you-mean & thinking", () => {
     await expect(p).rejects.toBeInstanceOf(ExitSentinel)
   })
 
+  test("slash sendirian membuka /help, bukan unknown command", async () => {
+    tty = installFakeTty()
+    const h = makeHarness()
+    const p = start(h)
+    await typeLine("/")
+    expect(visible(tty)).toContain("Commands:")
+    expect(visible(tty)).not.toContain("Unknown command")
+    await typeLine("/exit")
+    await expect(p).rejects.toBeInstanceOf(ExitSentinel)
+  })
+
+  test("render prompt dibungkus synchronized output (anti-flicker dropdown)", async () => {
+    tty = installFakeTty()
+    const h = makeHarness()
+    const p = start(h)
+    await waitForPrompt()
+    // Ketik "/" → dropdown terbuka → satu frame render penuh terjadi.
+    await tty.send("/", 25)
+    const raw = tty.combined()
+    expect(raw).toContain("\x1b[?2026h")
+    expect(raw).toContain("\x1b[?2026l")
+    // Hapus "/" dulu — kalau tidak, "/exit" menjadi "//exit" (unknown, tak exit).
+    await tty.send(KEY.backspace, 25)
+    await typeLine("/exit")
+    await expect(p).rejects.toBeInstanceOf(ExitSentinel)
+  })
+
   test("applyBusyKey: + / - / Ctrl+T / Ctrl+C selama turn", () => {
     const { applyBusyKey } = require("../cli/repl.ts") as typeof import("../cli/repl.ts")
     expect(applyBusyKey(0x03, "thinking")).toEqual({ action: "abort" })

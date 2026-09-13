@@ -400,6 +400,10 @@ export async function runRepl(ctx: CliSession): Promise<void> {
       const name = (spaceIdx === -1 ? q.slice(1) : q.slice(1, spaceIdx)).toLowerCase()
       const args = spaceIdx === -1 ? "" : q.slice(spaceIdx + 1).trim()
 
+      // Slash sendirian = minta daftar perintah, bukan unknown command.
+      if (name === "") {
+        return handleBuiltinCommand("/help", commandCtx).then((r) => !!r.shouldExit)
+      }
       if (name === "mode") {
         if (args) {
           if (!(MODES as readonly string[]).includes(args)) {

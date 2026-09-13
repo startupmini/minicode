@@ -300,6 +300,10 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
     }
 
     const renderAnsi = () => {
+      // Satu frame = satu unit sinkron: terminal menahan tampil sampai SYNC_END,
+      // sehingga navigasi dropdown (atas/bawah) tak berkedip/robek. Terminal
+      // tanpa dukungan mengabaikan sekuens ini (sudah dipakai clearOverlay).
+      process.stdout.write(SYNC_START)
       const rows = process.stdout.rows || 24
       // Baris input visual ikut memakan tinggi: kurangi jatah dropdown agar
       // blok input + dropdown tetap muat di terminal pendek.
@@ -364,6 +368,7 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
       if (upToCursor > 0) process.stdout.write(`\x1b[${upToCursor}A`)
       // Kursor sungguhan di posisi logis — bukan selalu di ujung baris.
       placeCursor(view.cursorCol)
+      process.stdout.write(SYNC_END)
       prevRows = spec.totalRows
       prevInputRows = nIn
       prevCursorRow = view.cursorRow

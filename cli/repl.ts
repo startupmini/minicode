@@ -28,7 +28,13 @@ import {
 } from "../src/ui/assistant/simple.ts"
 import { appendHistory, askLine } from "../src/ui/input/input.ts"
 import type { PromptKey } from "../src/ui/input/prompt-engine.ts"
-import { type CollapseSection, collapse, getBufferedSections } from "../src/ui/render/collapse.ts"
+import {
+  type CollapseSection,
+  collapse,
+  getBufferedSections,
+  resetBufferedSections,
+  setSectionMinimized,
+} from "../src/ui/render/collapse.ts"
 import { setCompactMode } from "../src/ui/render/detail.ts"
 import { formatUsd } from "../src/ui/render/money.ts"
 import { setReasoningVisible } from "../src/ui/render/reasoning.ts"
@@ -139,7 +145,7 @@ export async function runRepl(ctx: CliSession): Promise<void> {
   if (process.env.MINICODE_COMPACT === undefined) setCompactMode(true)
   // Section collapse default MINIMIZE: thinking/bash/edit/content jadi satu
   // baris `  + label`, isi di-buffer. `+`/`-` saat turn atau /expand membuka.
-  if (process.env.MINICODE_MINIMIZE_TOOL === undefined) collapse.setMinimized("tool", true)
+  if (process.env.MINICODE_MINIMIZE_TOOL === undefined) setSectionMinimized("tool", true)
   let nullStreak = 0
   let warned80 = false
   // Non-null selama turn berjalan — target abort SIGINT/Ctrl+C.
@@ -310,22 +316,30 @@ export async function runRepl(ctx: CliSession): Promise<void> {
         paintWrite(`\r\x1b[2K✦ ${msg}`)
       } catch {}
     }
-    const onBusyKey = (chunk: Buffer) => {
-      for (const b of chunk) {
-        const act = applyBusyKey(b, collapse.activeSection)
-        if (!act) continue
-        if (act.action === "abort") {
-          ctrl.abort()
-          continue
+    const onBusyKey = ttyStdin
+      ? (chunk: Buffer) => {
+          for (const b of chunk) {
+            const act = applyBusyKey(b, collapse.activeSection)
+            if (!act) continue
+            if (act.action === "abort") {
+              ctrl.abort()
+              continue
+            }
+            if (act.action === "toggle-thinking") {
+              busyFeedback(
+                `thinking: ${setSectionMinimized("thinking") ? "minimized" : "expanded"}`,
+              )
+              continue
+            }
+            const minimized = setSectionMinimized(act.kind, !act.expand)
+            busyFeedback(`${act.kind}: ${minimized ? "minimized" : "expanded"}`)
+          }
         }
-        if (act.action === "toggle-thinking") {
-          busyFeedback(`thinking: ${collapse.setMinimized("thinking") ? "minimized" : "expanded"}`)
-          continue
+      : // Pipe/CI: input bisa berisi byte + / - apa pun — jangan sentuh state.
+        // Perilaku lama: hanya abort via Ctrl+C (sinyal maupun byte).
+        (chunk: Buffer) => {
+          if (chunk.includes(0x03)) ctrl.abort()
         }
-        const minimized = collapse.setMinimized(act.kind, !act.expand)
-        busyFeedback(`${act.kind}: ${minimized ? "minimized" : "expanded"}`)
-      }
-    }
     process.stdin.resume()
     process.stdin.on("data", onBusyKey)
     const turnStart = Date.now()
@@ -428,10 +442,12 @@ export async function runRepl(ctx: CliSession): Promise<void> {
           process.stderr.write(`${c.muted(`  ── ${s.label} ──`)}\n`)
           process.stderr.write(s.text.endsWith("\n") ? s.text : `${s.text}\n`)
         }
+        // Sudah dibuka = selesai; cetak ulang butuh buffer baru dari turn baru.
+        resetBufferedSections()
         return false
       }
       if (name === "minimize") {
-        collapse.setMinimized("tool", true)
+        setSectionMinimized("tool", true)
         console.log(c.muted("sections: minimized (press + / - during the turn to expand/collapse)"))
         return false
       }

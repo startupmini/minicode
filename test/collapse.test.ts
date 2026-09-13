@@ -9,9 +9,9 @@ import type { EventBus } from "#minicore/core/index.ts"
 import { attachSimpleLogger } from "../src/ui/assistant/simple.ts"
 import {
   bufferSection,
-  collapse,
   getBufferedSections,
   resetBufferedSections,
+  setSectionMinimized,
 } from "../src/ui/render/collapse.ts"
 import { setReasoningVisible } from "../src/ui/render/reasoning.ts"
 import { stripAnsi } from "../src/ui/render/theme.ts"
@@ -102,7 +102,7 @@ describe("collapse: thinking section", () => {
 
 describe("collapse: tool section", () => {
   test("minimized: bash hanya satu baris + bash $ cmd, output di-buffer", () => {
-    collapse.setMinimized("tool", true)
+    setSectionMinimized("tool", true)
     const { bus, detach, err } = attach()
     bus.emit("turn:started", { turn: 1 })
     bus.emit("execution:started", {
@@ -119,7 +119,7 @@ describe("collapse: tool section", () => {
   })
 
   test("minimized: edit satu baris + edit path, isi di-buffer", () => {
-    collapse.setMinimized("tool", true)
+    setSectionMinimized("tool", true)
     const { bus, detach, err } = attach()
     bus.emit("turn:started", { turn: 1 })
     bus.emit(
@@ -141,7 +141,7 @@ describe("collapse: tool section", () => {
   })
 
   test("error tool selalu tampil walau dikecilkan", () => {
-    collapse.setMinimized("tool", true)
+    setSectionMinimized("tool", true)
     const { bus, detach, err } = attach()
     bus.emit("turn:started", { turn: 1 })
     bus.emit("execution:completed", done("read_file", { path: "x.ts" }, "gagal membaca", true))
@@ -155,11 +155,11 @@ describe("collapse: tool section", () => {
     bus.emit("turn:started", { turn: 1 })
     bus.emit("execution:started", { execution: { call: { name: "bash", args: { cmd: "b" } } } })
     // expand (seperti tombol +): tool berikutnya dicetak penuh
-    collapse.setMinimized("tool", false)
+    setSectionMinimized("tool", false)
     bus.emit("execution:completed", done("bash", { cmd: "b" }, "terlihat\n"))
     expect(err()).toContain("terlihat")
     // minimize lagi: tool berikutnya dikecilkan
-    collapse.setMinimized("tool", true)
+    setSectionMinimized("tool", true)
     bus.emit("execution:completed", done("bash", { cmd: "c" }, "tersembunyi\n"))
     expect(err()).not.toContain("tersembunyi")
     detach()
@@ -174,8 +174,31 @@ describe("collapse: buffer & reset", () => {
     expect(buf[buf.length - 1]!.text.length).toBeLessThanOrEqual(200_000)
   })
 
+  test("bufferSection cap total: tertua dibuang, terbaru dipertahankan", () => {
+    bufferSection("a", "a".repeat(200_000))
+    bufferSection("b", "b".repeat(200_000))
+    bufferSection("c", "c".repeat(200_000))
+    const buf = getBufferedSections()
+    const total = buf.reduce((n, s) => n + s.text.length, 0)
+    expect(total).toBeLessThanOrEqual(500_000)
+    expect(buf[buf.length - 1]!.label).toBe("c")
+    expect(buf.some((s) => s.label === "a")).toBe(false)
+  })
+
+  test("alur /expand: baca buffer lalu kosongkan (tanpa cetak ganda)", () => {
+    bufferSection("bash $ ls", "file1\n")
+    expect(getBufferedSections().length).toBe(1)
+    // repl /expand membaca lalu memanggil reset — tiru urutannya persis.
+    const shown = getBufferedSections()
+      .map((s) => `── ${s.label} ──\n${s.text}`)
+      .join("\n")
+    expect(shown).toContain("file1")
+    resetBufferedSections()
+    expect(getBufferedSections().length).toBe(0)
+  })
+
   test("turn:started membersihkan buffer turn sebelumnya", () => {
-    collapse.setMinimized("tool", true)
+    setSectionMinimized("tool", true)
     const { bus, detach } = attach()
     bus.emit("turn:started", { turn: 1 })
     bus.emit("execution:completed", done("bash", { cmd: "a" }, "isi\n"))

@@ -4,7 +4,12 @@
 // MINICODE_COMPACT=1 atau setCompactMode (/compact).
 import { Buffer } from "node:buffer"
 import type { UiBus, UiStep } from "../contract.ts"
-import { bufferSection, collapse, resetBufferedSections } from "../render/collapse.ts"
+import {
+  bufferSection,
+  collapse,
+  resetBufferedSections,
+  sectionMinimized,
+} from "../render/collapse.ts"
 import { detail } from "../render/detail.ts"
 import { renderDiffCard } from "../render/diff.ts"
 import { formatFriendly, friendlyError, friendlyFromCategory } from "../render/errors.ts"
@@ -149,11 +154,12 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   const offs: (() => void)[] = []
   offs.push(
     bus.on("turn:started", (e) => {
-      // Turn baru: simpan buffer thinking turn sebelumnya (jalur abort yang
-      // tak pernah turn:completed), lalu reset semua buffer section.
-      flushThinking()
+      // Turn baru: buffer turn sebelumnya dibuang (lihat /copy yang juga
+      // reset di sini) — /expand hanya untuk turn yang baru selesai.
+      thinkState = "off"
       thinkingBuf = ""
       resetBufferedSections()
+      collapse.setActiveSection(null)
       lastTurnText = ""
       pendingError = null
       if (opts.verbose) wErr(c.muted(`\n── Turn ${e.turn} ──\n`))
@@ -283,9 +289,9 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       }
       const target = typeof args.path === "string" ? args.path : undefined
       // Section tool dikecilkan: satu baris `  + label`, isi di-buffer untuk
-      // /expand. Ledger lain (cheVRon) tetap satu baris — ini menggantikan
+      // /expand. Ledger lain (chevron) tetap satu baris — ini menggantikan
       // pencetakan isi (bash/edit/diff/content tool), bukan marker.
-      if (collapse.minimized("tool")) {
+      if (sectionMinimized("tool")) {
         collapse.setActiveSection(null)
         const cmdStr = (args.cmd as string) ?? (args.command as string)
         const short = sanitizeAnsiLine(target ?? formatArgsPreview(args)).slice(0, 120)

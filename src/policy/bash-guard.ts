@@ -135,7 +135,7 @@ const UPLOAD_FLAG =
 
 /** Interpreter dijalankan dengan kode inline (semua bentuk flag). */
 const INLINE_INTERPRETER =
-  /\b(?:python|python2|python3|pypy|sh|bash|dash|zsh|ksh|node|deno|bun|perl|ruby|php|Rscript)\b\s+(?:-\w*\s+)*(?:-c|-e|-E|--eval|--print|-p|--command|-r|--execute)\b/i
+  /\b(?:pyw?|python[\d.]*|pypy[\d.]*|sh|bash|dash|zsh|ksh|node|deno|bun|perl|ruby|php|Rscript)\b\s+(?:-\w*\s+)*(?:-c|-e|-E|--eval|--print|-p|--command|-r|--execute)\b/i
 
 /** Process substitution / here-string yang memasukkan output perintah lain. */
 const PROCESS_SUB = /<\s*\(|>\s*\(|<<<|\bsource\s+<|\.\s+<\(/
@@ -303,6 +303,13 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
   // heuristik konservatif (`..`/absolut/sensitif) berlaku.
   for (const t of findRedirectTargets(raw)) {
     if (isNullSink(t)) continue
+    // Ekspansi %VAR% terjadi di cmd.exe SETELAH cek statis: `> "%TEMP%\x"`
+    // terlihat di dalam cwd secara literal lalu menulis ke luar. Target dengan
+    // pola %NAMA% tak bisa dipastikan aman → tolak; tulis ulang tanpa env var
+    // atau pakai path relatif. `%` tunggal (mis. `100%.txt`) tetap lolos
+    // karena bukan pola ekspansi.
+    if (/%[^%\s]+%/.test(t))
+      return { denied: true, reason: "redirect target with env expansion (%VAR%)" }
     if (cwd != null) {
       const abs = isAbsolute(t) ? resolve(t) : resolve(cwd, t)
       // Owned-state (.minicode/config dkk) simetris dengan jail file tools:

@@ -23,7 +23,7 @@ export function isSensitive(p: string): boolean {
 // BACA tetap boleh (observability/debug). Pola di-anchor ke segmen
 // `.minicode/` agar file user bernama mirip di tempat lain tak kena.
 const OWNED_STATE_RE =
-  /(?:^|[/\\])\.minicode[/\\](?:sessions\.db(?:-wal|-shm|-journal)?|vector\.db(?:-wal|-shm|-journal)?|todos(?:[/\\]|$)|plans(?:[/\\]|$)|checkpoints(?:[/\\]|$)|journal-[^/\\]*\.jsonl$|.*traces?\.jsonl$|repomap\.json$|allowlist\.json$|config\.json$)/i
+  /(?:^|[/\\])\.minicode[/\\](?:sessions\.db(?:-wal|-shm|-journal)?|vector\.db(?:-wal|-shm|-journal)?|todos(?:[/\\]|$)|plans(?:[/\\]|$)|checkpoints(?:[/\\]|$)|journal-[^/\\]*\.jsonl$|.*traces?\.jsonl$|repomap\.json$|allowlist\.json$|config\.json$|turn\.active\.json$)/i
 
 export function isOwnedState(p: string): boolean {
   return OWNED_STATE_RE.test(p)

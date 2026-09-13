@@ -64,19 +64,27 @@ export async function safeOpenRead(
   if (isSensitive(preReal)) throw new Error(`blocked sensitive file: ${abs}`)
 
   // Buka path terverifikasi — bukan abs (yang bisa di-swap setelah realpath).
+  let handle: FileHandle
   try {
-    const handle = await open(preReal, O_RDONLY | O_NOFOLLOW)
-    return { handle, realPath: preReal }
+    handle = await open(preReal, O_RDONLY | O_NOFOLLOW)
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code
     if (code === "ELOOP") throw new Error(`symlink swapped during open (O_NOFOLLOW): ${abs}`)
     // EINVAL: O_NOFOLLOW tidak didukung → buka biasa (Windows: pre-check saja)
     if (code === "EINVAL" && O_NOFOLLOW !== 0) {
-      const handle = await open(preReal, O_RDONLY)
-      return { handle, realPath: preReal }
-    }
-    throw e
+      handle = await open(preReal, O_RDONLY)
+    } else throw e
   }
+  // Hardlink ke luar workspace tak terlihat oleh realpath (semua nama setara)
+  // — baca via hardlink = baca konten luar. fstat pada handle yang SUDAH
+  // terbuka: tepat untuk file ini, bebas race dengan swap nama. File normal
+  // nlink=1; tolak sisanya dengan pesan yang bisa ditindaklanjuti.
+  const st = await handle.stat().catch(() => null)
+  if (st && st.nlink > 1) {
+    await handle.close().catch(() => {})
+    throw new Error(`refusing to read file with multiple hardlinks (nlink=${st.nlink}): ${abs}`)
+  }
+  return { handle, realPath: preReal }
 }
 
 export async function safeReadFile(abs: string, root: string): Promise<string> {

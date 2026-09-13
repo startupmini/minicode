@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs"
+import {
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { readFileTool } from "../src/tools/read_file.ts"
@@ -113,6 +121,67 @@ it("toctou: swapper 1000× inside↔outside, 0 lolos", async () => {
     try {
       rmSync(w, { recursive: true, force: true })
       rmSync(o, { recursive: true, force: true })
+    } catch {}
+  }
+})
+
+// Hardlink tak terlihat oleh realpath (semua nama setara) — baca via hardlink
+// = baca konten luar. Berbeda dari symlink, mklink /H jalan di Windows TANPA
+// privilege, jadi test ini TIDAK di-skip di sana. Skip anggun hanya bila FS
+// tak mendukung hardlink (beda volume/FAT).
+
+function hardlinkSupport(): boolean {
+  const d = mkdtempSync(join(tmpdir(), "hl-priv-"))
+  try {
+    writeFileSync(join(d, "t.txt"), "x")
+    linkSync(join(d, "t.txt"), join(d, "l.txt"))
+    unlinkSync(join(d, "l.txt"))
+    return true
+  } catch {
+    return false
+  } finally {
+    try {
+      rmSync(d, { recursive: true, force: true })
+    } catch {}
+  }
+}
+
+const canHardlink = hardlinkSupport()
+const hit = canHardlink ? test : test.skip
+
+hit("hardlink: baca via hardlink ke luar workspace ditolak (nlink>1)", async () => {
+  const w = mkdtempSync(join(tmpdir(), "hl-w-"))
+  const o = mkdtempSync(join(tmpdir(), "hl-o-"))
+  try {
+    mkdirSync(join(w, ".minicode"), { recursive: true })
+    writeFileSync(join(o, "secret.txt"), "SECRET-CONTENT")
+    linkSync(join(o, "secret.txt"), join(w, "link.txt"))
+    let leaked = false
+    try {
+      const r = (await readFileTool.execute({ path: "link.txt" }, mkctx(w))) as string
+      if (r.includes("SECRET-CONTENT")) leaked = true
+    } catch (e) {
+      expect(String(e)).toMatch(/hardlink/)
+    }
+    expect(leaked).toBe(false)
+  } finally {
+    try {
+      rmSync(w, { recursive: true, force: true })
+      rmSync(o, { recursive: true, force: true })
+    } catch {}
+  }
+})
+
+hit("hardlink: berkas normal (nlink=1) tetap terbaca", async () => {
+  const w = mkdtempSync(join(tmpdir(), "hl-ok-"))
+  try {
+    mkdirSync(join(w, ".minicode"), { recursive: true })
+    writeFileSync(join(w, "a.txt"), "SAFE-CONTENT")
+    const r = (await readFileTool.execute({ path: "a.txt" }, mkctx(w))) as string
+    expect(r).toContain("SAFE-CONTENT")
+  } finally {
+    try {
+      rmSync(w, { recursive: true, force: true })
     } catch {}
   }
 })

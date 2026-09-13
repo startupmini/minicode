@@ -373,6 +373,7 @@ test("delegate: file tool tak boleh tulis state minicode (semua mode)", async ()
         ".minicode/repomap.json",
         ".minicode/allowlist.json",
         ".minicode/config.json",
+        ".minicode/turn.active.json",
       ]
       for (const t of targets) {
         if ((await check("write_file", { path: t, content: "x" })) !== "deny")

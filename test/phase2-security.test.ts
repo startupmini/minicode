@@ -223,6 +223,34 @@ describe("bash-guard: redirect keluar workspace (temuan audit eksternal)", () =>
     expect(inspectBashCommand("echo hi > local.txt").denied).toBe(false)
   })
 
+  test("redirect dengan ekspansi %VAR% ditolak (ekspansi terjadi setelah cek)", () => {
+    // Temuan red-team: `> "%TEMP%\x"` terlihat di dalam cwd secara literal,
+    // lalu cmd.exe mengekspansi %TEMP% dan menulis ke luar workspace.
+    const dir = mkdtempSync(join(tmpdir(), "redir-env-"))
+    try {
+      expect(inspectBashCommand('echo x > "%TEMP%\\evil.txt"', dir).denied).toBe(true)
+      expect(inspectBashCommand("echo x > %USERPROFILE%\\evil.txt", dir).denied).toBe(true)
+      expect(inspectBashCommand("echo x > %CD%\\..\\evil.txt", dir).denied).toBe(true)
+      // Tanpa cwd pun pola %VAR% tak bisa dipastikan aman.
+      expect(inspectBashCommand('echo x > "%TEMP%\\evil.txt"').denied).toBe(true)
+      // `%` tunggal bukan pola ekspansi — nama file sah tetap jalan.
+      expect(inspectBashCommand("echo 100% > 100%.txt", dir).denied).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("inline interpreter: py/pyw launcher + python berversi diblokir", () => {
+    // Temuan red-team: `py -c` lolos karena regex hanya kenal python?.
+    expect(denied('py -c "print(1)"')).toBe(true)
+    expect(denied('pyw -c "print(1)"')).toBe(true)
+    expect(denied('python3.14 -c "print(1)"')).toBe(true)
+    expect(denied('pypy3 -c "print(1)"')).toBe(true)
+    expect(denied('python -c "print(1)"')).toBe(true)
+    // Kata yang MENGANDUNG py/python bukan interpreter — jangan over-block.
+    expect(denied("copy -c file")).toBe(false)
+  })
+
   test("allowlist: echo redirect keluar ditolak, di dalam allow", async () => {
     const dir = mkdtempSync(join(tmpdir(), "redir-perm-"))
     try {

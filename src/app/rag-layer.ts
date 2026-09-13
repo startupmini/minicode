@@ -2,6 +2,37 @@ import type { MinicodeConfig } from "../config.ts"
 import { searchHybrid } from "../memory/vector.ts"
 import { loadSkills, type Skill, skillsToSystemPrompt } from "../skills/loader.ts"
 
+/**
+ * Daftar endpoint embedding unik dari config + env. Murni (tanpa I/O) agar
+ * bisa diuji deterministik. Dedup per baseUrl: beberapa provider satu
+ * gateway tak boleh dicoba berulang dengan kunci beda.
+ */
+export function buildEmbeddingCandidates(
+  cfg: MinicodeConfig,
+): { baseUrl: string; apiKey: string }[] {
+  const candidates: { baseUrl: string; apiKey: string }[] = []
+  const seen = new Set<string>()
+  const consider = (baseUrl: string, apiKey: string) => {
+    if (!apiKey || !baseUrl || seen.has(baseUrl)) return
+    seen.add(baseUrl)
+    candidates.push({ baseUrl, apiKey })
+  }
+  for (const p of cfg.providers) if (p.apiKey) consider(p.baseUrl, p.apiKey)
+  if (process.env.AGENT_BASE_URL || process.env.OPENAI_API_KEY) {
+    consider(
+      process.env.AGENT_BASE_URL ?? "https://api.openai.com/v1",
+      process.env.OPENAI_API_KEY ?? process.env.AGENT_API_KEY ?? "",
+    )
+  }
+  if (candidates.length === 0 && (cfg.providers[0]?.apiKey || process.env.OPENAI_API_KEY)) {
+    consider(
+      cfg.providers[0]?.baseUrl ?? "https://api.openai.com/v1",
+      cfg.providers[0]?.apiKey ?? process.env.OPENAI_API_KEY ?? "",
+    )
+  }
+  return candidates
+}
+
 export async function createRagLayer(opts: {
   cfg: MinicodeConfig
   prompt: string
@@ -30,29 +61,7 @@ export async function createRagLayer(opts: {
   const q = opts.prompt.trim()
   if (q) {
     try {
-      const candidates: { baseUrl: string; apiKey: string }[] = []
-      const seen = new Set<string>()
-      const consider = (baseUrl: string, apiKey: string) => {
-        if (!apiKey || !baseUrl || seen.has(baseUrl)) return
-        seen.add(baseUrl)
-        candidates.push({ baseUrl, apiKey })
-      }
-      for (const p of opts.cfg.providers) if (p.apiKey) consider(p.baseUrl, p.apiKey)
-      if (process.env.AGENT_BASE_URL || process.env.OPENAI_API_KEY) {
-        consider(
-          process.env.AGENT_BASE_URL ?? "https://api.openai.com/v1",
-          process.env.OPENAI_API_KEY ?? process.env.AGENT_API_KEY ?? "",
-        )
-      }
-      if (
-        candidates.length === 0 &&
-        (opts.cfg.providers[0]?.apiKey || process.env.OPENAI_API_KEY)
-      ) {
-        consider(
-          opts.cfg.providers[0]?.baseUrl ?? "https://api.openai.com/v1",
-          opts.cfg.providers[0]?.apiKey ?? process.env.OPENAI_API_KEY ?? "",
-        )
-      }
+      const candidates = buildEmbeddingCandidates(opts.cfg)
       let hits: { text: string; score: number; createdAt: number }[] = []
       for (const c of candidates) {
         try {

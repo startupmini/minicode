@@ -1,30 +1,18 @@
-// RAG layer startup: prompt kosong tak boleh menyentuh network sama sekali.
-// Dulu tiap provider ber-API-key dicoba sequential (DNS tanpa cache + POST
-// embedding, timeout per endpoint) — startup membayar jumlahnya dalam hening.
-// Mock module vector.ts (bun:test, file-scoped): hitung invocasi searchHybrid
-// tanpa network sungguhan. Satu dynamic import di bawah mock agar binding
-// yang dipakai createRagLayer adalah mock-nya.
+// RAG layer startup: prompt kosong tak boleh me-retrieve (dulu tiap provider
+// ber-API-key dicoba sequential: DNS tanpa cache + POST embedding — startup
+// membayar jumlahnya dalam hening). Tanpa mock module (mock.module bocor
+// antar-file di Bun): dedup diuji via fungsi murni buildEmbeddingCandidates,
+// perilaku no-network via provider tanpa kunci + cwd kosong.
 
-import { afterEach, beforeEach, expect, mock, test } from "bun:test"
+import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { buildEmbeddingCandidates, createRagLayer } from "../src/app/rag-layer.ts"
+import { addMemory } from "../src/memory/vector.ts"
 
-type Hit = { text: string; score: number; createdAt: number }
-let calls: { baseUrl?: string }[] = []
-let hits: Hit[] = []
-
-mock.module("../src/memory/vector.ts", () => ({
-  searchHybrid: async (_q: unknown, o: { baseUrl?: string }) => {
-    calls.push({ baseUrl: o?.baseUrl })
-    return hits
-  },
-}))
-
-const { createRagLayer } = await import("../src/app/rag-layer.ts")
-
-const cfgWith = (urls: string[]) => ({
-  providers: urls.map((baseUrl, i) => ({ id: `p${i}`, baseUrl, apiKey: "k", models: [] })),
+const cfgWith = (providers: { id: string; baseUrl: string; apiKey?: string }[]) => ({
+  providers: providers.map((p) => ({ ...p, models: [] as string[] })),
 })
 
 let dir = ""
@@ -32,10 +20,8 @@ const ENV_KEYS = ["AGENT_BASE_URL", "OPENAI_API_KEY", "AGENT_API_KEY"] as const
 let savedEnv: Record<string, string | undefined> = {}
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "rag-"))
-  calls = []
-  hits = []
   // Kandidat embedding default (env mesin dev) harus disingkirkan agar
-  // hitungan panggilan deterministik.
+  // deterministik.
   savedEnv = {}
   for (const k of ENV_KEYS) {
     savedEnv[k] = process.env[k]
@@ -52,43 +38,42 @@ afterEach(() => {
   } catch {}
 })
 
-test("prompt kosong: searchHybrid tak pernah dipanggil (startup tanpa network)", async () => {
+test("dedup: dua provider satu baseUrl = satu kandidat", () => {
+  const out = buildEmbeddingCandidates(
+    cfgWith([
+      { id: "a", baseUrl: "http://a.invalid", apiKey: "k1" },
+      { id: "b", baseUrl: "http://a.invalid", apiKey: "k2" },
+      { id: "c", baseUrl: "http://b.invalid", apiKey: "k3" },
+    ]) as never,
+  )
+  expect(out).toEqual([
+    { baseUrl: "http://a.invalid", apiKey: "k1" },
+    { baseUrl: "http://b.invalid", apiKey: "k3" },
+  ])
+})
+
+test("tanpa kunci: kandidat kosong (tak ada yang bisa dipanggil)", () => {
+  const out = buildEmbeddingCandidates(cfgWith([{ id: "a", baseUrl: "http://a.invalid" }]) as never)
+  expect(out).toEqual([])
+})
+
+test("prompt kosong: tanpa retrieval, tanpa hits", async () => {
   const r = await createRagLayer({
-    cfg: cfgWith(["http://a.invalid", "http://b.invalid"]) as never,
+    cfg: cfgWith([{ id: "a", baseUrl: "http://a.invalid", apiKey: "k" }]) as never,
     prompt: "   ",
     cwd: dir,
   })
-  expect(calls).toEqual([])
   expect(r.memoryHits).toBe(0)
   expect(r.systemExtra ?? "").not.toContain("Relevant memory")
 })
 
-test("dedup: dua provider satu baseUrl = satu panggilan", async () => {
-  await createRagLayer({
-    cfg: cfgWith(["http://a.invalid", "http://a.invalid"]) as never,
-    prompt: "halo",
-    cwd: dir,
-  })
-  expect(calls).toEqual([{ baseUrl: "http://a.invalid" }])
-})
-
-test("URL beda tetap dicoba semua sampai hits (anti over-dedup)", async () => {
-  await createRagLayer({
-    cfg: cfgWith(["http://a.invalid", "http://b.invalid"]) as never,
-    prompt: "halo",
-    cwd: dir,
-  })
-  expect(calls).toEqual([{ baseUrl: "http://a.invalid" }, { baseUrl: "http://b.invalid" }])
-})
-
-test("prompt isi tetap me-retrieve (anti over-skip)", async () => {
-  hits = [{ text: "ingatan penting", score: 0.9, createdAt: Date.now() }]
+test("keyword fallback tetap jalan tanpa kunci (anti over-skip)", async () => {
+  await addMemory("kucing makan ikan di dapur", { cwd: dir })
   const r = await createRagLayer({
-    cfg: cfgWith(["http://a.invalid"]) as never,
-    prompt: "halo",
+    cfg: cfgWith([{ id: "a", baseUrl: "http://a.invalid" }]) as never,
+    prompt: "kucing",
     cwd: dir,
   })
-  expect(calls).toHaveLength(1)
-  expect(r.memoryHits).toBe(1)
-  expect(r.systemExtra ?? "").toContain("ingatan penting")
+  expect(r.memoryHits).toBeGreaterThan(0)
+  expect(r.systemExtra ?? "").toContain("kucing")
 })

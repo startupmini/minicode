@@ -147,6 +147,18 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   } = opts
   const modelRef = { current: modelOverride }
 
+  // Diagnosis startup lambat: MINICODE_DEBUG_STARTUP=1 mencetak durasi tiap
+  // fase session-setup ke stderr (`[startup] rag 8432ms`). Tanpa env = diam.
+  const startupPhase = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+    const s = Date.now()
+    try {
+      return await fn()
+    } finally {
+      if (process.env.MINICODE_DEBUG_STARTUP === "1")
+        process.stderr.write(`[startup] ${name} ${Date.now() - s}ms\n`)
+    }
+  }
+
   // Timeout default: --timeout > MINICODE_TIMEOUT_MS env > 15 min. 0 = Infinity.
   const envTimeout = process.env.MINICODE_TIMEOUT_MS
   let effectiveTimeoutMs =
@@ -195,15 +207,17 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     }
   } catch {}
 
-  const { cfg, router } = await createProviderLayer({
-    cwd,
-    prompt,
-    enterRepl,
-    rateLimiter,
-    providerOverride,
-    allowLocalConfig,
-    setupWhenEmpty: runSetupWizard,
-  })
+  const { cfg, router } = await startupPhase("provider-layer", () =>
+    createProviderLayer({
+      cwd,
+      prompt,
+      enterRepl,
+      rateLimiter,
+      providerOverride,
+      allowLocalConfig,
+      setupWhenEmpty: runSetupWizard,
+    }),
+  )
   // Operator wajib tahu saat config repo dipercaya — cetak sekali di awal.
   // localConfigNotice mengembalikan undefined bila flag mati atau berkas tak
   // ada, jadi tak ada noise pada alur normal.
@@ -224,14 +238,16 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     systemExtra,
     skills: allLoadedSkills,
     memoryHits,
-  } = await createRagLayer({
-    cfg,
-    prompt,
-    cwd,
-    // RAG retrieval tak boleh menulis access_count di mode tanpa-mutasi.
-    // "readonly" hanya ada via runtime __setMode (union startup tak memuatnya).
-    trackAccess: (permissionMode as string) !== "readonly" && permissionMode !== "plan",
-  })
+  } = await startupPhase("rag-layer", () =>
+    createRagLayer({
+      cfg,
+      prompt,
+      cwd,
+      // RAG retrieval tak boleh menulis access_count di mode tanpa-mutasi.
+      // "readonly" hanya ada via runtime __setMode (union startup tak memuatnya).
+      trackAccess: (permissionMode as string) !== "readonly" && permissionMode !== "plan",
+    }),
+  )
 
   // resume: load full history from DB -> seed into kernel ContextStore
   let initialMessages: readonly Message[] | undefined
@@ -302,7 +318,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       })
     : undefined
 
-  const { sessionTools } = await setupToolLayer(cfg, toolScope ?? "full", permissionMode)
+  const { sessionTools } = await startupPhase("tool-layer", () =>
+    setupToolLayer(cfg, toolScope ?? "full", permissionMode),
+  )
 
   // todo_write/todo_read menyimpan state per sesi di .minicode/todos/<id>.json
   todoSession.id = sessionId
@@ -321,27 +339,29 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     const v = opts.writeConcurrency
     return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined
   })()
-  const session = await createMinicodeSession({
-    provider: router,
-    tools: sessionTools,
-    cwd,
-    permissionMode,
-    allowLocalConfig,
-    systemExtra: (systemExtra ?? "") + recoveryAppendix,
-    model: modelRef.current,
-    ask: promptAsk,
-    onPermissions: (ctl) => {
-      permissions = ctl
-    },
-    ...(initialMessages ? { initialMessages } : {}),
-    ...(resumeTurnCount !== undefined ? { turnCount: resumeTurnCount } : {}),
-    ...(maxSteps ? { maxSteps } : {}),
-    ...(contextWindowTokens ? { contextWindowTokens } : {}),
-    ...(safeConcurrency ? { concurrency: safeConcurrency } : {}),
-    ...(safeWriteConcurrency ? { writeConcurrency: safeWriteConcurrency } : {}),
-    timeoutMs: effectiveTimeoutMs === 0 ? Infinity : effectiveTimeoutMs,
-    ...(compaction ? { compaction } : {}),
-  })
+  const session = await startupPhase("kernel-session", () =>
+    createMinicodeSession({
+      provider: router,
+      tools: sessionTools,
+      cwd,
+      permissionMode,
+      allowLocalConfig,
+      systemExtra: (systemExtra ?? "") + recoveryAppendix,
+      model: modelRef.current,
+      ask: promptAsk,
+      onPermissions: (ctl) => {
+        permissions = ctl
+      },
+      ...(initialMessages ? { initialMessages } : {}),
+      ...(resumeTurnCount !== undefined ? { turnCount: resumeTurnCount } : {}),
+      ...(maxSteps ? { maxSteps } : {}),
+      ...(contextWindowTokens ? { contextWindowTokens } : {}),
+      ...(safeConcurrency ? { concurrency: safeConcurrency } : {}),
+      ...(safeWriteConcurrency ? { writeConcurrency: safeWriteConcurrency } : {}),
+      timeoutMs: effectiveTimeoutMs === 0 ? Infinity : effectiveTimeoutMs,
+      ...(compaction ? { compaction } : {}),
+    }),
+  )
 
   const effectiveInitialModel = modelRef.current ?? cfg.providers[0]?.models[0] ?? "default"
 

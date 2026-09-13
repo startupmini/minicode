@@ -315,6 +315,18 @@ try {
 } catch {}
 
 // -- build session --
+// Session setup (provider/RAG/MCP/session) bisa makan detik (network + spawn)
+// TANPA output — user melihat kursor mati. Spinner transient TTY-only selama
+// setup, dibersihkan sebelum banner REPL agar tak ada jejak.
+let setupSpin: ReturnType<typeof setInterval> | undefined
+if (enterRepl && process.stderr.isTTY) {
+  const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+  let fi = 0
+  setupSpin = setInterval(() => {
+    const f = frames[fi++ % frames.length]!
+    process.stderr.write(`\r\x1b[2K${c.dim(`${f} Menyiapkan sesi…`)}`)
+  }, 120)
+}
 const ctx = await createCliSession({
   cwd,
   sessionId,
@@ -339,6 +351,10 @@ const ctx = await createCliSession({
   rateLimiter,
   sandboxNotice: requestedSandbox ? sandbox.notice : undefined,
 })
+if (setupSpin) {
+  clearInterval(setupSpin)
+  process.stderr.write("\r\x1b[2K")
+}
 
 if (enterRepl) {
   const { runRepl } = await import("./repl.ts")

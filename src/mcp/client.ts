@@ -294,16 +294,31 @@ export function capMcpText(content: string): string {
 }
 
 export async function connectAll(configs: McpServerConfig[]): Promise<Tool[]> {
+  // Paralel: server independen — sequential membuat startup membayar jumlah
+  // timeout handshake (3s/server). Urutan pesan stderr dipertahankan sesuai
+  // config agar log deterministik.
+  const settled = await Promise.allSettled(
+    configs.map(async (cfg) => {
+      if (activeConnections.has(cfg.id)) return { cfg, conn: null as McpConnection | null }
+      const conn = new McpConnection(cfg)
+      await conn.connect()
+      return { cfg, conn }
+    }),
+  )
   const allTools: Tool[] = []
 
-  for (const cfg of configs) {
-    if (activeConnections.has(cfg.id)) {
+  for (const s of settled) {
+    if (s.status === "rejected") {
+      const cfg = configs[settled.indexOf(s)]!
+      process.stderr.write(`[mcp] ${cfg.id} failed: ${(s.reason as Error)?.message ?? s.reason}\n`)
+      continue
+    }
+    const { cfg, conn } = s.value
+    if (!conn) {
       process.stderr.write(`[mcp] ${cfg.id} already connected\n`)
       continue
     }
-    const conn = new McpConnection(cfg)
-    try {
-      await conn.connect()
+    {
       const tools = conn.wrapTools(cfg.id)
       allTools.push(...tools)
       activeConnections.set(cfg.id, conn)
@@ -316,8 +331,6 @@ export async function connectAll(configs: McpServerConfig[]): Promise<Tool[]> {
       process.stderr.write(
         `[mcp] ${cfg.id} connected via ${conn.kind} (${tools.length} tools${extra ? `, ${extra}` : ""})\n`,
       )
-    } catch (e) {
-      process.stderr.write(`[mcp] ${cfg.id} failed: ${(e as Error).message}\n`)
     }
   }
 

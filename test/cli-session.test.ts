@@ -234,6 +234,27 @@ describe("cli: sesi one-shot dasar", () => {
     )
   })
 
+  test("MINICODE_DEBUG_STARTUP=1 mencetak durasi tiap fase setup", async () => {
+    const { run: r } = await runWithProvider(
+      [{ kind: "text", text: "ok", usage: BIG_USAGE }],
+      ["halo"],
+      { env: { MINICODE_DEBUG_STARTUP: "1" } },
+    )
+    expect(r.code).toBe(0)
+    for (const phase of ["provider-layer", "rag-layer", "tool-layer", "kernel-session"]) {
+      expect(r.stderr, phase).toContain(`[startup] ${phase} `)
+    }
+  })
+
+  test("tanpa MINICODE_DEBUG_STARTUP: tanpa baris [startup]", async () => {
+    const { run: r } = await runWithProvider(
+      [{ kind: "text", text: "ok", usage: BIG_USAGE }],
+      ["halo"],
+    )
+    expect(r.code).toBe(0)
+    expect(r.stderr).not.toContain("[startup]")
+  })
+
   test("tool call write_file benar-benar membuat berkas", async () => {
     const { run: r, ws } = await runWithProvider(
       [

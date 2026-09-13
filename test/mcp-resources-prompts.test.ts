@@ -320,3 +320,40 @@ describe("MCP resources/prompts: permission", () => {
     h.__setMode("auto")
   })
 })
+
+describe("MCP connectAll paralel", () => {
+  const minimal: RpcHandler = (method) => {
+    if (method === "initialize")
+      return { protocolVersion: "2025-06-18", capabilities: { tools: {} } }
+    if (method === "tools/list") return { tools: [{ name: "ping", description: "cek" }] }
+    throw new Error(`unsupported: ${method}`)
+  }
+
+  test("satu server gagal tak menggagalkan batch; pesan urut config", async () => {
+    const url = serveMcp(minimal)
+    const chunks: string[] = []
+    const prev = process.stderr.write.bind(process.stderr)
+    ;(process.stderr as unknown as { write: unknown }).write = (c: string | Uint8Array) => {
+      chunks.push(typeof c === "string" ? c : Buffer.from(c).toString("utf8"))
+      return true
+    }
+    try {
+      const tools = await connectAll([
+        { id: "bagus", url, allowPrivateHost: true },
+        { id: "rusak", url: "http://127.0.0.1:9/tidak-ada", allowPrivateHost: true },
+      ])
+      // Server bagus tetap menghasilkan tool meski tetangganya gagal total.
+      expect(tools.length).toBeGreaterThan(0)
+      expect(tools.every((t) => t.name.startsWith("bagus."))).toBe(true)
+      // Koneksi paralel tapi pesan stderr deterministik sesuai urutan config.
+      const out = chunks.join("")
+      const iOk = out.indexOf("bagus connected")
+      const iFail = out.indexOf("rusak failed")
+      expect(iOk).toBeGreaterThanOrEqual(0)
+      expect(iFail).toBeGreaterThanOrEqual(0)
+      expect(iOk).toBeLessThan(iFail)
+    } finally {
+      ;(process.stderr as unknown as { write: unknown }).write = prev
+    }
+  })
+})

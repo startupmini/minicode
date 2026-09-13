@@ -38,6 +38,7 @@ afterEach(() => {
   tty = undefined
   setCompactMode(false)
   setReasoningVisible(false)
+  delete process.env.MINICODE_MINIMIZE_TOOL
 })
 
 interface Harness {
@@ -409,14 +410,15 @@ describe("REPL linier: mode & toggle", () => {
     await expect(p).rejects.toBeInstanceOf(ExitSentinel)
   })
 
-  test("Ctrl+T tidak lagi toggle reasoning (diganti picker Enter di /model)", async () => {
+  test("Ctrl+T toggle expand/minimize reasoning saat idle", async () => {
     tty = installFakeTty()
     const h = makeHarness()
     const p = start(h)
     await waitForPrompt()
     await tty.send(KEY.ctrlT, 25)
-    // Ctrl+T sekarang no-op — tidak ada notifikasi reasoning
-    expect(visible(tty)).not.toContain("reasoning:")
+    expect(visible(tty)).toContain("thinking: expanded")
+    await tty.send(KEY.ctrlT, 25)
+    expect(visible(tty)).toContain("thinking: minimized")
     await typeLine("/exit")
     await expect(p).rejects.toBeInstanceOf(ExitSentinel)
   })
@@ -581,5 +583,46 @@ describe("REPL linier: did-you-mean & thinking", () => {
     expect(visible(tty)).toContain("thinking: minimized")
     await typeLine("/exit")
     await expect(p).rejects.toBeInstanceOf(ExitSentinel)
+  })
+
+  test("/expand dan /minimize mengontrol section collapse", async () => {
+    tty = installFakeTty()
+    const h = makeHarness()
+    const p = start(h)
+    // Tanpa isi buffer: /expand memberitahu jujur, bukan diam.
+    await typeLine("/expand")
+    expect(visible(tty)).toContain("nothing to expand")
+    await typeLine("/minimize")
+    expect(visible(tty)).toContain("sections: minimized")
+    expect(process.env.MINICODE_MINIMIZE_TOOL).toBe("1")
+    await typeLine("/exit")
+    await expect(p).rejects.toBeInstanceOf(ExitSentinel)
+  })
+
+  test("applyBusyKey: + / - / Ctrl+T / Ctrl+C selama turn", () => {
+    const { applyBusyKey } = require("../cli/repl.ts") as typeof import("../cli/repl.ts")
+    expect(applyBusyKey(0x03, "thinking")).toEqual({ action: "abort" })
+    expect(applyBusyKey(0x2b, null)).toEqual({
+      action: "toggle-section",
+      kind: "tool",
+      expand: true,
+    })
+    expect(applyBusyKey(0x3d, "thinking")).toEqual({
+      action: "toggle-section",
+      kind: "thinking",
+      expand: true,
+    })
+    expect(applyBusyKey(0x2d, "tool")).toEqual({
+      action: "toggle-section",
+      kind: "tool",
+      expand: false,
+    })
+    expect(applyBusyKey(0x5f, null)).toEqual({
+      action: "toggle-section",
+      kind: "tool",
+      expand: false,
+    })
+    expect(applyBusyKey(0x14, "thinking")).toEqual({ action: "toggle-thinking" })
+    expect(applyBusyKey(0x41, "thinking")).toBeNull()
   })
 })

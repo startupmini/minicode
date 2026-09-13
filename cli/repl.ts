@@ -28,10 +28,12 @@ import {
 } from "../src/ui/assistant/simple.ts"
 import { appendHistory, askLine } from "../src/ui/input/input.ts"
 import type { PromptKey } from "../src/ui/input/prompt-engine.ts"
+import { type CollapseSection, collapse, getBufferedSections } from "../src/ui/render/collapse.ts"
 import { setCompactMode } from "../src/ui/render/detail.ts"
 import { formatUsd } from "../src/ui/render/money.ts"
 import { setReasoningVisible } from "../src/ui/render/reasoning.ts"
 import { c, glyphs } from "../src/ui/render/theme.ts"
+import { paintWrite } from "../src/ui/runtime/statusline.ts"
 import {
   BUILTIN_COMMANDS,
   type CommandContext,
@@ -87,7 +89,26 @@ export function persistModelChoice(m: string, modelRef: { current?: string }): v
 // Tab/Shift+Tab sudah memutar mode tanpa baris baru, jadi /mode tak perlu
 // memenuhi dropdown. /thinking = toggle TAMPILAN reasoning (expand/minimize),
 // bukan effort — effort diatur lewat picker /model (Enter).
-const DRIVER_COMMANDS = ["/compact", "/thinking"]
+const DRIVER_COMMANDS = ["/compact", "/thinking", "/expand", "/minimize"]
+
+// Pemetaan byte tombol yang ditangkap SELAMA turn (raw mode). Dipisah agar
+// bisa di-unit-test murni. `+`/`=` expand section aktif, `-`/`_` minimize,
+// Ctrl+T toggle thinking, Ctrl+C abort.
+export type BusyKeyAction =
+  | { action: "abort" }
+  | { action: "toggle-section"; kind: CollapseSection; expand: boolean }
+  | { action: "toggle-thinking" }
+  | null
+
+export function applyBusyKey(byte: number, active: CollapseSection | null): BusyKeyAction {
+  if (byte === 0x03) return { action: "abort" }
+  if (byte === 0x2b || byte === 0x3d)
+    return { action: "toggle-section", kind: active ?? "tool", expand: true }
+  if (byte === 0x2d || byte === 0x5f)
+    return { action: "toggle-section", kind: active ?? "tool", expand: false }
+  if (byte === 0x14) return { action: "toggle-thinking" }
+  return null
+}
 
 export async function runRepl(ctx: CliSession): Promise<void> {
   const {
@@ -116,6 +137,9 @@ export async function runRepl(ctx: CliSession): Promise<void> {
   // /compact atau Ctrl+O. Env eksplisit selalu menang; one-shot/exec/CI tak
   // tersentuh (tetap expanded). Lihat detail.compact.
   if (process.env.MINICODE_COMPACT === undefined) setCompactMode(true)
+  // Section collapse default MINIMIZE: thinking/bash/edit/content jadi satu
+  // baris `  + label`, isi di-buffer. `+`/`-` saat turn atau /expand membuka.
+  if (process.env.MINICODE_MINIMIZE_TOOL === undefined) collapse.setMinimized("tool", true)
   let nullStreak = 0
   let warned80 = false
   // Non-null selama turn berjalan — target abort SIGINT/Ctrl+C.
@@ -271,14 +295,39 @@ export async function runRepl(ctx: CliSession): Promise<void> {
 
     const ctrl = new AbortController()
     abort = ctrl
-    // Cadangan Ctrl+C untuk konsol tanpa SIGINT: tangkap byte mentah saat
-    // stdin tidak raw. Sekaligus menelan input yang diketik selama turn —
-    // seperti perintah shell yang tidak membaca stdin.
-    const onRawCtrlC = (chunk: Buffer) => {
-      if (chunk.includes(0x03)) ctrl.abort()
+    // Raw mode selama turn: tombol + / - / Ctrl+T dibaca live (section
+    // collapse), Ctrl+C tetap abort via byte 0x03. Di luar turn stdin tidak
+    // raw — askLine mengelola mode raw sendiri. Bukan TTY (pipe/CI) = tanpa
+    // raw, tanpa tombol live (perilaku lama: hanya Ctrl+C via sinyal).
+    const ttyStdin = !!process.stdin.isTTY
+    if (ttyStdin) {
+      try {
+        process.stdin.setRawMode(true)
+      } catch {}
+    }
+    const busyFeedback = (msg: string) => {
+      try {
+        paintWrite(`\r\x1b[2K✦ ${msg}`)
+      } catch {}
+    }
+    const onBusyKey = (chunk: Buffer) => {
+      for (const b of chunk) {
+        const act = applyBusyKey(b, collapse.activeSection)
+        if (!act) continue
+        if (act.action === "abort") {
+          ctrl.abort()
+          continue
+        }
+        if (act.action === "toggle-thinking") {
+          busyFeedback(`thinking: ${collapse.setMinimized("thinking") ? "minimized" : "expanded"}`)
+          continue
+        }
+        const minimized = collapse.setMinimized(act.kind, !act.expand)
+        busyFeedback(`${act.kind}: ${minimized ? "minimized" : "expanded"}`)
+      }
     }
     process.stdin.resume()
-    process.stdin.on("data", onRawCtrlC)
+    process.stdin.on("data", onBusyKey)
     const turnStart = Date.now()
     try {
       await runPromptWithVerify(prompt, ctrl.signal)
@@ -304,8 +353,13 @@ export async function runRepl(ctx: CliSession): Promise<void> {
         throw e
       }
     } finally {
-      process.stdin.removeListener("data", onRawCtrlC)
+      process.stdin.removeListener("data", onBusyKey)
       process.stdin.pause()
+      if (ttyStdin) {
+        try {
+          process.stdin.setRawMode(false)
+        } catch {}
+      }
       abort = null
     }
 
@@ -356,6 +410,29 @@ export async function runRepl(ctx: CliSession): Promise<void> {
         const next = args === "" ? undefined : args === "on" || args === "1"
         const vis = setReasoningVisible(next)
         console.log(c.muted(`thinking: ${vis ? "expanded" : "minimized"}`))
+        return false
+      }
+      if (name === "expand") {
+        // Buka isi section yang dikecilkan pada turn terakhir (buffer).
+        // Detail = stderr sesuai kontrak; ringkasan/kontrol = stdout.
+        const sections = getBufferedSections()
+        if (sections.length === 0) {
+          console.log(
+            c.dim(
+              "(nothing to expand — all sections were visible; press + during the turn to collapse)",
+            ),
+          )
+          return false
+        }
+        for (const s of sections) {
+          process.stderr.write(`${c.muted(`  ── ${s.label} ──`)}\n`)
+          process.stderr.write(s.text.endsWith("\n") ? s.text : `${s.text}\n`)
+        }
+        return false
+      }
+      if (name === "minimize") {
+        collapse.setMinimized("tool", true)
+        console.log(c.muted("sections: minimized (press + / - during the turn to expand/collapse)"))
         return false
       }
       if (name === "undo") {

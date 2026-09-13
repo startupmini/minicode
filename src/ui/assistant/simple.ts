@@ -4,6 +4,7 @@
 // MINICODE_COMPACT=1 atau setCompactMode (/compact).
 import { Buffer } from "node:buffer"
 import type { UiBus, UiStep } from "../contract.ts"
+import { bufferSection, collapse, resetBufferedSections } from "../render/collapse.ts"
 import { detail } from "../render/detail.ts"
 import { renderDiffCard } from "../render/diff.ts"
 import { formatFriendly, friendlyError, friendlyFromCategory } from "../render/errors.ts"
@@ -102,6 +103,22 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   // fence berbahasa kehilangan highlight, dan wrap salah setelah fence.
   let fence: FenceMatch | null = null
 
+  // Section thinking: "off" (belum ada), "min" (minimized → buffer),
+  // "exp" (expanded → stream live). Header `  + thinking` / `  − thinking`
+  // dicetak pada transisi state — scrollback append-only, jadi toggle
+  // menambah baris header baru sebagai ganti menimpa yang lama.
+  let thinkState: "off" | "min" | "exp" = "off"
+  let thinkingBuf = ""
+
+  const flushThinking = () => {
+    if (thinkState === "min" && thinkingBuf) {
+      bufferSection("thinking", thinkingBuf)
+      thinkingBuf = ""
+    }
+    thinkState = "off"
+    collapse.setActiveSection(null)
+  }
+
   const flushLine = (line: string) => {
     const w = process.stdout.columns || 80
     const f = parseFence(line)
@@ -132,6 +149,11 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   const offs: (() => void)[] = []
   offs.push(
     bus.on("turn:started", (e) => {
+      // Turn baru: simpan buffer thinking turn sebelumnya (jalur abort yang
+      // tak pernah turn:completed), lalu reset semua buffer section.
+      flushThinking()
+      thinkingBuf = ""
+      resetBufferedSections()
       lastTurnText = ""
       pendingError = null
       if (opts.verbose) wErr(c.muted(`\n── Turn ${e.turn} ──\n`))
@@ -144,6 +166,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         flushLine(streamBuffer)
         streamBuffer = ""
       }
+      flushThinking()
       if (opts.verbose) wErr(c.muted(`\n  done\n`))
     }),
   )
@@ -152,6 +175,8 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       // Teks model TIDAK terpercaya: tanpa sanitasi ia bisa menyisipkan sekuens
       // kontrol (bersihkan layar, ubah judul jendela) langsung ke scrollback.
       // Versi sanitize yang SAMA masuk buffer /copy (apa yang terlihat).
+      // Teks = jawaban utama, SELALU tampil (tidak pernah dikecilkan).
+      flushThinking()
       const clean = sanitizeAnsi(e.text)
       streamBuffer += clean
       rememberTurn(clean)
@@ -161,11 +186,35 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   offs.push(
     bus.on("provider:extension", (e) => {
       if (e.kind === "reasoning") {
-        // Tampilkan bila --verbose ATAU MINICODE_SHOW_THINKING=1. Toggle
-        // runtime /thinking (atau Ctrl+T) memakai setReasoningVisible.
-        if (!opts.verbose && !reasoning.visible) return
+        // Section thinking: reasoning.visible = expanded (stream), else
+        // minimized (satu baris `  + thinking`, isi di-buffer untuk /expand).
+        // Toggle runtime /thinking, Ctrl+T, atau tombol + / - saat busy.
+        collapse.setActiveSection("thinking")
         const d = e.data as { text?: string }
-        if (d.text) wErr(c.muted(`\n${d.text}\n`))
+        const text = d.text ?? ""
+        // --verbose = semua terlihat (expanded). Kalau tidak, reasoning.visible
+        // menentukan: true = stream live, false = `  + thinking` + buffer.
+        const expanded = opts.verbose || reasoning.visible
+        if (expanded) {
+          if (thinkState !== "exp") {
+            thinkState = "exp"
+            wErr(c.muted(`  − thinking\n`))
+            if (thinkingBuf) {
+              wErr(c.muted(thinkingBuf))
+              thinkingBuf = ""
+            }
+          }
+          if (text) wErr(c.muted(text))
+        } else {
+          if (thinkState !== "min") {
+            thinkState = "min"
+            wErr(c.info(`  + thinking\n`))
+          }
+          if (text) {
+            thinkingBuf += text
+            if (thinkingBuf.length > 200_000) thinkingBuf = thinkingBuf.slice(-200_000)
+          }
+        }
       } else if (e.kind === "usage") {
         const u = e.data as { inputTokens?: number; outputTokens?: number }
         const txt = formatUsage(u)
@@ -196,6 +245,8 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   )
   offs.push(
     bus.on("execution:started", (e) => {
+      // Section aktif = tool yang sedang jalan — target tombol + / - saat busy.
+      collapse.setActiveSection("tool")
       if (detail.compact) {
         // Mode compact: TIDAK ada baris start. Aktivitas ditampilkan oleh
         // garis status "Thinking"/nama tool (TTY) atau diam (non-TTY) — baris
@@ -223,12 +274,29 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       if (!r.isError && typeof r.content === "string")
         rememberTurn(sanitizeAnsi(r.content).slice(0, 20000))
       if (r.isError) {
+        // Error tool SELALU tampil penuh — tidak pernah dikecilkan.
+        collapse.setActiveSection(null)
         wErr(
           c.error(`  ${glyphs.arrow} ${name}: ${sanitizeAnsi(String(r.content)).slice(0, 200)}\n`),
         )
         return
       }
       const target = typeof args.path === "string" ? args.path : undefined
+      // Section tool dikecilkan: satu baris `  + label`, isi di-buffer untuk
+      // /expand. Ledger lain (cheVRon) tetap satu baris — ini menggantikan
+      // pencetakan isi (bash/edit/diff/content tool), bukan marker.
+      if (collapse.minimized("tool")) {
+        collapse.setActiveSection(null)
+        const cmdStr = (args.cmd as string) ?? (args.command as string)
+        const short = sanitizeAnsiLine(target ?? formatArgsPreview(args)).slice(0, 120)
+        const label =
+          name === "bash" && typeof cmdStr === "string"
+            ? `bash $ ${sanitizeAnsiLine(String(cmdStr)).slice(0, 80)}`
+            : `${name}${short ? ` ${short}` : ""}`
+        wErr(c.info(`  + ${label}\n`))
+        bufferSection(label, sanitizeAnsi(String(r.content ?? "")).trim())
+        return
+      }
       if (name === "write_file" && target) {
         const size = typeof r.content === "string" ? `${(r.content as string).length} chars` : ""
         wOut(

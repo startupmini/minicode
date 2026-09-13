@@ -70,10 +70,13 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 animasi spinner,
 
 prompt `minicode <mode> ›` · activity: garis transient stderr (`✦···`
 putih↔abu kelip-kelip tiap tick, ·→··→··· ±300ms adaptif + `label-tool···`,
-tak pernah bare; kecepatan mengikuti reasoning) · startup:
-`⠋ Checking for updates…` (TTY, max 1.8s, hilang tanpa jejak) ·
-`/thinking` atau Ctrl+T: toggle reasoning expanded/minimized
-(`MINICODE_SHOW_THINKING`) ·
+tak pernah bare; kecepatan mengikuti reasoning) · section collapse:
+thinking/bash/edit/content MINIMIZED default (stderr) — satu baris
+`  + label`, isi di-buffer (cap 200KB) untuk `/expand`; `+`/`-`/Ctrl+T saat
+turn (raw mode) expand/minimize live, toggle menambah baris header baru
+(`  − label` / `  + label`) · startup: `⠋ Checking for updates…`
+(TTY, max 1.8s, hilang tanpa jejak) · `/thinking` atau Ctrl+T: toggle
+reasoning expanded/minimized (`MINICODE_SHOW_THINKING`) ·
 ledger tool `  › name target` (hijau) / `  › name: …` (merah, stderr, indent 2) ·
 model text (stdout, wrapped per baris, fence 2-spasi) ·
 error: `✗ pesan actionable` sekali per kegagalan (`takePendingError`).

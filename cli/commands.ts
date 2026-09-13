@@ -86,6 +86,7 @@ const KEYBOARD_HELP: [string, string][] = [
   ["ctrl+w", "delete previous word"],
   ["ctrl+u", "clear line"],
   ["ctrl+o", "toggle compact/expanded tool output"],
+  ["+ / -", "during turn: expand / minimize thinking & tool output"],
   ["ctrl+t", "toggle expand/minimize thinking output"],
   ["esc", "close dropdown / picker / cancel empty prompt"],
   ["ctrl+c", "stop turn when busy; cancel prompt when idle (twice = exit)"],

@@ -500,9 +500,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   }
 
   async function runPromptWithVerify(p: string, signal?: AbortSignal): Promise<void> {
-    // Bersihkan state garis status turn SEBELUMNYA bila kernel tidak sempat
-    // emit turn:completed (gagal/abort) — lihat lifecycle turn-status.ts.
-    turnStatus.endTurn()
+    // Listener UI segar tiap turn (pagar turn yatim — lihat attachUI).
+    attachUI()
     // Tandai turn aktif: bila proses mati di tengah (segfault/kill), sesi
     // berikutnya menemukan marker yatim dan memberi tahu (bukan hilang bisu).
     // Dihapus di finally di bawah pada SEMUA jalur settle.
@@ -515,6 +514,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     try {
       await runPromptWithVerifyInner(p, signal)
     } finally {
+      detachUI()
       try {
         ;(clearTurnActive as ((cwd?: string, id?: string) => void) | undefined)?.(cwd, sessionId)
       } catch {}
@@ -529,7 +529,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       try {
         await session.run(prompt, { model: modelRef.current, signal: s })
       } finally {
-        turnStatus.endTurn()
+        turnStatus?.endTurn()
       }
     }
     if (!verifyActive) {
@@ -589,26 +589,51 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     )
   }
 
-  // Printer linier + status turn: dipakai one-shot DAN REPL linier.
-  const detachSimple = attachSimpleLogger(session.events, { verbose })
+  // Printer linier + status turn: dipasang SEGAR tiap turn dan dilepas saat
+  // settle (sukses/gagal/abort/timeout). Cacat yang ditutup: kernel me-race
+  // turn melawan timeout/abort — provider/tool non-kooperatif bisa settle
+  // SETELAH run() ditolak, dan event telatnya tetap mengalir ke bus sesi
+  // bersama. Tanpa pagar ini teks telat tercetak di sesi prompt berikutnya
+  // ("macet"). Dengan detach, turn yatim tak punya subscriber → hening total
+  // (turnStore-nya memang dibuang kernel; kini outputnya juga).
+  let detachSimple: (() => void) | null = null
+  let turnStatus: { detach(): void; endTurn(): void } | null = null
   const { attachTurnStatus } = await import("../src/ui/assistant/turn-status.ts")
   const { formatUsd } = await import("../src/ui/render/money.ts")
+  // Dump diagnosis event bus (MINICODE_DEBUG_BUS=1): sekali per sesi agar
+  // event yatim pun terlihat; tanpa env = tanpa subscribe (zero-cost).
+  const { attachBusDebug } = await import("../src/ui/runtime/bus-debug.ts")
+  const detachBusDebug = attachBusDebug(session.events)
   const usage = createUsageCollector(session.events, effectiveInitialModel)
   // Statusline kaya = opt-in (default mati, shell tetap bersih). Data biaya
-  // disuntik sebagai callback agar UI tak mengimpor lapisan policy.
+  // disuntik sebagai callback agar UI tak perlu impor lapisan policy.
   const richStatus = process.env.MINICODE_STATUSLINE === "rich"
-  const turnStatus = attachTurnStatus(session.events, {
-    initialModel: effectiveInitialModel,
-    getModel: () => modelRef.current ?? effectiveInitialModel,
-    ...(richStatus
-      ? {
-          getStats: () => {
-            const u = usage.getSession(modelRef.current)
-            return `${u.totalTokens.toLocaleString()} tok${u.cost != null ? ` · ${formatUsd(u.cost)}` : ""}`
-          },
-        }
-      : {}),
-  })
+  const attachUI = () => {
+    detachUI()
+    detachSimple = attachSimpleLogger(session.events, { verbose })
+    turnStatus = attachTurnStatus(session.events, {
+      initialModel: effectiveInitialModel,
+      getModel: () => modelRef.current ?? effectiveInitialModel,
+      ...(richStatus
+        ? {
+            getStats: () => {
+              const u = usage.getSession(modelRef.current)
+              return `${u.totalTokens.toLocaleString()} tok${u.cost != null ? ` · ${formatUsd(u.cost)}` : ""}`
+            },
+          }
+        : {}),
+    })
+  }
+  const detachUI = () => {
+    try {
+      detachSimple?.()
+    } catch {}
+    detachSimple = null
+    try {
+      turnStatus?.detach()
+    } catch {}
+    turnStatus = null
+  }
   // Muat overlay harga dari cache lokal (bila user pernah `pricing sync`).
   // Tidak ada request jaringan di sini — hanya baca berkas.
   void primePricing()
@@ -626,8 +651,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   }
 
   async function close(): Promise<void> {
-    turnStatus.detach()
-    detachSimple()
+    detachUI()
+    detachBusDebug()
     // background job harus mati bersama CLI — jangan tinggalkan proses yatim
     killAllBackgroundJobs()
     await mcpCloseAll()
@@ -650,7 +675,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     budget,
     budgetStrict,
     memoryHits,
-    detachSimple,
+    detachSimple: () => detachUI(),
     persistCurrent,
     runPromptWithVerify,
     permissions,

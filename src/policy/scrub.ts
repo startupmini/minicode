@@ -6,6 +6,10 @@ const SECRET_PATTERNS: RegExp[] = [
   /\b(sk-[A-Za-z0-9_-]{20,})\b/g,
   /\b(sk-ant-[A-Za-z0-9_-]{20,})\b/g,
   /\b(dsk-[A-Za-z0-9_-]{20,})\b/g,
+  // Gateway tokens (TokenHarbor thk_live_*, HuggingFace hf_*) — terlihat di
+  // alam liar (red-team eksternal): format khas provider tanpa pola umum.
+  /\b(thk_live_[A-Za-z0-9_-]{16,})\b/g,
+  /\b(hf_[A-Za-z0-9]{20,})\b/g,
   // Generic OpenAI-compatible (DeepSeek may use similar)
   /\b(AIza[A-Za-z0-9_-]{35,})\b/g,
   // GitHub tokens (all variants)

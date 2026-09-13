@@ -39,6 +39,7 @@ afterEach(() => {
   setCompactMode(false)
   setReasoningVisible(false)
   delete process.env.MINICODE_MINIMIZE_TOOL
+  delete process.env.MINICODE_MINIMIZE_ANSWER
 })
 
 interface Harness {

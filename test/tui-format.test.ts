@@ -432,6 +432,7 @@ describe("simple logger (one-shot)", () => {
     setCompactMode(false)
     setReasoningVisible(false)
     delete process.env.MINICODE_MINIMIZE_TOOL
+    delete process.env.MINICODE_MINIMIZE_ANSWER
   })
 
   const attach = (verbose = false, rows = 24) => {
@@ -843,9 +844,9 @@ describe("simple logger (one-shot)", () => {
       expect(raw).not.toContain("model-rahasia-xyz")
       // Animasi titik spasi "·" → "· ·" → "· · ·" (tiap 3 tick):
       // minimal dua wujud berbeda dalam 900ms, dan tak pernah bare.
-      const frames = new Set(stripAnsi(raw).match(/✦  (·( ·){0,2})/g) ?? [])
+      const frames = new Set(stripAnsi(raw).match(/✦ {2}(·( ·){0,2})/g) ?? [])
       expect(frames.size).toBeGreaterThan(1)
-      expect(stripAnsi(raw)).not.toMatch(/✦  (?![·])/)
+      expect(stripAnsi(raw)).not.toMatch(/✦ {2}(?![·])/)
     } finally {
       ;(process.stderr as unknown as { write: unknown }).write = prevWrite
     }

@@ -38,6 +38,15 @@ test("scrub: env reference (process.env.X) NOT redacted", () => {
   expect(scrubSecrets(txt)).toBe(txt)
 })
 
+test("scrub: gateway tokens thk_live_* dan hf_* redacted", () => {
+  // Temuan red-team: kunci TokenHarbor/HuggingFace lolos pola umum.
+  expect(scrubSecrets("token thk_live_abc123XYZ987abc123XYZ987")).toContain("[REDACTED]")
+  expect(scrubSecrets("token thk_live_abc123XYZ987abc123XYZ987")).not.toContain("thk_live_")
+  expect(scrubSecrets("hf_abcdefghijklmnopqrstuvwxyz1234567890")).toContain("[REDACTED]")
+  // Prosa biasa tanpa pola kunci tidak tersentuh.
+  expect(scrubSecrets("the chef cooks")).toBe("the chef cooks")
+})
+
 test("ratelimit: burst up to capacity then throttles", async () => {
   const rl = new RateLimiter(2, 10 / 1000) // cap 2, refill 10 token/s
   const t0 = Date.now()

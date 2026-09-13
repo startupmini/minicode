@@ -113,7 +113,9 @@ export function attachTurnStatus(
     // kecepatan refresh mengikuti intervalMs yang adaptif terhadap
     // kecepatan reasoning model (minimum 120ms).
     const tickGroup = Math.floor(fi / 3)
-    const dots = Array(1 + (tickGroup % 3)).fill(glyphs.dot).join(" ")
+    const dots = Array(1 + (tickGroup % 3))
+      .fill(glyphs.dot)
+      .join(" ")
     const cols = process.stdout.columns || 80
     const thinkingIcon =
       tickGroup % 2 === 0 ? c.white(glyphs.thinkingIcon) : c.gray(glyphs.thinkingIcon)

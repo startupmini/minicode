@@ -243,12 +243,31 @@ describe("bash-guard: redirect keluar workspace (temuan audit eksternal)", () =>
   test("inline interpreter: py/pyw launcher + python berversi diblokir", () => {
     // Temuan red-team: `py -c` lolos karena regex hanya kenal python?.
     expect(denied('py -c "print(1)"')).toBe(true)
+    expect(denied('py -3 -c "print(1)"')).toBe(true)
     expect(denied('pyw -c "print(1)"')).toBe(true)
     expect(denied('python3.14 -c "print(1)"')).toBe(true)
     expect(denied('pypy3 -c "print(1)"')).toBe(true)
     expect(denied('python -c "print(1)"')).toBe(true)
     // Kata yang MENGANDUNG py/python bukan interpreter — jangan over-block.
     expect(denied("copy -c file")).toBe(false)
+  })
+
+  test("inline interpreter via .exe lolos regex lama — kini diblokir", () => {
+    // Temuan red-team: `\bpython\b\s+` gagal saat nama membawa `.exe`.
+    expect(denied('C:\\Python314\\python.exe -c "print(1)"')).toBe(true)
+    expect(denied('"C:\\Program Files\\nodejs\\node.exe" -e "console.log(1)"')).toBe(true)
+    expect(denied("perl.exe -e 1")).toBe(true)
+    expect(denied("python.exe -c 1")).toBe(true)
+  })
+
+  test("powershell -enc + blob base64 diblokir; -Encoding cmdlet lolos", () => {
+    // Temuan red-team: aturan hanya kenal `-EncodedCommand` penuh.
+    const blob = "VwByAGkAdABlAC0ATwB1AHQAcAB1AHQAIAAiAEUATgBDAF8AUgBFAEEATABZADIAOQA4ADcANgAiAA=="
+    expect(denied(`powershell -enc ${blob}`)).toBe(true)
+    expect(denied(`powershell.exe -EncodedCommand ${blob}`)).toBe(true)
+    // -Encoding milik cmdlet (bukan payload) + tanpa blob: jangan over-block.
+    expect(denied('powershell -Command "Get-Content -Encoding utf8 f.txt"')).toBe(false)
+    expect(denied("powershell -ExecutionPolicy Bypass -File x.ps1")).toBe(false)
   })
 
   test("allowlist: echo redirect keluar ditolak, di dalam allow", async () => {
@@ -314,6 +333,18 @@ describe("permission: integrasi guard di tiap mode", () => {
     for (const cmd of ["X=.env; cat $X", 'cat .e""nv', "echo $OPENAI_API_KEY", "cat /etc/shadow"]) {
       expect(await check(h, cmd)).toBe("deny")
     }
+  })
+
+  test("auth.json di .minicode ditolak baca+tulis (token OAuth); auth proyek lolos", async () => {
+    // Temuan red-team: `type %USERPROFILE%\.minicode\auth.json` membaca token
+    // OAuth global ke konteks. Pola menyempit ke .minicode agar auth.json
+    // milik aplikasi (src/auth.json) tetap bisa dibaca.
+    const h = mk("auto")
+    const fcheck = (name: string, args: Record<string, unknown>) =>
+      h.check({ id: "1", name, args } as never, {} as never)
+    expect(await fcheck("read_file", { path: ".minicode/auth.json" })).toBe("deny")
+    expect(await fcheck("write_file", { path: ".minicode/auth.json", content: "x" })).toBe("deny")
+    expect(await fcheck("read_file", { path: "src/auth.json" })).toBe("allow")
   })
 
   test("readonly/plan: bash selalu ditolak", async () => {

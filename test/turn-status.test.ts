@@ -157,7 +157,7 @@ describe("turn-status: heartbeat", () => {
     await sleep(200)
     // Ikon ✦ + titik spasi ("·", "· ·", "· · ·"), tidak ada timer detik
     expect(err()).toContain("✦")
-    expect(err()).toMatch(/✦  ·( ·){0,2}/)
+    expect(err()).toMatch(/✦ {2}·( ·){0,2}/)
     expect(err()).not.toMatch(/\d+s/)
     status.detach()
   }, 5000)

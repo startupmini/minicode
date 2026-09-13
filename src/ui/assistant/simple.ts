@@ -18,7 +18,7 @@ import { highlightCode } from "../render/highlight.ts"
 import { decorateMarkdown, type FenceMatch, parseFence } from "../render/markdown.ts"
 import { reasoning } from "../render/reasoning.ts"
 import { sanitizeAnsi, sanitizeAnsiLine } from "../render/sanitize.ts"
-import { c, glyphs } from "../render/theme.ts"
+import { c, glyphs, stripAnsi } from "../render/theme.ts"
 import { formatWrapped } from "../render/wrap.ts"
 import { runWithoutStatus } from "../runtime/statusline.ts"
 
@@ -114,8 +114,80 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   // menambah baris header baru sebagai ganti menimpa yang lama.
   let thinkState: "off" | "min" | "exp" = "off"
   let thinkingBuf = ""
+  // Sisa baris reasoning yang belum ber-newline (mode expanded): di-flush
+  // per baris utuh agar tampilan rapi, bukan salad fragmen per chunk.
+  let reasoningLine = ""
+
+  // Section answer (jawaban model): default minimize di REPL — teks lengkap
+  // TETAP ditulis (buffer), tampilan default satu baris `  + answer (N)`.
+  // /copy tak tersentuh (rememberTurn selalu jalan sebelum sink).
+  let answerBuf = ""
+  let answerTruncated = false
+  const ANSWER_BUF_MAX = 1_000_000
+  // Jawaban tak pernah disembunyikan di pipa/CI (output mesin harus utuh)
+  // dan --verbose selalu menampilkan semua.
+  const answerHidden = (): boolean =>
+    sectionMinimized("answer") && !!process.stdout.isTTY && !opts.verbose
+  const emitAnswer = (s: string) => {
+    if (!answerHidden()) {
+      wOut(s)
+      return
+    }
+    if (answerBuf.length < ANSWER_BUF_MAX) {
+      answerBuf += s.slice(0, ANSWER_BUF_MAX - answerBuf.length)
+      if (answerBuf.length >= ANSWER_BUF_MAX) answerTruncated = true
+    } else {
+      answerTruncated = true
+    }
+  }
+
+  /** Potong ke ≤max karakter di batas kata (fallback potong keras). */
+  const truncateWords = (s: string, max: number): string => {
+    if (s.length <= max) return s
+    const cut = s.lastIndexOf(" ", max)
+    return cut > 0 ? s.slice(0, cut) : s.slice(0, max)
+  }
+
+  /** Label satu-baris ringkas per tool (bukan dump JSON argumen). */
+  const toolSummary = (name: string, args: Record<string, unknown>, target?: string): string => {
+    if (name === "todo_write" || name === "todo_read") {
+      const list = args.todos
+      const n = Array.isArray(list) ? list.length : 0
+      return n > 0 ? `${name} ${n} items` : name
+    }
+    if (name === "bash") {
+      const cmdStr = (args.cmd as string) ?? (args.command as string)
+      if (typeof cmdStr === "string")
+        return `bash $ ${truncateWords(sanitizeAnsiLine(String(cmdStr)), 80)}`
+      return name
+    }
+    const short = truncateWords(sanitizeAnsiLine(target ?? formatArgsPreview(args)), 120)
+    return short ? `${name} ${short}` : name
+  }
+
+  const flushReasoningTail = () => {
+    if (reasoningLine) {
+      wErr(c.muted(`${reasoningLine}\n`))
+      reasoningLine = ""
+    }
+  }
+
+  // Sisa jawaban yang dikecilkan difinalkan: satu baris ringkas + isi masuk
+  // buffer /expand (dibuka via stdout agar kontrak stream terjaga).
+  // Dipakai turn:completed DAN detach — abort tanpa completed tak boleh
+  // menghilangkan konten diam-diam (perilaku lama menampilkannya live).
+  const finalizeAnswer = () => {
+    if (answerBuf.length === 0) return
+    const n = stripAnsi(answerBuf).length
+    const cap = answerTruncated ? ", capped 1MB" : ""
+    wErr(c.info(`  + answer (${n} chars${cap})\n`))
+    bufferSection("answer", answerBuf, "stdout")
+    answerBuf = ""
+    answerTruncated = false
+  }
 
   const flushThinking = () => {
+    flushReasoningTail()
     if (thinkState === "min" && thinkingBuf) {
       bufferSection("thinking", thinkingBuf)
       thinkingBuf = ""
@@ -138,11 +210,11 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       // bahasa. Tanpa bahasa, tetap apa adanya (perbaikan V8: fence tanpa
       // bahasa tidak boleh kehilangan *value* karena dianggap italic).
       const content = fence.lang ? highlightCode(line, fence.lang) : line
-      wOut(`  ${content}\n`)
+      emitAnswer(`  ${content}\n`)
       return
     }
-    wOut(formatWrapped(decorateMarkdown(line), w, true))
-    wOut("\n")
+    emitAnswer(formatWrapped(decorateMarkdown(line), w, true))
+    emitAnswer("\n")
   }
   const flushBuf = () => {
     if (!streamBuffer) return
@@ -158,6 +230,9 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       // reset di sini) — /expand hanya untuk turn yang baru selesai.
       thinkState = "off"
       thinkingBuf = ""
+      reasoningLine = ""
+      answerBuf = ""
+      answerTruncated = false
       resetBufferedSections()
       collapse.setActiveSection(null)
       lastTurnText = ""
@@ -173,6 +248,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         streamBuffer = ""
       }
       flushThinking()
+      finalizeAnswer()
       if (opts.verbose) wErr(c.muted(`\n  done\n`))
     }),
   )
@@ -181,8 +257,16 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       // Teks model TIDAK terpercaya: tanpa sanitasi ia bisa menyisipkan sekuens
       // kontrol (bersihkan layar, ubah judul jendela) langsung ke scrollback.
       // Versi sanitize yang SAMA masuk buffer /copy (apa yang terlihat).
-      // Teks = jawaban utama, SELALU tampil (tidak pernah dikecilkan).
+      // Teks = jawaban; section-nya ikut collapse (minimize → buffer + expand
+      // via + / /expand), kecuali pipa/CI/verbose yang selalu stream.
       flushThinking()
+      collapse.setActiveSection("answer")
+      if (!answerHidden() && answerBuf.length > 0) {
+        wErr(c.muted("  − answer\n"))
+        wOut(answerBuf)
+        answerBuf = ""
+        answerTruncated = false
+      }
       const clean = sanitizeAnsi(e.text)
       streamBuffer += clean
       rememberTurn(clean)
@@ -210,10 +294,20 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
               thinkingBuf = ""
             }
           }
-          if (text) wErr(c.muted(text))
+          // Line-buffered: kumpulkan sampai newline agar tampilan rapi
+          // (bukan salad fragmen per chunk); sisa di-flush saat fase berakhir.
+          if (text) {
+            reasoningLine += text
+            const parts = reasoningLine.split("\n")
+            for (let i = 0; i < parts.length - 1; i++) wErr(c.muted(`${parts[i]}\n`))
+            reasoningLine = parts[parts.length - 1] ?? ""
+          }
         } else {
           if (thinkState !== "min") {
             thinkState = "min"
+            // Sisa baris expanded yang belum selesai dicetak dulu (terlihat),
+            // baru header minimize — konten tak hilang, tak menempel.
+            flushReasoningTail()
             wErr(c.info(`  + thinking\n`))
           }
           if (text) {
@@ -253,6 +347,9 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     bus.on("execution:started", (e) => {
       // Section aktif = tool yang sedang jalan — target tombol + / - saat busy.
       collapse.setActiveSection("tool")
+      // Ganti fase: sisa baris thinking yang belum ber-newline dicetak dulu
+      // agar tak menempel ke baris tool.
+      flushReasoningTail()
       if (detail.compact) {
         // Mode compact: TIDAK ada baris start. Aktivitas ditampilkan oleh
         // garis status "Thinking"/nama tool (TTY) atau diam (non-TTY) — baris
@@ -293,12 +390,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       // pencetakan isi (bash/edit/diff/content tool), bukan marker.
       if (sectionMinimized("tool")) {
         collapse.setActiveSection(null)
-        const cmdStr = (args.cmd as string) ?? (args.command as string)
-        const short = sanitizeAnsiLine(target ?? formatArgsPreview(args)).slice(0, 120)
-        const label =
-          name === "bash" && typeof cmdStr === "string"
-            ? `bash $ ${sanitizeAnsiLine(String(cmdStr)).slice(0, 80)}`
-            : `${name}${short ? ` ${short}` : ""}`
+        const label = toolSummary(name, args, target)
         wErr(c.info(`  + ${label}\n`))
         bufferSection(label, sanitizeAnsi(String(r.content ?? "")).trim())
         return
@@ -403,6 +495,16 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   offs.push(bus.on("context:compacted", (e) => wErr(c.warning(`  ── compacted: ${e.reason}\n`))))
 
   return () => {
+    // Sisa parsal di-flush dulu (jangan hilang diam-diam), baru lepas.
+    // Tanpa ini detach di tengah baris membuang ekornya — dan di jalur abort
+    // (tanpa turn:completed) sisa streamBuffer bocor ke turn berikutnya.
+    if (streamBuffer) {
+      flushLine(streamBuffer)
+      streamBuffer = ""
+    }
+    flushReasoningTail()
+    flushThinking()
+    finalizeAnswer()
     for (const off of offs) off()
   }
 }

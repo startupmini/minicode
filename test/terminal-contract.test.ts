@@ -27,6 +27,7 @@ afterEach(() => {
   // Section collapse dibaca per-event dari env — bocor antar test dalam
   // file yang sama akan mengubah cabang › vs + secara diam-diam.
   delete process.env.MINICODE_MINIMIZE_TOOL
+  delete process.env.MINICODE_MINIMIZE_ANSWER
   tty?.restore()
   tty = undefined
 })
@@ -122,6 +123,41 @@ describe("terminal contract: tidak ada tulis setelah detach/endTurn", () => {
     expect(tty!.allErr()).toBe("")
     s.detach()
     status = null
+  }, 4000)
+
+  test("pagar turn yatim: detach KEDUA listener → event telat hening total", async () => {
+    // Pola wiring per-turn di driver (cli/setup.ts runPromptWithVerify):
+    // attach segar tiap turn, detach saat settle. Turn yatim (timeout/abort,
+    // provider non-kooperatif) yang settle belakangan tak punya subscriber —
+    // teks/reasoning/tool telatnya tidak boleh bocor ke sesi prompt baru.
+    tty = installFakeTty({ columns: 80, rows: 24 })
+    const bus = createFakeBus()
+    const detachLog = attachSimpleLogger(bus as never)
+    const s = attachTurnStatus(bus as never)
+    status = s
+    bus.emit("turn:started", { turn: 1 })
+    bus.emit("provider:extension", { kind: "reasoning", data: { text: "mikir\n" } })
+    await sleep(60)
+    // Turn settle (mis. timeout): driver detach keduanya.
+    detachLog()
+    s.detach()
+    status = null
+    tty!.clear()
+    // Banjir event yatim: teks + reasoning + tool + usage.
+    bus.emit("provider:text", { text: "jawaban telat\n" })
+    bus.emit("provider:extension", { kind: "reasoning", data: { text: "mikir telat\n" } })
+    bus.emit("execution:started", {
+      execution: { call: { name: "bash", args: { cmd: "late" } } },
+    })
+    bus.emit("execution:completed", {
+      execution: {
+        call: { name: "bash", args: { cmd: "late" } },
+        result: { isError: false, content: "out telat\n" },
+      },
+    })
+    await sleep(300)
+    expect(tty!.allErr()).toBe("")
+    expect(tty!.all()).toBe("")
   }, 4000)
 })
 

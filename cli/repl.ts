@@ -146,6 +146,10 @@ export async function runRepl(ctx: CliSession): Promise<void> {
   // Section collapse default MINIMIZE: thinking/bash/edit/content jadi satu
   // baris `  + label`, isi di-buffer. `+`/`-` saat turn atau /expand membuka.
   if (process.env.MINICODE_MINIMIZE_TOOL === undefined) setSectionMinimized("tool", true)
+  // Jawaban model juga default minimize (satu baris `  + answer (N chars)`,
+  // isi lengkap di-buffer untuk /expand). Pipa/CI tak tersentuh: guard TTY
+  // di renderer memaksa stream saat stdout bukan TTY.
+  if (process.env.MINICODE_MINIMIZE_ANSWER === undefined) setSectionMinimized("answer", true)
   let nullStreak = 0
   let warned80 = false
   // Non-null selama turn berjalan — target abort SIGINT/Ctrl+C.
@@ -432,7 +436,8 @@ export async function runRepl(ctx: CliSession): Promise<void> {
       }
       if (name === "expand") {
         // Buka isi section yang dikecilkan pada turn terakhir (buffer).
-        // Detail = stderr sesuai kontrak; ringkasan/kontrol = stdout.
+        // Stream asal dipertahankan: answer → stdout, sisanya stderr.
+        // Ringkasan/kontrol = stdout.
         const sections = getBufferedSections()
         if (sections.length === 0) {
           console.log(
@@ -443,8 +448,9 @@ export async function runRepl(ctx: CliSession): Promise<void> {
           return false
         }
         for (const s of sections) {
-          process.stderr.write(`${c.muted(`  ── ${s.label} ──`)}\n`)
-          process.stderr.write(s.text.endsWith("\n") ? s.text : `${s.text}\n`)
+          const out = s.stream === "stdout" ? process.stdout : process.stderr
+          out.write(`${c.muted(`  ── ${s.label} ──`)}\n`)
+          out.write(s.text.endsWith("\n") ? s.text : `${s.text}\n`)
         }
         // Sudah dibuka = selesai; cetak ulang butuh buffer baru dari turn baru.
         resetBufferedSections()
@@ -452,6 +458,7 @@ export async function runRepl(ctx: CliSession): Promise<void> {
       }
       if (name === "minimize") {
         setSectionMinimized("tool", true)
+        setSectionMinimized("answer", true)
         console.log(c.muted("sections: minimized (press + / - during the turn to expand/collapse)"))
         return false
       }

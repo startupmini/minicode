@@ -135,18 +135,18 @@ const UPLOAD_FLAG =
 
 /** Interpreter dijalankan dengan kode inline (semua bentuk flag). */
 const INLINE_INTERPRETER =
-  /\b(?:pyw?|python[\d.]*|pypy[\d.]*|sh|bash|dash|zsh|ksh|node|deno|bun|perl|ruby|php|Rscript)\b\s+(?:-\w*\s+)*(?:-c|-e|-E|--eval|--print|-p|--command|-r|--execute)\b/i
+  /\b(?:pyw?|python[\d.]*|pypy[\d.]*|sh|bash|dash|zsh|ksh|node|deno|bun|perl|ruby|php|Rscript)(?:\.exe)?\b\s+(?:-\w*\s+)*(?:-c|-e|-E|--eval|--print|-p|--command|-r|--execute)\b/i
 
 /** Process substitution / here-string yang memasukkan output perintah lain. */
 const PROCESS_SUB = /<\s*\(|>\s*\(|<<<|\bsource\s+<|\.\s+<\(/
 
 /** Pipe ke shell/interpreter — bentuk apa pun sumbernya. */
 const PIPE_TO_SHELL =
-  /\|\s*(?:sudo\s+)?(?:sh|bash|dash|zsh|ksh|python|python2|python3|node|deno|bun|perl|ruby|php|iex|Invoke-Expression)\b/i
+  /\|\s*(?:sudo\s+)?(?:sh|bash|dash|zsh|ksh|python|python2|python3|pyw?|node|deno|bun|perl|ruby|php|iex|Invoke-Expression)(?:\.exe)?\b/i
 
 /** Unduh ke berkas lalu jalankan berkas itu dalam satu baris. */
 const DOWNLOAD_THEN_RUN =
-  /\b(?:curl|wget|Invoke-WebRequest|iwr)\b[^\n]*?(?:-o|-O|--output|-OutFile)\s*(\S+)[^\n]*[;&|][^\n]*\b(?:sh|bash|dash|zsh|node|python3?|perl|ruby|php|\.\/)\b/i
+  /\b(?:curl|wget|Invoke-WebRequest|iwr)\b[^\n]*?(?:-o|-O|--output|-OutFile)\s*(\S+)[^\n]*[;&|][^\n]*\b(?:sh|bash|dash|zsh|node|pyw?|python3?|perl|ruby|php|\.\/)(?:\.exe)?\b/i
 
 /** Container escape: mount host root / privileged. */
 const CONTAINER_ESCAPE =
@@ -255,6 +255,12 @@ const STATIC_DENY: [RegExp, string][] = [
   [/\bmv\s+[^;|]*\s+\/(?:etc|boot|usr|lib)\b/i, "overwrite system dir"],
   [/\bsudo\b[^\n]*\brm\b/i, "sudo rm"],
   [/\bpowershell\b[^\n]*-EncodedCommand/i, "encoded powershell"],
+  // Bentuk pendek -enc/-enco/... + blob base64 panjang. Aturan penuh di atas
+  // tak menangkap prefix; pola ini mensyaratkan blob (60+ byte, hitung padding
+  // `==`) sehingga -Encoding milik cmdlet dalam (-Command "... -Encoding
+  // utf8 ...") lolos: -enc* + blob panjang praktis hanya payload terenkode.
+  // -Command arbitrer tetap residual jujur (butuh sandbox OS/docker).
+  [/\bpowershell(\.exe)?\b[^\n]*\s-e\w*\s+[A-Za-z0-9+/]{60,}={0,2}/i, "encoded powershell payload"],
   [/>\s*\/dev\/(?:sda|nvme|hd[a-z])/i, "raw device write"],
   [/\b(?:del|erase)\b[^\n]*\/[sfaq]/i, "windows recursive delete"],
   [/\brmdir\b[^\n]*\/s/i, "windows recursive rmdir"],

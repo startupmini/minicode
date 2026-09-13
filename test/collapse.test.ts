@@ -23,6 +23,7 @@ beforeEach(() => {
   tty = installFakeTty({ columns: 80, rows: 24 })
   setReasoningVisible(false)
   delete process.env.MINICODE_MINIMIZE_TOOL
+  delete process.env.MINICODE_MINIMIZE_ANSWER
   resetBufferedSections()
 })
 
@@ -31,6 +32,7 @@ afterEach(() => {
   tty = undefined
   setReasoningVisible(false)
   delete process.env.MINICODE_MINIMIZE_TOOL
+  delete process.env.MINICODE_MINIMIZE_ANSWER
   resetBufferedSections()
 })
 
@@ -164,6 +166,66 @@ describe("collapse: tool section", () => {
     expect(err()).not.toContain("tersembunyi")
     detach()
     expect(getBufferedSections().some((s) => s.text.includes("tersembunyi"))).toBe(true)
+  })
+})
+
+describe("collapse: answer section", () => {
+  const minimizeAnswer = () => {
+    process.env.MINICODE_MINIMIZE_ANSWER = "1"
+  }
+
+  test("minimized: jawaban di-buffer, satu baris + answer (N chars) di akhir", () => {
+    minimizeAnswer()
+    const { bus, detach, err, all } = attach()
+    bus.emit("turn:started", { turn: 1 })
+    bus.emit("provider:text", { text: "jawaban lengkap\nbaris dua\n" })
+    // Selama streaming: tidak ada teks jawaban di scrollback.
+    expect(all()).not.toContain("jawaban lengkap")
+    bus.emit("turn:completed", {})
+    detach()
+    expect(err()).toContain("+ answer (")
+    expect(err()).toContain("chars)")
+    const buf = getBufferedSections()
+    const ans = buf.find((s) => s.label === "answer")
+    expect(ans?.stream).toBe("stdout")
+    expect(ans?.text).toContain("jawaban lengkap")
+  })
+
+  test("expanded (env kosong): jawaban mengalir seperti dulu", () => {
+    const { bus, detach, all } = attach()
+    bus.emit("turn:started", { turn: 1 })
+    bus.emit("provider:text", { text: "terlihat langsung\n" })
+    bus.emit("turn:completed", {})
+    detach()
+    expect(all()).toContain("terlihat langsung")
+    expect(getBufferedSections().length).toBe(0)
+  })
+
+  test("expand live: buffer lama tercetak + lanjut stream", () => {
+    minimizeAnswer()
+    const { bus, detach, all } = attach()
+    bus.emit("turn:started", { turn: 1 })
+    bus.emit("provider:text", { text: "bagian satu\n" })
+    expect(all()).not.toContain("bagian satu")
+    // Tombol + : minimize mati → header + flush + stream.
+    delete process.env.MINICODE_MINIMIZE_ANSWER
+    bus.emit("provider:text", { text: "bagian dua\n" })
+    expect(all()).toContain("bagian satu")
+    expect(all()).toContain("bagian dua")
+    detach()
+  })
+
+  test("todo_write diringkas jadi N items (bukan dump JSON)", () => {
+    setSectionMinimized("tool", true)
+    const { bus, detach, err } = attach()
+    bus.emit("turn:started", { turn: 1 })
+    bus.emit(
+      "execution:completed",
+      done("todo_write", { todos: [{ content: "a", status: "pending" }] }, "ok"),
+    )
+    detach()
+    expect(err()).toContain("+ todo_write 1 items")
+    expect(err()).not.toContain('"content"')
   })
 })
 

@@ -9,7 +9,7 @@
 // (expanded = visible), jadi /thinking/Ctrl+T lama tetap satu arti.
 import { reasoning, setReasoningVisible } from "./reasoning.ts"
 
-export type CollapseSection = "thinking" | "tool"
+export type CollapseSection = "thinking" | "tool" | "answer"
 
 let activeSection: CollapseSection | null = null
 
@@ -17,6 +17,8 @@ let activeSection: CollapseSection | null = null
 export interface BufferedSection {
   label: string
   text: string
+  /** Stream asal konten (kontrak Unix dipertahankan saat /expand mencetak). */
+  stream: "stdout" | "stderr"
 }
 const MAX_SECTION_CHARS = 200_000
 const MAX_BUFFER_TOTAL = 500_000
@@ -34,7 +36,9 @@ export const collapse = {
 
 /** Section sedang dikecilkan? Thinking = invers reasoning.visible. */
 export function sectionMinimized(section: CollapseSection): boolean {
-  return section === "thinking" ? !reasoning.visible : process.env.MINICODE_MINIMIZE_TOOL === "1"
+  if (section === "thinking") return !reasoning.visible
+  if (section === "answer") return process.env.MINICODE_MINIMIZE_ANSWER === "1"
+  return process.env.MINICODE_MINIMIZE_TOOL === "1"
 }
 
 /** Set eksplisit (nilai minimize) atau toggle bila `next` tidak diberikan.
@@ -44,16 +48,21 @@ export function setSectionMinimized(section: CollapseSection, next?: boolean): b
     const vis = setReasoningVisible(next === undefined ? undefined : !next)
     return !vis
   }
-  const cur = process.env.MINICODE_MINIMIZE_TOOL === "1"
+  const key = section === "answer" ? "MINICODE_MINIMIZE_ANSWER" : "MINICODE_MINIMIZE_TOOL"
+  const cur = process.env[key] === "1"
   const nxt = next ?? !cur
-  process.env.MINICODE_MINIMIZE_TOOL = nxt ? "1" : "0"
+  process.env[key] = nxt ? "1" : "0"
   return nxt
 }
 
 /** Simpan isi section yang dikecilkan (cap per-entry + total). */
-export function bufferSection(label: string, text: string): void {
+export function bufferSection(
+  label: string,
+  text: string,
+  stream: BufferedSection["stream"] = "stderr",
+): void {
   if (!text) return
-  bufferedSections.push({ label, text: text.slice(0, MAX_SECTION_CHARS) })
+  bufferedSections.push({ label, text: text.slice(0, MAX_SECTION_CHARS), stream })
   // Buang yang tertua sampai total dalam budget — terbaru selalu dipertahankan.
   let total = 0
   let keepFrom = bufferedSections.length

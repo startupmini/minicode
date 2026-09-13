@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.17] - 2026-09-13 — Sparkle kelip + section collapse
+
+### Changed
+- **Thinking = sparkle `✦` kelip putih↔abu**: ganti emoji `💡` (yang warnanya mati kuning karena terminal mengabaikan ANSI pada emoji) dengan glyph monokrom sehingga kelip `c.white` ↔ `c.gray` benar-benar terlihat. Titik animasi + kecepatan adaptif tetap.
+- **Ledger tool = chevron `›` berwarna**: sukses hijau, gagal merah (menggantikan `✓`/`✗`). Satu bahasa visual dengan prompt `❯` + picker `›`. `✓`/`✗` tetap untuk status/konfirmasi perintah (sync, auth, config, spinner).
+
+### Added
+- **Section collapse `+`/`-` (default minimize)**: thinking, bash, edit/apply_patch, dan content tool mengecil jadi satu baris `  + label` (stderr) — isi di-buffer (200KB/entry, 500KB total), bukan dicetak.
+- **Tombol live saat turn** (raw mode, TTY saja): `+`/`=` expand section aktif, `-`/`_` minimize, `Ctrl+T` toggle thinking, `Ctrl+C` tetap abort. Toggle thinking menambah baris header (`  − thinking` / `  + thinking`); pipe/CI tanpa tombol live.
+- **`/expand` / `/minimize`**: `/expand` mencetak buffer section turn terakhir ke stderr lalu mengosongkan (sekali pakai); `/minimize` mengecilkan tool untuk turn berikutnya. Keduanya di dropdown Tab + banner.
+
 ## [0.9.16] - 2026-09-13 — Ikon putih + toggle thinking
 
 ### Changed

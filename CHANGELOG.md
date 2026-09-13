@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.9.18] - 2026-09-13 — Indikator rapi, jawaban minimize, pagar turn
+
+### Changed
+- **Indikator thinking tidak lagi blank/strobo**: grace 250ms (submit lambat langsung tampil `✦  · · ·`), latch fase (reasoning interleave di tengah jawaban tetap sembunyi — dulu on/off strobo mengikuti chunk), kelip pelan tiap 3 tick, titik-titik berjarak (`· · ·`), kursor disembunyikan saat melukis dan dikembalikan di semua path (tanda `|` tak lagi menempel).
+- **Reasoning expanded line-buffered**: baris utuh per newline, bukan salad fragmen per chunk; sisa baris di-flush saat fase berganti/turn selesai.
+
+### Added
+- **Jawaban model default minimize** (REPL): satu baris `  + answer (N chars)` di akhir turn, isi lengkap di-buffer (cap 1MB + penanda) untuk `+`/`/expand` (dicetak ke stdout — kontrak stream terjaga). Pipa/CI/`--verbose` selalu stream penuh (hard guard TTY). `/minimize` kini mencakup thinking + tool + answer.
+- **Pagar turn yatim**: listener UI di-attach segar per turn dan dilepas saat settle (termasuk timeout) — event telat dari provider/tool non-kooperatif pasca-abort tidak lagi bocor ke sesi prompt berikutnya (kandidat penyebab "macet").
+- **`MINICODE_DEBUG_BUS=1`**: dump ringkas tiap event bus (tipe + nama + panjang, tanpa isi konten) untuk diagnosis "macet" — bedakan event yatim vs stdin mati.
+
+### Security (temuan red-team eksternal)
+- Interpreter inline kini menangkap nama dengan `.exe` (`python.exe -c`, `node.exe -e`, dsb.) di 3 regex — dulu `.exe` mematahkan `\bpython\b\s+`.
+- `powershell -enc <blob base64>` diblokir (aturan penuh `-EncodedCommand` + pola blob panjang; `-Encoding`/`-ExecutionPolicy` cmdlet tidak over-block).
+- `.minicode/auth.json` (token OAuth) masuk sensitive-file — file tools & bash menolak baca/tulis.
+- Scrubber menangkap `thk_live_*` (TokenHarbor) dan `hf_*` (HuggingFace) yang lolos pola umum.
+
 ## [0.9.17] - 2026-09-13 — Sparkle kelip + section collapse
 
 ### Changed

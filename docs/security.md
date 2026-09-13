@@ -27,7 +27,10 @@
    | `bash <(curl x)` | tak ada aturan process substitution | ditolak |
    | `rm -rf ..`, `rm --recursive --force /`, `rm -rf /; :` | pola lama hanya kenal `/` dan `~` | ditolak |
    | `command env`, `nice env`, dkk. (wrapper) | deteksi env-dump ter-anchor ke awal | ditolak via `stripCommandWrappers` (14 wrapper, 4 lapis) |
-   | `echo x > ..\\evil` (redirect keluar workspace) | allowlist `echo *` + guard tanpa aturan redirect | ditolak via `findRedirectTargets` (target di-resolve ke cwd; heredoc/fd/`/dev/null` dikecualikan) |
+   | `echo x > ..\evil` (redirect keluar workspace) | allowlist `echo *` + guard tanpa aturan redirect | ditolak via `findRedirectTargets` (target di-resolve ke cwd; heredoc/fd/`/dev/null` dikecualikan) |
+   | `echo x > "%TEMP%\evil"` (redirect + ekspansi env) | cek statis melihat literal `%TEMP%\…` di dalam cwd; cmd.exe mengekspansi SETELAH cek | ditolak: target berpola `%NAMA%` tak bisa dipastikan aman (red-team eksternal). `%` tunggal (`100%.txt`) tetap lolos |
+   | `py -c …`, `python3.14 -c …` (launcher/versi) | regex hanya kenal `python|python2|python3|pypy` | ditolak via `pyw?|python[\d.]*|pypy[\d.]*` |
+   | baca via hardlink ke luar workspace | `realpath` tak melihat hardlink (semua nama setara) | ditolak bila `nlink > 1` pada handle yang dibuka (fstat, bebas race). Tulis aman by-design (atomic replace memutus hardlink) |
 
 2. **Allowlist** (`--allowlist`, dan default bila tanpa sandbox OS): hanya bentuk read/build — `git status/diff/log/branch/show`, `bun test/run/x tsc`, `npm run/exec`, `npx`, `ls cat head tail wc grep rg find which echo pwd`. Tulis via shell ditahan; pakai `write_file`/`edit` yang ter-jail. `npm exec`/`npx`/`bun run`/`bun x` tak boleh ekspansi shell/redirection.
 3. **Path jail** realpath-based + symlink check + TOCTOU `O_NOFOLLOW`; `.env`/`.git/config`/`node_modules` deny; berlaku bahkan `--allow-all`.
@@ -38,8 +41,28 @@
 
 - Output verify dibungkus fence agar instruksi di error build tidak diikuti model.
 - `mcp_read`/`mcp_prompt` di-gate meski read-only — konten pihak ketiga langsung ke konteks = jalur injection; "read-only ≠ aman".
-- Secret scrubber meredaksi `sk-`, `ghp_`, `AKIA`, PEM, JWT, Bearer, `api_key=...` sebelum teks ke LLM (read_file/bash/grep), tanpa whitelist kata.
+- Secret scrubber meredaksi `sk-`, `ghp-`, `AKIA`, PEM, JWT, Bearer, `api_key=...` sebelum teks ke LLM (read_file/bash/grep), tanpa whitelist kata.
 - Bypass korpus + fuzz: `bun run gate:bash`, `bun run extreme:fuzz` (`--seed` untuk reproduksi). Batas jujur: analisis statis atas bahasa Turing-complete; `$(curl …)` dinamis perlu sandbox OS/docker.
+
+## Batas kepercayaan file lokal (trust model)
+
+Agen berjalan SEBAGAI user — tidak ada batas privilege antara agen dan pemilik
+mesin. Yang dilindungi guard adalah **niat operator**, bukan capability:
+konten yang dibaca agen bisa memengaruhi keputusan dan ikut terkirim ke
+provider model pihak ketiga.
+
+- `MEMORY.md` (.minicode/, root, home), `AGENTS.md`, `rules/`, skills: **input
+  tepercaya yang boleh diedit manusia** — termasuk edit langsung via file.
+  Tulis out-of-band (di luar `write_memory`) ikut termuat apa adanya pada
+  retrieval berikutnya. Jangan taruh instruksi dari repo tak dikenal tanpa
+  dibaca; `forget_memory` hanya menjangkau `.minicode/MEMORY.md` lokal +
+  vector store lokal (bukan hierarki global/root/CLAUDE).
+- `sessions.db` + jurnal: transkrip sesi tersimpan plaintext di workspace
+  (terbaca agen mana pun di workspace itu). Jurnal 0-byte = sesi terpasang
+  yang belum bermutasi (by-design, bukan korupsi).
+- State milik runtime (`sessions.db`, `todos/`, `plans/`, `checkpoints/`,
+  `journal-*.jsonl`, `allowlist.json`, `config.json`, `turn.active.json`):
+  tulis via file tools ditolak; baca tetap boleh (observability).
 
 ## Config lokal & supply chain
 

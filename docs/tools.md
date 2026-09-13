@@ -44,7 +44,7 @@ read_file({ path: "src/big.ts", offset: 500, limit: 50 })
 
 | Tool | Fungsi | Catatan |
 |---|---|---|
-| `bash` | Shell 30 dtk SIGTERM→SIGKILL | cwd jail, env kredensial di-strip (`sanitizeSpawnEnv`), progres streaming, `background:true` + `bash_output`/`bash_kill`, sandbox docker/os optional, fail-closed via `MINICODE_SANDBOX_STRICT=1`. `background:true` ditolak saat `--sandbox` aktif |
+| `bash` | Shell 30 dtk SIGTERM→SIGKILL | Tanpa `MINICODE_SANDBOX`: jalan di HOST (network tidak diisolasi, teraudit di step-traces). cwd jail, env kredensial di-strip (`sanitizeSpawnEnv`), progres streaming, `background:true` + `bash_output`/`bash_kill`, sandbox docker/os optional, fail-closed via `MINICODE_SANDBOX_STRICT=1`. `background:true` ditolak saat `--sandbox` aktif |
 | `bash_output` | Output BARU job sejak baca terakhir | + exit status |
 | `bash_kill` | Stop job | SIGTERM lalu SIGKILL; tree-kill (`taskkill /T /F` di Windows, process-group di POSIX) |
 | `code_run` | Snippet python/node tanpa shell | Spawn langsung argv (tanpa shell agar `$(...)` tidak dieksekusi shell dulu). Wajib sandbox `os|docker`, network-isolated, cwd = session root. Fail-closed bila backend tak tersedia. Image default `node:22-alpine` hanya bawa node — python butuh `MINICODE_SANDBOX_IMAGE` yang menyediakannya |

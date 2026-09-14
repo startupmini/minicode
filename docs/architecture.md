@@ -14,7 +14,7 @@ L3 vendor/minicore  → kernel STATE/MODEL/ACTION/LOOP (freeze, zero-dep, via #m
 
 - `cli/` boleh impor `src/ui/` + `src/`; `src/` non-ui dilarang impor `src/ui/`; `src/ui/` dilarang impor `cli/`, `src/` non-ui, `#minicore`. Dijaga `test/ui-boundary.test.ts`.
 - Satu-satunya jendela UI↔luar: `src/ui/contract.ts` (`UiEvent/UiBus/UiStep/UiExecution`).
-- DI dari composition root (`cli/index.ts`, `cli/setup.ts` 561 baris): `createProviderLayer → loadLastModel → createRagLayer → resume + planRecovery + reconcileUndoRedo → setupToolLayer + setAskTextFn → createMinicodeSession → journal + checkpoint + step-trace + runPromptWithVerify (baseline-first + self-heal 3 siklus + hooks) → logger + turn-status + usage/pricing → persist/finalize → close (kill jobs, mcp/lsp close)`. `setSubAgentSessionFactory` sebelum dispatch agar REPL/one-shot/`mcp serve` tercakup.
+- DI dari composition root (`cli/index.ts`, `cli/setup.ts`): `createProviderLayer → loadLastModel → createRagLayer → resume + planRecovery + reconcileUndoRedo → setupToolLayer + setAskTextFn → createMinicodeSession → journal + checkpoint + step-trace + runPromptWithVerify (baseline-first + self-heal 3 siklus + hooks) → logger + turn-status + usage/pricing → persist/finalize → close (kill jobs, mcp/lsp close)`. `setSubAgentSessionFactory` sebelum dispatch agar REPL/one-shot/`mcp serve` tercakup.
 - `providers → config` satu arah (`src/providers/provision.ts` provisioning, `src/config.ts` murni IO).
 
 ## Alur satu prompt
@@ -27,13 +27,13 @@ MiniCode **shell-native CLI, bukan TUI**. Tanpa alternate screen/panel/header pe
 
 | Stream | Isi |
 |---|---|
-| stdout | Output program: teks model, receipt `✓ write_file …`, artefak perintah. Bersih dari cursor-control saat non-TTY |
-| stderr | Progress/diagnostik: ledger `✓/✗`, reasoning (verbose), warning, error. Boleh transient bila TTY |
+| stdout | Output program: teks model, receipt perubahan (`› write_file …`), daftar/artefak perintah. Bersih dari cursor-control saat non-TTY |
+| stderr | Progress/diagnostik: ledger tool (`› …` hijau/merah), reasoning (verbose), warning, error. Boleh transient bila TTY |
 | Keduanya | Warna hanya bila TTY (`stdout.isTTY`); `NO_COLOR` menang; `TERM`/`COLORTERM` tidak menyalakan warna di pipe |
 
 Satu-satunya arbitrator transient: `src/ui/runtime/statusline.ts` (`acquireTransientPaint` + `paintWrite`). Painter aktif (garis status turn vs spinner wizard) mutually exclusive; overlap = signal `[transient-paint]`, bukan crash. Foreign stderr writer (non-UI) boleh mentah — arbitrator mengkomitnya sebagai baris permanen bersih. 12 invariant + peta test (`terminal-contract`, `transient-arbitration`, `turn-status`, `tui-format`, `theme`, `repl-linear`, `ui-boundary`) ada di `TERMINAL_CONTRACT.md`.
 
-Lima primitif tampilan: prompt `minicode <mode> ›`, activity (garis transient stderr), ledger `  ✓ name target` / `  ✗ name: …` (stderr, indent 2), teks model (stdout, wrapped, fence 2-spasi), error `✗ pesan actionable` sekali per kegagalan (`takePendingError`).
+Lima primitif tampilan: prompt `minicode <mode> ›`, activity (garis transient stderr `✦···`), ledger `  › name target` hijau / `  › name: …` merah (stderr, indent 2), teks model (stdout, wrapped, fence 2-spasi), error `✗ pesan actionable` sekali per kegagalan (`takePendingError`). `✓`/`✗` tetap untuk status/konfirmasi perintah (sync, auth, config, spinner).
 
 ## Modul kunci
 

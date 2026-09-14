@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.19] - 2026-09-14 — Sinkronisasi dokumentasi + web
+
+### Fixed
+- **Dokumen selaras dengan kode**: ledger tool kini `›` hijau/merah di `docs/architecture.md` + `docs/terminal.md` (sebelumnya masih `✓`/`✗` era 0.9.16); ambang coverage `docs/contributing.md` kini **80 funcs / 85 lines** sesuai `scripts/coverage-gate.ts`; `EXPLORE_TOOL_NAMES` terdokumentasi 12 (kode: 12, bukan klaim 11 yang tersebar di komentar lama); klaim jumlah baris `cli/setup.ts` yang basi dihapus (kini 684 baris dan terus bergerak).
+- **Peta struktur hidup**: badge `docs/ARCHITECTURE.html` kini `v0.9.19` (pill kernel tetap `05fc595a` — basis pin vendor, bukan upstream).
+- **Web**: rebuild 32 halaman + `web:check` lolos (link internal, anchor, SEO, sitemap).
+
+### Deferred (disengaja — bukan lupa)
+- **Vendor sync ditunda**: upstream `minicore@1eceea9` divergen dari pin vendor (`868d4f1b…` vs `99b17847…`); `VENDOR.md` mencatat seam lokal `cwd` + `permissionMode` + `turnCount/stepCount` + `provider_meta` yang akan **dihapus** oleh sync membabi buta. Satu-satunya delta upstream (cap `retryAfter` 30s) sudah ditutup lapis-app (`cappedRecovery` + router). Hilirkan seam dulu ke repo minicore, baru sync ulang.
+
+
 ## [0.9.18] - 2026-09-13 — Indikator rapi, jawaban minimize, pagar turn
 
 ### Changed

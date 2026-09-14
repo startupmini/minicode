@@ -7,8 +7,8 @@ Minicode **shell-native CLI, bukan TUI**. Tanpa alternate screen/panel/header pe
 
 | Stream | Isi |
 |---|---|
-| stdout | Output program: teks model (wrapped, fence 2-spasi), receipt `✓ write_file …`, artefak perintah. Bersih dari cursor-control saat non-TTY |
-| stderr | Progress/diagnostik: ledger `✓/✗`, reasoning (verbose), warning, error. Boleh transient bila TTY |
+| stdout | Output program: teks model (wrapped, fence 2-spasi), receipt perubahan (`› write_file …`), artefak perintah. Bersih dari cursor-control saat non-TTY |
+| stderr | Progress/diagnostik: ledger tool (`› …` hijau/merah), reasoning (verbose), warning, error. Boleh transient bila TTY |
 
 - Warna hanya bila TTY (`stdout.isTTY`); `NO_COLOR` menang; `TERM`/`COLORTERM` tidak menyalakan warna di pipe.
 - Error `✗ pesan actionable` sekali per kegagalan (`takePendingError`) — bukan spam di setiap langkah.
@@ -17,7 +17,7 @@ Minicode **shell-native CLI, bukan TUI**. Tanpa alternate screen/panel/header pe
 
 1. Prompt `minicode <mode> ›`
 2. Activity — garis transient di stderr
-3. Ledger — `  ✓ name target` / `  ✗ name: …` (stderr, indent 2)
+3. Ledger — `  › name target` hijau / `  › name: …` merah (stderr, indent 2)
 4. Teks model — stdout, wrapped
 5. Error actionable — sekali per kegagalan
 

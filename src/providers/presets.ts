@@ -29,7 +29,10 @@ export const GATEWAY_PRESETS: GatewayPreset[] = [
     label: "OpenRouter (gateway 75+ model)",
     baseUrl: "https://openrouter.ai/api/v1",
     fallbackModels: [
-      "meta-llama/llama-3.1-8b-instruct:free",
+      // ID gratis pertama terverifikasi live 2026-09-14 (pengganti
+      // llama-3.1-8b-instruct:free yang sudah tak ada di katalog).
+      // Free-tier OpenRouter berputar — bila wizard gagal, cek katalog.
+      "nvidia/nemotron-3.5-lightning:free",
       "anthropic/claude-3.5-sonnet",
       "openai/gpt-4o-mini",
     ],

@@ -91,6 +91,14 @@ export interface AskLineOptions {
    */
   history?: string[]
   /**
+   * Batas idle tanpa keypress (ms); lewat = batal sendiri (null). Default
+   * 90.000 seperti picker/manager — raw-mode yang digenggam tanpa input
+   * rawan macet/segfault saat ConPTY mati. `0` = mati, dipakai prompt utama
+   * REPL: null di sana dihitung Ctrl+C (2x = exit), jadi auto-batal akan
+   * mengeluarkan user yang diam 3 menit.
+   */
+  idleMs?: number
+  /**
    * Dipanggil untuk setiap keypress SEBELUM logika bawaan (history, applyKey).
    * Return truthy = key sudah ditangani pemanggil; askLine melewatkan handling
    * default dan tetap me-render ulang. Dipakai REPL linier untuk Shift+Tab
@@ -114,10 +122,19 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
 
   if (!process.stdin.isTTY) {
     return new Promise((resolve) => {
+      let settled = false
+      const done = (v: string | null) => {
+        if (settled) return
+        settled = true
+        resolve(v)
+      }
       const rl = createInterface({ input: process.stdin, output: process.stdout })
+      // Pipe EOF tanpa newline: rl.question tak pernah memanggil balik —
+      // tanpa ini REPL gantung selamanya menunggu input yang tak datang.
+      rl.on("close", () => done(null))
       rl.question(promptOf(), (a) => {
         rl.close()
-        resolve(a.trim())
+        done(a.trim())
       })
     })
   }
@@ -167,13 +184,23 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
     const decoder: DecoderState = createDecoderState()
     let done = false
     let onData!: (chunk: Buffer) => void
+    let idleTimer: ReturnType<typeof setTimeout> | undefined
+    const clearIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = undefined
+    }
     const cleanup = () => {
       if (done) return
       done = true
+      clearIdle()
       try {
         process.stdin.setRawMode(false)
       } catch {}
-      process.stdin.pause()
+      // SENGAJA tanpa pause(): stdin TTY mengalir seumur proses — siklus
+      // pause→resume berulang mematikan pengiriman 'data' selamanya di
+      // Bun Windows (list tampil tapi semua tombol mati, bahkan Ctrl+C).
+      // Kepemilikan = siapa yang memegang listener; melepas listener cukup.
+      // Pause hanya di teardown sesi (close()) agar one-shot bisa exit.
       if (onData) process.stdin.removeListener("data", onData)
     }
     const finish = (v: string | null) => {
@@ -456,7 +483,24 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
       finish(v)
     }
 
+    // Idle-timeout: nol keypress selama idleMs = batal sendiri via jalur
+    // submit normal (draf ikut ter-echo ke scrollback, tak hilang bisu).
+    // Reset di tiap chunk — mengetik/menahan tombol apa pun memperpanjang.
+    const resetIdle = () => {
+      const ms = opts.idleMs ?? 90_000
+      if (done || !ms) return
+      clearIdle()
+      idleTimer = setTimeout(() => {
+        doSubmit(true)
+      }, ms)
+      // Jangan tahan process hidup hanya karena timer ini.
+      try {
+        ;(idleTimer as unknown as { unref?: () => void }).unref?.()
+      } catch {}
+    }
+
     onData = (chunk: Buffer) => {
+      resetIdle()
       const keys = decodeKeysStream(chunk, decoder)
       for (const d of keys) {
         // Hook pemanggil: key yang ditangani sendiri (return truthy) dilewati
@@ -616,6 +660,7 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
     }
 
     process.stdin.on("data", onData)
+    resetIdle()
     try {
       render()
     } catch (e) {
@@ -630,20 +675,29 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
  * "batal" dari "Enter tanpa isi" (yang dulu sama-sama jatuh ke pesan
  * "required", membuat batal dikira error).
  */
-export async function askSecret(promptText: string): Promise<string | null> {
+export async function askSecret(
+  promptText: string,
+  opts: { idleMs?: number } = {},
+): Promise<string | null> {
   if (!process.stdin.isTTY) return null
 
   return new Promise((resolve, reject) => {
     const decoder: DecoderState = createDecoderState()
     let done = false
     let onData!: (chunk: Buffer) => void
+    let idleTimer: ReturnType<typeof setTimeout> | undefined
+    const clearIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = undefined
+    }
     const cleanup = () => {
       if (done) return
       done = true
+      clearIdle()
       try {
         process.stdin.setRawMode(false)
       } catch {}
-      process.stdin.pause()
+      // Tanpa pause — lihat cleanup askLine (stdin mengalir seumur proses).
       if (onData) process.stdin.removeListener("data", onData)
     }
     const finish = (value: string | null) => {
@@ -655,11 +709,25 @@ export async function askSecret(promptText: string): Promise<string | null> {
       cleanup()
       reject(e)
     }
+    // Sama seperti askLine: idle tanpa keypress = batal (null), bukan
+    // gantung dengan raw-mode digenggam.
+    const resetIdle = () => {
+      const ms = opts.idleMs ?? 90_000
+      if (done || !ms) return
+      clearIdle()
+      idleTimer = setTimeout(() => {
+        finish(null)
+      }, ms)
+      try {
+        ;(idleTimer as unknown as { unref?: () => void }).unref?.()
+      } catch {}
+    }
 
     process.stdout.write(promptText)
     let secret = ""
 
     onData = (chunk: Buffer) => {
+      resetIdle()
       try {
         for (const d of decodeKeysStream(chunk, decoder)) {
           const k = d.key
@@ -720,7 +788,13 @@ export async function askSecret(promptText: string): Promise<string | null> {
     }
 
     process.stdin.resume()
-    process.stdin.setRawMode(true)
+    try {
+      process.stdin.setRawMode(true)
+    } catch (e) {
+      fail(e)
+      return
+    }
     process.stdin.on("data", onData)
+    resetIdle()
   })
 }

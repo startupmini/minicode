@@ -7,6 +7,13 @@ export interface DetectedModel {
 export interface DetectResult {
   models: string[]
   providerHint: "openai" | "anthropic" | "responses" | "unknown"
+  /**
+   * True bila server menjawab 401/403 di salah satu attempt: key salah/
+   * kedaluwarsa. Beda dari "tanpa endpoint /models" (404, mis. Anthropic)
+   * dan dari jaringan mati (tak ada respons sama sekali). Pemanggil JANGAN
+   * menutupi ini dengan fallback model — laporkan unauthorized dengan jujur.
+   */
+  authFailed: boolean
 }
 
 // Cache in-memory per baseUrl (30 menit) — /sync yang sering dipanggil tidak
@@ -37,9 +44,10 @@ async function tryFetchModels(
   baseUrl: string,
   headers: Record<string, string>,
   signal: AbortSignal,
-): Promise<{ models: string[] | null; contacted: boolean }> {
+): Promise<{ models: string[] | null; contacted: boolean; sawAuth: boolean }> {
   const urls = [`${baseUrl.replace(/\/+$/, "")}/models`, `${baseUrl.replace(/\/+$/, "")}/v1/models`]
   let contacted = false
+  let sawAuth = false
   for (const url of urls) {
     // timeout PER-ATTEMPT: satu fetch yang menggantung tidak memakan seluruh
     // budget sinyal luar — kombinasi via AbortSignal.any.
@@ -48,21 +56,26 @@ async function tryFetchModels(
     try {
       const res = await fetch(url, { headers, signal: attemptSignal })
       contacted = true // server menjawab (walau 404) — bukan jaringan mati
+      // 401/403 = key salah, BUKAN "tanpa endpoint": catat agar pemanggil
+      // tak menutupinya dengan fallback model (yang membuat key salah
+      // terlihat sukses tersimpan).
+      if (res.status === 401 || res.status === 403) sawAuth = true
       if (!res.ok) continue
       const json = (await res.json()) as { data?: { id: string }[]; models?: { id: string }[] }
       const data = json.data ?? json.models ?? []
       if (Array.isArray(data) && data.length)
-        return { models: data.map((m) => m.id).filter(Boolean), contacted }
+        return { models: data.map((m) => m.id).filter(Boolean), contacted, sawAuth }
       // anthropic format: {data: [{id, display_name}]}
       if (Array.isArray((json as unknown as { models: unknown }).models)) {
         return {
           models: (json as unknown as { models: { id: string }[] }).models.map((m) => m.id),
           contacted,
+          sawAuth,
         }
       }
     } catch {}
   }
-  return { models: null, contacted }
+  return { models: null, contacted, sawAuth }
 }
 
 export async function detectModels(
@@ -78,10 +91,12 @@ export async function detectModels(
   // CAP global — jangan pernah biarkan user menunggu lama pada gateway offline
   const sig = signal ?? AbortSignal.timeout(LIMITS.DETECT_GLOBAL_TIMEOUT_MS)
   let everContacted = false
+  let everAuthFailed = false
   for (const h of hybridHeaders(apiKey)) {
     if (sig.aborted) break
-    const { models, contacted } = await tryFetchModels(baseUrl, h, sig)
+    const { models, contacted, sawAuth } = await tryFetchModels(baseUrl, h, sig)
     everContacted = everContacted || contacted
+    everAuthFailed = everAuthFailed || sawAuth
     if (models?.length) {
       // P11 P1.4 — wire dari probe, bukan substring URL semata: path
       // /responses berarti endpoint Responses API (previous_response_id).
@@ -94,7 +109,11 @@ export async function detectModels(
         : path.includes("anthropic")
           ? "anthropic"
           : "openai"
-      const result = { models, providerHint: hint as DetectResult["providerHint"] }
+      const result = {
+        models,
+        providerHint: hint as DetectResult["providerHint"],
+        authFailed: everAuthFailed,
+      }
       cache.set(key, { at: Date.now(), result })
       return result
     }
@@ -103,5 +122,5 @@ export async function detectModels(
   // "provider tanpa model" (Anthropic menjawab 404 tapi tetap kontak).
   // Lempar agar /sync mencatat failed, bukan diam.
   if (!everContacted) throw new Error(`unreachable: ${baseUrl}`)
-  return { models: [], providerHint: "unknown" }
+  return { models: [], providerHint: "unknown", authFailed: everAuthFailed }
 }

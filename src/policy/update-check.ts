@@ -182,9 +182,14 @@ export function installUpdate(runner?: InstallRunner): boolean {
       ((cmd, args) => {
         // Windows: npm adalah .cmd → butuh shell; stdio inherit agar user
         // melihat progres install (interaktif, bukan CI).
+        // Timeout 120 dtk: tanpa ini spawnSync memblokir event-loop selamanya
+        // saat npm lambat (AV/UAC di Windows 15–60 dtk) — timer abort 1.8 dtk
+        // dan spinner ikut beku sehingga terlihat hang. Timeout = gagal jujur
+        // lalu lanjut versi lama, bukan gantung.
         const r = spawnSync(cmd, args, {
           stdio: "inherit",
           shell: process.platform === "win32",
+          timeout: 120_000,
         })
         return { status: typeof r.status === "number" ? r.status : null }
       })

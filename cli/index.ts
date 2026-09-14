@@ -274,6 +274,24 @@ if (enterRepl) {
   let spin: ReturnType<typeof setInterval> | undefined
   let showTimer: ReturnType<typeof setTimeout> | undefined
   let fi = 0
+  // Dipanggil auto-update SEBELUM fase panjang (install npm + respawn anak):
+  // matikan spinner agar tak menulis ke stderr yang sama dengan anak selama
+  // berjam-jam (stdio inherit) — itu yang terlihat sebagai hang/flicker.
+  // Idempoten: aman dipanggil dua kali (sebelum install, sebelum restart).
+  let longOpCleaned = false
+  const stopUpdateSpin = () => {
+    if (longOpCleaned) return
+    longOpCleaned = true
+    if (showTimer) clearTimeout(showTimer)
+    showTimer = undefined
+    if (spin) {
+      clearInterval(spin)
+      spin = undefined
+      try {
+        process.stderr.write("\r\x1b[2K")
+      } catch {}
+    }
+  }
   if (process.stderr.isTTY) {
     const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
     showTimer = setTimeout(() => {
@@ -285,7 +303,7 @@ if (enterRepl) {
   }
   try {
     const { maybeAutoUpdate } = await import("./auto-update.ts")
-    await maybeAutoUpdate(readVersion(), ctrl.signal)
+    await maybeAutoUpdate(readVersion(), ctrl.signal, { onLongOp: stopUpdateSpin })
   } catch {}
   clearTimeout(to)
   if (showTimer) clearTimeout(showTimer)
@@ -327,33 +345,46 @@ if (enterRepl && process.stderr.isTTY) {
     process.stderr.write(`\r\x1b[2K${c.dim(`${f} Menyiapkan sesi…`)}`)
   }, 120)
 }
-const ctx = await createCliSession({
-  cwd,
-  sessionId,
-  resumeId,
-  modelOverride,
-  providerOverride,
-  prompt,
-  enterRepl,
-  verbose,
-  allowAll,
-  ask,
-  plan,
-  allowlist: effectiveAllowlist,
-  verify,
-  allowLocalConfig: allowLocal,
-  budget,
-  budgetStrict,
-  toolScope,
-  maxSteps,
-  contextWindowTokens,
-  timeoutMs,
-  rateLimiter,
-  sandboxNotice: requestedSandbox ? sandbox.notice : undefined,
-})
-if (setupSpin) {
-  clearInterval(setupSpin)
-  process.stderr.write("\r\x1b[2K")
+const stopSetupSpin = () => {
+  if (setupSpin) {
+    clearInterval(setupSpin)
+    setupSpin = undefined
+    try {
+      process.stderr.write("\r\x1b[2K")
+    } catch {}
+  }
+}
+// finally: createCliSession yang melempar (provider/MCP gagal) tak boleh
+// membocorkan interval — tanpa ini spinner menulis ke stderr selamanya dan
+// proses tak pernah exit (terlihat hang).
+let ctx: Awaited<ReturnType<typeof createCliSession>>
+try {
+  ctx = await createCliSession({
+    cwd,
+    sessionId,
+    resumeId,
+    modelOverride,
+    providerOverride,
+    prompt,
+    enterRepl,
+    verbose,
+    allowAll,
+    ask,
+    plan,
+    allowlist: effectiveAllowlist,
+    verify,
+    allowLocalConfig: allowLocal,
+    budget,
+    budgetStrict,
+    toolScope,
+    maxSteps,
+    contextWindowTokens,
+    timeoutMs,
+    rateLimiter,
+    sandboxNotice: requestedSandbox ? sandbox.notice : undefined,
+  })
+} finally {
+  stopSetupSpin()
 }
 
 if (enterRepl) {
@@ -482,13 +513,16 @@ if (enterRepl) {
     rl.close()
     if (ans.trim().toLowerCase() === "y") {
       const { spawn } = await import("node:child_process")
+      const { waitChildExit } = await import("./auto-update.ts")
       const entry = process.argv[1] ?? resolvePath(import.meta.dir, "index.ts")
       const filtered = args.filter((a) => a !== "--plan")
       const child = spawn(process.execPath, [entry, ...filtered], {
         stdio: "inherit",
         env: { ...process.env, MINICODE_PLAN: "0" },
       })
-      child.on("exit", (code: number | null) => process.exit(code ?? 0))
+      // Tunggu via mekanisme tunggal (exit+close+error): exit saja bisa tak
+      // datang bila anak menahan stdio = induk gantung tanpa prompt.
+      void waitChildExit(child).then((code) => process.exit(code ?? 0))
       process.stdin.resume()
     } else {
       process.exit(0)

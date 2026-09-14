@@ -69,11 +69,11 @@ export function formatLines(
 export const readFileTool: Tool = {
   name: "read_file",
   description:
-    "Read a text file in the workspace, with line numbers. Use offset/limit to read large files in chunks (default: first 2000 lines).",
+    "Read a text file in the workspace with line numbers. Output is N: <line> and a footer telling the next offset. Large files MUST be read in chunks via offset/limit (max 2MB per file, 5000 lines per call, 2000 chars per line). Prefer this over `cat` in bash. Cannot read outside the workspace, secrets, or node_modules.",
   parameters: {
     type: "object",
     properties: {
-      path: { type: "string", description: "path relatif" },
+      path: { type: "string", description: "path relative to the workspace (e.g. src/a.ts)" },
       offset: { type: "number", description: "starting line (1-indexed, default 1)" },
       limit: { type: "number", description: "number of lines (default 2000, max 5000)" },
     },

@@ -83,7 +83,10 @@ export async function handleConfig(
       process.exit(1)
     }
     const entry = await detectAndSave(baseUrl, apiKey, id, {
-      global: args.includes("--global"),
+      // Default GLOBAL seperti remove/set-key: menulis provider+key ke
+      // .minicode/ repo diam-diam rawan ikut ter-commit plaintext.
+      // Eksplisit --local bila memang mau per-repo.
+      global: !args.includes("--local"),
       cwd: getArg("--cwd"),
     })
     console.log(

@@ -1,6 +1,6 @@
 import { existsSync, statSync } from "node:fs"
 import { resolve } from "node:path"
-import { GLOBAL, loadConfig } from "../../src/config.ts"
+import { globalConfigPath, loadConfig } from "../../src/config.ts"
 import { getMemoryStats } from "../../src/memory/vector.ts"
 import { inspectBashCommand } from "../../src/policy/bash-guard.ts"
 import { isPathOutsideRoot, isSensitive } from "../../src/policy/jail.ts"
@@ -79,7 +79,7 @@ export async function buildDoctorReport(cwd?: string): Promise<DoctorReport> {
       osSandbox === "none" && !docker
         ? "no OS/docker sandbox: default permission falls back to allowlist"
         : "sandbox available",
-    configGlobal: existsSync(GLOBAL),
+    configGlobal: existsSync(globalConfigPath()),
     configLocal: existsSync(resolve(cwd ?? ".", ".minicode", "config.json")),
     hardening: { bashGuard, jail, scrub, perms },
   }

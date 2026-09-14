@@ -129,31 +129,80 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
 
     let busy = false
     let done = false
+    // Bun Windows: raw-mode yang ditahan tanpa input rawan digenggam selamanya
+    // (lihat idleTimer 90 dtk di picker.ts — segfault setelah 133 dtk idle).
+    // Manager ini sebelumnya TANPA idleTimer: bila stdin 'data' tak pernah
+    // datang (ConPTY macet/fokus hilang/busy bocor), Promise tak pernah settle
+    // dan raw-mode dipegang selamanya = "masuk list model macet". Samakan
+    // dengan picker: idle 90 dtk = batal otomatis.
+    let idleTimer: ReturnType<typeof setTimeout> | undefined
+    const clearIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = undefined
+    }
+    // Didefinisikan di bawah (function hoisting via let) — dipanggil finish.
+    let resetIdle: () => void = () => {}
 
     const suspend = () => {
+      clearIdle()
       prevRows = clearTransientOverlay(prevRows)
       process.stdout.write("\x1b[0m\x1b[?25h")
       // TIDAK menulis \r\n — clearTransientOverlay sudah kembali ke anchor.
-      process.stdin.setRawMode(false)
-      process.stdin.pause()
-      process.stdin.removeListener("data", onData)
-      process.stdout.removeListener("resize", onResize)
+      // TANPA pause — stdin mengalir seumur proses (lihat cleanup askLine).
+      try {
+        process.stdin.setRawMode(false)
+      } catch {}
+      try {
+        process.stdin.removeListener("data", onData)
+      } catch {}
+      try {
+        process.stdout.removeListener("resize", onResize)
+      } catch {}
     }
 
     const resume = () => {
+      if (done) return
       process.stdin.setMaxListeners(0)
-      process.stdin.setRawMode(true)
+      try {
+        process.stdin.setRawMode(true)
+      } catch {
+        // Raw-mode gagal (ConPTY Windows) = tak bisa baca tombol; lebih baik
+        // tutup jujur daripada gantung dengan layar mati.
+        finish()
+        return
+      }
       process.stdin.resume()
       process.stdin.on("data", onData)
       process.stdout.on("resize", onResize)
       render()
+      resetIdle()
     }
 
     const finish = () => {
       if (done) return
       done = true
-      suspend()
-      resolve()
+      clearIdle()
+      // suspend() tak boleh menggagalkan resolve: setRawMode bisa melempar
+      // di Windows bila handle sudah rusak — tanpa try/finally Promise gantung
+      // selamanya (resolve tak tercapai).
+      try {
+        suspend()
+      } catch {
+      } finally {
+        resolve()
+      }
+    }
+
+    resetIdle = () => {
+      if (done) return
+      clearIdle()
+      idleTimer = setTimeout(() => {
+        finish()
+      }, 90_000)
+      // Jangan tahan process hidup hanya karena timer ini.
+      try {
+        ;(idleTimer as unknown as { unref?: () => void }).unref?.()
+      } catch {}
     }
 
     const runAction = (fn: () => Promise<void>) =>
@@ -238,12 +287,19 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
       const options = opts.getEfforts?.(modelId) ?? ["default", "low", "medium", "high"]
       if (options.length <= 1) return Promise.resolve("skip")
       return new Promise<string | null>((resolvePick) => {
-        void runPicker({
-          title: "Thinking effort",
-          items: options.map((name) => ({ name, provider: "", value: name })),
-          onPick: (v) => resolvePick(v),
-          onCancel: () => resolvePick(null),
-        })
+        // Fail-closed: runPicker non-TTY kini memanggil onCancel, tapi bila
+        // runPicker melempar/menolak sebelum itu, resolve null agar busy tak
+        // bocor true selamanya (= manager terkunci, terlihat hang).
+        try {
+          void runPicker({
+            title: "Thinking effort",
+            items: options.map((name) => ({ name, provider: "", value: name })),
+            onPick: (v) => resolvePick(v),
+            onCancel: () => resolvePick(null),
+          }).catch(() => resolvePick(null))
+        } catch {
+          resolvePick(null)
+        }
       }).then((picked) =>
         picked && ["default", "low", "medium", "high"].includes(picked)
           ? (picked as "default" | "low" | "medium" | "high")
@@ -254,6 +310,8 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
     const decoder: DecoderState = createDecoderState()
     const onData = (chunk: Buffer) => {
       if (busy) return
+      if (done) return
+      resetIdle()
       try {
         for (const item of decodeKeysStream(chunk, decoder)) {
           // Mode cari: semua ketikan masuk ke query, Esc keluar dari mode
@@ -367,6 +425,7 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
       process.stdin.setMaxListeners(0)
       process.stdin.on("data", onData)
       process.stdout.on("resize", onResize)
+      resetIdle()
       render()
     } catch {
       finish()

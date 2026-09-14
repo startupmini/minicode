@@ -402,6 +402,98 @@ test("jail argumen: git paths, lsp file, bash cwd di luar root ditolak", async (
   }
 })
 
+// ── Kunci .minicode/** penuh (audit #13): daftar-nama terbukti rapuh ──
+// Kasus nyata: `write_file .minicode/test-write.txt` lolos karena namanya
+// tak terdaftar. Kini segmen .minicode/ apa pun ditolak untuk tool tulis.
+
+test("allow-all menolak tulis/edit/hapus ke .minicode/<apa-pun>", async () => {
+  const root = tmpRoot()
+  try {
+    expect(await check("allow-all", root, "write_file", { path: ".minicode/notes.md" })).toBe(
+      "deny",
+    )
+    expect(await check("allow-all", root, "write_file", { path: ".minicode/.trash/x" })).toBe(
+      "deny",
+    )
+    expect(await check("allow-all", root, "edit", { path: ".minicode/custom.json" })).toBe("deny")
+    expect(await check("allow-all", root, "delete_file", { path: ".minicode/notes.md" })).toBe(
+      "deny",
+    )
+    // BACA tetap boleh (observability) — yang dikunci hanya tulis.
+    expect(await check("allow-all", root, "read_file", { path: ".minicode/notes.md" })).toBe(
+      "allow",
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("move restore dari .trash ke workspace lolos; selain itu dua arah deny", async () => {
+  const root = tmpRoot()
+  try {
+    // Restore sah: bukan deny (allow-all → allow; mode lain ikut mode check).
+    expect(
+      await check("allow-all", root, "move_file", {
+        from: join(".minicode", ".trash", "a.txt"),
+        to: "docs/a.txt",
+      }),
+    ).toBe("allow")
+    // Menanam ke state: deny.
+    expect(
+      await check("allow-all", root, "move_file", { from: "docs/a.txt", to: ".minicode/x.txt" }),
+    ).toBe("deny")
+    // Menggeser state keluar (sebar bukti): deny.
+    expect(
+      await check("allow-all", root, "move_file", {
+        from: join(".minicode", "sessions.db"),
+        to: "docs/s.db",
+      }),
+    ).toBe("deny")
+    // Trash ke trash = tetap state: deny (hanya keluar workspace yang sah).
+    expect(
+      await check("allow-all", root, "move_file", {
+        from: join(".minicode", ".trash", "a.txt"),
+        to: join(".minicode", "b.txt"),
+      }),
+    ).toBe("deny")
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("allow-all menolak hive kredensial Windows (kasus sesi nyata)", async () => {
+  const root = tmpRoot()
+  try {
+    const hive = (...segs: string[]) => join(root, ...segs)
+    expect(
+      await check("allow-all", root, "read_file", {
+        path: hive("Windows", "System32", "config", "SAM"),
+      }),
+    ).toBe("deny")
+    expect(
+      await check("allow-all", root, "read_file", {
+        path: hive("windows", "system32", "config", "system"),
+      }),
+    ).toBe("deny")
+    expect(await check("allow-all", root, "read_file", { path: hive("x", "ntds.dit") })).toBe(
+      "deny",
+    )
+    expect(
+      await check("allow-all", root, "write_file", {
+        path: hive("Windows", "System32", "config", "SECURITY"),
+      }),
+    ).toBe("deny")
+    // Negatif: kata mirip tanpa induk config/ + file biasa tetap lolos jail
+    // (deny lain dari mode tak dihitung — allow-all = allow bila jail lolos).
+    expect(await check("allow-all", root, "read_file", { path: "docs/system.txt" })).toBe("allow")
+    expect(await check("allow-all", root, "read_file", { path: "docs/ntds-notes.md" })).toBe(
+      "allow",
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 // ── konsistensi list-vs-enforcement: yang terlihat harus boleh ──
 
 test("EXPLORE list vs READONLY permission: over-hiding terdokumentasi", async () => {

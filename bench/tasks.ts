@@ -89,9 +89,12 @@ export const BENCH_TASKS: BenchTask[] = [
       return dir
     },
     // Sengaja TAK menyebut nama fungsinya: satu-satunya jalan tahu adalah
-    // fakta seedMemory di bawah (dibaca via RAG bila memory on).
+    // fakta seedMemory di bawah (dibaca via RAG bila memory on). Dulu prompt
+    // menyebut `f(name: string)` yang MENGANGKER nama `f` dan bertabrakan
+    // dengan konvensi `salam` — diferensial memory jadi tak terukur (model
+    // ikut prompt, bukan memori). Prompt kini netral terhadap nama.
     prompt:
-      "Create the standard project greeting function `f(name: string): string` in greet.ts. Use write_file. Write the full file.",
+      "Create the standard project greeting function in greet.ts. Use write_file. Write the full file.",
     seedMemory:
       "Project convention: the standard greeting function MUST be named `salam` (never `greet`, `hello`, or `hi`).",
     async verify(dir) {

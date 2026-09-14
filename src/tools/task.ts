@@ -97,15 +97,16 @@ async function getProvider() {
 export const delegateTaskTool: Tool = {
   name: "delegate_task",
   description:
-    "Delegate sub-task ke agen isolasi (explore/plan). Prompt ringkas, return summary. Isolasi ContextStore, memory, signal, dan budget.",
+    "Delegate a sub-task to an isolated sub-agent (read-only explore, or plan for small parallel work). Returns a summary (max 2000 chars). Use for independent research or small contained work to save context — the parent task stays your job. Sub-agents cannot write memory, todos, or commit. Requires interactive approval in gate mode.",
   parameters: {
     type: "object",
     properties: {
-      prompt: { type: "string", description: "instructions for the sub-agent" },
+      prompt: { type: "string", description: "concise instructions for the sub-agent" },
       mode: {
         type: "string",
         enum: ["explore", "plan"],
-        description: "explore=read-only, plan=read+write",
+        description:
+          "explore=read-only search/reason; plan=read-only plus small read+write work (in parent plan/readonly, always forced to explore)",
       },
       maxSteps: {
         type: "number",

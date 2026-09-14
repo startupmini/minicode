@@ -30,6 +30,8 @@ Set terkait: `INTERNAL_WRITE_TOOLS` 6, `FILE_WRITE_TOOLS` 5, `GATED_TOOLS` 6 + `
 | `node --eval "1"` | ditolak |
 | `env`, `set`, `export -p` | ditolak |
 | `curl -F file=@~/.ssh/id_rsa` | ditolak |
+| `type ..\..\windows\system32\config\sam`, `Get-Content .../ntds.dit` | ditolak (hive Windows + `reg save|export` hive + `vssadmin create|delete shadow` + `ntdsutil`; `reg query`, `vssadmin list`, `system.txt` biasa tetap lolos) |
+| `write_file .minicode/<apa-pun>` | ditolak fail-closed (kunci penuh segmen `.minicode/`; kecuali restore `.trash/` → workspace dan skrip `.minicode/hooks/`) |
 | `bash <(curl x)` | ditolak |
 | `rm -rf ..`, `rm --recursive --force /`, `rm -rf /; :` | ditolak |
 | `command env`, `nice env`, `exec 'env'` (wrapper geser posisi kata) | ditolak via `stripCommandWrappers` (14 wrapper, 4 lapis) |
@@ -62,7 +64,7 @@ Hasil: **0 bypass / 0 over-block**. Fuzz menemukan 3 kelas yang korpus manual le
 
 ## Lapisan lain
 
-- **Path jail** realpath-based + symlink `realpath` di permission layer; `.env`/`.git/config`/`node_modules` deny; TOCTOU `O_NOFOLLOW` (`src/lib/safe-open.ts`: `resolveSafePath` untuk penulis, `safeOpenRead` untuk pembaca; POSIX-only, Windows pre-check).
+- **Path jail** realpath-based + symlink `realpath` di permission layer; `.env`/`.git/config`/`node_modules`/hive Windows deny; `.minicode/` terkunci penuh untuk tool tulis (kecuali restore `.trash/`); TOCTOU `O_NOFOLLOW` (`src/lib/safe-open.ts`: `resolveSafePath` untuk penulis, `safeOpenRead` untuk pembaca; POSIX-only, Windows pre-check).
 - **Env scrub** `sanitizeSpawnEnv`: strip kata-kunci kredensial dari merge final; `GITHUB_WORKSPACE`/`REDIS_HOST`/`AWS_REGION` tetap ada, `GITHUB_TOKEN`/`AWS_SECRET_ACCESS_KEY`/`DATABASE_URL` tetap di-strip.
 - **web_fetch/web_search**: redirect manual 5 hop + DNS pinning 30 dtk + body 2 MB.
 - **Secret scrubber**: `sk-`, `ghp_`, `AKIA`, PEM, JWT, Bearer, `api_key=...` di-redact sebelum ke LLM (read_file/bash/grep) — tanpa whitelist kata.

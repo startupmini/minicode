@@ -185,6 +185,9 @@ describe("collapse: answer section", () => {
     detach()
     expect(err()).toContain("+ answer (")
     expect(err()).toContain("chars)")
+    // Baris minimize wajib memberi tahu cara membuka — tanpa ini jawaban
+    // yang dikecilkan terlihat "bisu" (tak ada off-switch yang bisa ditemukan).
+    expect(err()).toContain("/expand to read")
     const buf = getBufferedSections()
     const ans = buf.find((s) => s.label === "answer")
     expect(ans?.stream).toBe("stdout")

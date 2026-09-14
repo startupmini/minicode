@@ -26,6 +26,11 @@ export const LIMITS = {
   COMPACTION_SUMMARY_MAX_CHARS: 1_500,
   COMPACTION_LLM_TIMEOUT_MS: 10_000,
   EMBEDDING_TIMEOUT_MS: 3_500,
+  /** Budget TOTAL semua attempt embedding (3 header × 2 URL sekuensial):
+   * tanpa ini endpoint lambat-menjawab menahan RAG setup ~21 dtk (6×3,5 dtk
+   * + DNS per attempt) dengan spinner "Menyiapkan sesi…" yang diam = macet.
+   * Lewat budget = fallback keyword, bukan hang. */
+  EMBEDDING_TOTAL_TIMEOUT_MS: 10_000,
   VECTOR_SEARCH_LIMIT: 500,
   VECTOR_RECENT_LIMIT: 300,
   VECTOR_KEYWORD_LIMIT: 200,

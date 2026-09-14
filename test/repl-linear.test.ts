@@ -600,6 +600,43 @@ describe("REPL linier: did-you-mean & thinking", () => {
     await expect(p).rejects.toBeInstanceOf(ExitSentinel)
   })
 
+  test("default REPL: jawaban expanded, tool minimize", async () => {
+    tty = installFakeTty()
+    const h = makeHarness()
+    const p = start(h)
+    await waitForPrompt()
+    // Kode lama memaksa keduanya "1" saat start (REPL "bisu").
+    expect(process.env.MINICODE_MINIMIZE_TOOL).toBe("1")
+    expect(process.env.MINICODE_MINIMIZE_ANSWER).toBeUndefined()
+    await typeLine("/exit")
+    await expect(p).rejects.toBeInstanceOf(ExitSentinel)
+  })
+
+  test("/minimize toggle dua arah + on|off eksplisit", async () => {
+    tty = installFakeTty()
+    const h = makeHarness()
+    const p = start(h)
+    await waitForPrompt()
+    // Awal: tool=min, answer=exp → bare = minimize keduanya.
+    await typeLine("/minimize")
+    expect(visible(tty)).toContain("sections: minimized")
+    expect(process.env.MINICODE_MINIMIZE_ANSWER).toBe("1")
+    // Keduanya min → bare = expand keduanya (kode lama: tetap minimized).
+    await typeLine("/minimize")
+    expect(visible(tty)).toContain("sections: expanded")
+    expect(process.env.MINICODE_MINIMIZE_TOOL).toBe("0")
+    expect(process.env.MINICODE_MINIMIZE_ANSWER).toBe("0")
+    await typeLine("/minimize off")
+    expect(visible(tty)).toContain("sections: expanded")
+    await typeLine("/minimize on")
+    expect(visible(tty)).toContain("sections: minimized")
+    expect(process.env.MINICODE_MINIMIZE_TOOL).toBe("1")
+    await typeLine("/minimize bogus")
+    expect(visible(tty)).toContain("usage: /minimize")
+    await typeLine("/exit")
+    await expect(p).rejects.toBeInstanceOf(ExitSentinel)
+  })
+
   test("slash sendirian membuka /help, bukan unknown command", async () => {
     tty = installFakeTty()
     const h = makeHarness()

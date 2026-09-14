@@ -207,13 +207,13 @@ function runRipgrep(
 export const grepTool: Tool = {
   name: "grep",
   description:
-    "Search a regex across files (uses ripgrep when available, falls back to an internal walker). Returns file:line: content.",
+    "Search a regex across files. Returns file:line: content, capped (100/500 matches) with a refine hint. Skips .git, node_modules, and dotfiles; does not follow symlinks. Use for locating symbols or patterns before reading files.",
   parameters: {
     type: "object",
     properties: {
-      pattern: { type: "string", description: "regex, mis log.*Error" },
-      cwd: { type: "string", description: "root dir default '.'" },
-      include: { type: "string", description: "filter file glob, mis *.ts" },
+      pattern: { type: "string", description: "regex pattern (e.g. log.*Error)" },
+      cwd: { type: "string", description: "root directory (default: workspace root)" },
+      include: { type: "string", description: "file glob filter (e.g. *.ts)" },
       limit: { type: "number" },
     },
     required: ["pattern"],

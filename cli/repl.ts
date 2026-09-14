@@ -33,6 +33,7 @@ import {
   collapse,
   getBufferedSections,
   resetBufferedSections,
+  sectionMinimized,
   setSectionMinimized,
 } from "../src/ui/render/collapse.ts"
 import { setCompactMode } from "../src/ui/render/detail.ts"
@@ -143,13 +144,12 @@ export async function runRepl(ctx: CliSession): Promise<void> {
   // /compact atau Ctrl+O. Env eksplisit selalu menang; one-shot/exec/CI tak
   // tersentuh (tetap expanded). Lihat detail.compact.
   if (process.env.MINICODE_COMPACT === undefined) setCompactMode(true)
-  // Section collapse default MINIMIZE: thinking/bash/edit/content jadi satu
-  // baris `  + label`, isi di-buffer. `+`/`-` saat turn atau /expand membuka.
+  // Section collapse default MINIMIZE untuk tool: bash/edit/content jadi
+  // satu baris `  + label`, isi di-buffer. `+`/`-` saat turn atau /expand
+  // membuka. Jawaban model SENGAJA default expanded (streaming penuh) —
+  // minimize-default membuatnya "bisu" tanpa off-switch; yang mau rapi
+  // tinggal /minimize. Env eksplisit selalu menang untuk keduanya.
   if (process.env.MINICODE_MINIMIZE_TOOL === undefined) setSectionMinimized("tool", true)
-  // Jawaban model juga default minimize (satu baris `  + answer (N chars)`,
-  // isi lengkap di-buffer untuk /expand). Pipa/CI tak tersentuh: guard TTY
-  // di renderer memaksa stream saat stdout bukan TTY.
-  if (process.env.MINICODE_MINIMIZE_ANSWER === undefined) setSectionMinimized("answer", true)
   let nullStreak = 0
   let warned80 = false
   // Non-null selama turn berjalan — target abort SIGINT/Ctrl+C.
@@ -242,13 +242,14 @@ export async function runRepl(ctx: CliSession): Promise<void> {
   async function respawnWithResume(id: string): Promise<void> {
     await close()
     const { spawn } = await import("node:child_process")
+    const { waitChildExit } = await import("./auto-update.ts")
     const entry = resolvePath(import.meta.dir, "index.ts")
     const child = spawn(
       process.execPath,
       [entry, `--resume=${id}`, ...(cwd ? [`--cwd=${cwd}`] : [])],
       { stdio: "inherit", env: { ...process.env, MINICODE_RESUME_NEW: "1" } },
     )
-    child.on("exit", (code) => process.exit(code ?? 0))
+    void waitChildExit(child).then((code) => process.exit(code ?? 0))
   }
 
   // `/sessions` tanpa argumen: builtin mencetak daftar bernomor, lalu satu
@@ -372,7 +373,8 @@ export async function runRepl(ctx: CliSession): Promise<void> {
       }
     } finally {
       process.stdin.removeListener("data", onBusyKey)
-      process.stdin.pause()
+      // Tanpa pause — stdin mengalir seumur proses (lihat cleanup askLine);
+      // pause→resume berulang mematikan 'data' selamanya di Bun Windows.
       if (ttyStdin) {
         try {
           process.stdin.setRawMode(false)
@@ -457,9 +459,27 @@ export async function runRepl(ctx: CliSession): Promise<void> {
         return false
       }
       if (name === "minimize") {
-        setSectionMinimized("tool", true)
-        setSectionMinimized("answer", true)
-        console.log(c.muted("sections: minimized (press + / - during the turn to expand/collapse)"))
+        // Saklar tunggal "rapi ⇄ penuh" seperti /compact dan /thinking:
+        // bare = flip (keduanya minimize → expand keduanya; selain itu →
+        // minimize keduanya); on|1 / off|0 = set eksplisit keduanya.
+        const arg = args.trim().toLowerCase()
+        let next: boolean | undefined
+        if (arg === "") next = !(sectionMinimized("tool") && sectionMinimized("answer"))
+        else if (arg === "on" || arg === "1") next = true
+        else if (arg === "off" || arg === "0") next = false
+        else {
+          console.log(c.muted("usage: /minimize [on|off]"))
+          return false
+        }
+        setSectionMinimized("tool", next)
+        setSectionMinimized("answer", next)
+        console.log(
+          c.muted(
+            next
+              ? "sections: minimized (press + / - during the turn to expand/collapse)"
+              : "sections: expanded",
+          ),
+        )
         return false
       }
       if (name === "undo") {
@@ -584,7 +604,11 @@ export async function runRepl(ctx: CliSession): Promise<void> {
       let line: string | null
       try {
         const usePrompt = pending ? contPrompt : promptPrefix
-        line = await askLine({ prompt: usePrompt, hints: suggestions, groupOf, onKey })
+        // idleMs mati DI SINI saja: prompt utama adalah home state proses —
+        // null dihitung Ctrl+C (2x = exit), sehingga auto-batal akan
+        // mengeluarkan user yang diam. Dialog transient (approval, add/edit,
+        // wizard) tetap pakai default 90 dtk.
+        line = await askLine({ prompt: usePrompt, hints: suggestions, groupOf, onKey, idleMs: 0 })
       } catch (e) {
         console.log(`${c.red(glyphs.cross)} ${formatError(e)}`)
         continue

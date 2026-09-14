@@ -30,10 +30,12 @@
    | `echo x > ..\evil` (redirect keluar workspace) | allowlist `echo *` + guard tanpa aturan redirect | ditolak via `findRedirectTargets` (target di-resolve ke cwd; heredoc/fd/`/dev/null` dikecualikan) |
    | `echo x > "%TEMP%\evil"` (redirect + ekspansi env) | cek statis melihat literal `%TEMP%\…` di dalam cwd; cmd.exe mengekspansi SETELAH cek | ditolak: target berpola `%NAMA%` tak bisa dipastikan aman (red-team eksternal). `%` tunggal (`100%.txt`) tetap lolos |
    | `py -c …`, `python3.14 -c …` (launcher/versi) | regex hanya kenal `python|python2|python3|pypy` | ditolak via `pyw?|python[\d.]*|pypy[\d.]*` |
+   | `type ..\..\..\windows\system32\config\sam` (baca hive SAM) | pola kredensial POSIX-sentris (`/etc/shadow` dkk, tanpa padanan Windows) | ditolak: `system32\config\(sam|system|security|software|default)` + `ntds.dit` (anchor segmen, case-insensitive); `reg save|export` hive + `vssadmin create|delete shadow` + `ntdsutil` ditolak eksplisit (`reg query`, `vssadmin list`, `system.txt` biasa tetap lolos) |
+   | `write_file .minicode/test-write.txt` (state via nama tak terdaftar) | jail `.minicode/` berbasis daftar-nama | ditolak: kunci penuh segmen `.minicode/` untuk tool tulis (satu-satunya pengecualian: restore `.minicode/.trash/` → workspace) |
    | baca via hardlink ke luar workspace | `realpath` tak melihat hardlink (semua nama setara) | ditolak bila `nlink > 1` pada handle yang dibuka (fstat, bebas race). Tulis aman by-design (atomic replace memutus hardlink) |
 
 2. **Allowlist** (`--allowlist`, dan default bila tanpa sandbox OS): hanya bentuk read/build — `git status/diff/log/branch/show`, `bun test/run/x tsc`, `npm run/exec`, `npx`, `ls cat head tail wc grep rg find which echo pwd`. Tulis via shell ditahan; pakai `write_file`/`edit` yang ter-jail. `npm exec`/`npx`/`bun run`/`bun x` tak boleh ekspansi shell/redirection.
-3. **Path jail** realpath-based + symlink check + TOCTOU `O_NOFOLLOW`; `.env`/`.git/config`/`node_modules` deny; berlaku bahkan `--allow-all`.
+3. **Path jail** realpath-based + symlink check + TOCTOU `O_NOFOLLOW`; `.env`/`.git/config`/`node_modules`/hive Windows (`system32\config\sam|system|security|software`, `ntds.dit`) deny; berlaku bahkan `--allow-all`.
 4. **Env scrub** `sanitizeSpawnEnv`: strip kata-kunci kredensial dari merge final. `GITHUB_WORKSPACE`/`GITHUB_REF`/`GOOGLE_CHROME_PATH`/`REDIS_HOST`/`AWS_REGION` **tetap ada** (pernah terhapus dan memecahkan build CI), sementara `GITHUB_TOKEN`/`AWS_SECRET_ACCESS_KEY`/`DATABASE_URL` di-strip. Bila non-rahasia ikut hilang, itu bug — laporkan nama variabelnya.
 5. **web_fetch/web_search**: redirect manual ≤5 hop + DNS pinning 30 dtk + body cap 2 MB. Host privat ditolak (sama untuk MCP HTTP).
 
@@ -60,9 +62,12 @@ provider model pihak ketiga.
 - `sessions.db` + jurnal: transkrip sesi tersimpan plaintext di workspace
   (terbaca agen mana pun di workspace itu). Jurnal 0-byte = sesi terpasang
   yang belum bermutasi (by-design, bukan korupsi).
-- State milik runtime (`sessions.db`, `todos/`, `plans/`, `checkpoints/`,
-  `journal-*.jsonl`, `allowlist.json`, `config.json`, `turn.active.json`):
-  tulis via file tools ditolak; baca tetap boleh (observability).
+- State milik runtime (`.minicode/` — DB, todos, plans, checkpoints, jurnal,
+  traces, allowlist, config, + file APAPUN lain di bawahnya): tulis via file
+  tools ditolak fail-closed (pengecualian: restore `.minicode/.trash/` →
+  workspace dan skrip hooks `.minicode/hooks/` — eksekusi hook tetap butuh
+  registrasi allowlist yang terkunci); baca tetap boleh (observability). Tulis
+  catatan sendiri ke workspace, bukan ke `.minicode/`.
 
 ## Config lokal & supply chain
 

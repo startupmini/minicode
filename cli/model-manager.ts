@@ -3,7 +3,7 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import {
-  GLOBAL,
+  globalConfigPath,
   LOCAL,
   loadConfig,
   type MinicodeConfig,
@@ -50,7 +50,7 @@ export async function runModelManager(opts: {
     id: string,
     mutate: (p: ProviderEntry) => void,
   ): Promise<void> => {
-    const paths = opts.cwd ? [resolve(opts.cwd, LOCAL), GLOBAL] : [GLOBAL]
+    const paths = opts.cwd ? [resolve(opts.cwd, LOCAL), globalConfigPath()] : [globalConfigPath()]
     let touched = false
     for (const path of paths) {
       let cfg: MinicodeConfig

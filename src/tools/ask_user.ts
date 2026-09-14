@@ -23,11 +23,11 @@ export const askUserTool: Tool = {
   parameters: {
     type: "object",
     properties: {
-      question: { type: "string", description: "pertanyaan tunggal yang jelas" },
+      question: { type: "string", description: "single, clear question (max 2000 chars)" },
       options: {
         type: "array",
         items: { type: "string" },
-        description: "pilihan yang disarankan (boleh kosong)",
+        description: "suggested choices (may be empty); empty answer cancels",
       },
     },
     required: ["question"],

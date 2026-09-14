@@ -5,7 +5,7 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import {
-  GLOBAL,
+  globalConfigPath,
   LOCAL,
   loadConfig,
   type MinicodeConfig,
@@ -15,8 +15,20 @@ import {
   writeConfigAtomic,
 } from "../config.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
-import { clearDetectCache, detectModels } from "./detect.ts"
+import { getSecret } from "../lib/keystore.ts"
+import { clearDetectCache, type DetectResult, detectModels } from "./detect.ts"
 import { GATEWAY_PRESETS } from "./presets.ts"
+
+/**
+ * Selesaikan apiKey untuk deteksi model: referensi `keystore:<nama>` menjadi
+ * secret OS, sisanya lewat apa adanya. Return null bila entri keystore
+ * hilang/tak terbaca — pemanggil harus mencatat failed yang actionable,
+ * JANGAN mengirim literal "keystore:..." sebagai Bearer (401 diam-diam).
+ */
+export async function resolveDetectApiKey(apiKey: string): Promise<string | null> {
+  if (!apiKey.startsWith("keystore:")) return apiKey
+  return getSecret(apiKey.slice("keystore:".length)).catch(() => null)
+}
 
 export async function saveProvider(
   entry: ProviderEntry,
@@ -28,7 +40,8 @@ export async function saveProvider(
     throw new Error("provider id/baseUrl/apiKey required")
   // A provider may temporarily have no models: `/model` can remove the last
   // entry before `/sync` discovers a new one.
-  const path = (opts.global ?? true) ? GLOBAL : resolve(opts.cwd ?? process.cwd(), LOCAL)
+  const path =
+    (opts.global ?? true) ? globalConfigPath() : resolve(opts.cwd ?? process.cwd(), LOCAL)
   // Kunci per-path SAMA dengan saveMcpServer/saveLspServer (audit #07):
   // tanpa ini baca-modifikasi-tulis paralel last-wins dan menelan entri.
   return withConfigLock(path, async () => {
@@ -93,12 +106,21 @@ export async function detectAndSave(
   opts: { global?: boolean; cwd?: string; fallbackModels?: string[]; allowLocal?: boolean } = {},
 ): Promise<ProviderEntry> {
   // Fallback model dipakai bila provider tidak punya endpoint GET /models
-  // (mis. Anthropic) atau deteksi gagal — agar wizard tetap berhasil.
-  let detected: { models: string[]; providerHint: "openai" | "anthropic" | "responses" | "unknown" }
+  // (mis. Anthropic) atau deteksi gagal karena JARINGAN — agar wizard tetap
+  // berhasil. Key SALAH (401/403) bukan alasan fallback: menyimpannya dengan
+  // daftar palsu membuat auth gagal baru ketahuan saat inferensi.
+  // Cache 30 menit juga dibuang dulu: retry add dengan key terkoreksi harus
+  // re-fetch, bukan menyajikan daftar basi dari percobaan sebelumnya.
+  clearDetectCache()
+  let detected: DetectResult
   try {
     detected = await detectModels(baseUrl, apiKey)
-    if (detected.models.length === 0 && opts.fallbackModels?.length) {
-      detected = { models: opts.fallbackModels, providerHint: detected.providerHint }
+    if (detected.models.length === 0 && !detected.authFailed && opts.fallbackModels?.length) {
+      detected = {
+        models: opts.fallbackModels,
+        providerHint: detected.providerHint,
+        authFailed: false,
+      }
     }
   } catch (e) {
     if (!opts.fallbackModels) throw e
@@ -110,7 +132,16 @@ export async function detectAndSave(
     detected = {
       models: opts.fallbackModels,
       providerHint: hint as "openai" | "anthropic" | "responses" | "unknown",
+      authFailed: false,
     }
+  }
+  // Key ditolak server (401/403): gagal keras dengan pesan actionable.
+  // Menyimpan dengan fallback di sini = "Saved (3 models)" palsu yang baru
+  // ketahuan saat inferensi — temuan audit yang sedang diperbaiki.
+  if (detected.models.length === 0 && detected.authFailed) {
+    throw new Error(
+      `unauthorized: ${baseUrl} menolak API key (401/403) — periksa key, provider tidak disimpan`,
+    )
   }
   // dedup id: id ramah via preset/slug, tanpa hash acak (lihat deriveProviderId)
   const prevCfg = await loadConfig(opts.cwd, { allowLocal: opts.allowLocal })
@@ -132,7 +163,8 @@ export async function detectAndSave(
 }
 
 export async function removeProvider(id: string, opts: { global?: boolean; cwd?: string } = {}) {
-  const path = (opts.global ?? true) ? GLOBAL : resolve(opts.cwd ?? process.cwd(), LOCAL)
+  const path =
+    (opts.global ?? true) ? globalConfigPath() : resolve(opts.cwd ?? process.cwd(), LOCAL)
   return withConfigLock(path, async () => {
     let cfg: MinicodeConfig = { providers: [] }
     try {
@@ -163,7 +195,8 @@ export interface SyncResult {
   /** Provider yang gagal total (network/timeout) — bedakan dari "tak ada
    * perubahan" agar /sync jujur. Catatan: 401/403 dari /models ditelan
    * detectModels sebagai "kosong" (Anthropic memang tak punya endpoint itu),
-   * jadi daftar ini hanya untuk kegagalan transport, bukan vonis auth. */
+   * jadi daftar ini hanya untuk kegagalan transport dan keystore yang hilang
+   * (keduanya butuh aksi operator), bukan vonis auth. */
   failed: { id: string; reason: string }[]
 }
 
@@ -178,7 +211,7 @@ export async function refreshProviderModels(
   const providers: ProviderEntry[] = merged.providers
   if (providers.length === 0 && (opts.global ?? true)) {
     // tidak ada provider di merge — coba file global secara eksplisit
-    const g = await readFile(GLOBAL, "utf8")
+    const g = await readFile(globalConfigPath(), "utf8")
       .then((raw) => normalizeConfig(JSON.parse(raw)).providers)
       .catch(() => [])
     providers.push(...g)
@@ -190,10 +223,29 @@ export async function refreshProviderModels(
   for (let i = 0; i < providers.length; i++) {
     const p = providers[i]!
     if (!p.apiKey || !p.baseUrl) continue
+    // Selesaikan referensi keystore SEBELUM deteksi (sama seperti
+    // buildProviderListAsync): tanpa ini literal "keystore:..." terkirim
+    // sebagai Bearer → 401 → [] → sync diam-diam no-op selamanya — tak masuk
+    // updated maupun failed, dan daftar model tak pernah tersinkron.
+    const apiKey = await resolveDetectApiKey(p.apiKey)
+    if (apiKey == null) {
+      failed.push({
+        id: p.id,
+        reason: `keystore entry missing/unreadable — run: minicode config set-key ${p.id}`.slice(
+          0,
+          120,
+        ),
+      })
+      continue
+    }
     try {
-      const detected = await detectModels(p.baseUrl, p.apiKey)
+      const detected = await detectModels(p.baseUrl, apiKey)
       if (detected.models.length) {
         updated.set(p.id, { ...p, models: detected.models, providerHint: detected.providerHint })
+      } else if (detected.authFailed) {
+        // Key ditolak (401/403): bedakan dari provider tanpa endpoint
+        // (Anthropic-style, tetap diam) — operator harus periksa key-nya.
+        failed.push({ id: p.id, reason: "unauthorized (401/403) — periksa API key" })
       }
     } catch (e) {
       // provider offline/timeout — catat, jangan diam. Daftar lama dibiarkan.
@@ -209,8 +261,8 @@ export async function refreshProviderModels(
   // tanpa flag tak boleh menghubungi endpoint repo tak dikenal).
   const paths = new Set<string>()
   const checkPaths = opts.allowLocal
-    ? [GLOBAL, resolve(opts.cwd ?? process.cwd(), LOCAL)]
-    : [GLOBAL]
+    ? [globalConfigPath(), resolve(opts.cwd ?? process.cwd(), LOCAL)]
+    : [globalConfigPath()]
   for (const p of checkPaths) {
     try {
       await readFile(p, "utf8")

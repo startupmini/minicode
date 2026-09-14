@@ -176,13 +176,16 @@ function startBackground(cmd: string, cwd: string | undefined): string {
 export const bashTool: Tool = {
   name: "bash",
   description:
-    "Run a shell command (timeout 30s). Set background:true for long-running processes (dev server, watcher), then collect output via bash_output. Prefer git_status/git_diff/git_log tools over raw `git` commands: raw git executes repository-configured hooks, filters and diff drivers.",
+    "Run a shell command (default timeout 30s, max output 20k chars, exit code prefixed). Set background:true for long-running processes (dev server, watcher), then collect output via bash_output and stop with bash_kill. Prefer git_status/git_diff/git_log tools over raw `git` commands: raw git executes repository-configured hooks, filters and diff drivers. Destructive, network-exfiltrating, env-dumping, and inline-interpreter commands are blocked. On Windows the shell is cmd.exe (use dir, echo %VAR%, type).",
   parameters: {
     type: "object",
     properties: {
-      cmd: { type: "string" },
-      cwd: { type: "string" },
-      timeoutMs: { type: "number" },
+      cmd: { type: "string", description: "command to run (shell: cmd.exe on Windows)" },
+      cwd: {
+        type: "string",
+        description: "working directory relative to the workspace (default: workspace root)",
+      },
+      timeoutMs: { type: "number", description: "timeout in ms (default 30000)" },
       background: {
         type: "boolean",
         description:

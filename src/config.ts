@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs"
 import { mkdir, readFile } from "node:fs/promises"
-import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import { atomicWriteText } from "./lib/atomic-write.ts"
 import { homeDir } from "./lib/db-path.ts"
@@ -79,7 +78,13 @@ export interface MinicodeConfig {
 
 // Diekspor agar lapisan provisioning (src/providers/provision.ts) membaca dan
 // menulis berkas config yang sama tanpa menduplikasi path/normalisasi.
-export const GLOBAL = join(homedir(), ".minicode", "config.json")
+// FUNGSI bukan const: path dibaca tiap panggil agar hormat MINICODE_HOME yang
+// diset belakangan (test hermetic, CI hermetic via env) — konsisten dengan
+// DB/secrets lewat homeDir(). Const beku-saat-import membuat override env
+// tak berpengaruh (dulu provider "bocor" ke home asli saat MINICODE_HOME set).
+export function globalConfigPath(): string {
+  return join(homeDir(), ".minicode", "config.json")
+}
 export const LOCAL = ".minicode/config.json"
 
 /** Path absolut config lokal untuk cwd — untuk status/doctor tanpa membacanya. */
@@ -144,11 +149,19 @@ export async function loadConfig(
   let globalCfg: MinicodeConfig = { providers: [] }
   let localCfg: MinicodeConfig = { providers: [] }
   try {
-    const raw = await readFile(GLOBAL, "utf8")
+    const raw = await readFile(globalConfigPath(), "utf8")
     globalCfg = normalizeConfig(JSON.parse(raw))
   } catch (e) {
-    const msg = e instanceof SyntaxError ? `invalid JSON in ${GLOBAL}: ${e.message}` : null
-    if (msg) process.stderr.write(`[config] ${msg}\n`)
+    // ENOENT (belum ada file) = mulai kosong, diam. Error LAIN (EACCES,
+    // EISDIR, …) dulu ditelan menjadi "no providers" sehingga user menambah
+    // duplikat tanpa tahu config globalnya tak terbaca — beri tahu.
+    const code = (e as NodeJS.ErrnoException)?.code
+    if (e instanceof SyntaxError)
+      process.stderr.write(`[config] invalid JSON in ${globalConfigPath()}: ${e.message}\n`)
+    else if (code !== "ENOENT")
+      process.stderr.write(
+        `[config] cannot read ${globalConfigPath()} (${code ?? "error"}) — starting empty\n`,
+      )
   }
   // Local `.minicode/config.json` adalah input repo tak terpercaya (audit #07
   // P0: mcpServers langsung di-spawn, baseUrl jahat menyedot prompt,
@@ -161,10 +174,17 @@ export async function loadConfig(
       const raw = await readFile(localPath, "utf8")
       localCfg = normalizeConfig(JSON.parse(raw))
     } catch (e) {
-      const isSyntax = e instanceof SyntaxError
-      if (isSyntax)
+      // Sama seperti global: SyntaxError selalu ribut; error baca non-ENOENT
+      // (EACCES/…) ribut juga — reset diam-diam membuat override lokal
+      // "hilang" tanpa jejak.
+      const code = (e as NodeJS.ErrnoException)?.code
+      if (e instanceof SyntaxError)
         process.stderr.write(
           `[config] invalid JSON in ${resolve(cwd, LOCAL)}: ${(e as Error).message}\n`,
+        )
+      else if (code !== "ENOENT")
+        process.stderr.write(
+          `[config] cannot read ${resolve(cwd, LOCAL)} (${code ?? "error"}) — ignoring local\n`,
         )
     }
   }
@@ -174,7 +194,11 @@ export async function loadConfig(
     for (const v of global) map.set(keyFn(v), v)
     for (const v of local) {
       const k = keyFn(v)
-      if (map.has(k)) map.delete(k)
+      // Override lokal MENGGANTI nilai di posisi global, bukan pindah ke
+      // akhir: JS Map.set pada key lama mempertahankan urutan. Dulu
+      // delete-then-set memindahkan provider ter-override ke ujung sehingga
+      // providers[0] (default model sesi) berganti diam-diam tiap ada
+      // override lokal ("default flip").
       map.set(k, v)
     }
     return [...map.values()]
@@ -228,7 +252,8 @@ export async function saveMcpServer(
 ) {
   if (!entry.id || (!entry.command && !entry.url))
     throw new Error("mcp entry needs an id + (command for stdio or url for http)")
-  const path = (opts.global ?? true) ? GLOBAL : resolve(opts.cwd ?? process.cwd(), LOCAL)
+  const path =
+    (opts.global ?? true) ? globalConfigPath() : resolve(opts.cwd ?? process.cwd(), LOCAL)
   return withConfigLock(path, async () => {
     let cfg: MinicodeConfig = { providers: [] }
     let raw = ""
@@ -260,7 +285,8 @@ export async function saveMcpServer(
 }
 
 export async function removeMcpServer(id: string, opts: { global?: boolean; cwd?: string } = {}) {
-  const path = (opts.global ?? true) ? GLOBAL : resolve(opts.cwd ?? process.cwd(), LOCAL)
+  const path =
+    (opts.global ?? true) ? globalConfigPath() : resolve(opts.cwd ?? process.cwd(), LOCAL)
   return withConfigLock(path, async () => {
     let cfg: MinicodeConfig = { providers: [] }
     let raw = ""
@@ -292,7 +318,8 @@ export async function saveLspServer(
   opts: { global?: boolean; cwd?: string } = {},
 ) {
   if (!entry.ext || !entry.command) throw new Error("lsp ext/command required")
-  const path = (opts.global ?? true) ? GLOBAL : resolve(opts.cwd ?? process.cwd(), LOCAL)
+  const path =
+    (opts.global ?? true) ? globalConfigPath() : resolve(opts.cwd ?? process.cwd(), LOCAL)
   return withConfigLock(path, async () => {
     let cfg: MinicodeConfig = { providers: [] }
     let raw = ""
@@ -320,7 +347,8 @@ export async function saveLspServer(
 }
 
 export async function removeLspServer(ext: string, opts: { global?: boolean; cwd?: string } = {}) {
-  const path = (opts.global ?? true) ? GLOBAL : resolve(opts.cwd ?? process.cwd(), LOCAL)
+  const path =
+    (opts.global ?? true) ? globalConfigPath() : resolve(opts.cwd ?? process.cwd(), LOCAL)
   return withConfigLock(path, async () => {
     let cfg: MinicodeConfig = { providers: [] }
     let raw = ""

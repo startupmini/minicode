@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.9.21] - 2026-09-14 — Kokoh: stdin flow, hang, keamanan, kepintaran
+
+### Security (audit #13 — kasus nyata sesi liar)
+- **Kunci `.minicode/**` penuh untuk tool tulis**: daftar-nama terbukti rapuh (`write_file .minicode/test-write.txt` lolos). Kini segmen `.minicode/` apa pun ditolak fail-closed di semua mode termasuk allow-all; pengecualian: restore `.minicode/.trash/` → workspace dan skrip `.minicode/hooks/` (eksekusi hook tetap butuh registrasi allowlist yang terkunci). Baca tetap boleh.
+- **Pola kredensial Windows**: `system32\config\(sam|system|security|software|default)` + `ntds.dit` di jail file + bash-guard (kasus nyata `type ...\system32\config\sam` lolos karena pola POSIX-sentris); `reg save|export` hive, `vssadmin create|delete shadow`, `ntdsutil` ditolak eksplisit (`reg query`, `vssadmin list`, `system.txt` biasa tetap lolos).
+- Deny tetap tampil merah full-text + tercatat `denyReason` di step-traces (terverifikasi, tanpa perubahan UI).
+- **Baterai uji kepintaran (audit #14, ronde riset)**: tool-desc & param 12 tool inti di-EN-kan + batas nyata (chars/baris/timeout/output) + panduan kapan-tidak-pakai (read_file vs cat, edit vs apply_patch, dll.); system prompt dapat blok `# How to work` (baca-dulu, prefer tool, todo 1 in_progress, jangan ulang call yang ditolak, kerja di workspace) — leverage AHE: model lemah paling diuntungkan pola koordinasi eksplisit. Benchmark `follow-convention` diperbaiki: prompt dulu menyebut `f(...)` yang mengangker nama dan menabrak konvensi `salam` (diferensial memory tak terukur); prompt kini netral — verifikasi live: memory on → `salam` (PASS), off → tebakan `f` (FAIL).
+
+### Fixed
+- **Abort saat verify = batal, bukan gagal**: `runVerify`/`checkBaseline`/`runWithSelfHeal` meneruskan `AbortSignal` (exec dibunuh via signal); Ctrl+C di tengah verify/baseline melempar `AbortError` sehingga tak berubah menjadi siklus self-heal yang tak diminta. Cek aborted juga setelah verify (abort-di-tengah tak diproses sebagai gagal).
+- **Picker settle di semua jalur**: dua `catch` di `runPicker` (onData + setup) kini `cleanup()+onCancel()+resolve()` — dulu Promise gantung + `busy` bocor di pemanggil nested.
+- **Satu mekanisme tunggu anak**: `waitChildExit` baru (`cli/auto-update.ts`: exit+close+error, guard settle) dipakai auto-update, plan re-spawn, resume spawn, dan respawn REPL — dulu ketiganya hanya dengar `exit` yang bisa tak datang bila stdio macet.
+- **Spinner setup anti-bocor**: `createCliSession` yang melempar kini tetap membersihkan interval via try/finally.
+- **`/sync` jujur soal keystore**: referensi `keystore:...` di-resolve sebelum deteksi (helper `resolveDetectApiKey`); entri hilang → `failed` yang actionable, bukan no-op diam dengan literal terkirim sebagai Bearer.
+- **Key salah (401/403) tak lagi "Saved"**: `detectModels` menandai `authFailed`; `detectAndSave` melempar `unauthorized` (fallback hanya untuk tanpa-endpoint/unreachable); `refresh` mencatat ke `failed`. Termasuk `clearDetectCache()` di awal `detectAndSave` agar retry key langsung re-fetch.
+- **`config add` default global** (seperti remove/set-key): menulis provider+key ke repo lokal diam-diam rawan ikut ter-commit plaintext.
+- **Override lokal tak flip default**: `mergeByKey` mengganti nilai di posisi global (Map.set key lama tak pindah), bukan pindah ke ujung.
+- **Config tak terbaca berisik**: error baca non-ENOENT (EACCES/EISDIR) global/lokal kini warn ke stderr, bukan "no providers" diam.
+- **Idle-timeout input**: `askLine`/`askSecret` batal sendiri (null) setelah 90 dtk tanpa keypress (`idleMs`, unref, reset tiap chunk); non-TTY EOF (`close`) = batal. Prompt utama REPL opt-out (`idleMs: 0`) karena null dihitung Ctrl+C 2x-exit. Approval yang idle = deny (fail-closed).
+- **Budget total embedding 10 dtk** (`EMBEDDING_TOTAL_TIMEOUT_MS`): endpoint lambat tak lagi menahan setup RAG ~21 dtk (6×3,5 dtk); lewat = fallback keyword.
+- **stdin mengalir seumur proses (tanpa pause mid-session)**: siklus pause→resume berulang mematikan pengiriman `data` selamanya di Bun Windows — daftar tampil tapi semua tombol mati, bahkan Ctrl+C. `pause()` dihapus dari askLine/askSecret/picker/kedua manager/finally turn; kepemilikan = siapa yang memegang listener (byte tanpa listener dibuang, bukan di-buffer). Satu-satunya `pause()` tersisa di teardown sesi (`close()`) agar one-shot/exec tetap bisa exit.
+- **Jawaban REPL default expanded + `/minimize` toggle**: minimize-default tanpa off-switch membuat REPL "bisu" (`+ answer (N chars)` tanpa cara membuka yang bisa ditemukan; tombol `+` hanya hidup saat turn, klik mouse memang tak didukung). Kini jawaban streaming penuh kecuali diminta; `/minimize` tanpa argumen flip tool+answer (`on|off` eksplisit, echo status); baris minimize membawa petunjuk `/expand to read`.
+- **Preset OpenRouter**: fallback gratis pertama kini id yang terverifikasi live (lama sudah 404 di katalog).
+- **`globalConfigPath()` hormat `MINICODE_HOME` saat runtime** (dulu const beku-saat-import); test kini hermetic penuh.
+
 ## [0.9.20] - 2026-09-14 — Perbaiki safe-open + test timing CI
 
 ### Fixed

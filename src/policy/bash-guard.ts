@@ -112,10 +112,26 @@ export function normalizeCommand(cmd: string): string {
 
 /** Path/berkas kredensial, dicek pada bentuk ternormalisasi. */
 const SENSITIVE_TARGET =
-  /(?:^|[\s/\\=@"'([:])(?:\.env(?:\.[\w.-]+)?|\.git-credentials|\.npmrc|\.netrc|id_(?:rsa|dsa|ecdsa|ed25519)|credentials(?:\.json)?|\.pem|\.p12|\.pfx|shadow|master\.key)\b/i
+  /(?:^|[\s/\\=@"'([:])(?:\.env(?:\.[\w.-]+)?|\.git-credentials|\.npmrc|\.netrc|id_(?:rsa|dsa|ecdsa|ed25519)|credentials(?:\.json)?|\.pem|\.p12|\.pfx|shadow|master\.key|config[/\\](?:sam|system|security|software|default)(?=[/\\]|$|[\s;"'&|])|ntds\.dit\b|hklm[/\\](?:sam|system|security)(?=[/\\]|$|[\s;"'&|]))\b/i
 
 /** Direktori kredensial: ~/.ssh, $HOME/.aws, /etc/shadow, dst. */
 const SENSITIVE_DIR = /(?:~|\$HOME|\$\{HOME\}|\/etc|\/root|\/proc\/self)[/\\](?:\.?[\w.-]+)/i
+
+/** Export registry hive / salin shadow-copy — satu-satunya pemakaian di
+ * konteks agen adalah eksfiltrasi hive terkunci (SAM butuh SYSTEM/VSS).
+ * `reg query` diagnostik TIDAK kena (butuh kata kerja save|export). */
+const REG_HIVE_EXPORT = /\breg(?:\.exe)?\s+(?:save|export)\b/i
+
+/** Path hive dalam bentuk apa pun (file maupun key registry). Jaga sinkron
+ * dengan cabang config[/\\]…|ntds|hklm di SENSITIVE_TARGET di atas. */
+const HIVE_PATH =
+  /config[/\\](?:sam|system|security|software|default)(?=[/\\]|$|[\s;"'&|])|ntds\.dit\b|hklm[/\\](?:sam|system|security)(?=[/\\]|$|[\s;"'&|])/i
+
+/** Pembuatan/mount shadow copy + utilitas DS — di tangan agen hanya untuk
+ * membaca hive terkunci (kasus nyata: `type ...\system32\config\sam`).
+ * `vssadmin list` diagnostik tetap lolos (hanya create/delete yang ditahan). */
+const VSS_SHADOW = /\bvssadmin\b[^\n]*\b(?:create\s+shadow|delete\s+shadows?)\b/i
+const NTDSUTIL = /\bntdsutil\b/i
 
 /** Perintah yang membaca/menyalin isi berkas. */
 const READERS =
@@ -300,6 +316,12 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
   if (both(ENV_DUMP)) return { denied: true, reason: "environment dump" }
   if (both(ENV_SECRET_REF)) return { denied: true, reason: "credential env reference" }
   if (both(UPLOAD_FLAG)) return { denied: true, reason: "file upload to network" }
+  // Hive Windows: `reg save HKLM\SAM` / `reg export ...\config\system` —
+  // `reg query` diagnostik tetap lolos (tanpa kata kerja destruktif).
+  if (both(REG_HIVE_EXPORT) && (HIVE_PATH.test(norm) || HIVE_PATH.test(raw)))
+    return { denied: true, reason: "registry hive export" }
+  if (both(VSS_SHADOW)) return { denied: true, reason: "shadow copy credential access" }
+  if (both(NTDSUTIL)) return { denied: true, reason: "directory services tool" }
   if (both(ROOT_SCAN)) return { denied: true, reason: "filesystem-root scan" }
 
   // Redirect keluar workspace (temuan audit eksternal: `echo x > ..\evil`

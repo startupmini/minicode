@@ -180,7 +180,9 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     if (answerBuf.length === 0) return
     const n = stripAnsi(answerBuf).length
     const cap = answerTruncated ? ", capped 1MB" : ""
-    wErr(c.info(`  + answer (${n} chars${cap})\n`))
+    // Petunjuk /expand WAJIB di baris ini: tanpa itu jawaban yang dikecilkan
+    // terlihat "bisu" (tak ada cara membuka yang bisa ditemukan user).
+    wErr(c.info(`  + answer (${n} chars${cap}) — /expand to read\n`))
     bufferSection("answer", answerBuf, "stdout")
     answerBuf = ""
     answerTruncated = false

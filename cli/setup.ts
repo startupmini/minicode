@@ -545,43 +545,59 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     // apa pun, tempelkan catatan agar agen memperbaiki dulu, bukan menumpuk
     // fitur di atas baseline rusak (yang hanya memperparah keadaan).
     let firstPrompt = p
-    const broken = await checkBaseline(() => runVerify(verifyCommand, cwd ?? process.cwd()))
+    const broken = await checkBaseline(
+      (s) => runVerify(verifyCommand, cwd ?? process.cwd(), undefined, s ?? signal),
+      signal,
+    )
+    // Abort saat baseline jalan sudah melempar dari runVerify; cek ini untuk
+    // abort yang datang tepat di sela (tanpa ini turn agen jalan padahal user
+    // sudah Ctrl+C).
+    signal?.throwIfAborted()
     if (broken) {
       process.stderr.write(
         c.yellow(`\n[verify] baseline failing before agent run - fixing first\n`),
       )
       firstPrompt = buildBaselineNote(broken) + p
     }
-    await runWithSelfHeal(firstPrompt, {
-      run: async (prompt) => {
-        await runOnce(prompt)
+    await runWithSelfHeal(
+      firstPrompt,
+      {
+        run: async (prompt, s) => {
+          // Teruskan abort REPL ke turn perbaikan: tanpa ini Ctrl+C/Esc selama
+          // fix-turn diabaikan total (hanya kernel timeout 15 mnt yang menghentikan)
+          // sehingga terlihat "selesai menjawab lalu macet" saat verify merah.
+          // Pakai signal dari self-heal bila ada (sudah di-race antar-siklus),
+          // fallback ke signal turn luar.
+          await runOnce(prompt, s ?? signal)
+        },
+        verify: (s) => runVerify(verifyCommand, cwd ?? process.cwd(), undefined, s ?? signal),
+        onCycle: (cycle, max, v) => {
+          if (cycle === max) {
+            process.stderr.write(
+              c.red(`\n[verify] still failing after ${max} attempts - leaving for user\n`),
+            )
+            process.stderr.write(`${v.output.slice(0, 1200)}\n`)
+          } else {
+            process.stderr.write(
+              c.yellow(`\n[verify] attempt ${cycle}/${max} failed - self-healing…\n`),
+            )
+          }
+        },
+        onOk: (cycles) => {
+          process.stderr.write(c.green(`\n[verify] ok after ${cycles} fix cycles\n`))
+          // P13 P1 — turn yang lolos verify adalah bukti cara kerja yang valid:
+          // simpan ringkasnya sebagai snippet (opt-out sama seperti summary).
+          // Fire-and-forget: memori tak boleh menggagalkan run yang sudah hijau.
+          if (process.env.MINICODE_AUTO_MEMORY !== "0") {
+            void addMemory(buildVerifySnippet(p, verifyCommand, session.state.turnCount), {
+              category: "snippet",
+              cwd: cwd ?? process.cwd(),
+            }).catch(() => {})
+          }
+        },
       },
-      verify: () => runVerify(verifyCommand, cwd ?? process.cwd()),
-      onCycle: (cycle, max, v) => {
-        if (cycle === max) {
-          process.stderr.write(
-            c.red(`\n[verify] still failing after ${max} attempts - leaving for user\n`),
-          )
-          process.stderr.write(`${v.output.slice(0, 1200)}\n`)
-        } else {
-          process.stderr.write(
-            c.yellow(`\n[verify] attempt ${cycle}/${max} failed - self-healing…\n`),
-          )
-        }
-      },
-      onOk: (cycles) => {
-        process.stderr.write(c.green(`\n[verify] ok after ${cycles} fix cycles\n`))
-        // P13 P1 — turn yang lolos verify adalah bukti cara kerja yang valid:
-        // simpan ringkasnya sebagai snippet (opt-out sama seperti summary).
-        // Fire-and-forget: memori tak boleh menggagalkan run yang sudah hijau.
-        if (process.env.MINICODE_AUTO_MEMORY !== "0") {
-          void addMemory(buildVerifySnippet(p, verifyCommand, session.state.turnCount), {
-            category: "snippet",
-            cwd: cwd ?? process.cwd(),
-          }).catch(() => {})
-        }
-      },
-    })
+      signal,
+    )
     await runHooksGated(
       "post",
       { phase: "post", prompt: p, cwd, result: session.state.turnCount },
@@ -657,6 +673,16 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     killAllBackgroundJobs()
     await mcpCloseAll()
     await lspCloseAll()
+    // SATU-SATUNYA pause() mid-process yang tersisa: teardown sesi. stdin
+    // TTY kini mengalir seumur proses (tanpa pause per prompt) agar siklus
+    // pause→resume tak membunuh 'data' di Bun Windows; tanpa pause di sini
+    // event-loop tak pernah kering dan one-shot/exec tak pernah exit.
+    try {
+      process.stdin.setRawMode(false)
+    } catch {}
+    try {
+      process.stdin.pause()
+    } catch {}
   }
 
   return {

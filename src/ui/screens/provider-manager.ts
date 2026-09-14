@@ -123,35 +123,83 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
 
     let done = false
     let busy = false
+    // Idle-timeout 90 dtk seperti picker/model-manager: tanpa ini raw-mode
+    // digenggam selamanya bila stdin 'data' tak pernah datang di Windows
+    // (ConPTY macet) = "masuk list macet". Timer di-unref agar tak menahan exit.
+    let idleTimer: ReturnType<typeof setTimeout> | undefined
+    const clearIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer)
+      idleTimer = undefined
+    }
+    let resetIdle: () => void = () => {}
 
     // Suspend: hapus overlay + lepas raw mode + listener sementara
     // (untuk askLine/askSecret di a/d/e). Tidak menyentuh `done` - manager
     // tetap hidup; resume() menggambar ulang overlay dari posisi kursor kini.
     const suspend = () => {
+      clearIdle()
       prevRows = clearTransientOverlay(prevRows)
       process.stdout.write("\x1b[0m\x1b[?25h")
       // TIDAK menulis \r\n di sini: clearTransientOverlay sudah menaruh kursor
       // kembali ke anchor. \r\n sebelumnya membuat baris kosong permanen di
       // scrollback (append-only) — gap 1 baris tiap kali a/d/e dipakai.
-      process.stdin.setRawMode(false)
-      process.stdin.pause()
-      process.stdin.removeListener("data", onData)
-      process.stdout.removeListener("resize", onResize)
+      // setRawMode dibungkus try/catch: di Windows handle bisa rusak dan
+      // melempar — tanpa ini suspend melempar lalu Promise tak pernah settle.
+      // TANPA pause — stdin mengalir seumur proses (lihat cleanup askLine).
+      try {
+        process.stdin.setRawMode(false)
+      } catch {}
+      try {
+        process.stdin.removeListener("data", onData)
+      } catch {}
+      try {
+        process.stdout.removeListener("resize", onResize)
+      } catch {}
     }
     // Resume: pasang ulang raw mode + listener + render.
     const resume = () => {
+      if (done) return
       process.stdin.setMaxListeners(0)
-      process.stdin.setRawMode(true)
+      try {
+        process.stdin.setRawMode(true)
+      } catch {
+        // Raw-mode gagal = tak bisa baca tombol; tutup jujur daripada gantung.
+        cleanup()
+        resolve()
+        return
+      }
       process.stdin.resume()
       process.stdin.on("data", onData)
       process.stdout.on("resize", onResize)
       render()
+      resetIdle()
     }
     // Close final: suspend + tandai selesai (manager tidak bisa dibuka lagi).
+    // Selalu resolve walau suspend melempar — tanpa try/finally Promise gantung.
     const cleanup = () => {
       if (done) return
       done = true
-      suspend()
+      clearIdle()
+      try {
+        suspend()
+      } catch {}
+    }
+
+    resetIdle = () => {
+      if (done) return
+      clearIdle()
+      idleTimer = setTimeout(() => {
+        // Idle 90 dtk tanpa input = batal otomatis (samakan picker).
+        try {
+          cleanup()
+        } catch {}
+        try {
+          resolve()
+        } catch {}
+      }, 90_000)
+      try {
+        ;(idleTimer as unknown as { unref?: () => void }).unref?.()
+      } catch {}
     }
 
     // SEMUA aksi a/d/e lewat sini: busy guard + suspend, lalu SELALU resume di
@@ -316,6 +364,8 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
     const decoder: DecoderState = createDecoderState()
     const onData = (chunk: Buffer) => {
       if (busy) return
+      if (done) return
+      resetIdle()
       try {
         for (const d of decodeKeysStream(chunk, decoder)) {
           switch (d.key.type) {
@@ -348,7 +398,9 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
               // Footer bilang "select"; daftar kosong tak boleh menutup layar.
               const p = providers[sel]
               if (!p) return
-              opts.onSelect(p)
+              try {
+                opts.onSelect(p)
+              } catch {}
               cleanup()
               resolve()
               return
@@ -363,8 +415,15 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
               break
           }
         }
+        render()
       } catch {
-        cleanup()
+        // Tanpa resolve Promise gantung selamanya (bug: cleanup saja tak cukup).
+        try {
+          cleanup()
+        } catch {}
+        try {
+          resolve()
+        } catch {}
       }
     }
 
@@ -377,9 +436,15 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
       process.stdin.setMaxListeners(0)
       process.stdin.on("data", onData)
       process.stdout.on("resize", onResize)
+      resetIdle()
       render()
     } catch {
-      cleanup()
+      try {
+        cleanup()
+      } catch {}
+      try {
+        resolve()
+      } catch {}
     }
   })
 }

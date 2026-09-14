@@ -111,6 +111,8 @@ async function fetchEmbeddingsOnce(
   url: string,
   headers: Record<string, string>,
   body: string,
+  parentSignal?: AbortSignal,
+  attemptMs: number = LIMITS.EMBEDDING_TIMEOUT_MS,
 ): Promise<{ data?: { embedding: number[] }[] } | null> {
   // P1.4: redirect manual max 2 hop, tiap hop dicek SSRF strict (fail-close,
   // tanpa cache agar DNS rebinding tidak lolos via cache basi).
@@ -127,12 +129,17 @@ async function fetchEmbeddingsOnce(
     }
     let res: Response
     try {
+      // Budget total (parent) di-race dengan timeout per-attempt: attempt
+      // lambat tetap dibunuh 3,5 dtk, TAPI seluruh matriks 3×2 tak boleh
+      // melewati budget total — tanpa ini setup RAG macet ~21 dtk.
+      const perAttempt = AbortSignal.timeout(attemptMs)
+      const attemptSignal = parentSignal ? AbortSignal.any([parentSignal, perAttempt]) : perAttempt
       res = await fetch(current, {
         method: "POST",
         headers,
         body,
         redirect: "manual",
-        signal: AbortSignal.timeout(LIMITS.EMBEDDING_TIMEOUT_MS),
+        signal: attemptSignal,
       })
     } catch (e) {
       // fallback keyword-only tetap berjalan, tapi jangan senyap total
@@ -161,11 +168,14 @@ async function fetchEmbeddingsOnce(
   return null
 }
 
-async function embedTexts(
+// Diekspor agar bisa diuji (budget total vs per-attempt) tanpa DB —
+// pemakaian produksi lewat addMemory/query yang memakai default.
+export async function embedTexts(
   baseUrl: string,
   apiKey: string,
   texts: string[],
   model?: string,
+  timeouts?: { attemptMs?: number; totalMs?: number },
 ): Promise<number[][] | null> {
   if (!apiKey || !baseUrl) return null
   try {
@@ -190,9 +200,22 @@ async function embedTexts(
     model: model ?? process.env.MINICODE_EMBED_MODEL ?? "text-embedding-3-small",
     input: texts,
   })
+  // Budget total untuk seluruh matriks attempt (lihat EMBEDDING_TOTAL_TIMEOUT_MS).
+  const budget = AbortSignal.timeout(timeouts?.totalMs ?? LIMITS.EMBEDDING_TOTAL_TIMEOUT_MS)
+  // Jangan tahan process hidup hanya karena timer budget ini.
+  try {
+    ;(budget as unknown as { unref?: () => void }).unref?.()
+  } catch {}
   for (const headers of headersList) {
     for (const url of urls) {
-      const json = await fetchEmbeddingsOnce(url, headers as Record<string, string>, body)
+      if (budget.aborted) return null
+      const json = await fetchEmbeddingsOnce(
+        url,
+        headers as Record<string, string>,
+        body,
+        budget,
+        timeouts?.attemptMs,
+      )
       if (json?.data && Array.isArray(json.data)) return json.data.map((d) => d.embedding)
     }
   }

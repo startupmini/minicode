@@ -518,3 +518,43 @@ describe("SECRET_ENV_RE: strip rahasia tanpa memakan yang benign", () => {
     expect(out.OPENAI_API_KEY).toBeUndefined()
   })
 })
+
+describe("bash-guard: hive kredensial Windows (audit #13)", () => {
+  // Kasus nyata sesi user: `cmd.exe /c "type ..\..\..\windows\system32\config\sam"`
+  // lolos karena pola kredensial POSIX-sentris (/etc/shadow dkk).
+  const hiveReads = [
+    "type C:\\Windows\\System32\\config\\SAM",
+    'cmd.exe /c "type ..\\..\\..\\windows\\system32\\config\\sam"',
+    "Get-Content C:/Windows/System32/config/SYSTEM",
+    "copy C:\\t\\ntds.dit D:\\x",
+    "type C:\\t\\ntds.dit",
+    "cat /mnt/c/Windows/System32/config/SECURITY",
+  ]
+  for (const cmd of hiveReads) {
+    test(`ditolak: ${cmd}`, () => {
+      expect(denied(cmd)).toBe(true)
+    })
+  }
+
+  test("reg save/export hive ditolak dengan alasan registry", () => {
+    expect(inspectBashCommand("reg save HKLM\\SAM C:\\t\\s").denied).toBe(true)
+    expect(inspectBashCommand("reg save HKLM\\SAM C:\\t\\s").reason).toBe("registry hive export")
+    expect(inspectBashCommand("reg export HKLM\\SYSTEM C:\\t\\s").denied).toBe(true)
+    expect(inspectBashCommand("reg.exe export HKLM\\SECURITY C:\\t\\s").denied).toBe(true)
+  })
+
+  test("vssadmin destruktif + ntdsutil ditolak", () => {
+    expect(denied("vssadmin create shadow /for=C:")).toBe(true)
+    expect(denied("vssadmin delete shadows /for=C: /quiet")).toBe(true)
+    expect(denied("ntdsutil snapshot create quit quit")).toBe(true)
+  })
+
+  test("negatif: diagnostik + nama mirip tetap lolos guard", () => {
+    expect(denied("reg query HKCU\\Software\\foo")).toBe(false)
+    expect(denied("reg query HKLM\\Software\\bar")).toBe(false)
+    expect(denied("vssadmin list shadows")).toBe(false)
+    expect(denied("type docs\\system.txt")).toBe(false)
+    expect(denied("type config\\system.js")).toBe(false)
+    expect(denied("dir C:\\Windows\\System32")).toBe(false)
+  })
+})

@@ -112,13 +112,19 @@ export function flexibleMatch(content: string, needle: string): MatchResult | nu
 export const editTool: Tool = {
   name: "edit",
   description:
-    "Edit a file with a replacement string. oldString must appear exactly once (fuzzy tolerance for whitespace/indentation is supported). newString replaces it.",
+    "Edit a file with a string replacement. oldString must appear exactly once in the file — include surrounding lines to make it unique. Whitespace/indentation mismatch is tolerated (fuzzy). Prefer edit for small targeted changes; use apply_patch for multiple changes. Cannot edit files outside the workspace or .minicode/ state.",
   parameters: {
     type: "object",
     properties: {
-      path: { type: "string" },
-      oldString: { type: "string", description: "existing text to be replaced" },
-      newString: { type: "string", description: "teks baru" },
+      path: { type: "string", description: "path relative to the workspace (e.g. src/a.ts)" },
+      oldString: {
+        type: "string",
+        description: "exact existing text to be replaced (must match once)",
+      },
+      newString: {
+        type: "string",
+        description: "replacement text (empty string deletes the matched text)",
+      },
     },
     required: ["path", "oldString", "newString"],
     additionalProperties: false,

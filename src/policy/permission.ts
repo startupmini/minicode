@@ -3,7 +3,13 @@ import { cwd } from "node:process"
 import type { PermissionHandler, ToolCall } from "#minicore"
 import { loadAllowlist, matchAllowlist, saveAllowlist } from "./allowlist.ts"
 import { inspectBashCommand } from "./bash-guard.ts"
-import { isCwdOutsideRoot, isOwnedState, isRealPathOutsideRoot, isSensitive } from "./jail.ts"
+import {
+  isCwdOutsideRoot,
+  isOwnedState,
+  isRealPathOutsideRoot,
+  isSensitive,
+  isTrashRestore,
+} from "./jail.ts"
 
 export type PermissionMode = "auto" | "readonly" | "plan" | "allow-all" | "ask" | "allowlist"
 
@@ -346,15 +352,18 @@ export function createPermissionHandler(
           if (isRealPathOutsideRoot(p, root) || isSensitive(p)) return "deny"
         }
       }
-      // State milik minicode (temuan audit #04): tool TULIS file dilarang
-      // menyentuh sessions/vector DB, todos, plans, checkpoints, jurnal,
-      // traces, repomap, allowlist, config di bawah .minicode/. Tanpa ini
-      // sub-agen (atau call ter-injeksi) bisa menimpa todos/rencana,
+      // State milik minicode (temuan audit #04, dikeraskan audit #13):
+      // tool TULIS file dilarang menyentuh apa pun di bawah `.minicode/`
+      // (dulu daftar-nama: `test-write.txt` lolos). Tanpa ini sub-agen (atau
+      // call ter-injeksi) bisa menanam file, menimpa todos/rencana,
       // menanam allowlist "always", mendaftarkan server MCP via config,
       // atau membutakan recovery (jurnal/checkpoint) lewat jalur jinak.
       // Berlaku di SEMUA mode termasuk allow-all (jail mendahului mode).
       // BACA tetap boleh; tool khusus (todo/memory/config/undo) tak lewat
-      // gerbang ini sehingga alur legit tetap jalan.
+      // gerbang ini sehingga alur legit tetap jalan. Pengecualian:
+      // restore `.minicode/.trash/` → workspace (isTrashRestore) dan skrip
+      // hooks `.minicode/hooks/` (HOOKS_RE di jail.ts — registrasi eksekusi
+      // tetap dikunci via allowlist.json yang owned).
       if (
         call.name === "write_file" ||
         call.name === "edit" ||
@@ -362,11 +371,20 @@ export function createPermissionHandler(
         call.name === "delete_file" ||
         call.name === "move_file"
       ) {
-        const ps =
-          call.name === "move_file"
-            ? [(earlyArgs?.from as string) ?? "", (earlyArgs?.to as string) ?? ""]
-            : [(earlyArgs?.path as string) ?? ""]
-        if (ps.some((p) => p !== "" && isOwnedState(p))) return "deny"
+        // Restore dari trash (.minicode/.trash/ → workspace) adalah satu-
+        // satunya gerak sah menyentuh state — selain itu dua arah deny.
+        if (call.name === "move_file") {
+          const f = (earlyArgs?.from as string) ?? ""
+          const t = (earlyArgs?.to as string) ?? ""
+          if (isTrashRestore(f, t)) {
+            // lanjut ke mode check di bawah (ask/auto tetap berlaku)
+          } else if ((f !== "" && isOwnedState(f)) || (t !== "" && isOwnedState(t))) {
+            return "deny"
+          }
+        } else {
+          const p = (earlyArgs?.path as string) ?? ""
+          if (p !== "" && isOwnedState(p)) return "deny"
+        }
       }
 
       const mode = state.mode

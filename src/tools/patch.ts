@@ -10,11 +10,11 @@ import { flexibleMatch } from "./edit.ts"
 export const applyPatchTool: Tool = {
   name: "apply_patch",
   description:
-    "Apply SEARCH/REPLACE block(s) to file. Each search must match exactly once. Supports multiple patches in one call.",
+    "Apply SEARCH/REPLACE block(s) to a file. Each search must match exactly once. Blocks apply sequentially to the same content (max 50 blocks per call). Prefer for multiple changes in one file; use edit for a single small change.",
   parameters: {
     type: "object",
     properties: {
-      path: { type: "string", description: "path file relatif terhadap cwd" },
+      path: { type: "string", description: "path relative to the workspace" },
       patches: {
         type: "array",
         description: "Array of {search, replace} blocks. Applied sequentially to the same content.",
@@ -25,7 +25,7 @@ export const applyPatchTool: Tool = {
               type: "string",
               description: "code block to be replaced (exact or fuzzy match)",
             },
-            replace: { type: "string", description: "blok kode baru" },
+            replace: { type: "string", description: "replacement code block" },
           },
           required: ["search", "replace"],
           additionalProperties: false,

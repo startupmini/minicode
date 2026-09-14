@@ -49,6 +49,12 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
     console.log(`\n${opts.title}`)
     for (const [i, it] of opts.items.entries()) console.log(`  [${i}] ${it.provider}::${it.name}`)
     console.log("")
+    // Fail-closed: pemanggil nested (mis. pickEffort di /model) menunggu
+    // onPick/onCancel — tanpa ini await-nya gantung selamanya (busy=true)
+    // saat isTTY flip di tengah. Non-TTY = tak ada pilihan = batal.
+    try {
+      opts.onCancel()
+    } catch {}
     return
   }
 
@@ -183,7 +189,7 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       try {
         process.stdin.setRawMode(false)
       } catch {}
-      process.stdin.pause()
+      // Tanpa pause — stdin mengalir seumur proses (lihat cleanup askLine).
       if (onData) process.stdin.removeListener("data", onData)
       if (onResize) process.stdout.removeListener("resize", onResize)
     }
@@ -262,7 +268,16 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
           }
         }
       } catch {
-        cleanup()
+        // Tanpa onCancel+resolve, await runPicker gantung selamanya dan
+        // busy=true bocor di pemanggil nested (= manager terkunci, terlihat
+        // hang). Batal adalah satu-satunya jawaban jujur saat render rusak.
+        try {
+          cleanup()
+        } catch {}
+        try {
+          opts.onCancel()
+        } catch {}
+        resolve()
       }
     }
 
@@ -278,7 +293,15 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       resetIdle()
       render()
     } catch {
-      cleanup()
+      // Sama seperti di atas: setup gagal (raw-mode ConPTY rusak) harus
+      // settle, bukan gantung.
+      try {
+        cleanup()
+      } catch {}
+      try {
+        opts.onCancel()
+      } catch {}
+      resolve()
     }
   })
 }

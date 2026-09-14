@@ -281,13 +281,14 @@ export async function handleBuiltinCommand(
           return { handled: true }
         }
         const { spawn } = await import("node:child_process")
+        const { waitChildExit } = await import("./auto-update.ts")
         const entryPath = resolvePath(import.meta.dir, "index.ts")
         const child = spawn(
           process.execPath,
           [entryPath, `--resume=${target}`, ...(ctx.cwd ? [`--cwd=${ctx.cwd}`] : [])],
           { stdio: "inherit", env: { ...process.env, MINICODE_RESUME_NEW: "1" } },
         )
-        child.on("exit", (code) => process.exit(code ?? 0))
+        void waitChildExit(child).then((code) => process.exit(code ?? 0))
         process.stdin.pause()
       }
       console.log("")

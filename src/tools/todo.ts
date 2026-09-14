@@ -148,17 +148,17 @@ export const todoSession = { id: "default", cwd: undefined as string | undefined
 export const todoWriteTool: Tool = {
   name: "todo_write",
   description:
-    "Write/replace the todo list for this task. Send the ENTIRE list every time (not a delta). Use for tasks with 3+ steps: mark one item in_progress, mark it completed as soon as it is done.",
+    "Write/replace the todo list for this task. Send the ENTIRE list every time (not a delta). Use for tasks with 3+ steps: keep exactly one item in_progress at a time, mark it completed as soon as it is done.",
   parameters: {
     type: "object",
     properties: {
       todos: {
         type: "array",
-        description: "full todo list",
+        description: "full todo list (replace, not delta)",
         items: {
           type: "object",
           properties: {
-            content: { type: "string", description: "deskripsi singkat & actionable" },
+            content: { type: "string", description: "short, actionable task item" },
             status: {
               type: "string",
               enum: ["pending", "in_progress", "completed", "cancelled"],

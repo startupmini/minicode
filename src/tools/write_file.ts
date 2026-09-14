@@ -8,12 +8,12 @@ import { appendLspDiagnostics } from "../policy/verifier.ts"
 export const writeFileTool: Tool = {
   name: "write_file",
   description:
-    "Create/overwrite a file with text content. Creates parent directories automatically.",
+    "Create or overwrite a file with text content (atomic write, creates parent directories). Max 5M chars (~20MB). Cannot write outside the workspace, to secret paths (.env, .ssh, node_modules) or to .minicode/ state — write your own notes in the workspace instead. Prefer edit for small changes to an existing file.",
   parameters: {
     type: "object",
     properties: {
-      path: { type: "string", description: "path file relatif terhadap cwd" },
-      content: { type: "string", description: "konten file" },
+      path: { type: "string", description: "path relative to the workspace (e.g. src/a.ts)" },
+      content: { type: "string", description: "full file content to write" },
     },
     required: ["path", "content"],
     additionalProperties: false,

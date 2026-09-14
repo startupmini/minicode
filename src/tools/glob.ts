@@ -58,13 +58,13 @@ function globToRegExp(glob: string): RegExp {
 export const globTool: Tool = {
   name: "glob",
   description:
-    "Search files with a glob pattern (e.g. **/*.ts, src/**/*.js). Returns a list of relative paths.",
+    "Search files with a glob pattern (e.g. **/*.ts, src/**/*.js). Returns relative paths, capped at 100 by default. Skips .git, node_modules, and dotfiles.",
   parameters: {
     type: "object",
     properties: {
-      pattern: { type: "string", description: "glob seperti **/*.ts" },
-      cwd: { type: "string", description: "direktori root, default '.'" },
-      limit: { type: "number", description: "max hasil, default 100" },
+      pattern: { type: "string", description: "glob pattern (e.g. **/*.ts)" },
+      cwd: { type: "string", description: "root directory (default: workspace root)" },
+      limit: { type: "number", description: "max results (default 100)" },
     },
     required: ["pattern"],
     additionalProperties: false,

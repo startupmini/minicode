@@ -80,7 +80,10 @@ export async function safeOpenRead(
   // terbuka: tepat untuk file ini, bebas race dengan swap nama. File normal
   // nlink=1; tolak sisanya dengan pesan yang bisa ditindaklanjuti.
   const st = await handle.stat().catch(() => null)
-  if (st && st.nlink > 1) {
+  // Hardlink check hanya untuk file regular: direktori punya nlink >= 2
+  // (`.` dan `..`) dan bukan target hardlink — biarkan tool yang menolak
+  // direktori dengan pesan yang user-friendly.
+  if (st && !st.isDirectory() && st.nlink > 1) {
     await handle.close().catch(() => {})
     throw new Error(`refusing to read file with multiple hardlinks (nlink=${st.nlink}): ${abs}`)
   }

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.20] - 2026-09-14 — Perbaiki safe-open + test timing CI
+
+### Fixed
+- **safe-open**: pemeriksaan `nlink > 1` kini melewati direktori — di Linux direktori punya `nlink >= 2` (`.` dan `..`), sebelumnya `read_file` ditolak dengan pesan "hardlinks" alih-alih "is a directory" yang user-friendly.
+- **Test CI**: timeout test `§27 started ganda + satu completed` dinaikkan (200/300ms → 500/800ms) agar cukup untuk runner GitHub Actions yang lebih lambat.
+
 ## [0.9.19] - 2026-09-14 — Sinkronisasi dokumentasi + web
 
 ### Fixed

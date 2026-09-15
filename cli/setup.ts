@@ -50,6 +50,7 @@ import {
 } from "../src/telemetry/trace.ts"
 import { setAskTextFn } from "../src/tools/ask_user.ts"
 import { killAllBackgroundJobs } from "../src/tools/bash.ts"
+import { setSubAgentParentRouting } from "../src/tools/task.ts"
 import { todoSession } from "../src/tools/todo.ts"
 import { promptAsk, promptAskText } from "../src/ui/approval/prompt.ts"
 import { attachSimpleLogger } from "../src/ui/assistant/simple.ts"
@@ -328,6 +329,13 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // View pertanyaan ask_user — composition root meng-inject, tool menolak
   // jalan tanpanya (fail-closed, sama seperti `ask` pada permission).
   setAskTextFn(promptAskText)
+  // Warisan routing sub-agen (audit #14): anak memakai limiter BERSAMA
+  // (satu bucket — tak memicu 429 yang baru dihindari parent) dan menghormati
+  // --provider parent. Model diwarisi live via ToolContext (lihat task.ts).
+  setSubAgentParentRouting({
+    ...(rateLimiter ? { rateLimiter } : {}),
+    ...(providerOverride ? { defaultProviderId: providerOverride } : {}),
+  })
 
   let permissions: PermissionControl | undefined
   // Validasi concurrency: 0, NaN, Infinity → fallback ke default (jangan teruskan 0 ke executor)

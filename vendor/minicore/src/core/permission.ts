@@ -13,4 +13,12 @@ export type Decision = "allow" | "deny";
 
 export interface PermissionHandler {
   check(call: ToolCall, deps: ExecutorDeps): Promise<Decision>;
+  /**
+   * Additive seam (minicode, bukan upstream): alasan deny terakhir untuk
+   * `call`, agar model bisa koreksi arah alih-alih retry buta sampai
+   * max_steps. Dipanggil kernel tepat setelah `check` mengembalikan "deny";
+   * return undefined/"" = pesan deny polos seperti dulu. Opsional — handler
+   * lama tanpa method ini tetap jalan tanpa perubahan perilaku.
+   */
+  describeDenial?(call: ToolCall): Promise<string | undefined> | string | undefined;
 }

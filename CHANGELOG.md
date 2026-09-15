@@ -3,14 +3,12 @@
 ## [Unreleased]
 
 ### Fixed
+- **Deny beralasan sampai ke model**: seam `describeDenial` di kernel + alasan per aturan di app-layer (`bash-guard: …`, `jail: …`, `gated approval unavailable`, `read-only/plan mode`, …) — observasi `permission denied: <alasan>` alih-alih retry buta. `check()` tetap `"deny"` polos (112 assertion utuh).
+- **Sub-agen mewarisi sesi parent**: model yang sama (live via ToolContext), limiter bersama, dan `--provider` parent (`setSubAgentParentRouting` dari composition root; `SubAgentSpec.model`). Deskripsi tool diperbarui.
+- **Budget sadar-gambar**: `estimateMessage` menghitung byte gambar (`≈bytes/3` token) alih-alih placeholder ~15 token; hasil tool `Uint8Array` tak lagi meledak via `JSON.stringify` (~21k palsu).
 - **Router 429 fallback-dulu**: bila 429 dengan `Retry-After` dan alternatif tersedia, pindah segera tanpa bakar sleep 30 dtk; tunggu hanya bila ter-pin atau tak ada alternatif (test `providers-p11` diperbarui ke `toBeLessThan(25)`).
 - **System prompt `extra` anti-terpotong**: recovery/plan directive (paling penting) diposisikan sebelum blok data besar (MEMORY/AGENTS/repomap) sehingga `cutMarked(8000)` tak memotongnya duluan.
 - **Retrieval recency + dwibahasa**: skor hybrid kini dikali peluruhan 60-hari half-life dan boost kategori dwibahasa (`perbaiki|keputusan|selesaikan`, `suka|ingin`) — koreksi kemarin mengalahkan fakta 6 bulan.
-
-### Deferred (desain tercatat, bukan lupa)
-- **Deny reason ke model** — butuh seam vendor (`Decision` `deny:reason` + 112 assertion `toBe("deny")`); ditunda agar tidak churn massal di sesi baseline. Desain: executor kenali prefix `deny:` → `permission denied: <reason>`.
-- **Sub-agent warisi route/limiter** — butuh DI `modelRef`/`rateLimiter` dari `CliSession` ke `task.ts getProvider`; ditunda (env `MINICODE_PROVIDER_ORDER` sudah diwarisi; `allowlist` provider tetap via env).
-- **Image tokens di budget** — `estimateImageTokens` belum masuk `budget pressure`; butuh hitung vendor `tokens.ts`. Ditunda (cap `read_image` 100k sudah menahan kasus besar).
 
 ## [0.9.21] - 2026-09-14 — Kokoh: stdin flow, hang, keamanan, kepintaran
 

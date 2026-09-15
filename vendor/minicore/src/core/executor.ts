@@ -55,7 +55,19 @@ export async function runCall(call: ToolCall, deps: ExecutorDeps): Promise<ToolR
     return errorResult(safeCall, `permission error: ${error instanceof Error ? error.message : String(error)}`);
   }
   throwIfAborted(deps.signal);
-  if (decision === "deny") return errorResult(safeCall, "permission denied");
+  if (decision === "deny") {
+    // Additive seam (minicode): alasan deny opsional dari handler agar
+    // observasi model actionable ("permission denied: bash-guard: ...").
+    // describeDenial tak boleh menggagalkan denial itu sendiri — bungkus.
+    let suffix = "";
+    try {
+      const r = await deps.permissions.describeDenial?.(snapshotToolCall(safeCall));
+      if (typeof r === "string" && r.trim()) suffix = `: ${r.trim().slice(0, 160)}`;
+    } catch {
+      /* reason is diagnostic-only; the denial stands */
+    }
+    return errorResult(safeCall, `permission denied${suffix}`);
+  }
 
   const parsed = validateArgs(tool.parameters, safeCall.args);
   if (!parsed.ok) return errorResult(safeCall, `invalid arguments: ${parsed.message}`);

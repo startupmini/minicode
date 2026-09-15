@@ -4,6 +4,7 @@ import { createOpenAICompatProvider } from "#minicore/providers/openai-compat.ts
 import { Pool } from "../agents/pool.ts"
 import { loadConfig } from "../config.ts"
 import { LIMITS } from "../constants.ts"
+import type { RateLimiter } from "../policy/ratelimit.ts"
 import { buildProviderListAsync } from "../providers/build.ts"
 import { createRouterProvider } from "../providers/router.ts"
 import { appendMutationIntent, appendMutationTerminal, hashArgs } from "../session/journal.ts"
@@ -48,6 +49,13 @@ export interface SubAgentSpec {
     sessionId: string
     parentSessionId?: string
   }
+  /**
+   * Model warisan sesi parent (audit #14): anak jalan di model yang sama
+   * dengan parent — tanpa ini anak diam-diam memakai default router yang
+   * bisa beda kapabilitas/harga. Diisi tool dari ToolContext.state.model
+   * (live, ikut /model mid-session); opsional agar factory lama tetap jalan.
+   */
+  model?: string
 }
 
 /** Subset struktural sesi yang dibutuhkan tool ini — tanpa tipe lapisan app. */
@@ -71,9 +79,31 @@ export function setSubAgentSessionFactory(factory: SubAgentSessionFactory): void
 // karena factory adalah state module-global).
 export function clearSubAgentSessionFactory(): void {
   sessionFactory = undefined
+  parentRouting = {}
 }
 
-async function getProvider() {
+/**
+ * Konteks routing parent untuk sesi anak (audit #14): rate limiter BERSAMA
+ * (satu bucket — anak tak boleh memicu 429 yang baru dihindari parent) dan
+ * default provider (hormati --provider parent). Diset composition root
+ * (cli/setup.ts) sekali per sesi; dibaca getProvider. MINICODE_PROVIDER_ORDER
+ * tak perlu diteruskan (env, otomatis terbaca kedua sisi).
+ */
+export interface SubAgentParentRouting {
+  rateLimiter?: RateLimiter
+  defaultProviderId?: string
+}
+
+let parentRouting: SubAgentParentRouting = {}
+
+export function setSubAgentParentRouting(c: SubAgentParentRouting): void {
+  parentRouting = {
+    ...(c.rateLimiter ? { rateLimiter: c.rateLimiter } : {}),
+    ...(c.defaultProviderId ? { defaultProviderId: c.defaultProviderId } : {}),
+  }
+}
+
+async function getProvider(overrides: SubAgentParentRouting = parentRouting) {
   const cfg = await loadConfig()
   // Async: sub-agent juga harus bisa memakai provider OAuth milik parent.
   const providers = await buildProviderListAsync(cfg)
@@ -91,13 +121,21 @@ async function getProvider() {
       )
   }
   if (providers.length === 0) throw new Error("no provider for sub-agent")
-  return createRouterProvider({ providers })
+  return createRouterProvider({
+    providers,
+    ...(overrides.rateLimiter ? { limiter: overrides.rateLimiter } : {}),
+    ...(overrides.defaultProviderId ? { defaultProviderId: overrides.defaultProviderId } : {}),
+  })
 }
+
+// Diekspor agar warisan routing bisa diuji tanpa sesi penuh (pola repo:
+// pure/diekspor-untuk-test). perilakunya sama dengan jalur execute().
+export { getProvider as getSubAgentProvider }
 
 export const delegateTaskTool: Tool = {
   name: "delegate_task",
   description:
-    "Delegate a sub-task to an isolated sub-agent (read-only explore, or plan for small parallel work). Returns a summary (max 2000 chars). Use for independent research or small contained work to save context — the parent task stays your job. Sub-agents cannot write memory, todos, or commit. Requires interactive approval in gate mode.",
+    "Delegate a sub-task to an isolated sub-agent (read-only explore, or plan for small parallel work). Returns a summary (max 2000 chars). Use for independent research or small contained work to save context — the parent task stays your job. Sub-agents cannot write memory, todos, or commit. Runs on the parent session model and shared rate limit. Requires interactive approval in gate mode.",
   parameters: {
     type: "object",
     properties: {
@@ -187,6 +225,16 @@ export const delegateTaskTool: Tool = {
           permissionMode: "auto",
           maxSteps: cap,
           timeoutMs: LIMITS.SUB_AGENT_TIMEOUT_MS,
+          // Warisan model parent (audit #14): baca live dari ToolContext agar
+          // ikut /model mid-session; absen = default router seperti dulu.
+          ...(() => {
+            try {
+              const pm = (ctx as unknown as { state?: { model?: unknown } })?.state?.model
+              return typeof pm === "string" && pm ? { model: pm } : {}
+            } catch {
+              return {}
+            }
+          })(),
           systemExtra: [
             `You are a sub-agent (${m}). Be concise, return summary only. Do not use write_memory, forget_memory, or todo_write (isolated — those belong to the parent).`,
             // Provenance fence (temuan audit #06): tugas parent adalah DATA

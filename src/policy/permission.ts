@@ -195,10 +195,44 @@ export function createPermissionHandler(
     return GATED_TOOLS.has(name) || name.includes(".")
   }
 
-  function bashDenied(cmd: string): boolean {
-    // Teruskan root workspace: tanpa ini guard tak bisa membedakan
-    // `> local.txt` (sah) dari `> ..\evil` (escape) — temuan audit eksternal.
-    return inspectBashCommand(cmd, root).denied
+  // Alasan deny per-call untuk seam kernel describeDenial (audit #14):
+  // check() TETAP mengembalikan "deny" polos (kontrak Decision + semua
+  // assertion tak berubah); alasannya dibaca kernel tepat setelah deny via
+  // describeDenial(call) sehingga observasi model menjadi actionable
+  // ("permission denied: bash-guard: destructive rm") alih-alih retry buta.
+  // Map dibatasi + hapus-saat-baca agar abort di tengah tak bocor memori.
+  const denyReasons = new Map<string, string>()
+  function noteDeny(call: ToolCall, reason: string): void {
+    try {
+      const id = (call as { id?: string } | null)?.id
+      if (!id) return
+      if (denyReasons.size > 500) denyReasons.delete(denyReasons.keys().next().value as string)
+      denyReasons.set(id, reason.slice(0, 160))
+    } catch {}
+  }
+  function deny(call: ToolCall, reason: string): "deny" {
+    noteDeny(call, reason)
+    return "deny"
+  }
+  function takeDenyReason(call: ToolCall): string | undefined {
+    try {
+      const id = (call as { id?: string } | null)?.id
+      if (!id) return undefined
+      const r = denyReasons.get(id)
+      denyReasons.delete(id)
+      return r
+    } catch {
+      return undefined
+    }
+  }
+  function bashDenyReason(cmd: string): string | null {
+    if (!cmd.trim()) return "empty command"
+    try {
+      const v = inspectBashCommand(cmd, root)
+      return v.denied ? (v.reason ?? "blocked command") : null
+    } catch {
+      return null
+    }
   }
 
   function saveAlways(call: ToolCall): Promise<void> {
@@ -226,7 +260,8 @@ export function createPermissionHandler(
     ) => Promise<"allow" | "deny">
   > = {
     "allow-all": async () => "allow",
-    readonly: async (call) => (READONLY_TOOLS.has(call.name) ? "allow" : "deny"),
+    readonly: async (call) =>
+      READONLY_TOOLS.has(call.name) ? "allow" : deny(call, "read-only mode"),
     // Plan = readonly + tiga perkecualian aman: todo_write (artefak rencana
     // .minicode/plans, bukan file workspace), delegate_task (penelahan
     // rencana, bukan eksekusi — dipaksa explore/read-only di task.ts bila
@@ -239,21 +274,22 @@ export function createPermissionHandler(
       call.name === "delegate_task" ||
       call.name === "submit_result"
         ? "allow"
-        : "deny",
+        : deny(call, "plan mode"),
     allowlist: async (call, args) => {
       if (call.name === "bash") {
         const cmd = (args?.cmd as string) ?? ""
-        if (!cmd.trim() || bashDenied(cmd)) return "deny"
+        const br = bashDenyReason(cmd)
+        if (br) return deny(call, `bash-guard: ${br}`)
         const matched = bashAllowlist.filter((pat) => matchBashAllowlist(cmd, pat))
-        if (matched.length === 0) return "deny"
+        if (matched.length === 0) return deny(call, "allowlist: no matching pattern")
         if (matched.some((p) => /^(npx|npm exec|bun x|bun run)\b/i.test(p)) && !npmNpxSafe(cmd))
-          return "deny"
+          return deny(call, "allowlist: npm/npx unsafe")
         return "allow"
       }
-      if (isGated(call.name)) return "deny"
+      if (isGated(call.name)) return deny(call, "allowlist: gated tool")
       if (FILE_WRITE_TOOLS.has(call.name)) return "allow"
       if (INTERNAL_WRITE_TOOLS.has(call.name)) return "allow"
-      return READONLY_TOOLS.has(call.name) ? "allow" : "deny"
+      return READONLY_TOOLS.has(call.name) ? "allow" : deny(call, "allowlist: not allowed here")
     },
     ask: async (call, args, signal) => {
       if (READONLY_TOOLS.has(call.name)) return "allow"
@@ -265,9 +301,10 @@ export function createPermissionHandler(
       if (matchAllowlist(call, list)) return "allow"
       if (call.name === "bash") {
         const cmd = (args?.cmd as string) ?? ""
-        if (!cmd.trim() || bashDenied(cmd)) return "deny"
+        const br = bashDenyReason(cmd)
+        if (br) return deny(call, `bash-guard: ${br}`)
       } else if (isGated(call.name)) {
-        return await promptAskOr(call, () => "deny", signal)
+        return await promptAskOr(call, () => deny(call, "gated approval unavailable"), signal)
       }
       const ans = askUser ? await raceAbort(askUser(call), signal) : "deny"
       if (ans === "always") {
@@ -278,17 +315,20 @@ export function createPermissionHandler(
     },
     auto: async (call, args, signal) => {
       if (READONLY_TOOLS.has(call.name)) return "allow"
-      if (isGated(call.name)) return await promptAskOr(call, () => "deny", signal)
+      if (isGated(call.name))
+        return await promptAskOr(call, () => deny(call, "gated approval unavailable"), signal)
       if (FILE_WRITE_TOOLS.has(call.name)) return "allow"
       if (INTERNAL_WRITE_TOOLS.has(call.name)) return "allow"
       if (call.name === "code_run") {
         const sb = process.env.MINICODE_SANDBOX ?? ""
-        if (sb !== "os" && sb !== "docker" && sb !== "bwrap" && sb !== "seatbelt") return "deny"
+        if (sb !== "os" && sb !== "docker" && sb !== "bwrap" && sb !== "seatbelt")
+          return deny(call, "code_run needs sandbox (os|docker)")
         return "allow"
       }
       if (call.name === "bash") {
         const cmd = (args?.cmd as string) ?? ""
-        if (!cmd.trim() || bashDenied(cmd)) return "deny"
+        const br = bashDenyReason(cmd)
+        if (br) return deny(call, `bash-guard: ${br}`)
         return "allow"
       }
       return "deny"
@@ -314,26 +354,24 @@ export function createPermissionHandler(
         call.name === "delete_file"
       ) {
         const p = (earlyArgs?.path as string) ?? ""
-        if (!p || isRealPathOutsideRoot(p, root) || isSensitive(p)) return "deny"
+        if (!p) return "deny"
+        if (isRealPathOutsideRoot(p, root)) return deny(call, "jail: outside workspace")
+        if (isSensitive(p)) return deny(call, "jail: sensitive file")
       }
       // move_file punya dua ujung (from+to): keduanya dijail. `to` yang belum
       // ada jatuh ke cek logis di isRealPathOutsideRoot (fallback ENOENT).
       if (call.name === "move_file") {
         const f = (earlyArgs?.from as string) ?? ""
         const t = (earlyArgs?.to as string) ?? ""
-        if (
-          !f ||
-          !t ||
-          isRealPathOutsideRoot(f, root) ||
-          isRealPathOutsideRoot(t, root) ||
-          isSensitive(f) ||
-          isSensitive(t)
-        )
-          return "deny"
+        if (!f || !t) return "deny"
+        if (isRealPathOutsideRoot(f, root) || isRealPathOutsideRoot(t, root))
+          return deny(call, "jail: outside workspace")
+        if (isSensitive(f) || isSensitive(t)) return deny(call, "jail: sensitive file")
       }
       if (call.name.startsWith("lsp_")) {
         const f = (earlyArgs?.file as string) ?? ""
-        if (f && (isRealPathOutsideRoot(f, root) || isSensitive(f))) return "deny"
+        if (f && isRealPathOutsideRoot(f, root)) return deny(call, "jail: outside workspace")
+        if (f && isSensitive(f)) return deny(call, "jail: sensitive file")
       }
       const cwdArg = (earlyArgs?.cwd as string) ?? ""
       if (
@@ -343,13 +381,15 @@ export function createPermissionHandler(
           call.name === "grep" ||
           call.name.startsWith("git_"))
       ) {
-        if (isCwdOutsideRoot(cwdArg, root) || isRealPathOutsideRoot(cwdArg, root)) return "deny"
+        if (isCwdOutsideRoot(cwdArg, root) || isRealPathOutsideRoot(cwdArg, root))
+          return deny(call, "jail: cwd outside workspace")
       }
       // git_commit: path yang di-stage juga dijail, bukan hanya cwd.
       if (call.name === "git_commit" && Array.isArray(earlyArgs?.paths)) {
         for (const p of earlyArgs.paths as unknown[]) {
           if (typeof p !== "string") continue
-          if (isRealPathOutsideRoot(p, root) || isSensitive(p)) return "deny"
+          if (isRealPathOutsideRoot(p, root)) return deny(call, "jail: outside workspace")
+          if (isSensitive(p)) return deny(call, "jail: sensitive file")
         }
       }
       // State milik minicode (temuan audit #04, dikeraskan audit #13):
@@ -379,11 +419,11 @@ export function createPermissionHandler(
           if (isTrashRestore(f, t)) {
             // lanjut ke mode check di bawah (ask/auto tetap berlaku)
           } else if ((f !== "" && isOwnedState(f)) || (t !== "" && isOwnedState(t))) {
-            return "deny"
+            return deny(call, "jail: owned state")
           }
         } else {
           const p = (earlyArgs?.path as string) ?? ""
-          if (p !== "" && isOwnedState(p)) return "deny"
+          if (p !== "" && isOwnedState(p)) return deny(call, "jail: owned state")
         }
       }
 
@@ -394,7 +434,11 @@ export function createPermissionHandler(
         // inspectBashCommand (bukan sebagian), sama seperti mode lain.
         if (call.name === "bash") {
           const cmd = (earlyArgs?.cmd as string) ?? ""
-          if (cmd.trim() && bashDenied(cmd)) return "deny"
+          // allow-all + cmd kosong = allow (perilaku lama dipertahankan).
+          if (cmd.trim()) {
+            const br = bashDenyReason(cmd)
+            if (br) return deny(call, `bash-guard: ${br}`)
+          }
         }
         return "allow"
       }
@@ -411,10 +455,17 @@ export function createPermissionHandler(
     __getMode(): PermissionMode {
       return state.mode
     },
+    // Seam kernel describeDenial: alasan deny terakhir call ini (dicatat
+    // check() via deny()). Hapus-saat-baca; tak ada catatan = undefined =
+    // pesan deny polos seperti dulu.
+    describeDenial(call: ToolCall): string | undefined {
+      return takeDenyReason(call)
+    },
   }
   return returned as unknown as PermissionHandler & {
     __setMode(m: PermissionMode): void
     __getMode(): PermissionMode
+    describeDenial(call: ToolCall): string | undefined
   }
 
   // Balapan prompt melawan abort: jawaban yang tiba SETELAH sesi dibatalkan
@@ -447,6 +498,6 @@ export function createPermissionHandler(
       await saveAlways(call)
       return "allow"
     }
-    return ans === "allow" ? "allow" : "deny"
+    return ans === "allow" ? "allow" : deny(call, "declined by user")
   }
 }

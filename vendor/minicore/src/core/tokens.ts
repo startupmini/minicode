@@ -18,6 +18,28 @@ export function contentToText(content: Content): string {
 }
 
 /**
+ * Additive seam (minicode): estimasi token sadar-gambar. Gambar inline
+ * membawa byte base64 (~bytes/3 token) — placeholder `[image:mime]` lama
+ * membuat gambar 100k hanya ~15 token (tak terlihat budget → kompaksi tak
+ * jalan sampai konteks benar-benar jebol). Rumus sama dengan
+ * src/policy/context.ts estimateImageTokens agar laporan read_image dan
+ * budget konsisten.
+ */
+export function estimateImageTokens(byteLength: number): number {
+  return Math.ceil(Math.ceil((byteLength * 4) / 3) / DEFAULT_CHARS_PER_TOKEN);
+}
+
+function estimateContent(content: Content, est: TokenEstimator): number {
+  if (typeof content === "string") return est(content);
+  let total = 0;
+  for (const part of content) {
+    if (part.type === "text") total += est(part.text);
+    else total += estimateImageTokens(part.data.byteLength);
+  }
+  return total;
+}
+
+/**
  * JSON.stringify that never throws: cyclic values (possible only from hostile
  * or buggy input) fall back to a plain string instead of leaking a raw
  * TypeError through the kernel's deterministic error taxonomy.
@@ -33,11 +55,15 @@ export function safeStringify(value: unknown): string {
 export function estimateMessage(message: Message, est: TokenEstimator): number {
   switch (message.role) {
     case "user":
-      return est(contentToText(message.content));
+      return estimateContent(message.content, est);
     case "assistant":
-      return est(contentToText(message.content)) + est(safeStringify(message.toolCalls ?? [])) + est(message.reasoning ?? "");
+      return estimateContent(message.content, est) + est(safeStringify(message.toolCalls ?? [])) + est(message.reasoning ?? "");
     case "tool": {
       const c = message.content;
+      // Hasil tool biner (mis. gambar): JSON.stringify Uint8Array meledak
+      // jadi {"0":..} raksasa → tekanan palsu → kompaksi prematur. Estimasi
+      // sebagai gambar, bukan string JSON.
+      if (c instanceof Uint8Array) return estimateImageTokens(c.byteLength);
       return est(typeof c === "string" ? c : safeStringify(c ?? null));
     }
     default:

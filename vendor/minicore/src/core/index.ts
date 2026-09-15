@@ -13,6 +13,7 @@ export type { PermissionHandler, Decision } from "./permission.ts";
 export type { TokenEstimator } from "./tokens.ts";
 export {
   defaultTokenEstimator,
+  estimateImageTokens,
   estimateMessage,
   estimateMessages,
   estimateTools,

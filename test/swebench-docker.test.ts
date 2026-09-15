@@ -26,7 +26,13 @@ describe("swebench docker: manifest", () => {
     const m = loadEraManifest()!
     for (const e of m.instances) {
       expect(Object.keys(m.images)).toContain(e.python)
-      expect(e.python === "3.6" ? e.pytest : "7.4").toBe(e.pytest)
+      if (e.python === "3.6") {
+        // pytest 7.x butuh Python >=3.7 — pin 3.6 WAJIB major 6 (pip menolak
+        // 7.x di 3.6; dulu "7.0" yang tak pernah bisa terinstall).
+        expect(e.pytest.startsWith("6.")).toBe(true)
+      } else {
+        expect(e.pytest).toBe("7.4")
+      }
       expect(["pytest", "django"]).toContain(e.runner)
       expect(["high", "medium", "low"]).toContain(e.confidence)
     }

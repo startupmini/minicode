@@ -1,5 +1,5 @@
 {
-  "_note": "Pin Python/pytest per instance SWE-Lite-20. Sumber tanggal: base_commit via GitHub API (2026-09-07); versi Python = maks yang didukung repo saat itu (setup.py classifiers, diverifikasi per repo). confidence=low berarti tebakan beralasan yang WAJIB divalidasi pada run docker pertama (butuh daemon — tak ada di env ini). pytest 7.4 seragam (>=3.7) agar collection stabil; 7.0 untuk 3.6.",
+  "_note": "Pin Python/pytest per instance SWE-Lite-20. Sumber tanggal: base_commit via GitHub API (2026-09-07); versi Python = maks yang didukung repo saat itu (setup.py classifiers, diverifikasi per repo). confidence=low berarti tebakan beralasan yang WAJIB divalidasi pada run docker pertama (butuh daemon — tak ada di env ini). pytest 7.4 seragam (>=3.7) agar collection stabil; 6.2.5 untuk 3.6 karena pytest 7.x butuh Python >=3.7 (pip menolak install).",
   "images": {
     "3.6": "minicode-swe:py36",
     "3.7": "minicode-swe:py37",
@@ -130,7 +130,7 @@
     {
       "id": "scikit-learn__scikit-learn-10297",
       "python": "3.6",
-      "pytest": "7.0",
+      "pytest": "6.2.5",
       "runner": "pytest",
       "confidence": "medium"
     },
@@ -144,7 +144,7 @@
     {
       "id": "sympy__sympy-11400",
       "python": "3.6",
-      "pytest": "7.0",
+      "pytest": "6.2.5",
       "runner": "pytest",
       "confidence": "low"
     }

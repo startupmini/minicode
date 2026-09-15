@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Dockerfile py36 kini bisa build**: apt stretch pindah ke `archive.debian.org` (Check-Valid-Until saja tak cukup untuk repo yang dihapus) + pin `pytest==6.2.5` (7.x butuh Python ≥3.7 — pin lama `7.0` tak pernah bisa terinstall di 3.6); manifest + test konsistensi diperbarui. Validasi build tetap menunggu daemon.
+
 ### Added
 - **Baterai berbiaya terkendali**: `bench/runner.ts` flag `--model/--provider/--max-steps/--timeout` (sebelumnya: router default + 50 step + 600s tanpa rem — run bayar bisa liar).
 - **`gate:eval` (`bench/eval-gate.ts`)**: kunci ambang baterai (min resolve-rate, max median token, partial opsional) ala coverage-gate; `evaluateGate` murni + teruji.

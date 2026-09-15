@@ -1,15 +1,17 @@
 # Era image Python 3.6 untuk SWE-Lite-20 (lihat manifest.json).
 # Build: docker build -f bench/docker/Dockerfile.py36 -t minicode-swe:py36 bench/docker
-# DUA jebakan era yang sudah diperbaiki statis (tanpa daemon tak bisa
-# dibuktikan build — validasi build pertama WAJIB sebelum dikutip):
-# 1. Repo apt stretch DIHAPUS dari deb.debian.org (bukan sekadar expired) —
-#    Check-Valid-Until saja tidak cukup; arahkan ke archive.debian.org
+# DUA jebakan era yang sudah diperbaiki (terbukti saat build, bukan teori):
+# 1. python:3.6-slim berbasis bullseye yang DIHAPUS dari deb.debian.org —
+#    Check-Valid-Until saja tidak cukup; arahkan main ke archive.debian.org
 #    (tetap butuh Check-Valid-Until=false karena Release arsip pun expired).
-# 2. pytest 7.x butuh Python >=3.7 — di 3.6 pip menolak install. Pin 6.2.5
+# 2. Baris security (bullseye-security) TIDAK ADA di arsip dalam bentuk itu
+#    → 404 + exit 100. Solusi: buang baris security sekalian (git +
+#    build-essential tersedia di main; versi era pula, lebih tepat guna).
+# 3. pytest 7.x butuh Python >=3.7 — di 3.6 pip menolak install. Pin 6.2.5
 #    (terakhir untuk 3.6; collection stabil untuk era ini).
 FROM python:3.6-slim
-RUN sed -i 's|deb.debian.org|archive.debian.org|g; s|security.debian.org|archive.debian.org|g' /etc/apt/sources.list \
-  && sed -i '/stretch-updates/d' /etc/apt/sources.list \
+RUN sed -i 's|deb.debian.org|archive.debian.org|g' /etc/apt/sources.list \
+  && sed -i '/security\.debian\.org/d' /etc/apt/sources.list \
   && apt-get -o Acquire::Check-Valid-Until=false update \
   && apt-get install -y --no-install-recommends git build-essential \
   && rm -rf /var/lib/apt/lists/* \

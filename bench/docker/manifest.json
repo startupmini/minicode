@@ -146,7 +146,8 @@
       "python": "3.6",
       "pytest": "6.2.5",
       "runner": "pytest",
-      "confidence": "low"
+      "confidence": "low",
+      "deps": ["mpmath==1.0.0"]
     }
   ]
 }

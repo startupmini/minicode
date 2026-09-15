@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Fixed
+- **Baterai SWE-Docker hidup**: 5 image era terbangun (`py36` butuh rewrite apt-archive + pin pytest 6.2.5, sudah di commit sebelumnya); `--verify-only` (validasi tanpa agen/API key); install+test satu container (filesystem ephemeral); `manifest.deps` (sympy→`mpmath==1.0.0`); `interpretCodes` (exit≠0/1 = harness ERROR, bukan FAIL model — kasus nyata collection-error sympy).
+- **Hasil validasi**: requests-1963 (6/7 vacuous httpbin-drift + 1 genuine → tetap low), pytest-11143 (FAIL benar → diskriminator), sympy-11400 (tak runnable: bare-ID + shim `py.test` gagal di pytest 6.2.5 MAUPUN era 3.0.7 → tetap low beralasan).
+
+### Fixed
 - **Dockerfile py36 kini bisa build**: apt stretch pindah ke `archive.debian.org` (Check-Valid-Until saja tak cukup untuk repo yang dihapus) + pin `pytest==6.2.5` (7.x butuh Python ≥3.7 — pin lama `7.0` tak pernah bisa terinstall di 3.6); manifest + test konsistensi diperbarui. Validasi build tetap menunggu daemon.
 
 ### Added

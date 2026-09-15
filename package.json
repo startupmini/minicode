@@ -71,6 +71,7 @@
     "dev": "bun cli/index.ts",
     "bench": "bun bench/runner.ts",
     "bench:smoke": "bun bench/runner.ts --fake",
+    "gate:eval": "bun bench/eval-gate.ts",
     "audit:harness": "bun bench/harness-audit.ts",
     "bench:runs": "bun bench/runner.ts --runs 2",
     "web:css": "bun scripts/build-web-css.ts",

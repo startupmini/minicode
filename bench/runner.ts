@@ -2,6 +2,10 @@
 // steps, token, durasi. `--fake` untuk smoke tanpa API key (dipakai CI).
 // `--runs <n>`: jumlah run per task (default 1; 2 = stabil/median).
 // `--memory on|off`: RAG + auto-memory nyala/mati (ukur nilai memory diferensial).
+// `--model <provider::model>`: pin model (default: router default).
+// `--provider <id>`: batasi ke satu provider (WAJIB untuk run berbayar).
+// `--max-steps <n>`, `--timeout <ms>`: rem biaya per task.
+// `--tasks <path.json>`: ganti BENCH_TASKS dengan task eksternal.
 // `--out <path>`: file laporan JSON (default bench/results.json).
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { mkdtemp, rm } from "node:fs/promises"
@@ -30,6 +34,22 @@ const outIdx = process.argv.indexOf("--out")
 const outPath =
   outIdx !== -1 && process.argv[outIdx + 1] ? process.argv[outIdx + 1]! : "bench/results.json"
 
+// Audit #14: baterai live butuh kontrol biaya — model/provider/steps/timeout
+// eksplisit agar run tak liar (default kernel: 50 steps, 600s, provider pertama).
+const strFlag = (name: string): string | undefined => {
+  const i = process.argv.indexOf(name)
+  return i !== -1 && process.argv[i + 1] ? process.argv[i + 1]! : undefined
+}
+const numFlag = (name: string): number | undefined => {
+  const v = strFlag(name)
+  const n = v == null ? NaN : Number(v)
+  return Number.isFinite(n) && n > 0 ? n : undefined
+}
+const benchModel = strFlag("--model")
+const benchProvider = strFlag("--provider")
+const benchMaxSteps = numFlag("--max-steps")
+const benchTimeoutMs = numFlag("--timeout")
+
 async function main(): Promise<void> {
   let provider: ModelProvider
   if (fake) {
@@ -43,7 +63,17 @@ async function main(): Promise<void> {
     }
   } else {
     const cfg = await loadConfig()
-    const providers = buildProviderList(cfg)
+    let providers = buildProviderList(cfg)
+    // Pin provider bila diminta (--provider <id>): tanpa ini router default =
+    // provider pertama config, dan baterai bayar bisa jalan di model salah.
+    if (benchProvider) {
+      const kept = providers.filter((p) => (p as unknown as { id?: string }).id === benchProvider)
+      if (kept.length === 0) {
+        console.error(`[bench] provider "${benchProvider}" tidak ada di config`)
+        process.exit(1)
+      }
+      providers = kept
+    }
     if (providers.length === 0) {
       console.error("no provider configured — jalankan setup wizard, atau pakai --fake")
       process.exit(1)
@@ -108,11 +138,13 @@ async function main(): Promise<void> {
           cwd: dir,
           permissionMode: "auto",
           ...(systemExtra ? { systemExtra } : {}),
+          ...(benchMaxSteps ? { maxSteps: benchMaxSteps } : {}),
+          ...(benchTimeoutMs ? { timeoutMs: benchTimeoutMs } : {}),
         })
         const usage = createUsageCollector(session.events)
         const t0 = Date.now()
         try {
-          const res = await session.run(task.prompt, {})
+          const res = await session.run(task.prompt, benchModel ? { model: benchModel } : {})
           steps = res.usage.steps
         } catch (e) {
           error = (e as Error).message
@@ -171,6 +203,10 @@ async function main(): Promise<void> {
     fake,
     runsPerTask: runs,
     memory: memoryOn ? "on" : "off",
+    model: benchModel ?? null,
+    provider: benchProvider ?? null,
+    maxSteps: benchMaxSteps ?? null,
+    timeoutMs: benchTimeoutMs ?? null,
     total: results.length,
     resolved,
     partial,

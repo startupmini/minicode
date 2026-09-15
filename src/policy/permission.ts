@@ -118,6 +118,10 @@ const DEFAULT_BASH_ALLOWLIST = [
   "dir*",
   "pwd",
   "cat *",
+  // `type` = padanan `cat` di cmd.exe Windows (deskripsi tool bash menyuruh
+  // model memakainya) — tanpanya tiap baca berkas via shell di Windows
+  // gagal allowlist walau guard sudah menganggapnya reader aman.
+  "type *",
   "head *",
   "tail *",
   "wc *",
@@ -281,7 +285,14 @@ export function createPermissionHandler(
         const br = bashDenyReason(cmd)
         if (br) return deny(call, `bash-guard: ${br}`)
         const matched = bashAllowlist.filter((pat) => matchBashAllowlist(cmd, pat))
-        if (matched.length === 0) return deny(call, "allowlist: no matching pattern")
+        // Alasan actionable (keluhan eval: "no matching pattern" tanpa jalan
+        // keluar membuat model retry buta): tulis/baca file = pakai tool file
+        // terjail; shell penuh = operator pilih --allow-all/--sandbox docker.
+        if (matched.length === 0)
+          return deny(
+            call,
+            `allowlist: no matching pattern for "${cmd.slice(0, 80)}" — file work: use read_file/write_file/edit; full shell: rerun with --allow-all / --sandbox docker / MINICODE_BASH_ALLOWLIST`,
+          )
         if (matched.some((p) => /^(npx|npm exec|bun x|bun run)\b/i.test(p)) && !npmNpxSafe(cmd))
           return deny(call, "allowlist: npm/npx unsafe")
         return "allow"

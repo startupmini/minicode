@@ -39,7 +39,11 @@ export interface SubAgentSpec {
   provider: ModelProvider
   tools: Tool[]
   cwd: string
-  permissionMode: "auto"
+  // Mode izin anak: warisi `allowlist` parent yang lebih ketat (tanpa ini
+  // parent allowlist melahirkan anak `auto` yang shell-nya justru lebih longgar
+  // — inkonsistensi, bukan RCE: auto = default sesi utama juga). plan/readonly
+  // tetap dipaksa explore di bawah (mode alat), bukan di sini (mode izin).
+  permissionMode: "auto" | "allowlist"
   maxSteps: number
   timeoutMs: number
   systemExtra: string
@@ -222,7 +226,8 @@ export const delegateTaskTool: Tool = {
           provider,
           tools: subTools,
           cwd: parentCwd,
-          permissionMode: "auto",
+          // Parent allowlist → anak allowlist (lihat komentar tipe di atas).
+          permissionMode: parentMode === "allowlist" ? "allowlist" : "auto",
           maxSteps: cap,
           timeoutMs: LIMITS.SUB_AGENT_TIMEOUT_MS,
           // Warisan model parent (audit #14): baca live dari ToolContext agar

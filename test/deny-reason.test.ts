@@ -156,4 +156,24 @@ describe("app handler reasons", () => {
     expect(r.isError).toBe(true)
     expect(String(r.content)).toBe("permission denied: bash-guard: destructive rm")
   })
+
+  test("allowlist: `type` (padanan cat Windows) lolos, sensitif tetap ditahan guard", async () => {
+    const h = handler("allowlist")
+    const ok = await reasoned(h, "bash", { cmd: "type readme.txt" })
+    expect(ok.decision).toBe("allow")
+    const sens = await reasoned(h, "bash", { cmd: "type .env" })
+    expect(sens.decision).toBe("deny")
+    expect(sens.reason).toBe("bash-guard: sensitive file access")
+  })
+
+  test("allowlist miss memberi jalan keluar, bukan alasan buntu", async () => {
+    const h = handler("allowlist")
+    const { decision, reason } = await reasoned(h, "bash", { cmd: "mkdir subdir" })
+    expect(decision).toBe("deny")
+    expect(reason).toContain("allowlist: no matching pattern")
+    // Model harus tahu alternatifnya: tool file untuk kerja file, eskalasi
+    // mode untuk shell penuh — tanpa ini model retry buta (temuan eval).
+    expect(reason).toContain("read_file/write_file/edit")
+    expect(reason).toContain("--allow-all")
+  })
 })

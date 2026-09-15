@@ -284,6 +284,22 @@ const STATIC_DENY: [RegExp, string][] = [
   [/\[System\.IO\.File\]::ReadAllText/i, "powershell file read"],
   [/\b(?:Invoke-Expression|iex)\b/i, "powershell dynamic eval"],
   [/\bawk\b[^\n]*\bsystem\s*\(/i, "awk system()"],
+  // git sebagai pelarian jail: `git diff --no-index A B` mencetak isi path
+  // filesystem ARBITRER (di luar workspace, abaikan file-jail — terkonfirmasi
+  // via inspectBashCommand, bukan teori); --exec-path/--upload-pack/
+  // --receive-pack/ext:: mengeksekusi helper eksternal. Bentuk global
+  // `git -c k=v <sub>` sebelum subcommand sudah gugur di allowlist (tak cocok
+  // pola ^git <sub>), tapi mode auto hanya dijaga guard ini. Alur sah agen
+  // (status/diff/log/branch/show dalam repo) tak memakai flag ini.
+  [/\bgit\b[^\n]*?--(?:no-index|exec-path|upload-pack|receive-pack)\b/, "git dangerous flag"],
+  [/\bext::/, "git ext transport"],
+  // Injeksi konfigurasi git via environment (`GIT_EXTERNAL_DIFF=x git diff`
+  // setara diff.external repo — repo-side adalah residual terdokumentasi, tapi
+  // env datang dari perintah model sendiri sehingga ditahan di sini).
+  [
+    /\bGIT_(?:EXTERNAL_DIFF|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+)\s*=/,
+    "git config injection via env",
+  ],
   [
     /(?:^|[;&|]\s*)(?:base64|xxd)[^\n]*\|\s*(?:sh|bash|python|python3|node|perl)\b/i,
     "decode|shell",

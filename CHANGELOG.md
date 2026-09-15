@@ -23,6 +23,19 @@
 - **System prompt `extra` anti-terpotong**: recovery/plan directive (paling penting) diposisikan sebelum blok data besar (MEMORY/AGENTS/repomap) sehingga `cutMarked(8000)` tak memotongnya duluan.
 - **Retrieval recency + dwibahasa**: skor hybrid kini dikali peluruhan 60-hari half-life dan boost kategori dwibahasa (`perbaiki|keputusan|selesaikan`, `suka|ingin`) — koreksi kemarin mengalahkan fakta 6 bulan.
 
+## [0.9.22] - 2026-09-15 — Tindak lanjut eval D:\Test: allowlist produktif, guard git, warisan izin
+
+### Fixed
+- **Lubang baca-bebas via `git diff --no-index`**: mencetak isi path filesystem arbitrer walau cocok pola allowlist `git diff*` (terkonfirmasi empiris via `inspectBashCommand`, bukan teori). Guard kini menolak `--no-index/--exec-path/--upload-pack/--receive-pack`, transport `ext::`, dan injeksi config via env (`GIT_EXTERNAL_DIFF`/`GIT_CONFIG_*` inline); alur sah dalam-repo (`status/diff/log/branch/show`) tetap jalan.
+- **Inkonsistensi izin sub-agent**: parent `allowlist` melahirkan anak `auto` yang shell-nya lebih longgar. Anak kini mewarisi `allowlist` (`SubAgentSpec.permissionMode: "auto" | "allowlist"`); `plan`/`readonly` tetap dipaksa explore.
+
+### Added
+- **`type *` di allowlist bash**: padanan `cat` di cmd.exe Windows yang dijanjikan deskripsi tool tapi selalu ditolak allowlist; guard sensitif tetap berlaku (`type .env` ditahan).
+- **Deny allowlist actionable**: `allowlist: no matching pattern for "<cmd>" — file work: use read_file/write_file/edit; full shell: rerun with --allow-all / --sandbox docker / MINICODE_BASH_ALLOWLIST` + panduan anti-retry-buta di deskripsi tool bash.
+
+### Notes
+- Klaim eval yang dikoreksi setelah verifikasi kode: `--exec-path` RCE tak tereksploitasi seperti ditulis (residual repo-config sudah terdokumentasi di `repo-git-trust.test.ts`); klaim "sub-agent full access" dan "UNC bypass" salah arah (fail-closed); fail-open DNS adalah tradeoff availability yang disengaja di `src/lib/net.ts`.
+
 ## [0.9.21] - 2026-09-14 — Kokoh: stdin flow, hang, keamanan, kepintaran
 
 ### Security (audit #13 — kasus nyata sesi liar)

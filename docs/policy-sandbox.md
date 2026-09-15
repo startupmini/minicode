@@ -11,7 +11,7 @@
 | `ask` | Readonly + `NO_PROMPT_TOOLS` auto-allow; sisanya prompt/TTY + allowlist persist |
 | `readonly` | Hanya 18 tool `READONLY_TOOLS` |
 | `plan` | `readonly` + `todo_write` + `delegate_task` (dipaksa explore/read-only) + `submit_result`. Tetap tanpa mutasi file/git/memory (audit #04: delegasi plan tak bisa menulis — child dipaksa explore) |
-| `allowlist` | Bash hanya pola `DEFAULT_BASH_ALLOWLIST`/env; file-write/internal-write sesuai set |
+| `allowlist` | Bash hanya pola `DEFAULT_BASH_ALLOWLIST`/env; file-write/internal-write sesuai set. Diwariskan ke sub-agent (parent allowlist → anak allowlist, bukan auto) |
 | `allow-all` | Allow semua; **tetap** tolak bash berbahaya + path jail tetap aktif |
 
 Cycle Tab/Shift+Tab hanya 5 (`auto,ask,plan,allowlist,allow-all` — `allow-all` dilewati agar tak aktif tak sengaja). Mode bisa dioverride: `--plan`, `--allowlist`, `--ask`, `--allow-all`, `MINICODE_PLAN=1`, `MINICODE_PERMISSION=allowlist`, `Shift+Tab` runtime.

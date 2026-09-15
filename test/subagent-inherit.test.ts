@@ -165,3 +165,46 @@ describe("sub-agent mewarisi routing parent", () => {
     }
   })
 })
+
+describe("sub-agent mewarisi mode allowlist parent", () => {
+  // Parent allowlist melahirkan anak `auto` = shell anak lebih longgar dari
+  // parent (inkonsistensi). plan/readonly tetap dipaksa explore (mode alat).
+  test("parent allowlist → spec.permissionMode allowlist", async () => {
+    process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || "sk-test-hermetic"
+    let seen: { permissionMode?: string } | undefined
+    setSubAgentSessionFactory(async (spec) => {
+      seen = spec
+      return {
+        events: { on: () => () => {} },
+        run: async () => ({ finalText: "ok", usage: { steps: 1 } }),
+      }
+    })
+    const ctx = {
+      signal: new AbortController().signal,
+      emit: () => {},
+      state: { model: "prov::m1" },
+      permissionMode: "allowlist",
+    } as never
+    await delegateTaskTool.execute({ prompt: "x" }, ctx)
+    expect(seen?.permissionMode).toBe("allowlist")
+  })
+
+  test("parent auto → spec.permissionMode tetap auto", async () => {
+    process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || "sk-test-hermetic"
+    let seen: { permissionMode?: string } | undefined
+    setSubAgentSessionFactory(async (spec) => {
+      seen = spec
+      return {
+        events: { on: () => () => {} },
+        run: async () => ({ finalText: "ok", usage: { steps: 1 } }),
+      }
+    })
+    const ctx = {
+      signal: new AbortController().signal,
+      emit: () => {},
+      state: { model: "prov::m1" },
+    } as never
+    await delegateTaskTool.execute({ prompt: "x" }, ctx)
+    expect(seen?.permissionMode).toBe("auto")
+  })
+})

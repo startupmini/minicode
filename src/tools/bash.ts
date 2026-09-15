@@ -176,7 +176,7 @@ function startBackground(cmd: string, cwd: string | undefined): string {
 export const bashTool: Tool = {
   name: "bash",
   description:
-    "Run a shell command (default timeout 30s, max output 20k chars, exit code prefixed). Set background:true for long-running processes (dev server, watcher), then collect output via bash_output and stop with bash_kill. Prefer git_status/git_diff/git_log tools over raw `git` commands: raw git executes repository-configured hooks, filters and diff drivers. Destructive, network-exfiltrating, env-dumping, and inline-interpreter commands are blocked. On Windows the shell is cmd.exe (use dir, echo %VAR%, type).",
+    "Run a shell command (default timeout 30s, max output 20k chars, exit code prefixed). Set background:true for long-running processes (dev server, watcher), then collect output via bash_output and stop with bash_kill. Prefer git_status/git_diff/git_log tools over raw `git` commands: raw git executes repository-configured hooks, filters and diff drivers. Destructive, network-exfiltrating, env-dumping, and inline-interpreter commands are blocked. If the shell allowlist denies a command: do NOT retry blindly — file reads/writes belong to read_file/write_file/edit, and a full shell needs the operator to rerun with --allow-all or --sandbox docker. On Windows the shell is cmd.exe (use dir, echo %VAR%, type).",
   parameters: {
     type: "object",
     properties: {

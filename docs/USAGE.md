@@ -376,7 +376,7 @@ Docker **tidak** dipakai otomatis meski tersedia — menarik image dan menjalank
    | `bash <(curl x)` | tak ada aturan process substitution | ditolak |
    | `rm -rf ..` | pola lama hanya kenal `/` dan `~` | ditolak |
 
-2. **Allowlist** (`--allowlist`, dan default bila tak ada sandbox) — hanya bentuk perintah read/build: `git status/diff/log/branch/show`, `bun test/run/x tsc`, `npm run/exec`, `npx`, `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `find`, `which`, `echo`, `pwd`. Operasi tulis lewat shell (`mkdir`, `cp`, `mv`, `rm`, `touch`) **ditahan** — agent yang perlu menulis file punya `write_file`/`edit` yang ter-jail. Untuk `npm exec`/`npx`/`bun run`/`bun x`, arg tak boleh memuat ekspansi shell (`$`, backtick) atau redirection.
+2. **Allowlist** (`--allowlist`, dan default bila tak ada sandbox) — hanya bentuk perintah read/build: `git status/diff/log/branch/show`, `bun test/run/x tsc`, `npm run/exec`, `npx`, `ls`, `dir`, `cat`, `type`, `head`, `tail`, `wc`, `grep`, `rg`, `find`, `which`, `echo`, `pwd`. Operasi tulis lewat shell (`mkdir`, `cp`, `mv`, `rm`, `touch`) **ditahan** — agent yang perlu menulis file punya `write_file`/`edit` yang ter-jail. Untuk `npm exec`/`npx`/`bun run`/`bun x`, arg tak boleh memuat ekspansi shell (`$`, backtick) atau redirection. Penolakan allowlist menyebut jalan keluarnya (pakai tool file, atau `--allow-all`/`--sandbox docker` untuk shell penuh).
 
 3. **Path jail** — realpath-based, berlaku bahkan saat `--allow-all`.
 

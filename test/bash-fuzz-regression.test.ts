@@ -171,3 +171,41 @@ describe("fuzz regresi: batas normalisasi yang jujur", () => {
     expect(denied("D=-v; docker run $D /:/host alpine sh")).toBe(true)
   })
 })
+
+describe("fuzz regresi: git sebagai pelarian jail", () => {
+  // Temuan verifikasi eval D:\Test: `git diff --no-index A B` mencetak isi
+  // path filesystem arbitrer (di luar workspace) walau cocok pola allowlist
+  // `git diff*` — guard tak menganggap `git` sebagai reader. Flag/helper lain
+  // sekelas juga ditahan; alur sah dalam-repo tetap jalan.
+  test("git diff --no-index membaca path arbitrer: ditolak", () => {
+    expect(denied("git diff --no-index /etc/shadow /dev/null")).toBe(true)
+    expect(denied("git diff --no-index C:/Windows/System32/config/SAM NUL")).toBe(true)
+    expect(inspectBashCommand("git diff --no-index a b").reason).toBe("git dangerous flag")
+  })
+
+  test("helper eksekusi git dan transport ext:: ditolak", () => {
+    expect(denied("git status --exec-path=/tmp/x")).toBe(true)
+    expect(denied("git --exec-path=/tmp/e status")).toBe(true)
+    expect(denied("git clone --upload-pack=id evil")).toBe(true)
+    expect(denied("git clone --receive-pack=id evil")).toBe(true)
+    expect(denied("git clone ext::sh -c id")).toBe(true)
+  })
+
+  test("injeksi config git via env ditolak", () => {
+    expect(denied("GIT_EXTERNAL_DIFF=x git diff")).toBe(true)
+    expect(denied("GIT_CONFIG_COUNT=1 git diff")).toBe(true)
+    expect(denied("GIT_CONFIG_KEY_0=diff.external git diff")).toBe(true)
+  })
+
+  test("alur git sah dalam repo tetap jalan", () => {
+    for (const c of [
+      "git status",
+      "git status --short",
+      "git diff --stat",
+      "git log --oneline -5",
+      "git show HEAD:README.md",
+      "git branch -a",
+    ])
+      expect(denied(c)).toBe(false)
+  })
+})

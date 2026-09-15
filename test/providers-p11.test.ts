@@ -204,7 +204,7 @@ async function collectText(p: ModelProvider): Promise<string> {
   return out
 }
 
-test("router: 429 + retryAfter → tunggu lalu fallback (daftar tak terbakar)", async () => {
+test("router: 429 + retryAfter → fallback DULU (jangan bakar sleep saat alternatif menganggur)", async () => {
   let callsA = 0
   const a: ModelProvider = {
     id: "a",
@@ -220,8 +220,10 @@ test("router: 429 + retryAfter → tunggu lalu fallback (daftar tak terbakar)", 
   const r = createRouterProvider({ providers: [a, b] })
   const t0 = Date.now()
   expect(await collectText(r)).toBe("dari-b")
-  // retry-after 30ms dihonori (elapsed >= 30), bukan fallback instan.
-  expect(Date.now() - t0).toBeGreaterThanOrEqual(25)
+  // Audit #14: fallback instan ke b — A hanya dicoba sekali, tanpa menunggu
+  // retry-after 30ms padahal b menganggur. Kode lama: tidur 30ms dulu, baru
+  // fallback (test ini gagal di kode lama).
+  expect(Date.now() - t0).toBeLessThan(25)
   expect(callsA).toBe(1)
 })
 

@@ -623,9 +623,26 @@ export async function searchHybrid(
     const kw = keywordScore(query, r.text)
     // hybrid 0.7 vector + 0.3 keyword, if no vector -> keyword only
     let score = queryVec ? vecScore * 0.7 + kw * 0.3 : kw
-    // P13 S2 — boost decision category bila query mengandung fix/decide
-    if ((r as MemoryRow).category === "decision" && /fix|decide|decision/i.test(query)) score += 0.1
-    if ((r as MemoryRow).category === "preference" && /prefer|like/i.test(query)) score += 0.05
+    // Recency decay (audit #14): koreksi kemarin harus mengalahkan fakta 170
+    // hari dengan skor hampir sama — TTL menghapus di ujung, tapi sebelum itu
+    // tak ada penurunan bertahap. Paruh-hidup 60 hari: 1 minggu ≈ 0.92×,
+    // 6 bulan ≈ 0.12× (jatuh di bawah ambang relevansi, efeknya sama dengan
+    // kadaluwarsa). Fakta fresh (age≈0) tidak berubah → test lama tetap hijau.
+    const ageDays = (Date.now() - r.created_at) / 86_400_000
+    score *= 0.5 ** (ageDays / 60)
+    // P13 S2 — boost decision/preference bila query menyentuh kata kuncinya.
+    // Regex kini dwibahasa (EN + ID): prompt Indonesia ("perbaiki",
+    // "keputusan", "suka") tidak boleh kehilangan boost yang dinikmati versi EN.
+    if (
+      (r as MemoryRow).category === "decision" &&
+      /fix|decide|decision|perbaiki|keputusan|selesaikan/i.test(query)
+    )
+      score += 0.1
+    if (
+      (r as MemoryRow).category === "preference" &&
+      /prefer|like|preference|suka|ingin/i.test(query)
+    )
+      score += 0.05
     return { text: r.text, score, vec, createdAt: r.created_at }
   })
   const minScore = queryVec ? LIMITS.MEMORY_MIN_SCORE_HYBRID : LIMITS.MEMORY_MIN_SCORE_KEYWORD

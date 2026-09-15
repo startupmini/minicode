@@ -179,11 +179,11 @@ export function createRouterProvider(config: RouterConfig): ModelProvider {
             if (e.retryAfterMs != null && e.retryAfterMs > maxRetry) {
               err = new ProviderError(e.category, e.message, maxRetry)
             }
-            // P11 P1.3 — honori retry-after: untuk 429 dengan retryAfter, tunggu
-            // (dibatasi maxRetry, default 30 dtk) lalu fallback. Tanpa tunggu,
-            // request berikutnya menabrak jendela limit yang sama — daftar
-            // provider terbakar sia-sia. Bila tak ada provider tersisa, coba
-            // ulang provider SAMA sekali (tunggu-di-tempat), baru menyerah.
+            // P11 P1.3 — honori retry-after. Audit #14: fallback DULU bila ada
+            // alternatif — jangan bakar sleep (maks 30 dtk) saat provider
+            // berikutnya menganggur; tunggu hanya bila tidak ada alternatif
+            // (atau ter-pin), lalu ulangi provider sama di tempat. retried429For
+            // mencegah loop: tiap provider hanya pernah menunggu sekali.
             // Sleep abort-aware: Ctrl+C/timeout tidak boleh hang 30 dtk.
             if (
               err.category === "rate_limit" &&
@@ -191,6 +191,13 @@ export function createRouterProvider(config: RouterConfig): ModelProvider {
               !retried429For.has(current.id)
             ) {
               retried429For.add(current.id)
+              if (!pinned) {
+                const next = config.providers.find((p) => !tried.has(p.id))
+                if (next) {
+                  current = next
+                  continue
+                }
+              }
               const waitMs = Math.min(err.retryAfterMs, maxRetry)
               if (signal.aborted) throw new DOMException("Aborted", "AbortError")
               let onAbort: (() => void) | undefined
@@ -209,11 +216,6 @@ export function createRouterProvider(config: RouterConfig): ModelProvider {
               // Pin: tetap di provider yang dipilih (tunggu lalu ulangi di
               // tempat) — jangan pindah ke provider lain.
               if (pinned) continue
-              const next = config.providers.find((p) => !tried.has(p.id))
-              if (next) {
-                current = next
-                continue
-              }
               // tunggu-di-tempat: ulangi provider sama sekali
               continue
             }

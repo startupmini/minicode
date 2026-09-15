@@ -66,6 +66,11 @@ export async function buildSystemPrompt(
       "- Work only inside the workspace. Do not attempt to read or write files outside it, in secret paths, or in .minicode/.",
     ].join("\n"),
   )
+  // `extra` (recovery directive, plan hint, RAG relevant-memory) diposisikan
+  // SEBELUM blok data besar (MEMORY/AGENTS/repomap): saat total jebol budget
+  // 8000, cutMarked memotong EKOR — dulu extra justru paling akhir sehingga
+  // peringatan recovery/plan yang paling penting hilang lebih dulu. Audit #14.
+  if (opts.extra) parts.push(opts.extra)
   // Lingkungan kerja. Tanpa ini model MENEBAK: pada uji live ia melaporkan
   // "cwd saat ini adalah /" lalu menyimpulkan direktori tidak writable, padahal
   // ia berjalan di workspace Windows yang normal. Path relatif pada tool
@@ -149,7 +154,6 @@ export async function buildSystemPrompt(
       if (files) parts.push(`\n# Repo files (sample)\n${files}`)
     }
   } catch {}
-  if (opts.extra) parts.push(opts.extra)
   const full = parts.join("\n\n")
   // single total budget — keep system prompt lean
   if (full.length > MAX_SYSTEM_CHARS) return cutMarked(full, MAX_SYSTEM_CHARS)

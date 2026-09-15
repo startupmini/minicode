@@ -5,6 +5,8 @@
 // `--model <provider::model>`: pin model (default: router default).
 // `--provider <id>`: batasi ke satu provider (WAJIB untuk run berbayar).
 // `--max-steps <n>`, `--timeout <ms>`: rem biaya per task.
+// `--judge-model <provider::model>`: nilai kualitas penjelasan tiap run
+// (model HARUS beda dari aktor); tanpa flag = tak dinilai.
 // `--tasks <path.json>`: ganti BENCH_TASKS dengan task eksternal.
 // `--out <path>`: file laporan JSON (default bench/results.json).
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
@@ -49,6 +51,9 @@ const benchModel = strFlag("--model")
 const benchProvider = strFlag("--provider")
 const benchMaxSteps = numFlag("--max-steps")
 const benchTimeoutMs = numFlag("--timeout")
+// Judge terpisah (model berbeda dari aktor): --judge-model <provider::model>.
+// Tanpa flag = tak dinilai (hemat biaya); --fake tak pernah dinilai.
+const benchJudgeModel = strFlag("--judge-model")
 
 async function main(): Promise<void> {
   let provider: ModelProvider
@@ -92,7 +97,13 @@ async function main(): Promise<void> {
   const results: Record<string, unknown>[] = []
   const perTask = new Map<
     string,
-    { passed: number; durations: number[]; tokens: number[]; memoryHits: number[] }
+    {
+      passed: number
+      durations: number[]
+      tokens: number[]
+      memoryHits: number[]
+      judgeScores: number[]
+    }
   >()
   // HOME hermetic per run: DB/memory/sesi global tak bocor antar run dan tak
   // menyentuh ~/.minicode operator. Disimpan per run agar seed memory terisolasi.
@@ -105,6 +116,7 @@ async function main(): Promise<void> {
       durations: [] as number[],
       tokens: [] as number[],
       memoryHits: [] as number[],
+      judgeScores: [] as number[],
     }
     for (let r = 0; r < runs; r++) {
       const dir = await task.setup()
@@ -143,9 +155,11 @@ async function main(): Promise<void> {
         })
         const usage = createUsageCollector(session.events)
         const t0 = Date.now()
+        let finalText = ""
         try {
           const res = await session.run(task.prompt, benchModel ? { model: benchModel } : {})
           steps = res.usage.steps
+          finalText = (res as { finalText?: string }).finalText ?? ""
         } catch (e) {
           error = (e as Error).message
         }
@@ -154,6 +168,25 @@ async function main(): Promise<void> {
         const rawVerify = await task.verify(dir)
         // --fake: provider palsu tak pernah benar-benar mengedit file → anggap passed bila harness jalan tanpa error
         const verify = fake ? { ...rawVerify, passed: true } : rawVerify
+        // Judge penjelasan (live + flag): teks final per run, model beda dari
+        // aktor, tanpa tools. Gagal judge = null (tak menghukum run).
+        if (!fake && benchJudgeModel && !error) {
+          try {
+            const { judgeAnswer } = await import("./judge.ts")
+            const judged = await judgeAnswer(
+              provider,
+              {
+                taskDescription: task.description,
+                taskPrompt: task.prompt,
+                answer: finalText,
+                verifyPassed: verify.passed,
+                verifyDetail: verify.detail,
+              },
+              { model: benchJudgeModel },
+            )
+            if (judged.score != null) stats.judgeScores.push(judged.score)
+          } catch {}
+        }
         await task.cleanup(dir)
         const passed = verify.passed && !error
         stats.passed += passed ? 1 : 0
@@ -185,6 +218,7 @@ async function main(): Promise<void> {
       medianDurationMs: median(stats.durations),
       medianTokens: median(stats.tokens),
       medianMemoryHits: median(stats.memoryHits),
+      medianJudge: stats.judgeScores.length > 0 ? median(stats.judgeScores) : null,
     })
   }
   if (prevHome === undefined) delete process.env.MINICODE_HOME

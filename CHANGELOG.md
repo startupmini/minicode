@@ -6,6 +6,7 @@
 - **Baterai berbiaya terkendali**: `bench/runner.ts` flag `--model/--provider/--max-steps/--timeout` (sebelumnya: router default + 50 step + 600s tanpa rem — run bayar bisa liar).
 - **`gate:eval` (`bench/eval-gate.ts`)**: kunci ambang baterai (min resolve-rate, max median token, partial opsional) ala coverage-gate; `evaluateGate` murni + teruji.
 - **Pilot live vyceai `deepseek-v4-flash`**: 5/6 tugas mainan (1 designed-fail tanpa memori); recovery terlihat live (edit gagal → baca pesan → perbaiki, 3 step).
+- **LLM-judge terpisah (`bench/judge.ts`)**: nilai kualitas penjelasan 0-2 + alasan, model wajib beda dari aktor, gagal-parse = null (bukan vonis); pilot: 2/2 jawaban benar-dinilai-1 (tepat: kode benar tanpa penjelasan).
 
 ### Fixed
 - **Deny beralasan sampai ke model**: seam `describeDenial` di kernel + alasan per aturan di app-layer (`bash-guard: …`, `jail: …`, `gated approval unavailable`, `read-only/plan mode`, …) — observasi `permission denied: <alasan>` alih-alih retry buta. `check()` tetap `"deny"` polos (112 assertion utuh).

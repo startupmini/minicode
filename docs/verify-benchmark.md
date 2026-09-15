@@ -23,6 +23,7 @@ bun run bench --runs 2                   # median 2 runs
 bun bench/runner.ts --fake --memory off  # tanpa RAG/auto-memory
 bun bench/runner.ts --fake --memory on   # dengan RAG + seed memory
 bun bench/runner.ts --provider vyceai-com --model 'vyceai-com::deepseek-v4-flash' --max-steps 6 --timeout 90000  # live berbiaya: pin provider+model+rem
+bun bench/runner.ts --judge-model 'vyceai-com::deepseek-v4-flash-lr'  # nilai penjelasan (model HARUS beda dari aktor)
 bun run gate:eval                        # kunci ambang baterai (min resolve-rate, max median token)
 bun run gate:eval --results bench/live.json --min-rate 0.8 --max-median-tokens 8000 --allow-partial
 ```

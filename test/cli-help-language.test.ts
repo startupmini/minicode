@@ -109,15 +109,11 @@ describe("konsistensi bahasa keluaran", () => {
   const PERINTAH = ["/sync", "/status", "/sessions", "/exit", "/model"]
 
   for (const cmd of PERINTAH) {
-    test(
-      `${cmd} tidak memuat frasa Inggris yang pernah bocor`,
-      async () => {
-        const teks = (await run(cmd)).join(" ")
-        const m = INDONESIAN.exec(teks)
-        expect(m?.[0], `${cmd}: ${teks.slice(0, 90)}`).toBeUndefined()
-      },
-      10000,
-    )
+    test(`${cmd} tidak memuat frasa Inggris yang pernah bocor`, async () => {
+      const teks = (await run(cmd)).join(" ")
+      const m = INDONESIAN.exec(teks)
+      expect(m?.[0], `${cmd}: ${teks.slice(0, 90)}`).toBeUndefined()
+    }, 10000)
   }
 
   test("/status uses English labels and includes usage", async () => {

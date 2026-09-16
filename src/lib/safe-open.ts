@@ -1,6 +1,6 @@
 import { constants } from "node:fs"
 import type { FileHandle } from "node:fs/promises"
-import { lstat, open, realpath } from "node:fs/promises"
+import { open, realpath } from "node:fs/promises"
 import { basename, dirname, isAbsolute, resolve } from "node:path"
 import { isPathOutsideRoot, isSensitive } from "../policy/jail.ts"
 
@@ -115,24 +115,18 @@ export async function safeStat(abs: string, root: string) {
  * symlink yang menunjuk keluar). Di Windows fallback ke realpath check.
  *
  * LIVE di tool penulis overwrite (write_file/edit/apply_patch, audit
- * 2026-09-16 L11 — sebelumnya dead-code hanya dipakai test): menolak
- * menimpa symlink final (`refusing to overwrite symlink`) sehingga swap
- * antar resolveSafePath dan atomicWriteText gagal tutup, bukan menulis
- * mengikuti link. move/delete dikecualikan sadar (semantik trash/restore
- * rename membutuhkan penanganan link sendiri).
+ * 2026-09-16 L11): verifikasi target nyata + parent-dir pada titik tulis.
+ * Symlink INTERNAL sengaja TIDAK ditolak di sini — kontrak tool file adalah
+ * "symlink internal tetap bisa diedit, targetnya yang dicek" (dijaga
+ * test/live-toctou.test.ts). Escape/sensitif sudah ditutup resolveSafePath
+ * via isPathOutsideRoot(real) + isSensitive(real), dan cek realpath di
+ * bawah menjaga parent-dir yang di-swap jadi symlink keluar.
  */
 export async function assertSafeWriteTarget(abs: string, root: string): Promise<string> {
   const realRoot = await realpath(root).catch(() => root)
   const dir = dirname(abs)
   const realDir = await realpath(dir).catch(() => dir)
   if (isPathOutsideRoot(realDir, realRoot)) throw new Error(`parent outside workspace: ${abs}`)
-  // Coba deteksi symlink via lstat (best-effort)
-  try {
-    const st = await lstat(abs).catch(() => null)
-    if (st?.isSymbolicLink()) throw new Error(`refusing to overwrite symlink: ${abs}`)
-  } catch (e) {
-    if ((e as Error).message.includes("refusing")) throw e
-  }
   const fileReal = await realpath(abs).catch(() => null)
   // basename (bukan split "/"): path Windows memakai backslash — split "/"
   // mengembalikan seluruh path absolut sehingga resolve() mengabaikan realDir

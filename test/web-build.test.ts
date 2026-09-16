@@ -379,13 +379,17 @@ describe("web ssg", () => {
 describe("web audit 2026-09-16", () => {
   test("serve: path keluar site/ ditolak (traversal)", () => {
     // Guard defense-in-depth (URL WHATWG sudah menormalkan `..`): path yang
-    // lolos join harus tetap di dalam site/.
+    // lolos join harus tetap di dalam site/. Catatan POSIX: backslash di
+    // nama path LINUX adalah karakter biasa (bukan pemisah) — kasus Windows
+    // hanya diverifikasi di Windows.
     expect(isPathWithinSite("/index.html")).toBe(true)
     expect(isPathWithinSite("/docs/cli.html")).toBe(true)
     expect(isPathWithinSite("/blog/")).toBe(true)
     expect(isPathWithinSite("/../package.json")).toBe(false)
     expect(isPathWithinSite("/docs/../../cli/index.ts")).toBe(false)
-    expect(isPathWithinSite("..\\package.json")).toBe(false)
+    if (process.platform === "win32") {
+      expect(isPathWithinSite("..\\package.json")).toBe(false)
+    }
   })
 
   test("blog: judul/desc frontmatter di-escape (anti-rusak layout)", () => {

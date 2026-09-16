@@ -108,7 +108,11 @@ describe("konvensi import kernel", () => {
     // Tanpa sibling ../minicore script tetap lulus dengan pesan — keduanya sah.
     const vendorMd = readFileSync(join(repoRoot, "vendor", "minicore", "VENDOR.md"), "utf8")
     if (vendorMd.includes("seam aditif")) {
-      expect(out).toMatch(/sinkron|TIDAK sinkron/)
+      // Tiga hasil sah (lihat pesan script): sinkron, TIDAK sinkron (seam
+      // aditif lokal), atau "tidak ada" (sibling ../minicore tak ter-clone —
+      // repo privat; script memakai vendor/ yang sudah ada). Bug lama: hanya
+      // dua pertama yang diterima sehingga CI tanpa sibling selalu merah.
+      expect(out).toMatch(/sinkron|TIDAK sinkron|tidak ada/)
       return
     }
     expect(r.status).toBe(0)

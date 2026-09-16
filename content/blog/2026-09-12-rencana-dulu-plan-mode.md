@@ -2,7 +2,7 @@
 title: "Rencana dulu sebelum eksekusi dengan plan mode"
 date: 2026-09-12
 tags: [minicode, plan-mode, tutorial]
-desc: "Jalankan minicode --plan untuk membaca, mencari, dan menyusun rencana tanpa mengubah apa pun — termasuk menulis daftar todo dan mendelegasikan penelahan read-only."
+desc: "Jalankan minicode --plan untuk membaca, mencari, dan menyusun rencana tanpa mengubah apa pun — termasuk daftar todo dan delegasi read-only."
 ---
 
 Sebelum memberi agen akses tulis, ada baiknya melihat dulu apa rencananya. Mode plan (`--plan`) membuat sesi read-only: agen boleh membaca dan mencari, tetapi setiap percobaan tulis, bash, git, atau memori langsung ditolak di gerbang izin — bukan sekadar diminta tidak melakukannya.

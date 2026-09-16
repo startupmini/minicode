@@ -42,7 +42,7 @@ write(
   "index.html",
   renderPage(webDir, {
     title: "Coding agent CLI yang menunjukkan semua kerjanya",
-    desc: "MiniCode untuk developer terminal: tiap langkah terlihat di scrollback, tiap aksi sensitif lewat izin Anda. MIT, zero-dep, Bun.",
+    desc: "Minicode untuk developer terminal: tiap langkah terlihat di scrollback, tiap aksi sensitif lewat izin Anda. MIT, zero-dep, Bun.",
     canon: `${base}/`,
     body: landing,
     version,
@@ -85,6 +85,8 @@ for (const f of ["styles.css", "app.js"]) {
 // Logo milik pengguna: satu sumber di content/logo-user.svg (mudah diganti),
 // di-copy saat build agar layout <img> selalu merujuk file yang ada.
 cpSync(join(repoRoot, "content", "logo-user.svg"), join(siteDir, "assets", "logo-user.svg"))
+// Kartu sosial untuk og:image (SVG flat, zero-dep — lihat web/og-image.svg).
+cpSync(join(webDir, "og-image.svg"), join(siteDir, "og-image.svg"))
 write("admin.html", readFileSync(join(webDir, "admin.html"), "utf8"))
 // File CNAME membuat binding custom domain persisten — deploy artifact
 // tanpa file ini bisa melepas domain di Settings → Pages.

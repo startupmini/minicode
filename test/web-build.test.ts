@@ -2,12 +2,24 @@
 // Mengapa ada: satu-satunya penjaga agar edit docs/SUMMARY.md atau layout
 // yang typo langsung gagal di `bun test`, bukan setelah deploy Pages.
 import { describe, expect, test } from "bun:test"
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { buildBlog } from "../scripts/web/blog.ts"
 import { parseFrontmatter } from "../scripts/web/fm.ts"
 import { mdToHtml } from "../scripts/web/md.ts"
 import { readDocNav } from "../scripts/web/nav.ts"
 import { softwareJsonld } from "../scripts/web/page.ts"
+import { isPathWithinSite } from "../scripts/web-serve.ts"
 
 const repoRoot = join(import.meta.dir, "..")
 
@@ -262,7 +274,7 @@ describe("web ssg", () => {
     const index = readFileSync(join(site, "index.html"), "utf8")
     expect(index).toContain("menunjukkan semua kerjanya")
     expect(index).toContain('id="cara-kerja"')
-    expect(index).toContain("Kapan MiniCode cocok?")
+    expect(index).toContain("Kapan Minicode cocok?")
     expect(index).toContain("Bukan pilihan tepat")
     expect(index).toContain("/docs/security-model.html")
     expect(index).toContain("/docs/quickstart.html")
@@ -335,13 +347,13 @@ describe("web ssg", () => {
 
   test("design language flat: tanpa shadow/gradient, radius kecil, kartu flat", () => {
     // Audit desain: bahasa visual = flat. Guard level-source agar dekorasi
-    // tak merayap kembali (bukan per halaman).
-    const css =
-      readFileSync(join(repoRoot, "web", "part-01-base.css"), "utf8") +
-      readFileSync(join(repoRoot, "web", "part-02-header.css"), "utf8") +
-      readFileSync(join(repoRoot, "web", "part-03-hero.css"), "utf8") +
-      readFileSync(join(repoRoot, "web", "part-04-sections.css"), "utf8") +
-      readFileSync(join(repoRoot, "web", "part-05-docs-blog.css"), "utf8")
+    // tak merayap kembali (bukan per halaman). Glob cermin builder
+    // (build-web-css.ts) supaya part baru otomatis tercakup.
+    const css = readdirSync(join(repoRoot, "web"))
+      .filter((f) => /^part-.*\.css$/.test(f))
+      .sort()
+      .map((f) => readFileSync(join(repoRoot, "web", f), "utf8"))
+      .join("\n")
     const code = css.replace(/\/\*[\s\S]*?\*\//g, "")
     expect(code).not.toMatch(/box-shadow\s*:/)
     expect(code).not.toMatch(/linear-gradient|radial-gradient/)
@@ -358,5 +370,120 @@ describe("web ssg", () => {
     expect(code).toContain("scrollbar-width: thin")
     expect(code).not.toContain(".tbl")
     expect(code).not.toContain(".prov-line")
+    // Audit website 2026-09-16: selector yatim tanpa konsumen HTML/JS.
+    expect(code).not.toContain(".hint")
+    expect(code).not.toContain("a.active")
+  })
+})
+
+describe("web audit 2026-09-16", () => {
+  test("serve: path keluar site/ ditolak (traversal)", () => {
+    // Guard defense-in-depth (URL WHATWG sudah menormalkan `..`): path yang
+    // lolos join harus tetap di dalam site/.
+    expect(isPathWithinSite("/index.html")).toBe(true)
+    expect(isPathWithinSite("/docs/cli.html")).toBe(true)
+    expect(isPathWithinSite("/blog/")).toBe(true)
+    expect(isPathWithinSite("/../package.json")).toBe(false)
+    expect(isPathWithinSite("/docs/../../cli/index.ts")).toBe(false)
+    expect(isPathWithinSite("..\\package.json")).toBe(false)
+  })
+
+  test("blog: judul/desc frontmatter di-escape (anti-rusak layout)", () => {
+    // Frontmatter melewati renderer md (yang meng-escape) — tanpa escape di
+    // sini `<` di judul (mis. "a < b") merusak halaman.
+    const root = mkdtempSync(join(tmpdir(), "mc-web-"))
+    try {
+      const blogDir = join(root, "content", "blog")
+      mkdirSync(blogDir, { recursive: true })
+      writeFileSync(
+        join(blogDir, "2026-01-02-xss-probe.md"),
+        '---\ntitle: "a < b </script><script>alert(1)</script> c"\ndate: 2026-01-02\ntags: [x]\ndesc: "d < e"\n---\n\nIsi.\n',
+        "utf8",
+      )
+      const pages = new Map<string, string>()
+      // webDir asli (template layout), siteDir tmp (rss) — konten blog fiktif.
+      buildBlog(root, join(repoRoot, "web"), root, "https://x.example", "0.0.0", (rel, html) =>
+        pages.set(rel, html),
+      )
+      const idx = pages.get("blog/index.html") ?? ""
+      const post = pages.get("blog/xss-probe.html") ?? ""
+      expect(post.length).toBeGreaterThan(0)
+      // Konten elemen: escape penuh — payload breakout tak boleh utuh.
+      for (const html of [idx, post]) {
+        expect(html).toContain("a &lt; b")
+        expect(html).not.toContain("<h1>a < b")
+        expect(html).not.toContain("<h3>a < b")
+        expect(html).not.toContain("<p>a < b")
+        expect(html).not.toContain("</script><script>alert")
+      }
+      // JSON-LD: `<` mentah legal di JSON, tapi `</` (breakout `</script>`)
+      // wajib lolos-escape — dan payload harus round-trip utuh.
+      const ld = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(post)?.[1] ?? ""
+      expect(ld.length).toBeGreaterThan(0)
+      expect(ld).not.toContain("</script")
+      expect((JSON.parse(ld) as { headline?: string }).headline).toBe(
+        "a < b </script><script>alert(1)</script> c",
+      )
+      const rss = readFileSync(join(root, "rss.xml"), "utf8")
+      expect(rss).toContain("a &lt; b")
+      expect(rss).not.toContain("<script>alert")
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("blog: tanggal rusak tak jadi pubDate Invalid Date", () => {
+    const root = mkdtempSync(join(tmpdir(), "mc-web-"))
+    try {
+      const blogDir = join(root, "content", "blog")
+      mkdirSync(blogDir, { recursive: true })
+      writeFileSync(
+        join(blogDir, "2026-01-03-bad-date.md"),
+        '---\ntitle: "T"\ndate: kapan-kapan\ntags: []\ndesc: "D"\n---\n\nIsi.\n',
+        "utf8",
+      )
+      buildBlog(root, join(repoRoot, "web"), root, "https://x.example", "0.0.0", () => {})
+      const rss = readFileSync(join(root, "rss.xml"), "utf8")
+      expect(rss).not.toContain("Invalid Date")
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("tema tanpa kedip: init sinkron di head + kunci sama dengan app.js", () => {
+    // Tanpa init sinkron, pengguna dark-mode melihat kilat terang saat load
+    // (app.js deferred). Kunci localStorage harus sama di kedua tempat.
+    for (const f of ["web/layout.html", "web/admin.html"]) {
+      const src = readFileSync(join(repoRoot, f), "utf8")
+      expect(src).toContain('localStorage.getItem("minicode-theme")')
+      expect(src.indexOf("minicode-theme")).toBeLessThan(src.indexOf("stylesheet"))
+    }
+    const app = readFileSync(join(repoRoot, "web", "app.js"), "utf8")
+    expect(app).toContain('localStorage.getItem("minicode-theme")')
+  })
+
+  test("motion: token + kill-switch reduced-motion + gate progresif", () => {
+    // Bahasa gerak satu token; tanpa JS / reduced-motion konten tetap tampil.
+    const css = readdirSync(join(repoRoot, "web"))
+      .filter((f) => /^part-.*\.css$/.test(f))
+      .sort()
+      .map((f) => readFileSync(join(repoRoot, "web", f), "utf8"))
+      .join("\n")
+    expect(css).toContain("--t:")
+    // Hanya opacity/transform (+ color/bg 0.15s): tanpa properti pemicu layout.
+    for (const m of css.matchAll(/@keyframes\s+([a-zA-Z-]+)\s*\{([\s\S]*?)\n\}/g)) {
+      expect(m[2]!).not.toMatch(/width|height|margin|padding|top|left/)
+    }
+    expect(css).toContain("prefers-reduced-motion")
+    expect(css).toContain("!important")
+    // Entrance disembunyikan hanya di balik gate .js (no-JS = tampil utuh).
+    expect(css).toMatch(/\.js\s+\.hero\s*>\s*\*/)
+    expect(css).toMatch(/\.js\s+\.rv\b/)
+    // View transition native (progresif: browser lama abaikan aturan ini).
+    expect(css).toContain("@view-transition")
+    const app = readFileSync(join(repoRoot, "web", "app.js"), "utf8")
+    expect(app).toContain('classList.add("js")')
+    expect(app).toContain("IntersectionObserver")
+    expect(app).toContain("prefers-reduced-motion")
   })
 })

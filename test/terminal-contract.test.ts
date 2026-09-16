@@ -1,4 +1,4 @@
-// Kontrak terminal MiniCode (docs/TERMINAL_CONTRACT.md) — test invariant
+// Kontrak terminal Minicode (docs/TERMINAL_CONTRACT.md) — test invariant
 // KONSOLIDASI: ownership & lifecycle, bukan snapshot teks. Assertion
 // behavioral: hitung marker, cek newline, cek tidak ada tulis setelah
 // detach/endTurn, cek arbitrase owner. Detail per-area ada di

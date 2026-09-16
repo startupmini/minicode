@@ -1,4 +1,4 @@
-// REPL linier — MiniCode sebagai agentic Unix shell.
+// REPL linier — Minicode sebagai agentic Unix shell.
 //
 // Loop `askLine` + printer linier (src/ui/assistant/simple.ts, dipasang di
 // cli/setup.ts) + spinner turn-status. Output append-only di scrollback:

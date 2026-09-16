@@ -1,4 +1,5 @@
-\n
+# Memory & Sessions
+
 ## Memory dua lapis
 
 1. `MEMORY.md` hierarki (global → lokal → root → `CLAUDE.md` → `.minicode/rules/*.md`) selalu dimuat ke system prompt.
@@ -14,7 +15,7 @@ Retensi hierarkis per kategori: `fact`/`decision`/`preference` 180 hari, `summar
 minicode memory status [--json]   # rows, bytes DB/WAL/SHM, sebaran model/dim, hit-rate RAG
 ```
 
-Auto-simpan: summary persist (`compaction.ts:187` → `addMemory(summary.slice(0,1200))`) + snippet verify sukses. Opt-out `MINICODE_AUTO_MEMORY=0`.
+Auto-simpan: summary persist + snippet verify sukses. Opt-out `MINICODE_AUTO_MEMORY=0`.
 
 Embedding: default `text-embedding-3-small` (`MINICODE_EMBED_MODEL`). Dim-mismatch → warn sekali + fallback keyword-only. FTS5 (`porter unicode61`) + trigger sync; fallback LIKE bila MATCH gagal.
 
@@ -46,7 +47,7 @@ Jurnal bukan transaksi atomik; `pending` = ambigu (efek mungkin sudah terjadi). 
 
 ## Konteks & compaction
 
-Model hanya melihat jendela riwayat terbatas (**konteks**). Saat percakapan menekan jendela itu, MiniCode **memadatkan** (compaction): turn lama diganti satu ringkasan, turn terbaru dipertahankan utuh. Anda melihatnya sebagai baris `── compacted: …` di output.
+Model hanya melihat jendela riwayat terbatas (**konteks**). Saat percakapan menekan jendela itu, Minicode **memadatkan** (compaction): turn lama diganti satu ringkasan, turn terbaru dipertahankan utuh. Anda melihatnya sebagai baris `── compacted: …` di output.
 
 - **Kapan terjadi:** otomatis saat tekanan konteks, sebelum batas jendela tercapai. Bila sesudah padat masih kurang, run gagal eksplisit (`context window exceeded`) — bukan sunyi.
 - **Yang dipertahankan:** ringkasan fakta — path file, signature, snippet penting, hasil tool, error, next steps. Ringkasan sebelumnya dibawa verbatim (tidak diringkas ulang) agar makna tak melenceng tiap siklus.

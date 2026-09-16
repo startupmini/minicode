@@ -39,7 +39,7 @@ minicode (coding-agent — self-contained, tanpa sibling clone)
 # macOS/Linux: curl -fsSL https://bun.sh/install | bash
 # cek: bun --version  -> 1.4.x
 
-# 1. MiniCode:
+# 1. Minicode:
 npm install -g @miniroom/minicode
 # bin: minicode
 
@@ -119,14 +119,14 @@ permission `auto|ask|readonly|plan|allowlist|allow-all` — bash guard **berbasi
 
 **Sandbox aktif otomatis.** Bila bubblewrap (Linux) atau seatbelt (macOS) tersedia, bash berjalan di dalamnya tanpa perlu flag. Bila tidak tersedia — termasuk **semua Windows** — permission default diturunkan ke `allowlist` dan alasannya dicetak sekali, karena lebih baik membatasi perintah daripada menjalankan apa pun sambil menampilkan label aman. Pilih sendiri dengan `--allow-all`/`--ask`, matikan dengan `--sandbox none`, atau pakai `--sandbox docker`.
 
-Postur keamanan bash terukur, bukan diklaim — **dua lapis**:
+Postur keamanan bash terukur, bukan diklaim — **dua lapis** (korpus manual + fuzz); exit 0 berarti 0 bypass dan 0 over-block:
 
 ```bash
-bun run gate:bash        # korpus manual: 38 pola serangan + 15 perintah sah
-bun run extreme:fuzz     # mutasi kombinatorial ber-seed, ~13.000 varian
+bun run gate:bash        # korpus manual pola serangan + perintah sah
+bun run extreme:fuzz     # mutasi kombinatorial ber-seed
 ```
 
-Probe manual menguji serangan yang sudah dipikirkan; fuzz membangkitkan varian sendiri dari transformasi yang shell anggap setara (quote-split, indirection variabel, wrapper perintah, flag panjang, chaining) dan **menemukan 3 kelas bypass yang korpus manual lewatkan** — `command env`, `rm --recursive /`, dan `rm -rf /;`. Semuanya kini tertutup dan terkunci di `test/bash-fuzz-regression.test.ts`. Hasil saat ini **0 bypass / 0 over-block** di kedua lapis.
+Probe manual menguji serangan yang sudah dipikirkan; fuzz membangkitkan varian sendiri dari transformasi yang shell anggap setara (quote-split, indirection variabel, wrapper perintah, flag panjang, chaining). Temuan terkunci sebagai regression test (`test/bash-fuzz-regression.test.ts`); jalankan kedua lapis untuk angka terkini.
 
 Batasnya tetap jujur: ini analisis statis, jadi command substitution dinamis (`$(...)`) tak bisa diselesaikan tanpa mengeksekusi — untuk itulah sandbox OS ada.
 

@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { escAttr, firstPara } from "./fm.ts"
-import { extractHeadings, mdToHtml } from "./md.ts"
+import { escHtml, extractHeadings, mdToHtml } from "./md.ts"
 import { type DocEntry, docMeta, readDocNav } from "./nav.ts"
 import { mdLinksToHtml, renderPage } from "./page.ts"
 
@@ -70,7 +70,7 @@ export function buildDocs(
     const body =
       `<div class="doc-layout">${renderDocSidebar(entries, e.slug)}` +
       `<div class="doc-main">` +
-      `<article class="doc-body"><h1>${e.title}</h1>${toc}${content}</article>${nav}</div>` +
+      `<article class="doc-body"><h1>${escHtml(e.title)}</h1>${toc}${content}</article>${nav}</div>` +
       `</div>`
     const rel = e.slug === "readme" ? "docs/index.html" : `docs/${e.slug}.html`
     const canon = e.slug === "readme" ? `${base}/docs/` : `${base}/docs/${e.slug}.html`
@@ -87,7 +87,9 @@ export function buildDocs(
           "@context": "https://schema.org",
           "@type": "TechArticle",
           headline: e.title,
-        }),
+          // `</` di-escape agar judul tak bisa menutup tag script (pola sama
+          // seperti softwareJsonld di page.ts).
+        }).replaceAll("</", "<\\/"),
       }),
     )
     urls.push(canon)

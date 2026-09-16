@@ -6,7 +6,7 @@ import { McpTransport } from "./transport.ts"
 
 // MODEL KEPERCAYAAN MCP (baca sebelum mengubah file ini):
 //
-// Permission MiniCode HANYA mengontrol pemanggilan (invocation): tool apa di
+// Permission Minicode HANYA mengontrol pemanggilan (invocation): tool apa di
 // server mana dengan argumen apa, satu approval per panggilan (di auto/ask;
 // ditolak di readonly/plan/allowlist; bebas di allow-all).
 //
@@ -14,7 +14,7 @@ import { McpTransport } from "./transport.ts"
 // (filesystem, network, process, state, API eksternal, kredensial) TIDAK
 // dapat diketahui statis dan TIDAK diklasifikasikan — anggap setiap
 // `tools/call` sebagai UNCLASSIFIED EXTERNAL CAPABILITY dengan efek arbitrer.
-// Satu-satunya batas sisi-MiniCode: validasi server-id, scrubSecrets +
+// Satu-satunya batas sisi-Minicode: validasi server-id, scrubSecrets +
 // cap 100k pada hasil, dan SSRF guard untuk transport HTTP.
 // Pembatalan parent menghentikan penungguan (dan request HTTP), tetapi TIDAK
 // membunuh proses stdio server maupun membatalkan efek yang sudah terjadi.

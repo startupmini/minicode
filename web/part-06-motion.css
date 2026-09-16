@@ -1,0 +1,120 @@
+/* Motion website: mikro-interaksi + entrance + transisi halaman.
+   Aturan keras (jangan dilanggar):
+   - Hanya opacity/transform (+ color/background 0.15s) — tanpa layout,
+     tanpa shadow/gradient/lift (bahasa flat, dijaga test).
+   - Semua mati total di prefers-reduced-motion (blok akhir).
+   - Konten default TERLIHAT tanpa JS (gate class .js dari app.js). */
+
+:root {
+  --t: 0.15s;
+  --t-slow: 0.5s;
+}
+
+/* ── P0: hover/fokus terasa lues, bukan snap ── */
+.btn,
+.nav a,
+.iconbtn,
+.copybtn,
+.ds-i,
+.doc-nav a,
+.footer a,
+.faq summary,
+a.more,
+.post-row h3,
+.toc a,
+code,
+pre,
+.term,
+.btn-s,
+.field input,
+.field textarea,
+.footer,
+.status {
+  transition:
+    color var(--t) ease,
+    background-color var(--t) ease,
+    opacity var(--t) ease;
+}
+
+/* ── P0: FAQ <details> buka-tutup halus, murni CSS ── */
+.faq .faq-a {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.45s ease;
+}
+.faq .faq-a > p {
+  overflow: hidden;
+  min-height: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding-top: 6px;
+}
+.faq details[open] .faq-a {
+  grid-template-rows: 1fr;
+}
+
+/* ── P1+P2: entrance — hero saat load, kartu saat scroll ── */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.js .hero > * {
+  opacity: 0;
+  animation: rise 0.6s ease forwards;
+}
+.js .hero > *:nth-child(1) { animation-delay: 0.02s; }
+.js .hero > *:nth-child(2) { animation-delay: 0.1s; }
+.js .hero > *:nth-child(3) { animation-delay: 0.18s; }
+.js .hero > *:nth-child(4) { animation-delay: 0.26s; }
+.js .hero > *:nth-child(5) { animation-delay: 0.34s; }
+.js .hero > *:nth-child(6) { animation-delay: 0.42s; }
+.js .hero > *:nth-child(7) { animation-delay: 0.5s; }
+.js .rv {
+  opacity: 0;
+  transform: translateY(12px);
+  transition:
+    opacity var(--t-slow) ease,
+    transform var(--t-slow) ease;
+}
+.js .rv.in {
+  opacity: 1;
+  transform: none;
+}
+
+/* ── P1: penanda aktif TOC saat scroll (kelas dipasang app.js) ── */
+.toc a.on {
+  color: var(--acc-text);
+  font-weight: 600;
+}
+
+/* ── P2: transisi antar-halaman native (progresif: browser lama abaikan) ── */
+@view-transition {
+  navigation: auto;
+}
+
+/* ── Kill-switch total: gerak apa pun dilarang ── */
+@media (prefers-reduced-motion: reduce) {
+  @view-transition {
+    navigation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+  .js .hero > *,
+  .js .rv {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

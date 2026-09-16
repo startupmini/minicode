@@ -53,7 +53,7 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
     src: "src/policy/bash-guard.ts",
   },
   "security-model": {
-    desc: "Model keamanan MiniCode: rantai eksekusi, 6 mode izin, trust boundary, limitasi.",
+    desc: "Model keamanan Minicode: rantai eksekusi, 6 mode izin, trust boundary, limitasi.",
     src: "src/policy/permission.ts",
   },
   terminal: {

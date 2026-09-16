@@ -1,6 +1,15 @@
-// JS web minicode: tema + copy button. Tanpa dependensi, tanpa framework.
+// JS web minicode: tema + copy button + reveal-on-scroll + scrollspy.
+// Tanpa dependensi, tanpa framework. Semua enhancement progresif: tanpa JS
+// (atau reduced-motion) halaman tampil utuh — gate class .js di bawah.
 (function () {
   var root = document.documentElement;
+  root.classList.add("js");
+  var reduceMotion = false;
+  try {
+    reduceMotion =
+      window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch (_) {}
+  var canObserve = !reduceMotion && "IntersectionObserver" in window;
   try {
     var saved = localStorage.getItem("minicode-theme");
     if (saved === "dark" || saved === "light") root.setAttribute("data-theme", saved);
@@ -19,8 +28,6 @@
     var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
     root.setAttribute("data-theme", next);
     themeBtn.setAttribute("aria-pressed", next === "dark" ? "true" : "false");
-    var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
-    root.setAttribute("data-theme", next);
     try { localStorage.setItem("minicode-theme", next); } catch (_) {}
     // Ikon saja: bulan (dark_mode) saat light, matahari (light_mode) saat dark.
     themeBtn.querySelector(".material-symbols-outlined").textContent = next === "dark" ? "light_mode" : "dark_mode";
@@ -36,4 +43,41 @@
       else done();
     });
   });
+  // Reveal-on-scroll: kartu landing muncul halus sekali, lalu lepas pantau.
+  // Target struktural yang sudah ada (tanpa ubah markup): kartu fitur,
+  // item FAQ, dan heading section.
+  if (canObserve) {
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        e.target.classList.add("in");
+        io.unobserve(e.target);
+      });
+    }, { rootMargin: "0px 0px -8% 0px", threshold: 0.12 });
+    var rvs = document.querySelectorAll(".feat-list > *, .faq > details, section h2");
+    for (var i = 0; i < rvs.length; i++) {
+      var el = rvs[i];
+      el.classList.add("rv");
+      el.style.transitionDelay = (i % 4) * 70 + "ms";
+      io.observe(el);
+    }
+  }
+  // Scrollspy TOC dokumen: tandai link section yang sedang terlihat.
+  var tocAs = Array.prototype.slice.call(document.querySelectorAll(".toc a[href^='#']"));
+  if (tocAs.length && canObserve) {
+    var byId = {};
+    tocAs.forEach(function (a) { byId[a.getAttribute("href").slice(1)] = a; });
+    var spy = new IntersectionObserver(
+      function (es) {
+        es.forEach(function (e) {
+          if (!e.isIntersecting) return;
+          tocAs.forEach(function (a) { a.classList.remove("on"); });
+          var t = byId[e.target.id];
+          if (t) t.classList.add("on");
+        });
+      },
+      { rootMargin: "-20% 0px -70% 0px" }
+    );
+    document.querySelectorAll(".doc-body h2[id]").forEach(function (h) { spy.observe(h); });
+  }
 })();

@@ -23,7 +23,7 @@ L3 vendor/minicore  → kernel STATE/MODEL/ACTION/LOOP (freeze, zero-dep, via #m
 
 ## UI/UX terminal (kontrak FROZEN)
 
-MiniCode **shell-native CLI, bukan TUI**. Tanpa alternate screen/panel/header permanen. Output append-only scrollback; picker/manager transient dan menghapus diri sendiri.
+Minicode **shell-native CLI, bukan TUI**. Tanpa alternate screen/panel/header permanen. Output append-only scrollback; picker/manager transient dan menghapus diri sendiri.
 
 | Stream | Isi |
 |---|---|

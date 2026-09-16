@@ -64,7 +64,7 @@ Untuk langkah selanjutnya — mulai dari awal sampai membuat prompt pertama yang
 
 Anda baru dan tak mau menebak urutan baca? Ikuti jalur ini (total ±15 menit):
 
-0. **Apa MiniCode?** — [Konsep & Desain](concepts.md) (3 menit): apa, kenapa, dan apa yang sengaja tidak ada.
+0. **Apa Minicode?** — [Konsep & Desain](concepts.md) (3 menit): apa, kenapa, dan apa yang sengaja tidak ada.
 1. **Install** — [Instalasi](getting-started.md) (5 menit): Bun, clone, `doctor`.
 2. **Prompt pertama** — [Quickstart](quickstart.md) (5 menit): wizard/API key atau OAuth, prompt ter-verify pertama.
 3. **Pilih mode** — [Memilih Mode](choosing-mode.md) (2 menit): baca, ubah, approve, atau plan.

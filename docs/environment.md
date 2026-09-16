@@ -17,7 +17,7 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | `MINICODE_TOOL_SCOPE` | `explore` → subset read-only 12 tool (sama `--tool-scope explore`) |
 | `MINICODE_HOOKS` | `1` → jalankan hook `pre/post-run` dari `~/.minicode/hooks/*.js` & `.minicode/hooks/*.js` (konteks di env `MINICODE_HOOK_CTX`; env hook disanitasi tanpa secret; dilewati bila sesi dibatalkan) |
 | `MINICODE_SESSION_TTL_DAYS` | TTL sesi (default 30; `0` = selamanya) |
-| `MINICODE_HOME` | Override home untuk DB lokal/global (sessions + vector); default `~`. Berguna agar test hermetic di POSIX (di sana `homedir()` mengabaikan `$HOME`) |
+| `MINICODE_HOME` | Override home untuk DB lokal/global (sessions + vector); default `~` |
 | `MINICODE_TELEMETRY` | `0`/`false`/`off` → matikan penulisan traces.jsonl |
 | `MINICODE_VERIFY_CMD` | Custom verify command (ganti `detectVerifyCommand`) |
 | `MINICODE_BASH_ALLOWLIST` | Kustom allowlist bash (koma-pisah, ganti DEFAULT) |

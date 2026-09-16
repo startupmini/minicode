@@ -14,6 +14,9 @@
   --code-bg: #161618;
   --code-fg: #e6e8ee;
   --ok: #e7f3ec;
+  /* Teks di atas aksen (tombol primer/skip): putih di terang, nyaris-hitam
+     di gelap — kontras dua arah, bukan satu warna hardcoded. */
+  --on-acc: #ffffff;
   --sans: "Inter", ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
   --w: 1080px;
@@ -22,6 +25,9 @@
      naikkan reduksi jadi 12.5px) agar halaman referensi padat. */
   --fs-doc: 12.5px;
   --r: 8px;
+  /* Durasi gerak tunggal: mikro-interaksi 0.15s, entrance 0.5s. */
+  --t: 0.15s;
+  --t-slow: 0.5s;
 }
 /* Transisi hanya untuk ganti tema (150ms); selain itu tanpa motion. */
 body { transition: background-color 0.15s ease, color 0.15s ease; }
@@ -46,6 +52,7 @@ html[data-theme="dark"] {
   --acc-text: #8fb0ff;
   --code-bg: #0d0e10;
   --code-fg: #e6e8ee;
+  --on-acc: #0c0d10;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; }
@@ -64,7 +71,7 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
    border di CSS gabungan (aturan desain flat: tanpa garis). */
 button { font: inherit; color: inherit; background: none; border-style: none; border-width: 0; padding: 0; appearance: none; -webkit-appearance: none; cursor: pointer; }
 :focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; border-radius: 4px; }
-.skip { position: absolute; left: -9999px; top: 0; z-index: 200; background: var(--acc); color: #fff; padding: 8px 14px; border-radius: 0 0 8px 0; }
+.skip { position: absolute; left: -9999px; top: 0; z-index: 200; background: var(--acc); color: var(--on-acc); padding: 8px 14px; border-radius: 0 0 8px 0; }
 .skip:focus { left: 0; }
 code { font-family: var(--mono); font-size: 0.85em; background: var(--soft); color: var(--ink); padding: 0.06em 0.3em; border-radius: 6px; overflow-wrap: anywhere; }
 pre { background: var(--code-bg); color: var(--code-fg); padding: 14px 16px; border-radius: var(--r); overflow-x: auto; font: 12px/1.7 var(--mono); }

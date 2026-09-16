@@ -30,5 +30,16 @@ Atau buka `/admin.html` setelah deploy, login GitHub, tulis, Publish.
 ## Desain
 
 Konsep "Flat Paper": tanpa border, garis, shadow. Hierarki dari tipografi +
-spasi + blok background. Font docs satu tingkat lebih kecil (13.5px).
+spasi + blok background. Font docs satu tingkat lebih kecil (12.5px).
 Ikon Material Symbols Outlined via Google Fonts dengan fallback sembunyi.
+
+## Motion
+
+Satu token durasi (`--t: 0.15s`, `--t-slow: 0.5s`, di `part-01-base.css`);
+aturan gerak hidup di `part-06-motion.css`. Hanya opacity/transform (+
+color/background 0.15s) — tanpa properti pemicu layout, tanpa shadow.
+Entrance hero + reveal-on-scroll + scrollspy digerakkan `app.js` di balik
+gate class `.js` (tanpa JS konten tampil utuh); transisi antar-halaman
+pakai `@view-transition: navigation auto` (progresif — browser lama abaikan).
+Semua mati total di `prefers-reduced-motion`. FAQ memakai grid-rows agar
+buka-tutup halus murni CSS.

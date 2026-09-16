@@ -66,7 +66,7 @@ export function landingFit(): string {
     "Mencari hosted environment / ekosistem plugin raksasa",
   ]
   const list = (items: string[]) => `<ul>${items.map((x) => `<li>${x}</li>`).join("")}</ul>`
-  return `<section><h2>Kapan MiniCode cocok?</h2><div class="feat-list"><div class="feat"><h3>Cocok bila Anda…</h3>${list(yes)}</div><div class="feat"><h3>Bukan pilihan tepat bila…</h3>${list(no)}</div></div></section>`
+  return `<section><h2>Kapan Minicode cocok?</h2><div class="feat-list"><div class="feat"><h3>Cocok bila Anda…</h3>${list(yes)}</div><div class="feat"><h3>Bukan pilihan tepat bila…</h3>${list(no)}</div></div></section>`
 }
 
 export function landingSafety(): string {
@@ -95,11 +95,13 @@ export function landingFaq(): string {
     ["Butuh Node.js?", "Tidak. Wajib Bun ≥ 1.0 karena <code>bun:sqlite</code>."],
     [
       "Siapa yang membayar model?",
-      "Anda, ke provider pilihan Anda. MiniCode gratis (MIT) tanpa analitik keluar; telemetri lokal bisa dimatikan. <code>--budget</code> + <code>pricing sync</code> mengontrol biaya.",
+      "Anda, ke provider pilihan Anda. Minicode gratis (MIT) tanpa analitik keluar; telemetri lokal bisa dimatikan. <code>--budget</code> + <code>pricing sync</code> mengontrol biaya.",
     ],
   ]
   const items = faqs
-    .map(([q, a]) => `<details><summary>${q}</summary><p>${a}</p></details>`)
+    .map(
+      ([q, a]) => `<details><summary>${q}</summary><div class="faq-a"><p>${a}</p></div></details>`,
+    )
     .join("")
   return `<section><h2>FAQ</h2><div class="faq">${items}</div><div class="cta"><a class="btn btn-s" href="/docs/troubleshooting.html">Troubleshooting</a></div></section>`
 }

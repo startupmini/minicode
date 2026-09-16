@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#161618"/>
+  <rect x="96" y="96" width="72" height="72" rx="16" fill="#e6e8ee"/>
+  <text x="132" y="148" text-anchor="middle" font-family="ui-monospace, Menlo, Consolas, monospace" font-weight="700" font-size="44" fill="#161618">m</text>
+  <text x="196" y="148" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif" font-weight="700" font-size="52" fill="#e6e8ee">minicode</text>
+  <text x="96" y="248" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif" font-size="40" fill="#e6e8ee">Coding agent CLI yang menunjukkan</text>
+  <text x="96" y="300" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif" font-size="40" fill="#e6e8ee">semua kerjanya.</text>
+  <text x="96" y="400" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="30" fill="#7fd1a3">› write_file server.ts</text>
+  <text x="96" y="448" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="30" fill="#8b8f98">128 token · $0.0004 · 2 langkah</text>
+  <text x="96" y="540" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="26" fill="#6e92f7">$ minicode &#8220;buat http server&#8221;</text>
+</svg>

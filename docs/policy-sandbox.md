@@ -1,22 +1,23 @@
 # Policy & Sandbox
 
+Siapa boleh apa: enam mode izin, penjaga perintah shell, dan isolasi eksekusi — plus batas jujurnya.
 
 ## 6 permission mode
 
-`type PermissionMode = "auto"|"readonly"|"plan"|"allow-all"|"ask"|"allowlist"` (`permission.ts:8`). Keputusan data-driven `handlers` (`:193-269`).
+`type PermissionMode = "auto"|"readonly"|"plan"|"allow-all"|"ask"|"allowlist"` (`permission.ts`). Keputusan data-driven per mode.
 
 | Mode | Semantik |
 |---|---|
 | `auto` | Readonly + gated-prompt + file/internal-write allow; `code_run`/`bash` dengan guard. `delegate_task`/`mcp_call`/semua MCP bertitik di-gate (prompt saat TTY, tolak tanpa TTY) |
 | `ask` | Readonly + `NO_PROMPT_TOOLS` auto-allow; sisanya prompt/TTY + allowlist persist |
 | `readonly` | Hanya 18 tool `READONLY_TOOLS` |
-| `plan` | `readonly` + `todo_write` + `delegate_task` (dipaksa explore/read-only) + `submit_result`. Tetap tanpa mutasi file/git/memory (audit #04: delegasi plan tak bisa menulis — child dipaksa explore) |
+| `plan` | `readonly` + `todo_write` + `delegate_task` (anak dipaksa explore/read-only) + `submit_result`. Tetap tanpa mutasi file/git/memory |
 | `allowlist` | Bash hanya pola `DEFAULT_BASH_ALLOWLIST`/env; file-write/internal-write sesuai set. Diwariskan ke sub-agent (parent allowlist → anak allowlist, bukan auto) |
 | `allow-all` | Allow semua; **tetap** tolak bash berbahaya + path jail tetap aktif |
 
 Cycle Tab/Shift+Tab hanya 5 (`auto,ask,plan,allowlist,allow-all` — `allow-all` dilewati agar tak aktif tak sengaja). Mode bisa dioverride: `--plan`, `--allowlist`, `--ask`, `--allow-all`, `MINICODE_PLAN=1`, `MINICODE_PERMISSION=allowlist`, `Shift+Tab` runtime.
 
-Set terkait: `INTERNAL_WRITE_TOOLS` 6, `FILE_WRITE_TOOLS` 5, `GATED_TOOLS` 6 + `*.*` MCP, `NO_PROMPT_TOOLS` 4. `move_file`/`delete_file` dijail di permission layer (berlaku semua mode termasuk `--allow-all`).
+Set terkait: `INTERNAL_WRITE_TOOLS`, `FILE_WRITE_TOOLS`, `GATED_TOOLS` (+ `*.*` MCP), `NO_PROMPT_TOOLS`. `move_file`/`delete_file` dijail di permission layer (berlaku semua mode termasuk `--allow-all`).
 
 ## Bash-guard ternormalisasi
 

@@ -5,7 +5,7 @@ export function landingHero(version: string): string {
   return `<section class="hero">
 <div class="kicker">v${version} · MIT · zero-dep</div>
 <h1>Coding agent CLI yang menunjukkan semua kerjanya.</h1>
-<p class="lead">Untuk developer yang hidup di terminal: MiniCode membaca kode, menjalankan tool, dan melaporkan tiap langkah di scrollback — meminta izin sebelum bertindak, tanpa layar khusus.</p>
+<p class="lead">Untuk developer yang hidup di terminal: Minicode membaca kode, menjalankan tool, dan melaporkan tiap langkah di scrollback — meminta izin sebelum bertindak, tanpa layar khusus.</p>
 <div class="cta">
 <a class="btn btn-p" href="/docs/quickstart.html">Mulai dalam 5 menit</a>
 <a class="btn btn-s" href="#cara-kerja">Lihat cara kerja</a>

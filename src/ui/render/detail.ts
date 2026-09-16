@@ -1,6 +1,6 @@
 // Satu sumber state "level detail tool call": expanded vs compact.
 //
-// Posisi MiniCode = agentic Unix shell: tool call transparan di aliran output.
+// Posisi Minicode = agentic Unix shell: tool call transparan di aliran output.
 // Default tergantung konteks: one-shot/exec = expanded; REPL interaktif
 // mengaktifkan compact saat start (lihat runRepl) kecuali env diset eksplisit.
 // `MINICODE_COMPACT=1`/`0` atau `/compact` selalu menang. Getter — jangan simpan

@@ -6,7 +6,7 @@ section .sub { color: var(--mut); font-size: 15px; max-width: 60ch; margin-botto
    lewat whitespace + tipografi, bukan background/radius). */
 .feat-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 34px 40px; }
 .feat { padding: 0; }
-.feat h3 { font-size: 14.5px; font-weight: 650; display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
+.feat h3 { font-size: 14px; font-weight: 650; display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
 .feat h3 .material-symbols-outlined { font-size: 16px; color: var(--acc); }
 .feat p { font-size: 13px; color: var(--mut); margin-top: 0; }
 .feat a.more { display: inline-block; margin-top: 9px; font-size: 13px; font-weight: 600; }

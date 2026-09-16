@@ -1,10 +1,10 @@
 # Security Model
 
-Model ancaman MiniCode dalam satu halaman: apa yang dikontrol, apa yang dipercaya, dan apa batasnya. Tanpa kata "aman" absolut — setiap klaim di bawah menunjuk ke mekanisme yang bisa Anda baca dan uji.
+Model ancaman Minicode dalam satu halaman: apa yang dikontrol, apa yang dipercaya, dan apa batasnya. Tanpa kata "aman" absolut — setiap klaim di bawah menunjuk ke mekanisme yang bisa Anda baca dan uji.
 
 ## Prinsip
 
-MiniCode mengontrol **kemampuan bertingkat** (layered capability control), bukan niat model. Model boleh salah paham; yang menentukan apa yang benar-benar terjadi adalah gerbang deterministik di bawahnya: izin → jail → guard → validasi → eksekusi → bukti.
+Minicode mengontrol **kemampuan bertingkat** (layered capability control), bukan niat model. Model boleh salah paham; yang menentukan apa yang benar-benar terjadi adalah gerbang deterministik di bawahnya: izin → jail → guard → validasi → eksekusi → bukti.
 
 ## Execution Chain
 
@@ -45,14 +45,14 @@ PENTING: **`allow-all` bukan akses host tanpa batas.** Jail path dan bash-guard 
 | Hasil tool | Data | Dibaca model sebagai fakta observasi, bukan instruksi baru |
 | Data repository (kode, AGENTS.md, MEMORY, skill) | Data | Bisa berisi instruksi injeksi; system prompt menandainya tak-terpercaya |
 | Server MCP | External capability | Efek di sisi server arbitrer dan tak terlihat; tiap pemanggilan di-gate; pembatalan tak membatalkan efek yang sudah terjadi |
-| Provider / network | External | Prompt dan hasil melewati provider yang Anda pilih; tak ada telemetri/analitik dari MiniCode sendiri |
+| Provider / network | External | Prompt dan hasil melewati provider yang Anda pilih; tak ada telemetri/analitik dari Minicode sendiri |
 | Child agent | Terisolasi | Memori, sinyal, budget, dan jurnal sendiri; tanpa MCP/commit/tulis-memori/nesting |
 | Local config (`.minicode/config.json`) | Tak dipercaya default | Diabaikan kecuali `--allow-local-config`; repo clone-an tak bisa men-spawn server |
 | Skills / memory tersimpan | Data | Dibaca sebagai konteks, bukan kebijakan |
 
 ## Dangerous Capabilities
 
-MiniCode **tidak menyediakan tool** untuk (terverifikasi di `src/tools/`):
+Minicode **tidak menyediakan tool** untuk (terverifikasi di `src/tools/`):
 
 - `git push`, `fetch`, `pull`, `clone` — tak ada tool git jaringan sama sekali
 - `git reset`, `amend`, `rebase`, `checkout`, `branch -D`, `stash drop`
@@ -79,7 +79,7 @@ Kejujuran yang disengaja: crash ambiguity TETAP MUNGKIN (filesystem dan database
 - **Repo hooks/filter/driver:** `git` via bash mengeksekusinya (semantik stock-git); tool `git_*` tidak.
 - **Bash arbitrer:** guard adalah analisis statis; substitusi dinamis (`$(curl …)`) butuh sandbox OS/docker untuk isolasi nyata.
 - **Efek eksternal MCP:** setelah terjadi, tak bisa dibatalkan dari sini.
-- **Provider/network:** data melewati provider pilihan Anda; MiniCode tak menambahkan transmisi sendiri.
+- **Provider/network:** data melewati provider pilihan Anda; Minicode tak menambahkan transmisi sendiri.
 - **Perilaku model:** pemilihan tool, klaim sukses, dan kepatuhan intent adalah sifat model — orkestrasi menjamin bukti dan batas, bukan kebijaksanaan.
 - **Server LSP:** di-spawn dari perintah di config Anda; hanya daftarkan server yang Anda percaya.
 - **Repo tak-terpercaya:** perlakukan seperti menjalankan `git`/`bash` manual di sana — karena memang itu yang terjadi di balik tool.

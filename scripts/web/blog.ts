@@ -3,7 +3,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { escAttr, firstPara, parseFrontmatter } from "./fm.ts"
-import { mdToHtml } from "./md.ts"
+import { escHtml, mdToHtml } from "./md.ts"
 import { mdLinksToHtml, renderPage, softwareJsonld } from "./page.ts"
 
 export function buildBlog(
@@ -30,10 +30,12 @@ export function buildBlog(
   const rows = posts
     .map(
       (p) =>
+        // Judul/desc/tags dari frontmatter (teks penulis) di-escape: tanpa
+        // ini `<` di judul (mis. "a < b") merusak halaman (audit website).
         `<a class="post-row" href="/blog/${p.slug}.html">` +
-        `<div class="post-date">${p.fm.date || ""}</div><h3>${p.fm.title}</h3><p>${p.desc}</p>` +
+        `<div class="post-date">${escHtml(p.fm.date || "")}</div><h3>${escHtml(p.fm.title)}</h3><p>${escHtml(p.desc)}</p>` +
         (p.fm.tags.length
-          ? `<div class="tags">${p.fm.tags.map((t) => `<span>${t}</span>`).join("")}</div>`
+          ? `<div class="tags">${p.fm.tags.map((t) => `<span>${escHtml(t)}</span>`).join("")}</div>`
           : "") +
         `</a>`,
     )
@@ -60,10 +62,10 @@ export function buildBlog(
   for (const p of posts) {
     const html = mdLinksToHtml(mdToHtml(p.fm.body))
     const body =
-      `<article class="article"><div class="post-date">${p.fm.date || ""}</div><h1>${p.fm.title}</h1>` +
-      `<p class="lede">${p.desc}</p>` +
+      `<article class="article"><div class="post-date">${escHtml(p.fm.date || "")}</div><h1>${escHtml(p.fm.title)}</h1>` +
+      `<p class="lede">${escHtml(p.desc)}</p>` +
       (p.fm.tags.length
-        ? `<div class="tags">${p.fm.tags.map((t) => `<span>${t}</span>`).join("")}</div>`
+        ? `<div class="tags">${p.fm.tags.map((t) => `<span>${escHtml(t)}</span>`).join("")}</div>`
         : "") +
       `${html}<p style="margin-top:40px"><a href="/blog/">← Semua artikel</a></p></article>`
     write(
@@ -80,19 +82,27 @@ export function buildBlog(
           "@type": "Article",
           headline: p.fm.title,
           datePublished: p.fm.date,
-        }),
+          // Sama seperti softwareJsonld: `</` di-escape agar string tak bisa
+          // menutup tag script (`</script>` di judul = breakout).
+        }).replaceAll("</", "<\\/"),
       }),
     )
     urls.push(`${base}/blog/${p.slug}.html`)
   }
   const items = posts
-    .map(
-      (p) =>
+    .map((p) => {
+      // Tanggal rusak → hilangkan pubDate (bukan "Invalid Date" ke RSS).
+      const ms = Date.parse(p.fm.date)
+      const pub = Number.isFinite(ms)
+        ? `<pubDate>${escAttr(new Date(ms).toUTCString())}</pubDate>`
+        : ""
+      return (
         `<item><title>${escAttr(p.fm.title)}</title><link>${base}/blog/${p.slug}.html</link>` +
         `<guid>${base}/blog/${p.slug}.html</guid>` +
-        (p.fm.date ? `<pubDate>${escAttr(new Date(p.fm.date).toUTCString())}</pubDate>` : "") +
-        `<description>${escAttr(p.desc)}</description></item>`,
-    )
+        pub +
+        `<description>${escAttr(p.desc)}</description></item>`
+      )
+    })
     .join("")
   writeFileSync(
     join(siteDir, "rss.xml"),

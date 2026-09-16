@@ -1,8 +1,8 @@
 # Instalasi
 
-Prasyarat tunggal: **`bun >= 1.0`** — runtime MiniCode, bukan Node.js. `npm` hanya dipakai untuk distribusi, bukan untuk menjalankan.
+Prasyarat tunggal: **`bun >= 1.0`** — runtime Minicode, bukan Node.js. `npm` hanya dipakai untuk distribusi, bukan untuk menjalankan.
 
-> Kernel MiniCore ikut repo di `vendor/minicore`, jadi **tanpa clone tambahan**. Klaim lama di `CONTRIBUTING.md` yang menyuruh clone `../minicore` sudah usang untuk pemakaian normal; clone sibling hanya dibutuhkan bila kamu mau sync ulang kernel via `bun run vendor:minicore`.
+> Kernel MiniCore ikut repo di `vendor/minicore`, jadi **tanpa clone tambahan**. Clone sibling `../minicore` hanya dibutuhkan bila kamu mau sync ulang kernel via `bun run vendor:minicore`.
 
 ## Install (untuk awam — tanpa Node/Bun sekalipun)
 
@@ -22,7 +22,7 @@ curl -fsSL https://bun.sh/install | bash
 
 Cek: `bun --version` harus keluar `1.4.x`. Kalau masih `command not found`, tutup-buka terminal dulu (PATH baru ke-load setelah restart).
 
-**Langkah 2 — Pasang MiniCode:**
+**Langkah 2 — Pasang Minicode:**
 
 ```bash
 npm install -g @miniroom/minicode

@@ -1,4 +1,5 @@
-\n
+# Skills & Hooks
+
 ## Skills
 
 Skill = file markdown dengan frontmatter `name` + `description`, diletakkan di `.minicode/skills/*.md` (recursive, `**/*.md` juga didukung):

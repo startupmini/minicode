@@ -1,4 +1,5 @@
-\n
+# Keamanan
+
 ## Prinsip
 
 1. **Fail-closed di jalur tak pasti**: tool tanpa backend tersedia menolak (`code_run`), sandbox yang diminta tapi tidak tersedia tidak pura-pura aman (warn + `allowlist`), provider OAuth yang belum login dibuang dari daftar, auth non-TTY fail-fast.

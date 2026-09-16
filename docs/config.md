@@ -1,4 +1,7 @@
-\n
+# Config — File & Lokasi Data
+
+Di mana pengaturan dan data Minicode tinggal, dan bagaimana file lokal yang tak tepercaya diperlakukan.
+
 ## Skema `.minicode/config.json`
 
 ```json

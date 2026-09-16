@@ -1,8 +1,6 @@
 # Contributing
 
-Lisensi **MIT** (lihat `LICENSE`). Kontribusi publik diterima. Dokumen ini merekonsiliasi `CONTRIBUTING.md` (59 baris) dengan `AGENTS.md` + `PLAN.md` yang aktif.
-
-> Konflik yang diluruskan di sini (bukan diam-diam): `CONTRIBUTING.md` mengklaim `Full English comments/docs`, sementara `AGENTS.md` memerintahkan komentar Indonesia yang menjelaskan *mengapa*. Praktik aktif: **komentar Indonesia**, menjelaskan mengapa + bukti. `CONTRIBUTING.md` juga menyuruh clone `../minicore` untuk setup, sementara `README.md` benar bahwa repo self-contained tanpa sibling clone (sibling hanya untuk sync kernel).
+Lisensi **MIT** (lihat `LICENSE`). Kontribusi publik diterima. Praktik aktif: **komentar Indonesia** yang menjelaskan *mengapa* (bukan *apa*), istilah teknis tetap English.
 
 ## Setup dev
 

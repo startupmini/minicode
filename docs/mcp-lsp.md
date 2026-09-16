@@ -1,5 +1,7 @@
 # MCP & LSP
 
+Sambungkan Minicode ke tool server eksternal (MCP) dan language server (LSP) untuk kemampuan di luar bawaan.
+
 ## MCP — dua transport
 
 ```bash

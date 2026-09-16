@@ -16,7 +16,7 @@ import { closeAll as mcpCloseAll } from "../src/mcp/client.ts"
 import { addMemory } from "../src/memory/vector.ts"
 import { createLlmCompaction } from "../src/policy/compaction.ts"
 import type { RateLimiter } from "../src/policy/ratelimit.ts"
-import { createUsageCollector, primePricing } from "../src/policy/usage.ts"
+import { createUsageCollector, primePricing, watchBudgetLimit } from "../src/policy/usage.ts"
 import {
   buildBaselineNote,
   buildVerifySnippet,
@@ -534,9 +534,39 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     // berhenti pada sukses MAUPUN gagal/abort (kernel hanya emit
     // turn:completed di jalur sukses — tanpa ini painter basi menimpa prompt).
     const runOnce = async (prompt: string, s?: AbortSignal) => {
+      // Pemutus budget MID-TURN (audit 2026-09-16 M3): pre-check driver hanya
+      // menolak prompt BARU, sehingga tool loop / siklus self-heal bisa
+      // belanja tanpa batas dalam satu turn. Watcher membaca biaya LIVE dari
+      // collector dan menggugurkan turn via controller gabungan begitu pagu
+      // lewat (atau cost tak dikenal di --budget-strict). Tanpa --budget =
+      // no-op (sinyal parent diteruskan apa adanya, zero-cost).
+      // `formatUsd` diimpor di bawah (sebelum return) tapi selalu terinisiasi
+      // sebelum runOnce pertama dipanggil — aman dipakai di closure ini.
+      const ctl = new AbortController()
+      const onParentAbort = () => ctl.abort(s?.reason)
+      if (s) {
+        if (s.aborted) ctl.abort(s.reason)
+        else s.addEventListener("abort", onParentAbort, { once: true })
+      }
+      const stopWatch = watchBudgetLimit({
+        bus: session.events,
+        budget,
+        strict: budgetStrict ?? false,
+        getCost: () => usage.getSession().cost,
+        onOver: (st, cost) => {
+          process.stderr.write(
+            st === "over" && cost != null && budget != null
+              ? `[budget] ${formatUsd(cost)} > ${formatUsd(budget)} - over budget, stopping turn.\n`
+              : `[budget] cost unknown (model without pricing) - over budget under --budget-strict, stopping turn.\n`,
+          )
+          ctl.abort(new Error("budget exceeded"))
+        },
+      })
       try {
-        await session.run(prompt, { model: modelRef.current, signal: s })
+        await session.run(prompt, { model: modelRef.current, signal: ctl.signal })
       } finally {
+        stopWatch()
+        if (s) s.removeEventListener("abort", onParentAbort)
         turnStatus?.endTurn()
       }
     }

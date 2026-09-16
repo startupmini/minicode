@@ -1,7 +1,7 @@
-import { readFile } from "node:fs/promises"
 import { isAbsolute, resolve as resolvePath } from "node:path"
 import { pathToFileURL } from "node:url"
 import type { Tool } from "#minicore"
+import { safeReadFile } from "../lib/safe-open.ts"
 import {
   findSymbolPosition,
   getConfiguredExts,
@@ -38,7 +38,11 @@ async function readTarget(file: string, cwd: string): Promise<{ abs: string; tex
   if (isSensitive(file)) throw new Error(`blocked sensitive file: ${file}`)
   const abs = isAbsolute(file) ? resolvePath(file) : resolvePath(cwd, file)
   if (isRealPathOutsideRoot(abs, cwd)) throw new Error(`path outside workspace: ${file}`)
-  const text = await readFile(abs, "utf8")
+  // Baca via safeReadFile (O_NOFOLLOW + verifikasi ulang target saat open):
+  // readFile biasa membuka hasil realpath LAMA sehingga swap symlink di
+  // antara cek dan baca lolos + membaca target sensitif. relevan ganda di
+  // jalur MCP yang permission handler-nya minim (tanpa pre-check jail).
+  const text = await safeReadFile(abs, cwd)
   return { abs, text }
 }
 
@@ -127,11 +131,17 @@ function posTool(
         if (typeof resolved === "string") return resolved
         const { abs, text, position } = resolved
         const result = await raceAbort(
-          lspCall(abs, text, method, {
-            textDocument: { uri: toUri(abs) },
-            position,
-            ...extraParams,
-          }),
+          lspCall(
+            abs,
+            text,
+            method,
+            {
+              textDocument: { uri: toUri(abs) },
+              position,
+              ...extraParams,
+            },
+            cwd,
+          ),
           ctx.signal,
         )
         if (!result || (Array.isArray(result) && result.length === 0)) return "(not found)"
@@ -160,7 +170,7 @@ export const lspDiagnosticsTool: Tool = {
     const cwd = (ctx as { cwd?: string }).cwd ?? process.cwd()
     try {
       const { abs, text } = await readTarget(String(file), cwd)
-      const { items } = await raceAbort(lspDiagnostics(abs, text), ctx.signal)
+      const { items } = await raceAbort(lspDiagnostics(abs, text, undefined, cwd), ctx.signal)
       if (!items.length) return "(no diagnostics)"
       return scrubSecrets(
         items
@@ -218,9 +228,15 @@ export const lspSymbolsTool: Tool = {
     try {
       const { abs, text } = await readTarget(String(file), cwd)
       const result = await raceAbort(
-        lspCall(abs, text, "textDocument/documentSymbol", {
-          textDocument: { uri: toUri(abs) },
-        }),
+        lspCall(
+          abs,
+          text,
+          "textDocument/documentSymbol",
+          {
+            textDocument: { uri: toUri(abs) },
+          },
+          cwd,
+        ),
         ctx.signal,
       )
       if (!result || !Array.isArray(result) || result.length === 0) return "(no symbols)"
@@ -283,7 +299,11 @@ export const lspWorkspaceSymbolsTool: Tool = {
     if (getConfiguredExts().length === 0)
       return "(no LSP servers configured — add via minicode config lsp add)"
     try {
-      const symbols = await raceAbort(workspaceSymbols((query as string) ?? "", 5000), ctx.signal)
+      const cwd = (ctx as { cwd?: string }).cwd ?? process.cwd()
+      const symbols = await raceAbort(
+        workspaceSymbols((query as string) ?? "", 5000, cwd),
+        ctx.signal,
+      )
       if (!symbols.length) return "(no symbols)"
       const KIND = [
         "File",

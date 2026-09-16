@@ -128,7 +128,8 @@ export async function handleExec(
       else process.stderr.write(`${msg}\n`)
       process.exit(1)
     }
-    const u = ctx.usage.get(ctx.modelRef.current)
+    // Ringkasan memakai total SESI (ue), bukan turn terakhir: dengan --verify
+    // (multi-turn + reset antar-siklus) angka turn mengecilkan pemakaian nyata.
     if (jsonMode) {
       // submit_result dari model (bila dipanggil) ikut verbatim — pipeline CI
       // tak perlu menebak batas JSON dari prosa turn terakhir.
@@ -142,7 +143,7 @@ export async function handleExec(
         durationMs: Date.now() - t0,
         steps: ctx.session.state.stepCount,
         turns: ctx.session.state.turnCount,
-        usage: u,
+        usage: ue,
         eventCount: events.length,
         ...(submitted ? { submitted: submitted.result } : {}),
       }
@@ -152,7 +153,7 @@ export async function handleExec(
       process.stdout.write(`${scrubSecrets(JSON.stringify(result))}\n`)
     } else {
       process.stdout.write(
-        `\n[exec] done model=${ctx.modelRef.current} steps=${ctx.session.state.stepCount} tokens=${u.totalTokens} ${Date.now() - t0}ms\n`,
+        `\n[exec] done model=${ctx.modelRef.current} steps=${ctx.session.state.stepCount} tokens=${ue.totalTokens} ${Date.now() - t0}ms\n`,
       )
     }
     unsub()

@@ -175,7 +175,10 @@ export const todoWriteTool: Tool = {
   async execute({ todos }, ctx) {
     ctx.signal.throwIfAborted()
     const list = normalizeTodos(todos)
-    const cwd = todoSession.cwd ?? process.cwd()
+    // cwd sesi dari ToolContext dulu (skenario --cwd / sub-agen), lalu global
+    // yang di-set composition root (cli/setup.ts, MCP serve), terakhir cwd
+    // proses. Urutan lama (global-dulu) buta terhadap ctx.
+    const cwd = (ctx as { cwd?: string }).cwd ?? todoSession.cwd ?? process.cwd()
     await saveTodos(todoSession.id, list, cwd)
     // Plan artifact ditulis tiap save — murah (atomik, kecil) dan membuat
     // resume lintas sesi tidak butuh memutar ulang seluruh percakapan.
@@ -190,7 +193,7 @@ export const todoReadTool: Tool = {
   parameters: { type: "object", properties: {}, additionalProperties: false },
   async execute(_args, ctx) {
     ctx.signal.throwIfAborted()
-    const cwd = todoSession.cwd ?? process.cwd()
+    const cwd = (ctx as { cwd?: string }).cwd ?? todoSession.cwd ?? process.cwd()
     const list = await loadTodos(todoSession.id, cwd)
     if (list.length === 0) return "(no todos yet — use todo_write to create one)"
     return renderTodos(list)

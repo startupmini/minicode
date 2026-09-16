@@ -66,6 +66,49 @@ export function budgetStatus(
   return strict ? "unknown-strict" : "ok"
 }
 
+/**
+ * Pemutus budget MID-TURN (audit 2026-09-16 M3).
+ *
+ * Pre-check di driver (REPL/exec) hanya menolak prompt BARU, sehingga turn
+ * panjang — tool loop puluhan step, siklus self-heal --verify — bisa belanja
+ * tanpa batas dalam satu turn. Watcher ini membaca biaya LIVE (collector yang
+ * sama diakumulasi per usage-event) dan memanggil onOver TEPAT SEKALI begitu
+ * status bukan "ok". Driver memakai callback itu untuk menggugurkan turn
+ * (abort signal) — tanpa ini `--budget` hanya memutus ANTAR prompt.
+ *
+ * Tanpa budget (undefined) = no-op total: tanpa subscribe, tanpa overhead,
+ * perilaku nol-budget identik seperti sebelumnya. Cek langsung sekali saat
+ * pasang agar siklus self-heal yang mulai dalam keadaan sudah-over langsung
+ * gugur tanpa menunggu usage-event baru.
+ */
+export function watchBudgetLimit(opts: {
+  bus: EventBus
+  budget?: number
+  strict?: boolean
+  getCost: () => number | undefined
+  onOver: (status: "over" | "unknown-strict", cost: number | undefined) => void
+}): () => void {
+  if (opts.budget == null) return () => {}
+  let fired = false
+  const check = () => {
+    if (fired) return
+    const st = budgetStatus(opts.budget, opts.getCost(), opts.strict ?? false)
+    if (st !== "ok") {
+      fired = true
+      opts.onOver(st, opts.getCost())
+    }
+  }
+  const off = opts.bus.on("provider:extension", (e) => {
+    if (e.kind === "usage" || e.kind === "effective-model") check()
+  })
+  check()
+  return () => {
+    try {
+      off()
+    } catch {}
+  }
+}
+
 export function createUsageCollector(bus: EventBus, model?: string) {
   // DUA akumulator, bukan satu.
   //

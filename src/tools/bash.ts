@@ -1,4 +1,4 @@
-﻿import { spawn, spawnSync } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { resolve as resolvePath } from "node:path"
 import type { Tool, ToolContext } from "#minicore"

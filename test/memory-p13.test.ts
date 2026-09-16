@@ -6,11 +6,17 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { resolveDbPath } from "../src/lib/db-path.ts"
-import { addMemory, getMemoryStats, searchHybrid } from "../src/memory/vector.ts"
+import { appendMemory, deleteMemoryLines, readMemoryFile } from "../src/memory/files.ts"
+import {
+  addMemory,
+  deleteMemoryByQuery,
+  getMemoryStats,
+  searchHybrid,
+} from "../src/memory/vector.ts"
 
 const repoRoot = resolve(import.meta.dir, "..")
 
@@ -121,6 +127,82 @@ test("P13 scope all: menggabung DB lokal + global (tanpa silent shadowing)", asy
     // scope cwd saja tidak melihat baris global.
     const local = await searchHybrid(`recipe ${m} kitchen pipeline`, { cwd, scope: "cwd" })
     expect(local.map((h) => h.text).join("\n")).not.toContain(`global recipe ${m}`)
+  } finally {
+    if (prevHome === undefined) delete process.env.MINICODE_HOME
+    else process.env.MINICODE_HOME = prevHome
+    await cleanup(cwd)
+    await rm(fakeHome, { recursive: true, force: true }).catch(() => {})
+  }
+})
+
+test("M4 forget vector: deleteMemoryByQuery menghapus lokal + global", async () => {
+  // searchHybrid scope=all menggabung dua DB — forget yang hanya menyentuh
+  // satu sisi membuat data lama global tetap ditemukan (audit 2026-09-16).
+  // Di kode lama hitungan = 1 (global bertahan); setelah perbaikan = 2.
+  const prevHome = process.env.MINICODE_HOME
+  const fakeHome = await mkdtemp(join(tmpdir(), "minicode-memhome-"))
+  const cwd = await makeCwd()
+  try {
+    await mkdir(join(fakeHome, ".minicode"), { recursive: true })
+    process.env.MINICODE_HOME = fakeHome
+    const m = randomUUID().slice(0, 6)
+    await addMemory(`global forgetme ${m} sourdough starter`, { cwd: fakeHome })
+    await addMemory(`local forgetme ${m} deploy pipeline`, { cwd })
+    const del = await deleteMemoryByQuery(`forgetme ${m}`, cwd)
+    expect(del).toBe(2)
+    const all = await searchHybrid(`forgetme ${m}`, { cwd, scope: "all" })
+    expect(all.some((h) => h.text.includes(m))).toBe(false)
+  } finally {
+    if (prevHome === undefined) delete process.env.MINICODE_HOME
+    else process.env.MINICODE_HOME = prevHome
+    await cleanup(cwd)
+    await rm(fakeHome, { recursive: true, force: true }).catch(() => {})
+  }
+})
+
+test("M4 forget file: deleteMemoryLines menghapus MEMORY.md lokal + global", async () => {
+  // read_memory membaca hierarki lokal DAN global — hapus lokal saja tak
+  // tuntas. Di kode lama hitungan = 1 (global bertahan).
+  const prevHome = process.env.MINICODE_HOME
+  const fakeHome = await mkdtemp(join(tmpdir(), "minicode-memhome-"))
+  const cwd = await makeCwd()
+  try {
+    process.env.MINICODE_HOME = fakeHome
+    const m = randomUUID().slice(0, 6)
+    await appendMemory(`local file forgetme ${m} deploy pipeline`, cwd)
+    await mkdir(join(fakeHome, ".minicode"), { recursive: true })
+    await writeFile(
+      join(fakeHome, ".minicode", "MEMORY.md"),
+      `- lama file forgetme ${m} sourdough\n`,
+    )
+    const del = await deleteMemoryLines(`forgetme ${m}`, cwd)
+    expect(del).toBe(2)
+    expect((await readMemoryFile(cwd)).includes(m)).toBe(false)
+  } finally {
+    if (prevHome === undefined) delete process.env.MINICODE_HOME
+    else process.env.MINICODE_HOME = prevHome
+    await cleanup(cwd)
+    await rm(fakeHome, { recursive: true, force: true }).catch(() => {})
+  }
+})
+
+test("B9 scope global: membaca DB global eksplisit, bukan lokal", async () => {
+  // MINICODE_MEMORY_SCOPE=global didokumentasikan (docs/environment.md),
+  // tapi jatuh ke resolveDbPath = lokal bila .minicode ada. Di kode lama
+  // hasil memuat baris lokal dan melewatkan global.
+  const prevHome = process.env.MINICODE_HOME
+  const fakeHome = await mkdtemp(join(tmpdir(), "minicode-memhome-"))
+  const cwd = await makeCwd()
+  try {
+    await mkdir(join(fakeHome, ".minicode"), { recursive: true })
+    process.env.MINICODE_HOME = fakeHome
+    const m = randomUUID().slice(0, 6)
+    await addMemory(`global scopeprobe ${m} sourdough starter`, { cwd: fakeHome })
+    await addMemory(`local scopeprobe ${m} deploy pipeline`, { cwd })
+    const g = await searchHybrid(`scopeprobe ${m}`, { cwd, scope: "global" })
+    const texts = g.map((h) => h.text).join("\n")
+    expect(texts).toContain(`global scopeprobe ${m}`)
+    expect(texts).not.toContain(`local scopeprobe ${m}`)
   } finally {
     if (prevHome === undefined) delete process.env.MINICODE_HOME
     else process.env.MINICODE_HOME = prevHome

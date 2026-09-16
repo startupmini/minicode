@@ -348,24 +348,6 @@ export async function callMcpTool(
   return conn.callTool(toolName, args, signal)
 }
 
-export async function listMcpTools(serverId: string): Promise<McpToolDef[]> {
-  const conn = activeConnections.get(serverId)
-  if (!conn) throw new Error(`MCP server ${serverId} not connected`)
-  return conn.tools
-}
-
-export function listMcpResources(serverId: string): McpResourceDef[] {
-  const conn = activeConnections.get(serverId)
-  if (!conn) throw new Error(`MCP server ${serverId} not connected`)
-  return conn.resources
-}
-
-export function listMcpPrompts(serverId: string): McpPromptDef[] {
-  const conn = activeConnections.get(serverId)
-  if (!conn) throw new Error(`MCP server ${serverId} not connected`)
-  return conn.prompts
-}
-
 export async function readMcpResource(
   serverId: string,
   uri: string,

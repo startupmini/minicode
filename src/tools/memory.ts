@@ -122,7 +122,8 @@ export const writeMemoryTool: Tool = {
 
 export const forgetMemoryTool: Tool = {
   name: "forget_memory",
-  description: "Delete memories matching the query from the vector store.",
+  description:
+    "Delete memories matching the query from the vector store AND MEMORY.md files, in both project (cwd) and global scopes — search merges both, so forgetting one side would leave rows behind.",
   parameters: {
     type: "object",
     properties: { query: { type: "string" } },

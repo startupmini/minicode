@@ -61,8 +61,13 @@ export const webFetchTool: Tool = {
     if (ctx.signal.aborted) controller.abort(ctx.signal.reason)
 
     try {
-      // Redirect ditangani MANUAL: tiap hop divalidasi ulang isPrivateHost + DNS —
-      // menutup SSRF via open-redirect & DNS rebinding ke 169.254.169.254 / localhost dsb.
+      // Redirect ditangani MANUAL: tiap hop divalidasi ulang isPrivateHost +
+      // DNS tanpa cache klien — menutup SSRF via open-redirect & rebinding
+      // yang mengandalkan cache basi. SISA RESIDUAL jujur (audit 2026-09-16
+      // B6): validasi-lalu-fetch = check-then-connect; resolver OS bisa
+      // mengembalikan IP berbeda saat connect dibanding saat cek. Menutupnya
+      // butuh pin-IP di level socket (di luar API fetch) — ditunda sadar,
+      // bukan diklaim tertutup.
       let current = parsed
       if (await isPrivateHostWithDns(current.hostname)) {
         throw new Error(`blocked private host: ${current.hostname}`)

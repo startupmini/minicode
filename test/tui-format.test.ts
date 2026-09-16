@@ -844,7 +844,6 @@ describe("simple logger (one-shot)", () => {
       expect(raw).not.toContain("model-rahasia-xyz")
       // Thinking kini titik saja (spark pindah ke footer) — animasi
       // "·" → "· ·" → "· · ·" (tiap 3 tick):
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: menguji output terminal saksi (ESC + \r).
       // Thinking kini titik saja (spark pindah ke footer) — animasi
       // titik selalu muncul, tapi warna/fase bisa sama saat interval 900ms
       // dengan titik 3-fase; cukup cek hadir, bukan variasi.

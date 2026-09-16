@@ -6,9 +6,6 @@ import { buildProviderListAsync } from "../providers/build.ts"
 import { createRouterProvider } from "../providers/router.ts"
 
 let currentRouter: ReturnType<typeof createRouterProvider> | null = null
-export function getCurrentRouter(): ReturnType<typeof createRouterProvider> | null {
-  return currentRouter
-}
 export async function reloadProviders(
   cwd?: string,
   opts: { allowLocal?: boolean } = {},

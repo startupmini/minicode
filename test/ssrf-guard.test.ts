@@ -1,4 +1,4 @@
-﻿import { afterEach, expect, test } from "bun:test"
+import { afterEach, expect, test } from "bun:test"
 import { isPrivateHost } from "../src/lib/net.ts"
 import { webFetchTool } from "../src/tools/web_fetch.ts"
 

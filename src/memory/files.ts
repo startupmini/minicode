@@ -2,6 +2,7 @@ import { appendFile, mkdir, readFile, stat } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { LIMITS } from "../constants.ts"
+import { homeDir } from "../lib/db-path.ts"
 import { isRealPathOutsideRoot } from "../policy/jail.ts"
 import { scrubSecrets } from "../policy/scrub.ts"
 
@@ -10,7 +11,10 @@ function tildePath(p: string): string {
   return p.startsWith(home) ? `~${p.slice(home.length)}` : p
 }
 
-const GLOBAL_MEM = join(homedir(), ".minicode", "MEMORY.md")
+// Jalur global DIHITUNG per panggil (bukan const modul): homeDir() hormat
+// MINICODE_HOME saat runtime (hermetic test + XDG-ish, sama seperti DB).
+// Const modul akan membekukan home saat import pertama (audit 2026-09-16 M4).
+const globalMemPath = (): string => join(homeDir(), ".minicode", "MEMORY.md")
 const LOCAL_MEM = ".minicode/MEMORY.md"
 const ROOT_MEM = "MEMORY.md"
 // Claude-like hierarchy extensions
@@ -18,9 +22,10 @@ const CLAUDE_MEM = "CLAUDE.md"
 
 export async function loadMemoryFiles(cwd = process.cwd()): Promise<string> {
   const parts: string[] = []
+  const globalMem = globalMemPath()
   // Hierarchy: global → local → root → CLAUDE compat → rules/
   const candidates = [
-    GLOBAL_MEM,
+    globalMem,
     resolve(cwd, LOCAL_MEM),
     resolve(cwd, ROOT_MEM),
     resolve(cwd, CLAUDE_MEM),
@@ -28,9 +33,9 @@ export async function loadMemoryFiles(cwd = process.cwd()): Promise<string> {
   for (const p of candidates) {
     try {
       // Symlink escape (temuan audit #06): kandidat fixed-name bisa berupa
-      // symlink keluar workspace. GLOBAL_MEM (home) sengaja dikecualikan —
+      // symlink keluar workspace. globalMem (home) sengaja dikecualikan —
       // di luar cwd by design. Samakan rules/ di bawah ke realpath.
-      if (p !== GLOBAL_MEM && isRealPathOutsideRoot(p, cwd)) continue
+      if (p !== globalMem && isRealPathOutsideRoot(p, cwd)) continue
       const txt = await readFile(p, "utf8")
       if (txt.trim()) parts.push(`# ${tildePath(p)}\n${scrubSecrets(txt.slice(0, 6000))}`)
     } catch {}
@@ -119,31 +124,36 @@ export async function readMemoryFile(cwd = process.cwd()): Promise<string> {
 }
 
 /**
- * Hapus baris MEMORY.md lokal yang cocok query (temuan audit #06).
+ * Hapus baris MEMORY.md lokal + global yang cocok query (temuan audit #06,
+ * diperluas audit 2026-09-16 M4).
  *
  * forget_memory sebelumnya hanya menghapus baris vector — entri file
  * (sumber `file hits:` di read_memory) bertahan selamanya sehingga "lupa"
- * tidak pernah benar-benar terjadi di jalur file. Pencocokan sama persis
+ * tidak pernah benar-benar terjadi di jalur file. Perluasan M4: read_memory
+ * membaca hierarki lokal DAN global (loadMemoryFiles), jadi hapus lokal saja
+ * tak tuntas — baris global yang cocok ikut dihapus. Pencocokan sama persis
  * dengan jalur baca (substring case-insensitive) agar hapus-menemukan apa
- * yang baca-temukan. Hanya LOCAL_MEM (tempat write_memory menulis); catatan:
- * hierarki global/root/CLAUDE di luar wewenang forget sesi ini.
+ * yang baca-temukan.
  */
 export async function deleteMemoryLines(query: string, cwd = process.cwd()): Promise<number> {
   const q = query.trim().toLowerCase()
   if (!q) return 0
-  const path = resolve(cwd, LOCAL_MEM)
-  return withMemLock(path, async () => {
-    let txt: string
-    try {
-      txt = await readFile(path, "utf8")
-    } catch {
-      return 0
-    }
-    const kept = txt.split("\n").filter((l) => !l.toLowerCase().includes(q))
-    const deleted = txt.split("\n").length - kept.length
-    if (deleted === 0) return 0
-    const { atomicWriteText } = await import("../lib/atomic-write.ts")
-    await atomicWriteText(path, kept.join("\n"))
-    return deleted
-  })
+  let total = 0
+  for (const path of [resolve(cwd, LOCAL_MEM), globalMemPath()]) {
+    total += await withMemLock(path, async () => {
+      let txt: string
+      try {
+        txt = await readFile(path, "utf8")
+      } catch {
+        return 0
+      }
+      const kept = txt.split("\n").filter((l) => !l.toLowerCase().includes(q))
+      const deleted = txt.split("\n").length - kept.length
+      if (deleted === 0) return 0
+      const { atomicWriteText } = await import("../lib/atomic-write.ts")
+      await atomicWriteText(path, kept.join("\n"))
+      return deleted
+    })
+  }
+  return total
 }

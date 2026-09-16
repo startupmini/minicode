@@ -94,9 +94,18 @@ export function inlineSimpleVars(cmd: string): string {
 export function stripCommandWrappers(cmd: string): string {
   const WRAPPER =
     /(^|[;&|]\s*)(?:command|exec|builtin|eval|nice(?:\s+-n\s*-?\d+)?|nohup|time|timeout\s+[\d.]+[smhd]?|stdbuf(?:\s+-\S+)*|env(?=\s+[A-Za-z_][A-Za-z0-9_]*=)|setsid|ionice(?:\s+-\S+)*|xargs(?:\s+-\S+)*|sudo(?:\s+-\S+)*|doas)\s+/gi
+  // Wrapper privilese/konteks (audit 2026-09-16 B2): `su -c 'env'`,
+  // `runuser -u x -- printenv`, `cmd /c set` menyembunyikan perintah
+  // sebenarnya dari aturan konten yang ter-anchor ke awal (ENV_DUMP dkk).
+  // Dibuang BESERTA flag/argumen konteksnya (user/host/path, introducer
+  // -c/--//c) sehingga perintah DALAM dievaluasi aturan biasa — `su -c
+  // 'cat /etc/shadow'` tetap kena SENSITIVE_TARGET. Jangkar awal mencegah
+  // strip di tengah perintah (`echo su -c env` tak tersentuh).
+  const WRAPPER_SHELL =
+    /(^|[;&|]\s*)(?:(?:su|runuser|gosu|chroot|nsenter)(?:\s+(?:-[^\s;|]+|--[^\s;|]*|\/[^\s;|]*|[^-;\s|/][^;\s|]*))*\s+|cmd(?:\.exe)?(?:\s+\/[a-zA-Z]+)*\s+\/c\s+)/gi
   let out = cmd
   for (let pass = 0; pass < 4; pass++) {
-    const next = out.replace(WRAPPER, "$1")
+    const next = out.replace(WRAPPER, "$1").replace(WRAPPER_SHELL, "$1")
     if (next === out) break
     out = next
   }
@@ -133,9 +142,13 @@ const HIVE_PATH =
 const VSS_SHADOW = /\bvssadmin\b[^\n]*\b(?:create\s+shadow|delete\s+shadows?)\b/i
 const NTDSUTIL = /\bntdsutil\b/i
 
-/** Perintah yang membaca/menyalin isi berkas. */
+/** Perintah yang membaca/menyalin isi berkas. Daftar ini + ekstraktor argumen
+ * di inspectBashCommand WAJIB sinkron (audit 2026-09-16 B4: certutil/tac/
+ * findstr lolos karena hanya ada di satu sisi). Denylist takkan pernah
+ * komplet (residual arsitektural, lihat kepala berkas) — tiap entri di sini
+ * adalah kasus konkret terverifikasi, bukan tebakan. */
 const READERS =
-  /\b(?:cat|bat|less|more|head|tail|nl|od|xxd|strings|type|Get-Content|cp|copy|mv|move|scp|rsync|tar|zip|gzip|base64|openssl|awk|sed|grep|egrep|fgrep|rg|cut|sort|uniq|tee|dd|install)\b/i
+  /\b(?:cat|bat|less|more|head|tail|nl|od|xxd|strings|type|Get-Content|certutil|tac|findstr|fc|comp|cp|copy|mv|move|scp|rsync|tar|zip|gzip|base64|openssl|awk|sed|grep|egrep|fgrep|rg|cut|sort|uniq|tee|dd|install)\b/i
 
 /** Dump environment — `printenv` sudah lama diblok, sisanya belum. */
 const ENV_DUMP =
@@ -152,6 +165,12 @@ const UPLOAD_FLAG =
 /** Interpreter dijalankan dengan kode inline (semua bentuk flag). */
 const INLINE_INTERPRETER =
   /\b(?:pyw?|python[\d.]*|pypy[\d.]*|sh|bash|dash|zsh|ksh|node|deno|bun|perl|ruby|php|Rscript)(?:\.exe)?\b\s+(?:-\w*\s+)*(?:-c|-e|-E|--eval|--print|-p|--command|-r|--execute)\b/i
+// Residual jujur (audit 2026-09-16 B3): eksekusi via stdin/redirect TANPA
+// flag inline (`bash -s < skrip`, `python3 < prog`, `... | python3 -`) tidak
+// ditahan — menahan `| python3 -` mematahkan pipeline sah, dan `bash berkas`
+// telanjang memang diizinkan (skrip workspace dieksekusi setara user
+// menjalankannya; penanaman skrip dijaga permission write). Isolasi penuh
+// tetap tugas sandbox OS/docker, bukan analisis statis.
 
 /** Process substitution / here-string yang memasukkan output perintah lain. */
 const PROCESS_SUB = /<\s*\(|>\s*\(|<<<|\bsource\s+<|\.\s+<\(/
@@ -251,10 +270,14 @@ const ROOT_SCAN = /\b(?:find|fd|ls|dir|du|tree|grep|rg)\b[^\n]*\s\/(?:\s|$)/i
  * Traversal dicek di mana pun dalam argumen, bukan hanya di awal kata: target
  * bisa dibungkus command substitution (`rm -rf $(pwd)/../..`) yang tidak bisa
  * kita evaluasi, tapi `..` yang menaik tetap terlihat.
+ *
+ * Target `//` dan `/.X` ikut berbahaya (audit 2026-09-16 B5): slash ganda
+ * collapse ke root di POSIX (`rm -rf //` ≡ `rm -rf /`), dan `/.[!.]*` dengan
+ * -r menghapus isi dotfile root.
  */
 const RM_RECURSIVE = /\brm\b[^\n]*(?:\s-[a-z]*[rR]|\s--recursive\b|\s--dir\b)/i
 const RM_DANGEROUS_TARGET =
-  /(?:\s\/(?:\s|$|\*|;|&)|\s~(?:[/\\]\s*)?(?:\s|$|;|&)|\$\{?HOME\}?|\.\.(?:[/\\]|\s|$|;|&)|\s\*\s*(?:$|;|&)|--no-preserve-root)/
+  /(?:\s\/(?:\s|$|\*|;|&|\/|\.)|\s~(?:[/\\]\s*)?(?:\s|$|;|&)|\$\{?HOME\}?|\.\.(?:[/\\]|\s|$|;|&)|\s\*\s*(?:$|;|&)|--no-preserve-root)/
 
 const STATIC_DENY: [RegExp, string][] = [
   // Fork bomb: definisi fungsi rekursif yang memanggil dirinya lewat pipe.
@@ -270,13 +293,18 @@ const STATIC_DENY: [RegExp, string][] = [
   [/\btruncate\b/i, "truncate file"],
   [/\bmv\s+[^;|]*\s+\/(?:etc|boot|usr|lib)\b/i, "overwrite system dir"],
   [/\bsudo\b[^\n]*\brm\b/i, "sudo rm"],
-  [/\bpowershell\b[^\n]*-EncodedCommand/i, "encoded powershell"],
+  // `pwsh`/`pwsh.exe` = nama biner PowerShell modern lintas-OS (audit
+  // 2026-09-16: varian encoded lolos karena aturan hanya kenal `powershell`).
+  [/\b(?:powershell|pwsh)\b[^\n]*-EncodedCommand/i, "encoded powershell"],
   // Bentuk pendek -enc/-enco/... + blob base64 panjang. Aturan penuh di atas
   // tak menangkap prefix; pola ini mensyaratkan blob (60+ byte, hitung padding
   // `==`) sehingga -Encoding milik cmdlet dalam (-Command "... -Encoding
   // utf8 ...") lolos: -enc* + blob panjang praktis hanya payload terenkode.
   // -Command arbitrer tetap residual jujur (butuh sandbox OS/docker).
-  [/\bpowershell(\.exe)?\b[^\n]*\s-e\w*\s+[A-Za-z0-9+/]{60,}={0,2}/i, "encoded powershell payload"],
+  [
+    /\b(?:powershell|pwsh)(\.exe)?\b[^\n]*\s-e\w*\s+[A-Za-z0-9+/]{60,}={0,2}/i,
+    "encoded powershell payload",
+  ],
   [/>\s*\/dev\/(?:sda|nvme|hd[a-z])/i, "raw device write"],
   [/\b(?:del|erase)\b[^\n]*\/[sfaq]/i, "windows recursive delete"],
   [/\brmdir\b[^\n]*\/s/i, "windows recursive rmdir"],
@@ -390,7 +418,7 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
     const readerTargets = (() => {
       const out: string[] = []
       const re =
-        /\b(?:cat|bat|less|more|head|tail|nl|od|xxd|strings|type|Get-Content|cp|copy|mv|move|scp|rsync|tar|zip|gzip|base64|openssl|awk|sed|grep|egrep|fgrep|rg|cut|sort|uniq|tee|dd|install)\b\s+([^\n;&|]+)/gi
+        /\b(?:cat|bat|less|more|head|tail|nl|od|xxd|strings|type|Get-Content|certutil|tac|findstr|fc|comp|cp|copy|mv|move|scp|rsync|tar|zip|gzip|base64|openssl|awk|sed|grep|egrep|fgrep|rg|cut|sort|uniq|tee|dd|install)\b\s+([^\n;&|]+)/gi
       for (const m of norm.matchAll(re)) {
         const args = m[1]!.split(/\s+/)
         for (const a of args) {

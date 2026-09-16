@@ -18,11 +18,23 @@ function open(cwd?: string): Database {
     db.exec(`PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}`)
   } catch {}
   if (!initializedSessionPaths.has(p)) {
-    // journal_size_limit + wal_autocheckpoint: WAL tidak tumbuh tak terbatas
-    db.exec(
-      `PRAGMA journal_mode=WAL; PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=${LIMITS.SQLITE_WAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=${LIMITS.SQLITE_WAL_AUTOCHECKPOINT_PAGES};`,
-    )
-    initializedSessionPaths.add(p)
+    // journal_size_limit + wal_autocheckpoint: WAL tidak tumbuh tak terbatas.
+    // Bungkus try/catch DENGAN retry-next-open (audit 2026-09-16): di Windows,
+    // lock AV/file sesaat saat dua proses membuka bersamaan membuat setup WAL
+    // gagal SQLITE_IOERR_TRUNCATE — crash di sini mematikan SELURUH operasi
+    // sesi padahal mode rollback-journal tetap bisa baca. Jangan tandai
+    // initialized bila gagal agar open berikutnya mencoba lagi (mode WAL
+    // persisten di berkas DB, jadi sekali sukses berlaku untuk semua handle).
+    try {
+      db.exec(
+        `PRAGMA journal_mode=WAL; PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=${LIMITS.SQLITE_WAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=${LIMITS.SQLITE_WAL_AUTOCHECKPOINT_PAGES};`,
+      )
+      initializedSessionPaths.add(p)
+    } catch (e) {
+      process.stderr.write(
+        `[warn] persistence: wal setup deferred, retry next open: ${(e as Error).message}\n`,
+      )
+    }
     // File DB dibuat dengan 644 default; ubah ke 600 agar history tidak world-readable
     try {
       const { chmodSync } = require("node:fs") as typeof import("node:fs")

@@ -1,7 +1,7 @@
 import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
-import { resolveSafePath, safeReadFile } from "../lib/safe-open.ts"
+import { assertSafeWriteTarget, resolveSafePath, safeReadFile } from "../lib/safe-open.ts"
 import { appendLspDiagnostics } from "../policy/verifier.ts"
 import { applyHashline } from "./hashline.ts"
 
@@ -136,6 +136,8 @@ export const editTool: Tool = {
     // Verifikasi path terpusat (logis + target nyata, induk symlink ikut
     // ter-resolusi) — symlink internal tetap bisa diedit, targetnya yang dicek.
     const { abs, real: realAbs } = await resolveSafePath(p, root)
+    // Tolak menimpa symlink final (swap antara cek dan tulis gagal tutup).
+    await assertSafeWriteTarget(abs, root)
     // Cek ukuran sebelum baca penuh — hindari OOM 1GB via safeReadFile.
     // Pakai byte length via stat pada realAbs (handle belum ada), fallback ke content length.
     const { stat } = await import("node:fs/promises")
@@ -174,6 +176,8 @@ export const editTool: Tool = {
         realAbs,
         hashApply,
         `edited ${realAbs} (hashline match) (${oldS.length} → ${newS.length} chars)`,
+        undefined,
+        root,
       )
     }
     const match = flexibleMatch(content, oldS)
@@ -195,6 +199,6 @@ export const editTool: Tool = {
     await atomicWriteText(realAbs, next)
     const note = match.mode !== "exact" ? ` (${match.mode} match)` : ""
     const base = `edited ${realAbs}${note} (${oldS.length} → ${newS.length} chars)`
-    return await appendLspDiagnostics(realAbs, next, base)
+    return await appendLspDiagnostics(realAbs, next, base, undefined, root)
   },
 }

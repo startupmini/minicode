@@ -336,9 +336,13 @@ describe("REPL linier: mode & toggle", () => {
     // di tempat via footer.refresh saat Shift+Tab).
     expect(out).toContain("minicode ›")
     expect(out).not.toContain("ask ›")
-    // Footer: spark ✦ + mode di-pad + • model • cwd.
-    expect(out).toContain("✦ ask")
-    expect(out).toContain("• m1")
+    // Footer: spark ✦ + 2 spasi + mode di-pad-9 + • model • cwd
+    // (format footer pasca-0.9.23: `${spark}  ${mode}`, lihat footer.ts).
+    expect(out).toContain("✦  ask")
+    // Model tampil di footer (lebar spasi separator milik unit test footer —
+    // di sini cukup pastikan kedua token ada).
+    expect(out).toContain("•")
+    expect(out).toContain("m1")
     await waitForPrompt()
     await tty.send(KEY.ctrlC, 20)
     await waitForPrompt()
@@ -404,10 +408,12 @@ describe("REPL linier: mode & toggle", () => {
       await tty.send(KEY.tab, 25)
       expect(h.mode).toBe(m)
       // Prompt steril + mode terlihat di footer (bukan prefix, bukan "mode:").
+      // Format: `✦  <mode pad-9> • <model> • <cwd>` (2 spasi pasca-spark).
       expect(visible(tty)).toContain("minicode ›")
       expect(visible(tty)).not.toContain("mode:")
-      expect(visible(tty)).toContain(`✦ ${m}`)
-      expect(visible(tty)).toContain("• m1")
+      expect(visible(tty)).toContain(`✦  ${m}`)
+      expect(visible(tty)).toContain("•")
+      expect(visible(tty)).toContain("m1")
       await waitForPrompt()
     }
     await typeLine("/exit")

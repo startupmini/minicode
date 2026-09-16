@@ -4,6 +4,8 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
+  isDangerousLink,
+  isHardlink,
   isPathOutsideRoot,
   isRealPathOutsideRoot,
   isSensitive,
@@ -86,6 +88,29 @@ test("isRealPathOutsideRoot detects symlink escape that logical check misses", a
     // traversal klasik tetap tertangkap kedua varian
     expect(isRealPathOutsideRoot("../outside.txt", root)).toBe(true)
     expect(isPathOutsideRoot("../outside.txt", root)).toBe(true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("isRealPathOutsideRoot: direktori sah di dalam root TIDAK ditolak", async () => {
+  // Regresi audit 2026-09-16: isHardlink (nlink>1) menuduh tiap DIREKTORI di
+  // POSIX (nlink>=2 via `.`/subdir) → argumen cwd sah untuk glob/grep/git/bash
+  // di-deny "cwd outside workspace". Windows (nlink dir = 1) lolos sehingga
+  // bug tak terlihat di suite Windows — test ini mengunci perilaku benar di
+  // semua OS (di POSIX ia gagal pada kode lama).
+  const root = await mkdtemp(join(tmpdir(), "minicode-jaildir-"))
+  try {
+    const sub = join(root, "sub")
+    await mkdir(sub, { recursive: true })
+    expect(isHardlink(sub)).toBe(false)
+    expect(isDangerousLink(sub)).toBe(false)
+    expect(isRealPathOutsideRoot(sub, root)).toBe(false)
+    expect(isRealPathOutsideRoot("sub", root)).toBe(false)
+    // Berkas biasa juga bukan hardlink — deteksi hardlink asli tetap jalan.
+    const f = join(root, "a.txt")
+    await writeFile(f, "x")
+    expect(isHardlink(f)).toBe(false)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

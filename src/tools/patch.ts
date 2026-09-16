@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises"
 import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
-import { resolveSafePath, safeReadFile } from "../lib/safe-open.ts"
+import { assertSafeWriteTarget, resolveSafePath, safeReadFile } from "../lib/safe-open.ts"
 import { flexibleMatch } from "./edit.ts"
 
 // Apply SEARCH/REPLACE block (a la Aider) ke file. Search block harus match
@@ -41,6 +41,8 @@ export const applyPatchTool: Tool = {
     const root = (ctx as { cwd?: string }).cwd ?? process.cwd()
     // Verifikasi path terpusat (logis + target nyata) — detail di safe-open.ts.
     const { abs, real: realAbs } = await resolveSafePath(p, root)
+    // Tolak menimpa symlink final (swap antara cek dan tulis gagal tutup).
+    await assertSafeWriteTarget(abs, root)
     const st = await stat(realAbs).catch(() => null)
     if (!st) throw new Error(`file not found: ${p}`)
     if (st.size > LIMITS.READ_FILE_MAX_BYTES) throw new Error(`file too large: ${p} (${st.size})`)

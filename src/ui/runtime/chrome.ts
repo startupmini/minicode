@@ -30,7 +30,7 @@ export interface FooterChromeOptions {
 
 export interface FooterChrome {
   readonly mode: "sticky" | "print" | "none"
-  /** Baris dasar yang wajib disisakan editor/prompt (sticky=3, lainnya 0). */
+  /** Baris dasar yang wajib disisakan editor/prompt (sticky=2, lainnya 0). */
   reserveRows(): number
   /**
    * Panggil tepat sebelum prompt idle: sticky → pastikan region + repaint
@@ -40,7 +40,7 @@ export interface FooterChrome {
   present(): void
   /**
    * Repaint footer DI TEMPAT tanpa memindahkan kursor — dipakai perubahan
-   * status saat prompt aktif (mis. Shift+Tab ganti mode). Sticky: repaint 3
+   * status saat prompt aktif (mis. Shift+Tab ganti mode). Sticky: repaint 2
    * baris dasar; print/none: no-op (footer berikutnya dicetak di idle).
    */
   refresh(): void

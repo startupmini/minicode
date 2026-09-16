@@ -162,4 +162,33 @@ describe("integritas encoding berkas", () => {
     }
     expect(withBom).toEqual([])
   })
+
+  test("SEMUA berkas teks terlacak tanpa BOM (repo UTF-8 tanpa BOM)", () => {
+    // Perluasan audit 2026-09-16 L4: 5 berkas .ts (src/tools/bash.ts,
+    // read_file.ts + 3 test) kedapatan ber-BOM di worktree — lolos karena
+    // guard hanya cek 3 config, dan `git status` buta terhadapnya (clean
+    // filter menormalkan). Bun/Node toleran BOM di .ts, tapi konvensi repo
+    // (AGENTS.md) melarangnya di semua berkas.
+    const withBom: string[] = []
+    for (const f of textFiles) {
+      const buf = readFileSync(join(repoRoot, f))
+      if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) withBom.push(f)
+    }
+    expect(withBom).toEqual([])
+  })
+
+  test("sumber web (web/ + content/) tanpa BOM dan tanpa CRLF", () => {
+    // Cleanup 2026-09-16: `content/logo-user.svg` ber-BOM dan 8 berkas
+    // web/*.html/*.css ber-CRLF (di luar cakupan .gitattributes lama) —
+    // BOM merusak parse XML, CRLF pernah memecahkan frontmatter blog.
+    const webFiles = trackedFiles(/\.(css|html|svg)$/)
+    const bad: string[] = []
+    for (const f of webFiles) {
+      if (!f.startsWith("web/") && !f.startsWith("content/")) continue
+      const buf = readFileSync(join(repoRoot, f))
+      if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) bad.push(`${f} (BOM)`)
+      else if (buf.includes(0x0d)) bad.push(`${f} (CR)`)
+    }
+    expect(bad).toEqual([])
+  })
 })

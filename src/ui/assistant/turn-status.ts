@@ -1,4 +1,5 @@
 import type { UiBus } from "../contract.ts"
+import { sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, glyphs } from "../render/theme.ts"
 import { displayWidth, truncateToWidth } from "../render/width.ts"
 import { acquireTransientPaint, paintWrite, registerStatusLine } from "../runtime/statusline.ts"
@@ -220,7 +221,10 @@ export function attachTurnStatus(
     else if (typeof args.command === "string") target = args.command.slice(0, 80)
     // Potong panjang (bukan lebar) di sini; pemotongan LEBAR terjadi per-paint
     // agar resize langsung berefek.
-    const label2 = target ? `${name} ${target}` : name
+    // Nama + argumen datang dari model (tak terpercaya): sanitasi sebelum
+    // masuk paintWrite — truncateToWidth memotong lebar, bukan sekuens kontrol.
+    const cleanName = sanitizeAnsiLine(name)
+    const label2 = target ? `${cleanName} ${sanitizeAnsiLine(target)}` : cleanName
     return label2.length > 200 ? label2.slice(0, 200) : label2
   }
 

@@ -81,11 +81,6 @@ export function scrubSecrets(text: string): string {
   return out
 }
 
-// Khusus untuk per baris (grep): redact per baris.
-export function scrubLine(line: string): string {
-  return scrubSecrets(line)
-}
-
 // Env vars yang namanya cocok pola kredensial di-strip sebelum spawn proses
 // (bash / docker / MCP server / LSP server) — kurangi permukaan exfiltration.
 //

@@ -378,7 +378,7 @@ async function buildRepoMapLsp(cwd: string): Promise<string | null> {
   try {
     const { getConfiguredExts, workspaceSymbols } = await import("../lsp/client.ts")
     if (getConfiguredExts().length === 0) return null
-    const symbols = await workspaceSymbols("", 4000)
+    const symbols = await workspaceSymbols("", 4000, cwd)
     if (!symbols.length) return null
     const KIND = [
       "File",

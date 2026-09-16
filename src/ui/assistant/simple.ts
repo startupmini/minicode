@@ -19,6 +19,7 @@ import { decorateMarkdown, type FenceMatch, parseFence } from "../render/markdow
 import { reasoning } from "../render/reasoning.ts"
 import { sanitizeAnsi, sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, glyphs, stripAnsi } from "../render/theme.ts"
+import { displayWidth, truncateToWidth } from "../render/width.ts"
 import { formatWrapped } from "../render/wrap.ts"
 import { runWithoutStatus } from "../runtime/statusline.ts"
 
@@ -141,11 +142,22 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     }
   }
 
-  /** Potong ke ≤max karakter di batas kata (fallback potong keras). */
+  /** Potong ke ≤max KOLOM terminal di batas kata (fallback potong keras).
+   * Versi lama memakai s.length/slice karakter: CJK/emoji 2-kolom meluap dan
+   * slice mentah bisa membelah sekuens SGR/surrogate — truncateToWidth aman
+   * untuk keduanya (tak pernah belah escape, tutup atribut terbuka). */
   const truncateWords = (s: string, max: number): string => {
-    if (s.length <= max) return s
-    const cut = s.lastIndexOf(" ", max)
-    return cut > 0 ? s.slice(0, cut) : s.slice(0, max)
+    if (displayWidth(s) <= max) return s
+    let out = ""
+    for (const w of s.split(" ")) {
+      const cand = out ? `${out} ${w}` : w
+      if (displayWidth(cand) > max) break
+      out = cand
+    }
+    // Satu kata raksasa tanpa spasi: potong keras yang aman-SGR, tanpa elipsis
+    // (label ringkas, bukan tajuk terpotong).
+    if (!out) return truncateToWidth(s, max, "")
+    return out
   }
 
   /** Label satu-baris ringkas per tool (bukan dump JSON argumen). */
@@ -162,7 +174,10 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       return name
     }
     const short = truncateWords(sanitizeAnsiLine(target ?? formatArgsPreview(args)), 120)
-    return short ? `${name} ${short}` : name
+    // Nama tool ikut dari event model — sanitasi di label akhir (perbandingan
+    // === di atas tetap pakai nama mentah).
+    const tagged = short ? `${name} ${short}` : name
+    return sanitizeAnsiLine(tagged)
   }
 
   const flushReasoningTail = () => {
@@ -299,7 +314,9 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
           // Line-buffered: kumpulkan sampai newline agar tampilan rapi
           // (bukan salad fragmen per chunk); sisa di-flush saat fase berakhir.
           if (text) {
-            reasoningLine += text
+            // Teks reasoning TAK TERPERCAYA seperti provider:text — sanitasi
+            // saat masuk (bukan saat flush) agar tak ada jalur cetak yang lupa.
+            reasoningLine += sanitizeAnsi(text)
             const parts = reasoningLine.split("\n")
             for (let i = 0; i < parts.length - 1; i++) wErr(c.muted(`${parts[i]}\n`))
             reasoningLine = parts[parts.length - 1] ?? ""
@@ -313,7 +330,9 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
             wErr(c.info(`  + thinking\n`))
           }
           if (text) {
-            thinkingBuf += text
+            // Sama: buffer thinking ikut tercemar bila mentah (flush expanded
+            // mencetaknya verbatim + /expand menampilkannya lagi).
+            thinkingBuf += sanitizeAnsi(text)
             if (thinkingBuf.length > 200_000) thinkingBuf = thinkingBuf.slice(-200_000)
           }
         }
@@ -340,7 +359,11 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     bus.on("step:started", (e: { step: UiStep }) => {
       if (!opts.verbose) return
       const calls = e.step.toolCalls
-        .map((tc) => `${c.info(tc.name)}(${c.muted(formatArgsPreview(tc.args))})`)
+        // Nama + argumen dari model (tak terpercaya): sanitasi sebelum tampil.
+        .map(
+          (tc) =>
+            `${c.info(sanitizeAnsiLine(tc.name))}(${c.muted(sanitizeAnsiLine(formatArgsPreview(tc.args)))})`,
+        )
         .join(", ")
       wErr(c.muted(`  Step ${e.step.index}: ${calls}\n`))
     }),
@@ -364,7 +387,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       const args = (e.execution.call.args ?? {}) as Record<string, unknown>
       wErr(
         c.muted(
-          `  ${glyphs.arrow} ${e.execution.call.name} ${sanitizeAnsiLine(formatArgsPreview(args))}\n`,
+          `  ${glyphs.arrow} ${sanitizeAnsiLine(e.execution.call.name)} ${sanitizeAnsiLine(formatArgsPreview(args))}\n`,
         ),
       )
     }),
@@ -377,12 +400,14 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       // Hasil string ikut ke buffer /copy (versi sanitize, cap per-add agar
       // satu read_file raksasa tak langsung memenuhi buffer sendirian).
       if (!r.isError && typeof r.content === "string")
-        rememberTurn(sanitizeAnsi(r.content).slice(0, 20000))
+        rememberTurn(truncateToWidth(sanitizeAnsi(r.content), 20000, ""))
       if (r.isError) {
         // Error tool SELALU tampil penuh — tidak pernah dikecilkan.
         collapse.setActiveSection(null)
         wErr(
-          c.error(`  ${glyphs.arrow} ${name}: ${sanitizeAnsi(String(r.content)).slice(0, 200)}\n`),
+          c.error(
+            `  ${glyphs.arrow} ${sanitizeAnsiLine(name)}: ${truncateToWidth(sanitizeAnsi(String(r.content)), 200, "")}\n`,
+          ),
         )
         return
       }
@@ -399,8 +424,13 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       }
       if (name === "write_file" && target) {
         const size = typeof r.content === "string" ? `${(r.content as string).length} chars` : ""
+        // Target dari argumen model — sanitasi agar path berisi escape tak
+        // membersihkan layar saat receipt sukses tampil.
+        const cleanTarget = sanitizeAnsiLine(target)
         wOut(
-          c.success(`  ${glyphs.arrow} write_file ${target}${size ? c.muted(` (${size})`) : ""}\n`),
+          c.success(
+            `  ${glyphs.arrow} write_file ${cleanTarget}${size ? c.muted(` (${size})`) : ""}\n`,
+          ),
         )
         return
       }
@@ -413,13 +443,13 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         // jatuh ke baris ringkasan seperti sebelumnya.
         if (!detail.compact && (oldT || newT)) {
           wOut(
-            `${renderDiffCard(target, sanitizeAnsi(oldT), sanitizeAnsi(newT), {
+            `${renderDiffCard(sanitizeAnsiLine(target), sanitizeAnsi(oldT), sanitizeAnsi(newT), {
               maxLines: DIFF_MAX_LINES,
             })}\n`,
           )
           return
         }
-        wOut(c.success(`  ${glyphs.arrow} ${name} ${target}\n`))
+        wOut(c.success(`  ${glyphs.arrow} ${sanitizeAnsiLine(name)} ${sanitizeAnsiLine(target)}\n`))
         return
       }
       // todo_write: tampilkan daftarnya utuh — ini rencana kerja, bukan noise.
@@ -432,8 +462,11 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       }
       const cmdStr = (args.cmd as string) ?? (args.command as string)
       if (name === "bash" && typeof cmdStr === "string") {
-        const cmdLabel = sanitizeAnsiLine(String(cmdStr)).slice(0, 80)
-        const lines = String(r.content).trim().split("\n").filter(Boolean)
+        const cmdLabel = truncateToWidth(sanitizeAnsiLine(String(cmdStr)), 80, "")
+        // Output tool tak terpercaya (bisa berisi isi berkas): sanitasi SEKALI
+        // di sini — cabang compact di bawah dan expanded map di-sanitize lagi
+        // (idempoten) sehingga tak ada cabang yang mentah.
+        const lines = sanitizeAnsi(String(r.content)).trim().split("\n").filter(Boolean)
         if (detail.compact) {
           const preview =
             lines.length > 3
@@ -456,8 +489,8 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       // satu baris › + target — isinya milik model untuk dibaca, bukan untuk
       // membanjiri scrollback pengguna. Konten tetap bisa dilihat via expanded.
       if (detail.compact && CONTENT_TOOLS.has(name)) {
-        const label = sanitizeAnsiLine(target ?? formatArgsPreview(args)).slice(0, 120)
-        wErr(c.success(`  ${glyphs.arrow} ${name}${label ? ` ${label}` : ""}\n`))
+        const label = truncateWords(sanitizeAnsiLine(target ?? formatArgsPreview(args)), 120)
+        wErr(c.success(`  ${glyphs.arrow} ${sanitizeAnsiLine(name)}${label ? ` ${label}` : ""}\n`))
         return
       }
       if (!detail.compact && CONTENT_TOOLS.has(name)) {
@@ -475,23 +508,26 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
             : ""
         const label = sanitizeAnsiLine(target ?? formatArgsPreview(args))
         wErr(
-          c.success(`  ${glyphs.arrow} ${name} ${label}\n`) +
+          c.success(`  ${glyphs.arrow} ${sanitizeAnsiLine(name)} ${label}\n`) +
             (preview ? `${c.muted(preview) + more}\n` : ""),
         )
         return
       }
       // Sisa tool (compact & expanded): satu baris › + label. WAJIB diakhiri
       // newline — tanpa itu baris berikutnya menempel (overlap di stderr log).
-      const label = sanitizeAnsiLine(target ?? formatArgsPreview(args)).slice(0, 120)
+      const label = truncateWords(sanitizeAnsiLine(target ?? formatArgsPreview(args)), 120)
       const first = sanitizeAnsi(String(r.content)).trim().split("\n")[0] ?? ""
-      const preview = first.slice(0, 80)
+      const preview = truncateToWidth(first, 80, "")
+      const cleanName = sanitizeAnsiLine(name)
       if (!detail.compact && preview) {
         wErr(
-          c.success(`  ${glyphs.arrow} ${name}${label ? ` ${label}` : ""} ${c.muted(preview)}\n`),
+          c.success(
+            `  ${glyphs.arrow} ${cleanName}${label ? ` ${label}` : ""} ${c.muted(preview)}\n`,
+          ),
         )
         return
       }
-      wErr(c.success(`  ${glyphs.arrow} ${name}${label ? ` ${label}` : ""}\n`))
+      wErr(c.success(`  ${glyphs.arrow} ${cleanName}${label ? ` ${label}` : ""}\n`))
     }),
   )
   offs.push(bus.on("context:compacted", (e) => wErr(c.warning(`  ── compacted: ${e.reason}\n`))))

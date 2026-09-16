@@ -8,7 +8,7 @@
 
 import { describe, expect, test } from "bun:test"
 import { createEventBus } from "#minicore/core/events.ts"
-import { createUsageCollector } from "../src/policy/usage.ts"
+import { createUsageCollector, watchBudgetLimit } from "../src/policy/usage.ts"
 
 const emitUsage = (
   bus: ReturnType<typeof createEventBus>,
@@ -109,5 +109,87 @@ describe("usage: turn vs sesi", () => {
     emitUsage(bus, 100, 50)
     expect(u.getSession().cost).toBeUndefined()
     expect(u.getSession().totalTokens).toBe(150)
+  })
+})
+
+describe("watchBudgetLimit: pemutus mid-turn", () => {
+  // gpt-4o-mini input $0,15/M → 1 jt token = $0,15.
+  test("melewati pagu di tengah turn → onOver sekali, lalu hening", () => {
+    const bus = createEventBus()
+    const u = createUsageCollector(bus, "gpt-4o-mini")
+    const calls: string[] = []
+    const stop = watchBudgetLimit({
+      bus,
+      budget: 0.1,
+      getCost: () => u.getSession().cost,
+      onOver: (st) => calls.push(st),
+    })
+    emitUsage(bus, 100, 0, { cacheIncluded: false }) // jauh di bawah pagu
+    expect(calls).toEqual([])
+    emitUsage(bus, 1_000_000, 0, { cacheIncluded: false }) // $0,15 > $0,10
+    expect(calls).toEqual(["over"])
+    emitUsage(bus, 1_000_000, 0, { cacheIncluded: false }) // tak dobel
+    expect(calls).toEqual(["over"])
+    stop()
+  })
+
+  test("sudah over sebelum watcher dipasang → langsung tembak sekali", () => {
+    const bus = createEventBus()
+    const u = createUsageCollector(bus, "gpt-4o-mini")
+    emitUsage(bus, 1_000_000, 0, { cacheIncluded: false })
+    const calls: string[] = []
+    const stop = watchBudgetLimit({
+      bus,
+      budget: 0.1,
+      getCost: () => u.getSession().cost,
+      onOver: (st) => calls.push(st),
+    })
+    expect(calls).toEqual(["over"])
+    stop()
+  })
+
+  test("tanpa budget = no-op: belanja berapa pun tak menembak", () => {
+    const bus = createEventBus()
+    const u = createUsageCollector(bus, "gpt-4o-mini")
+    let fired = 0
+    const stop = watchBudgetLimit({
+      bus,
+      getCost: () => u.getSession().cost,
+      onOver: () => fired++,
+    })
+    emitUsage(bus, 10_000_000, 0, { cacheIncluded: false })
+    expect(fired).toBe(0)
+    stop()
+  })
+
+  test("strict + model tanpa harga + ada pemakaian → unknown-strict", () => {
+    const bus = createEventBus()
+    const u = createUsageCollector(bus, "model-yang-tidak-ada-di-tabel-harga")
+    const calls: string[] = []
+    const stop = watchBudgetLimit({
+      bus,
+      budget: 1,
+      strict: true,
+      getCost: () => u.getSession().cost,
+      onOver: (st) => calls.push(st),
+    })
+    emitUsage(bus, 100, 50)
+    expect(calls).toEqual(["unknown-strict"])
+    stop()
+  })
+
+  test("non-strict + cost tak dikenal = fail-open seperti dulu", () => {
+    const bus = createEventBus()
+    const u = createUsageCollector(bus, "model-yang-tidak-ada-di-tabel-harga")
+    let fired = 0
+    const stop = watchBudgetLimit({
+      bus,
+      budget: 1,
+      getCost: () => u.getSession().cost,
+      onOver: () => fired++,
+    })
+    emitUsage(bus, 100, 50)
+    expect(fired).toBe(0)
+    stop()
   })
 })

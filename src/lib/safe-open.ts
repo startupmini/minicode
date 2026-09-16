@@ -113,6 +113,13 @@ export async function safeStat(abs: string, root: string) {
  * lalu tulis via atomicWriteText yang sudah pakai O_EXCL.
  * Tambahan: O_NOFOLLOW untuk file target bila sudah ada (cegah overwrite
  * symlink yang menunjuk keluar). Di Windows fallback ke realpath check.
+ *
+ * LIVE di tool penulis overwrite (write_file/edit/apply_patch, audit
+ * 2026-09-16 L11 — sebelumnya dead-code hanya dipakai test): menolak
+ * menimpa symlink final (`refusing to overwrite symlink`) sehingga swap
+ * antar resolveSafePath dan atomicWriteText gagal tutup, bukan menulis
+ * mengikuti link. move/delete dikecualikan sadar (semantik trash/restore
+ * rename membutuhkan penanganan link sendiri).
  */
 export async function assertSafeWriteTarget(abs: string, root: string): Promise<string> {
   const realRoot = await realpath(root).catch(() => root)
@@ -127,7 +134,10 @@ export async function assertSafeWriteTarget(abs: string, root: string): Promise<
     if ((e as Error).message.includes("refusing")) throw e
   }
   const fileReal = await realpath(abs).catch(() => null)
-  const realAbs = fileReal ?? resolve(realDir, abs.split("/").pop() ?? "")
+  // basename (bukan split "/"): path Windows memakai backslash — split "/"
+  // mengembalikan seluruh path absolut sehingga resolve() mengabaikan realDir
+  // dan verifikasi parent symlink gugur diam-diam di Windows.
+  const realAbs = fileReal ?? resolve(realDir, basename(abs))
   if (fileReal && isPathOutsideRoot(realAbs, realRoot))
     throw new Error(`symlink points outside workspace: ${abs}`)
   return realAbs

@@ -16,7 +16,7 @@
 // (Shift+Tab): tanpa padding, `auto`→`allowlist` menggeser seluruh baris.
 import { sanitizeAnsi } from "./render/sanitize.ts"
 import { c, glyphs } from "./render/theme.ts"
-import { displayWidth, truncateToWidth } from "./render/width.ts"
+import { displayWidth, padToWidth, truncateToWidth } from "./render/width.ts"
 
 export interface FooterStatus {
   mode: string
@@ -47,7 +47,9 @@ export function shortModel(id: string): string {
  * dipilih dari nama mode asli.
  */
 export function paintFooterMode(mode: string): string {
-  const padded = sanitizeAnsi(mode).padEnd(MODE_WIDTH)
+  // Padding per KOLOM (bukan padEnd karakter): CJK/emoji = 2 kolom, dan
+  // displayWidth sudah dipakai di bawah — konsisten satu penggaris.
+  const padded = padToWidth(sanitizeAnsi(mode), MODE_WIDTH)
   return mode === "plan" ? c.warning(padded) : mode === "ask" ? c.info(padded) : c.success(padded)
 }
 

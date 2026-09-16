@@ -1,8 +1,9 @@
 import { stat } from "node:fs/promises"
+import { resolve } from "node:path"
 import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
-import { resolveSafePath } from "../lib/safe-open.ts"
+import { assertSafeWriteTarget, resolveSafePath } from "../lib/safe-open.ts"
 import { appendLspDiagnostics } from "../policy/verifier.ts"
 
 export const writeFileTool: Tool = {
@@ -24,6 +25,8 @@ export const writeFileTool: Tool = {
     const root = (ctx as { cwd?: string }).cwd ?? process.cwd()
     // Verifikasi path terpusat (logis + target nyata) — detail di safe-open.ts.
     const { real: realAbs } = await resolveSafePath(p, root)
+    // Tolak menimpa symlink final (swap antara cek dan tulis gagal tutup).
+    await assertSafeWriteTarget(resolve(root, p), root)
     // guard large write — chars vs bytes (emoji/CJK 4x)
     const c = content as string
     if (c.length > LIMITS.WRITE_FILE_MAX_CHARS)
@@ -34,6 +37,6 @@ export const writeFileTool: Tool = {
     await atomicWriteText(realAbs, c)
     const st = await stat(realAbs).catch(() => null)
     const base = `wrote ${realAbs} (${st?.size ?? c.length} bytes)`
-    return await appendLspDiagnostics(realAbs, c, base)
+    return await appendLspDiagnostics(realAbs, c, base, undefined, root)
   },
 }

@@ -14,7 +14,9 @@ export interface ApprovalRequest {
 export async function promptAsk(call: ApprovalRequest): Promise<"allow" | "deny" | "always"> {
   if (!process.stdin.isTTY) return "deny"
   // Non-visual feedback bisa dimatikan untuk aksesibilitas/recording.
-  if (process.env.MINICODE_BELL !== "0") process.stdout.write("\x07")
+  // Bell hanya bila stdout TTY: byte `\x07` di stdout pipe mengotori output
+  // program (kontrak: stdout = output PROGRAM, bukan diagnostik).
+  if (process.env.MINICODE_BELL !== "0" && process.stdout.isTTY) process.stdout.write("\x07")
   // Live-region untuk screen reader: baris polos tanpa ANSI agar terbaca
   // sebagai teks, bukan escape mentah. Bell saja mengganggu tanpa informasi.
   if (process.env.MINICODE_A11Y === "1")

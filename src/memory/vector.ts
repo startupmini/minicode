@@ -11,7 +11,28 @@ const dbPath = (cwd?: string) => resolveDbPath("vector.db", cwd)
 const initializedPaths = new Set<string>()
 
 function open(cwd?: string): Database {
-  const p = dbPath(cwd)
+  return openAt(dbPath(cwd))
+}
+
+/**
+ * DB global eksplisit untuk scope="global" (audit 2026-09-16 B9).
+ * Sebelumnya scope global jatuh ke open(cwd) = resolveDbPath yang memilih
+ * LOKAL bila .minicode ada — env MINICODE_MEMORY_SCOPE=global yang
+ * didokumentasikan tak pernah dihormati. Global yang belum pernah ada
+ * dilewati (fallback resolusi normal) agar baca tak membuat DB kosong.
+ */
+function openGlobalDb(fallbackCwd?: string): Database {
+  try {
+    const { join } = require("node:path") as typeof import("node:path")
+    const { existsSync } = require("node:fs") as typeof import("node:fs")
+    const { homeDir } = require("../lib/db-path.ts") as typeof import("../lib/db-path.ts")
+    const g = join(homeDir(), ".minicode", "vector.db")
+    if (existsSync(g)) return openAt(g)
+  } catch {}
+  return open(fallbackCwd)
+}
+
+function openAt(p: string): Database {
   const db = new Database(p)
   // busy_timeout DULU seperti sessions.db (audit #09 P1 §27): pola yang sama
   // (journal_mode sebelum timeout aktif) gagal SQLITE_BUSY saat dua proses
@@ -245,27 +266,45 @@ function escapeLike(s: string): string {
 }
 
 export async function deleteMemoryByQuery(query: string, cwd?: string): Promise<number> {
-  const db = open(cwd)
+  // Hapus dari DB lokal DAN global (bila berkasnya beda): searchHybrid
+  // scope=all menggabung keduanya, sehingga hapus satu sisi membuat "lupa"
+  // tak tuntas — data lama global tetap ditemukan (temuan audit 2026-09-16
+  // M4; tulisan baru selalu lokal sejak audit #10 P1, tapi data legacy
+  // global masih bisa ada). Global yang belum pernah ada dilewati agar
+  // forget tak membuat berkas DB kosong sebagai side-effect.
+  const pattern = escapeLike(query.toLowerCase())
+  const paths = [dbPath(cwd)]
   try {
-    const pattern = escapeLike(query.toLowerCase())
-    // Hitung dulu: sqlite3_changes() ikut menghitung tulis trigger FTS,
-    // jadi info.changes DELETE bukan jumlah baris memory yang terhapus.
-    const before = db
-      .prepare(
-        "SELECT count(*) as c FROM memory WHERE lower(text) LIKE '%' || ? || '%' ESCAPE '\\'",
+    const { join } = await import("node:path")
+    const { homeDir } = await import("../lib/db-path.ts")
+    const { existsSync } = await import("node:fs")
+    const g = join(homeDir(), ".minicode", "vector.db")
+    if (g !== paths[0] && existsSync(g)) paths.push(g)
+  } catch {}
+  let total = 0
+  for (const p of paths) {
+    const db = openAt(p)
+    try {
+      // Hitung dulu: sqlite3_changes() ikut menghitung tulis trigger FTS,
+      // jadi info.changes DELETE bukan jumlah baris memory yang terhapus.
+      const before = db
+        .prepare(
+          "SELECT count(*) as c FROM memory WHERE lower(text) LIKE '%' || ? || '%' ESCAPE '\\'",
+        )
+        .get(pattern) as { c: number } | null
+      const n = before?.c ?? 0
+      if (n === 0) continue
+      await withBusyRetry(() =>
+        db
+          .prepare("DELETE FROM memory WHERE lower(text) LIKE '%' || ? || '%' ESCAPE '\\'")
+          .run(pattern),
       )
-      .get(pattern) as { c: number } | null
-    const n = before?.c ?? 0
-    if (n === 0) return 0
-    await withBusyRetry(() =>
-      db
-        .prepare("DELETE FROM memory WHERE lower(text) LIKE '%' || ? || '%' ESCAPE '\\'")
-        .run(pattern),
-    )
-    return n
-  } finally {
-    db.close()
+      total += n
+    } finally {
+      db.close()
+    }
   }
+  return total
 }
 
 export async function clearAllMemory(cwd?: string): Promise<void> {
@@ -567,7 +606,7 @@ export async function searchHybrid(
   }
 
   let rows: MemoryRow[]
-  const db = open(opts.cwd)
+  const db = scope === "global" ? openGlobalDb(opts.cwd) : open(opts.cwd)
   try {
     rows = fetchRows(db)
     if (scope === "all") {

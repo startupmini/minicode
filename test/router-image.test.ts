@@ -1,4 +1,4 @@
-﻿import { expect, test } from "bun:test"
+import { expect, test } from "bun:test"
 import { createAnthropicProvider } from "../src/providers/anthropic.ts"
 import { createRouterProvider } from "../src/providers/router.ts"
 

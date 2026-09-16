@@ -1,9 +1,10 @@
 import { spawn, spawnSync } from "node:child_process"
-import { readdir, readFile, realpath, stat } from "node:fs/promises"
+import { readdir, realpath, stat } from "node:fs/promises"
 import { join, relative, resolve } from "node:path"
 import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { isIgnored, loadIgnoreMatchers } from "../lib/ignore.ts"
+import { safeReadFile } from "../lib/safe-open.ts"
 import { isPathOutsideRoot, isSensitive } from "../policy/jail.ts"
 import { scrubSecrets } from "../policy/scrub.ts"
 
@@ -37,7 +38,10 @@ async function walkGrep(
       // also skip if symlink points outside (already covered) or sensitive
       const st = await stat(real).catch(() => null)
       if (!st || st.size > LIMITS.GREP_FILE_MAX_BYTES) continue
-      const text = await readFile(real, "utf8").catch(() => "")
+      // Baca via safeReadFile (O_NOFOLLOW + verifikasi ulang target saat
+      // open): swap symlink antara realpath di atas dan read di bawah tak
+      // lagi bisa menyelundupkan konten luar/sensitif. Gagal = lewati berkas.
+      const text = (await safeReadFile(real, root).catch(() => null)) ?? ""
       if (text.includes("\0")) continue
       const lines = text.split("\n")
       for (let i = 0; i < lines.length; i++) {
@@ -82,11 +86,6 @@ export function ripgrepAvailable(): boolean {
     rgPath = null
   }
   return rgPath !== null
-}
-
-/** Reset cache deteksi — hanya untuk test. */
-export function __resetRipgrepCache(): void {
-  rgPath = undefined
 }
 
 /**

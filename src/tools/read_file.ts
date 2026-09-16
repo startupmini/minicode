@@ -1,4 +1,4 @@
-﻿import { isAbsolute, resolve } from "node:path"
+import { isAbsolute, resolve } from "node:path"
 import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { safeOpenRead } from "../lib/safe-open.ts"

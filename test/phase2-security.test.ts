@@ -121,6 +121,7 @@ describe("bash-guard: pola lama tetap tertutup", () => {
     "Remove-Item -Recurse -Force C:\\",
     "Invoke-Expression $payload",
     "powershell -EncodedCommand ZQBj",
+    "pwsh -EncodedCommand ZQBj",
   ]
   for (const cmd of cases) {
     test(`tolak: ${cmd.slice(0, 45)}`, () => {
@@ -265,9 +266,46 @@ describe("bash-guard: redirect keluar workspace (temuan audit eksternal)", () =>
     const blob = "VwByAGkAdABlAC0ATwB1AHQAcAB1AHQAIAAiAEUATgBDAF8AUgBFAEEATABZADIAOQA4ADcANgAiAA=="
     expect(denied(`powershell -enc ${blob}`)).toBe(true)
     expect(denied(`powershell.exe -EncodedCommand ${blob}`)).toBe(true)
+    // `pwsh` = biner modern lintas-OS — pola encoded wajib mengenalinya juga
+    // (audit 2026-09-16: `pwsh -EncodedCommand` lolos total).
+    expect(denied(`pwsh -enc ${blob}`)).toBe(true)
+    expect(denied(`pwsh.exe -EncodedCommand ${blob}`)).toBe(true)
     // -Encoding milik cmdlet (bukan payload) + tanpa blob: jangan over-block.
     expect(denied('powershell -Command "Get-Content -Encoding utf8 f.txt"')).toBe(false)
-    expect(denied("powershell -ExecutionPolicy Bypass -File x.ps1")).toBe(false)
+    expect(denied('pwsh -Command "Get-Content f.txt"')).toBe(false)
+  })
+
+  test("B2 wrapper privilese su/runuser/cmd tak sembunyikan perintah dalam", () => {
+    // ENV_DUMP ter-anchor ke awal — tanpa strip wrapper, perintah dalam lolos.
+    expect(denied("su -c 'env'")).toBe(true)
+    expect(denied("runuser -c 'printenv'")).toBe(true)
+    expect(denied("cmd /c set")).toBe(true)
+    expect(denied("su deploy -c 'cat /etc/shadow'")).toBe(true)
+    expect(denied("sudo su -c 'env'")).toBe(true) // lapis ganda
+    // Bukan wrapper bila di tengah perintah; perintah sah tetap jalan.
+    expect(denied("echo su -c env")).toBe(false)
+    expect(denied("git status")).toBe(false)
+  })
+
+  test("B4 reader sensitif: certutil/tac/findstr/fc/comp ikut ditahan", () => {
+    expect(denied("certutil -encode .env out.txt")).toBe(true)
+    expect(denied("tac .env")).toBe(true)
+    expect(denied("findstr password .env")).toBe(true)
+    expect(denied("fc .env other.txt")).toBe(true)
+    // Tanpa path sensitif: jangan over-block pemakaian sah.
+    expect(denied("tac notes.txt")).toBe(false)
+    expect(denied("fc a.txt b.txt")).toBe(false)
+    expect(denied("certutil -hashfile setup.exe SHA256")).toBe(false)
+  })
+
+  test("B5 rm root via slash-ganda dan dotfile-root ditolak", () => {
+    // `//` collapse ke `/` di POSIX; `/.[!.]*` + -r menghabisi dotfile root.
+    expect(denied("rm -rf //")).toBe(true)
+    expect(denied("rm -rf /.[!.]*")).toBe(true)
+    // Target sah tetap lolos (tak ada spasi-slash-root).
+    expect(denied("rm -rf ./build")).toBe(false)
+    expect(denied("rm -rf /tmp/x")).toBe(false)
+    expect(denied("rm -rf node_modules/.cache")).toBe(false)
   })
 
   test("allowlist: echo redirect keluar ditolak, di dalam allow", async () => {

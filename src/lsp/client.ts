@@ -285,11 +285,15 @@ export function getConfiguredExts(): string[] {
   return [...activeServers.keys()]
 }
 
-async function getConnection(file: string): Promise<LspConnection> {
+async function getConnection(file: string, cwd?: string): Promise<LspConnection> {
   const ext = extname(file).toLowerCase()
   const conn = activeServers.get(ext)
   if (!conn) throw new Error(`no LSP configured for '${ext}' — add via minicode config lsp add`)
-  await conn.start(process.cwd())
+  // Root server = workspace sesi, BUKAN process.cwd(): tanpa ini sesi --cwd
+  // beda direktori menjalankan server di direktori yang salah (simbol dan
+  // diagnostics menunjuk workspace yang keliru). Default process.cwd()
+  // mempertahankan pemanggil lama (verifier tanpa konteks cwd).
+  await conn.start(cwd ?? process.cwd())
   return conn
 }
 
@@ -316,8 +320,9 @@ export async function lspDiagnostics(
   absPath: string,
   text: string,
   timeoutMs = 5_000,
+  cwd?: string,
 ): Promise<{ uri: string; items: Record<string, unknown>[] }> {
-  const conn = await getConnection(absPath)
+  const conn = await getConnection(absPath, cwd)
   const uri = conn.openDocument(absPath, text)
   const items = await conn.waitForDiagnostics(uri, timeoutMs)
   return { uri, items }
@@ -328,9 +333,10 @@ export async function lspCall(
   text: string,
   method: string,
   params: Record<string, unknown>,
+  cwd?: string,
   waitDiagsMs = 3_000,
 ): Promise<unknown> {
-  const conn = await getConnection(absPath)
+  const conn = await getConnection(absPath, cwd)
   const uri = conn.openDocument(absPath, text)
   await conn.waitForDiagnostics(uri, waitDiagsMs).catch(() => [])
   return conn.request(method, params)
@@ -357,13 +363,14 @@ export interface WorkspaceSymbol {
 export async function workspaceSymbols(
   query: string,
   timeoutMs = 4000,
+  cwd?: string,
 ): Promise<WorkspaceSymbol[]> {
   const conns = [...activeServers.values()]
   if (conns.length === 0) return []
   const results = await Promise.all(
     conns.map(async (conn) => {
       try {
-        await conn.start(process.cwd())
+        await conn.start(cwd ?? process.cwd())
         const res = (await conn.request("workspace/symbol", { query }, timeoutMs)) as
           | WorkspaceSymbol[]
           | null

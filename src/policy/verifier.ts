@@ -102,11 +102,12 @@ export async function appendLspDiagnostics(
   newContent: string,
   base: string,
   timeoutMs = 2000,
+  cwd?: string,
 ): Promise<string> {
   try {
     const ext = extname(absPath).toLowerCase()
     if (!getConfiguredExts().includes(ext)) return base
-    const { items } = await lspDiagnostics(absPath, newContent, timeoutMs)
+    const { items } = await lspDiagnostics(absPath, newContent, timeoutMs, cwd)
     const diag = formatDiagnostics(items, absPath)
     if (!diag) return base
     return `${base}\n${diag}`

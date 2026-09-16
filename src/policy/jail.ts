@@ -109,8 +109,14 @@ export function isSymlink(p: string): boolean {
 
 export function isHardlink(p: string): boolean {
   try {
-    const s = lstatSync(p) as unknown as { nlink?: number }
-    return (s.nlink ?? 1) > 1
+    const s = lstatSync(p)
+    // Direktori punya nlink >= 2 di POSIX (entri `.` + tiap subdir) — itu
+    // BUKAN hardlink (hardlink direktori tak bisa dibuat user). Tanpa
+    // pengecualian ini tiap argumen cwd direktori yang sah ditolak
+    // isRealPathOutsideRoot di Linux/macOS, sementara Windows (nlink dir
+    // biasanya 1) lolos — bug hanya terlihat di POSIX.
+    if (s.isDirectory()) return false
+    return ((s as unknown as { nlink?: number }).nlink ?? 1) > 1
   } catch {
     return false
   }

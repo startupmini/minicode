@@ -1,4 +1,4 @@
-﻿// Interactive `runProviderManager` flows: a (add), d (delete), e (edit).
+// Interactive `runProviderManager` flows: a (add), d (delete), e (edit).
 //
 // These paths were previously untested (43% lines) because they run
 // `askLine`/`askSecret` INSIDE suspended raw mode: the old harness could only

@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, statSync } from "node:fs"
+import { accessSync, constants, statSync } from "node:fs"
 import { delimiter, isAbsolute, join } from "node:path"
 
 // Resolusi executable TERPERCAYA (audit #10 P0).
@@ -78,14 +78,4 @@ function resolveUncached(name: string): string {
     }
   }
   return name
-}
-
-/** Untuk test: buang cache resolusi. */
-export function clearTrustedExecCache(): void {
-  cache.clear()
-}
-
-/** Untuk test: apakah path hasil resolusi benar-benar absolut (aman)? */
-export function isTrustedResolution(path: string): boolean {
-  return isAbsolute(path) && existsSync(path)
 }

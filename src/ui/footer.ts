@@ -69,7 +69,7 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
   const spark = sparkGlyph(s.sparkFrame ?? 0)
   const mode = paintFooterMode(s.mode)
   const dot = c.gray("•")
-  const sep = ` ${dot} `
+  const sep = `  ${dot}  `
   const model = c.gray(sanitizeAnsi(shortModel(s.model)))
   const cwdTxt = c.gray(sanitizeAnsi(s.cwd))
 
@@ -81,15 +81,15 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
   const ctx = s.context ? sanitizeAnsi(s.context) : ""
   const ctxW = ctx ? displayWidth(ctx) : 0
 
-  // Rata kanan: konteks didorong ke kolom `target` dengan gap ideal ≥2
-  // agar tidak mepet (keluhan: terlalu rapat). Bila tak muat, konteks
-  // diprioritaskan — kiri dipotong duluan lewat tangga di bawah, bukan
-  // konteks yang dilepas. Kosong sebelum prompt pertama = gap tak dirender.
+  // Rata kanan: konteks didorong ke kolom `target` dengan gap ideal ≥4
+  // agar rapi dan tidak mepet (keluhan: terlalu rapat, sebelum 1 lalu 2).
+  // Bila tak muat, konteks diprioritaskan — kiri dipotong duluan lewat
+  // tangga di bawah, bukan konteks yang dilepas.
   const align = (left: string): string => {
     const lw = displayWidth(left)
     if (!ctx) return left
     if (lw + ctxW + 2 > target) return left
-    const gap = Math.max(2, target - lw - ctxW)
+    const gap = Math.max(4, target - lw - ctxW)
     return `${left}${" ".repeat(gap)}${c.gray(ctx)}`
   }
 

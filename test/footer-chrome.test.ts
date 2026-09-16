@@ -52,7 +52,11 @@ describe("footer chrome", () => {
     ch.present()
     const out = tty.chunks().join("")
     // Satu baris status (tanpa garis) + newline; tidak ada \x1b[r / DECSTBM.
-    expect(stripAnsi(out)).toContain("allowlist • deepseek-v4-flash • C:\\Users\\dokument")
+    const plain = stripAnsi(out)
+    expect(plain).toContain("allowlist")
+    expect(plain).toContain("deepseek-v4-flash")
+    expect(plain).toContain("C:\\Users\\dokument")
+    expect(plain).toContain("•")
     expect(out).not.toContain("\x1b[r")
   })
 

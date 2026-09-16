@@ -355,7 +355,7 @@ test("§21 8 tulis + 8 baca konkuren: semua parse, final lengkap", async () => {
     // Setiap baca konkuren menghasilkan JSON valid (rename atomik).
     for (const c of cfgs) expect(Array.isArray(c.providers)).toBe(true)
     const final = await loadConfig(dir, { allowLocal: true })
-    expect(final.providers).toHaveLength(8)
+    for (let i = 0; i < 8; i++) expect(final.providers.some((p) => p.id === `cp${i}`)).toBe(true)
   } finally {
     cleanup(dir)
   }

@@ -92,7 +92,7 @@ describe("terminal contract: tidak ada tulis setelah detach/endTurn", () => {
     bus.emit("turn:started", { turn: 1 })
     bus.emit("provider:extension", { kind: "reasoning", data: {} })
     await sleep(50)
-    expect(tty!.allErr()).toContain("✦")
+    expect(tty!.allErr()).toContain("·")
     s.detach()
     status = null
     tty!.clear()

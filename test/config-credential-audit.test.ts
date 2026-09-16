@@ -75,7 +75,9 @@ test("provision: 8× saveProvider paralel tidak saling menelan", async () => {
     )
     const cfg = await loadConfig(dir, { allowLocal: true })
     // Tanpa withConfigLock: last-wins, hanya 1 yang selamat (reproducer: "saved 1").
-    expect(cfg.providers.length).toBe(8)
+    // Global dirumah dev mungkin berisi ~10 provider, jadi cek kehadiran 8 id
+    // lokal, bukan panjang eksak yang rapuh terhadap global.
+    for (let i = 0; i < 8; i++) expect(cfg.providers.some((p) => p.id === `p${i}`)).toBe(true)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

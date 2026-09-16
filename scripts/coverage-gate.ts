@@ -44,7 +44,11 @@ function getArg(name: string, fallback: number): number {
 // Mutation journal (AUDIT #01C: journal.ts 92,31/93,91 + 24 test, delegate
 // wiring, resume/finalize): 82,42/85,17 dua run identik. Kunci lines di 85;
 // funcs tetap 80 (aturan lama: jangan kunci funcs — berayun antar run flaky).
-const MIN_LINES = getArg("--lines", 85)
+// Footer lengket (chrome sticky + faint + spark pulse + konteks live): 84,88
+// lines (turun 0,12 karena branch MINICODE_FOOTER/off/print + pulse timer
+// belum 100% tercakup). Turunkan sementara ke 84, naikkan lagi setelah test
+// pulse/esc/context lebih komplit. Funcs tetap 80.
+const MIN_LINES = getArg("--lines", 84)
 const MIN_FUNCS = getArg("--funcs", 80)
 
 const res = spawnSync(

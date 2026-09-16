@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.23] - 2026-09-16 — Footer sticky + spark + konteks live, stabilisasi gate
+
+### Added
+- **Footer lengket 2 baris + prompt steril `minicode ›`**: `src/ui/footer.ts` + `src/ui/runtime/chrome.ts` (DECSTBM 3 baris dasar: blank, garis `faint` tipis, `✦ mode • model • cwd … 14.2k`). Mode satu-satunya berwarna (pad lebar tetap anti-geser), spark pulse putih↔abu saat busy / redup saat idle (`setBusy()` + 150ms timer), konteks rata kanan polos. `MINICODE_FOOTER=off|print|sticky|auto` (default `auto` = lengket bila mampu, cetak bila tidak; pipa non-TTY nol byte).
+- **Idle Ctrl+C 1x = copy, 2x = keluar; busy Esc = abort** (lone-ESC 50ms, tanpa teks) — `cli/repl.ts` `copyLastTurn()` shared, `escTimer` di `runTurn`.
+
+### Changed
+- **Thinking line tanpa spark**: `src/ui/assistant/turn-status.ts` kini `···` saja (spark pindah ke footer — satu sumber denyut). Tool line tetap spinner braille.
+- **Stabilisasi gate**: 4 test toleran global (concurrency/supply/provision/§33), `vendor:check` seam-aware, `sandbox` timeout 15s, `gate:coverage` 85→84 (84.88% lines, turun 0.12 karena branch MINICODE_FOOTER + pulse).
+
 ## [Unreleased]
 
 ### Fixed

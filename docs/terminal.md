@@ -1,7 +1,7 @@
 # Kontrak Terminal
 
 
-Minicode **shell-native CLI, bukan TUI**. Tanpa alternate screen/panel/header permanen. Output append-only ke scrollback; picker/manager transient dan menghapus diri sendiri. Ini kenapa hasil agen bisa di-pipe, di-grep, dan tinggal di scrollback Anda sendiri.
+Minicode **shell-native CLI, bukan TUI**. Tanpa alternate screen/panel/header permanen. Output append-only ke scrollback; picker/manager transient dan menghapus diri sendiri. Ini kenapa hasil agen bisa di-pipe, di-grep, dan tinggal di scrollback Anda sendiri. Satu-satunya chrome permanen yang diizinkan: footer status lengket (`src/ui/runtime/chrome.ts`, DECSTBM scroll-region) — reset region wajib di semua jalur keluar, nol byte di non-TTY.
 
 ## Dua stream, dua isi
 
@@ -15,19 +15,20 @@ Minicode **shell-native CLI, bukan TUI**. Tanpa alternate screen/panel/header pe
 
 ## Lima primitif tampilan
 
-1. Prompt `minicode <mode> ›`
-2. Activity — garis transient di stderr
-3. Ledger — `  › name target` hijau / `  › name: …` merah (stderr, indent 2)
-4. Teks model — stdout, wrapped
-5. Error actionable — sekali per kegagalan
+1. Prompt `minicode ›` (steril — status pindah ke footer)
+2. Footer status lengket — `✦ mode • model • cwd … 14.2k` (mode pad anti-geser; spark pulse saat busy/redup saat idle; konteks rata kanan; garis faint); `MINICODE_FOOTER=off|print|sticky|auto`
+3. Activity — garis transient di stderr
+4. Ledger — `  › name target` hijau / `  › name: …` merah (stderr, indent 2)
+5. Teks model — stdout, wrapped
+6. Error actionable — sekali per kegagalan
 
 ## Arbitrasi transient
 
 Satu-satunya arbitrator transient: `src/ui/runtime/statusline.ts` (`acquireTransientPaint` + `paintWrite`). Painter aktif (garis status turn vs spinner wizard) mutually exclusive; overlap = signal `[transient-paint]`, bukan crash. Foreign stderr writer (non-UI) boleh mentah — arbitrator mengkomitnya sebagai baris permanen bersih.
 
-## 12 invariant
+## 14 invariant
 
-Peta lengkap 12 invariant + test proteksinya (`terminal-contract`, `transient-arbitration`, `turn-status`, `tui-format`, `theme`, `repl-linear`, `ui-boundary`) ada di `docs/TERMINAL_CONTRACT.md`. Setiap fitur terminal baru tunduk pada invariant itu — mis. tak boleh menulis cursor-control ke stdout non-TTY, tak boleh mengandalkan alternate screen.
+Peta lengkap 14 invariant + test proteksinya (`terminal-contract`, `transient-arbitration`, `turn-status`, `tui-format`, `theme`, `repl-linear`, `ui-boundary`, `footer-render`, `footer-chrome`) ada di `docs/TERMINAL_CONTRACT.md`. Setiap fitur terminal baru tunduk pada invariant itu — mis. tak boleh menulis cursor-control ke stdout non-TTY, tak boleh mengandalkan alternate screen.
 
 ## Aksesibilitas & konsol lawas
 

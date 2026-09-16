@@ -117,11 +117,12 @@ export function attachTurnStatus(
       .fill(glyphs.dot)
       .join(" ")
     const cols = process.stdout.columns || 80
-    const thinkingIcon =
-      tickGroup % 2 === 0 ? c.white(glyphs.thinkingIcon) : c.gray(glyphs.thinkingIcon)
+    // Sinyal "alive" (spark pulse) kini MILIK FOOTER, bukan thinking line:
+    // satu sumber agar tak ada dua denyut. Thinking = titik saja; tool line
+    // tetap pakai spinner braille (itu progres, bukan spark).
     const body =
       label === "Thinking"
-        ? `${thinkingIcon}  ${dots}`
+        ? `${dots}`
         : `${c.info(glyphs.spinnerFrames[fi % glyphs.spinnerFrames.length]!)} ${label}  ${dots}`
     const full = body + extra
     // Terminal sangat sempit: potongan label bisa tinggal 1 huruf ("t") —

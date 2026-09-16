@@ -40,6 +40,7 @@ import { setCompactMode } from "../src/ui/render/detail.ts"
 import { formatUsd } from "../src/ui/render/money.ts"
 import { setReasoningVisible } from "../src/ui/render/reasoning.ts"
 import { c, glyphs } from "../src/ui/render/theme.ts"
+import { createFooterChrome, type FooterChrome } from "../src/ui/runtime/chrome.ts"
 import { paintWrite } from "../src/ui/runtime/statusline.ts"
 import {
   BUILTIN_COMMANDS,
@@ -188,11 +189,10 @@ export async function runRepl(ctx: CliSession): Promise<void> {
       ? "commands"
       : "skills"
 
-  // Prefiks prompt memuat mode berwarna — Shift+Tab mengubahnya live karena
-  // prompt berbentuk fungsi yang diselesaikan tiap render.
+  // Prompt steril: tanpa status apa pun (mode/model/cwd pindah ke footer).
+  // Bentuk fungsi dipertahankan karena askLine menerima string|fungsi.
   const promptPrefix = (): string => {
-    const paintMode = mode === "plan" ? c.warning : mode === "ask" ? c.info : c.success
-    return `${c.dim("minicode")} ${paintMode(mode)} › `
+    return `${c.dim("minicode")} › `
   }
 
   // Notifikasi satu baris saat prompt masih aktif: bersihkan baris berjalan,
@@ -211,12 +211,16 @@ export async function runRepl(ctx: CliSession): Promise<void> {
   }
 
   const onKey = (key: PromptKey, line: string): boolean => {
-    // Ganti mode TANPA baris scrollback baru: prefiks prompt memuat mode dan
-    // askLine me-render ulang baris berjalan setelah onKey (lihat input.ts).
-    // notify() di sini hanya menambah histori "mode: x" tiap tekan tombol.
+    // Ganti mode TANPA baris scrollback baru: askLine me-render ulang baris
+    // berjalan setelah onKey (lihat input.ts); mode baru terlihat di footer
+    // yang dicetak pada idle berikutnya. notify() di sini hanya menambah
+    // histori "mode: x" tiap tekan tombol.
     // (compact di bawah tetap notify: statusnya tak ada di prefiks.)
     if (key.type === "shift-tab") {
       cycleMode()
+      // Mode baru langsung terlihat di footer (repaint di tempat, tanpa
+      // memindahkan kursor) — bukan menunggu idle berikutnya.
+      footer.refresh()
       return true
     }
     // Tab di baris kosong = putar mode (sama seperti Shift+Tab): auto →
@@ -224,6 +228,7 @@ export async function runRepl(ctx: CliSession): Promise<void> {
     // cycleMode). "Build" = mode auto (tulis); tak ada mode bernama build.
     if (key.type === "tab" && line === "") {
       cycleMode()
+      footer.refresh()
       return true
     }
     if (key.type === "ctrl-o") {
@@ -240,6 +245,9 @@ export async function runRepl(ctx: CliSession): Promise<void> {
   }
 
   async function respawnWithResume(id: string): Promise<void> {
+    // Lepas region footer sebelum spawn anak stdio-inherit — anak tidak boleh
+    // mewarisi terminal yang region-nya terkunci milik parent.
+    footer.detach()
     await close()
     const { spawn } = await import("node:child_process")
     const { waitChildExit } = await import("./auto-update.ts")
@@ -274,6 +282,23 @@ export async function runRepl(ctx: CliSession): Promise<void> {
     await respawnWithResume(id)
   }
 
+  // Salin teks turn terakhir ke clipboard (OSC 52). Dipakai /copy DAN Ctrl+C
+  // sekali saat idle. Mengembalikan true bila ada yang disalin.
+  function copyLastTurn(): boolean {
+    const txt = getLastTurnText().trim()
+    if (!txt) {
+      console.log(c.dim("(nothing to copy yet — run a prompt first)"))
+      return false
+    }
+    // OSC 52 diblokir default di banyak terminal; sampaikan jujur.
+    if (writeClipboardOsc52(txt))
+      console.log(
+        c.dim(`copied ${txt.length} chars (OSC 52 — allow clipboard access in terminal if empty)`),
+      )
+    else console.log(c.dim("(clipboard needs a TTY terminal)"))
+    return true
+  }
+
   // Jalankan satu prompt user sebagai turn agen. Budget diperiksa di sini
   // (dipindah dari UI ke driver): prompt baru ditolak setelah batas terlampaui,
   // peringatan 80% dicetak sekali.
@@ -304,6 +329,7 @@ export async function runRepl(ctx: CliSession): Promise<void> {
       for (const n of expanded.notes) process.stderr.write(`  [@mention] ${n}\n`)
     }
 
+    footer.setBusy(true)
     const ctrl = new AbortController()
     abort = ctrl
     // Raw mode selama turn: tombol + / - / Ctrl+T dibaca live (section
@@ -321,8 +347,27 @@ export async function runRepl(ctx: CliSession): Promise<void> {
         paintWrite(`\r\x1b[2K✦ ${msg}`)
       } catch {}
     }
+    // Esc sendirian = abort. 0x1b juga awal SEMUA escape sequence (panah,
+    // F-key, mouse), jadi kita tunggu ~50ms: kalau ada byte lanjutan, itu
+    // sekuens — bukan Esc; kalau tidak ada, Esc asli → abort.
+    let escTimer: ReturnType<typeof setTimeout> | undefined
+    const armEsc = (): void => {
+      if (escTimer) clearTimeout(escTimer)
+      escTimer = setTimeout(() => {
+        escTimer = undefined
+        ctrl.abort()
+      }, 50)
+    }
     const onBusyKey = ttyStdin
       ? (chunk: Buffer) => {
+          if (chunk.length === 1 && chunk[0] === 0x1b) {
+            armEsc()
+            return
+          }
+          if (escTimer) {
+            clearTimeout(escTimer)
+            escTimer = undefined
+          }
           for (const b of chunk) {
             const act = applyBusyKey(b, collapse.activeSection)
             if (!act) continue
@@ -372,6 +417,11 @@ export async function runRepl(ctx: CliSession): Promise<void> {
         throw e
       }
     } finally {
+      footer.setBusy(false)
+      if (escTimer) {
+        clearTimeout(escTimer)
+        escTimer = undefined
+      }
       process.stdin.removeListener("data", onBusyKey)
       // Tanpa pause — stdin mengalir seumur proses (lihat cleanup askLine);
       // pause→resume berulang mematikan 'data' selamanya di Bun Windows.
@@ -513,19 +563,7 @@ export async function runRepl(ctx: CliSession): Promise<void> {
         return false
       }
       if (name === "copy") {
-        const txt = getLastTurnText().trim()
-        if (!txt) {
-          console.log(c.dim("(nothing to copy yet — run a prompt first)"))
-          return false
-        }
-        // OSC 52 diblokir default di banyak terminal; sampaikan jujur.
-        if (writeClipboardOsc52(txt))
-          console.log(
-            c.dim(
-              `copied ${txt.length} chars (OSC 52 — allow clipboard access in terminal if empty)`,
-            ),
-          )
-        else console.log(c.dim("(clipboard needs a TTY terminal)"))
+        copyLastTurn()
         return false
       }
       if (name === "history") {
@@ -584,14 +622,35 @@ export async function runRepl(ctx: CliSession): Promise<void> {
     }
   }
   process.on("SIGINT", onSigint)
-  // Satu baris konteks saat start — tanpa ini user buta: model, mode, dan
-  // direktori apa yang sedang dikerjakan. Tetap satu baris (minimalis).
-  console.log(
-    c.dim(
-      `minicode · ${modelRef.current ?? cfg.providers[0]?.models[0] ?? "no model"} · ${mode} · ${cwd ?? process.cwd()}`,
-    ),
-  )
-  console.log(c.dim("/help for commands · Tab complete (empty: mode) · Ctrl+C 2x exit"))
+  // Baris konteks startup (model/mode/dir + hint) dihapus: status kini milik
+  // footer yang dicetak fresh tiap idle — startup tetap steril seperti prompt.
+
+  // Footer status (mode • model • cwd • konteks): lengket di dasar terminal
+  // bila terminal mampu (DECSTBM), jatuh ke cetak bila tidak, mati total di
+  // pipe. Diresolve per present/refresh agar mode/model/cwd/konteks selalu
+  // aktual (Shift+Tab, /model, cwd berubah, konteks live). Reset region
+  // dijamin pada semua jalur keluar. Mode di-pad agar teks kanan tak bergeser
+  // (lihat footer.ts MODE_WIDTH), garis = faint tipis hampir tak terlihat.
+  const fmtCtx = (n: number): string | undefined => {
+    if (!Number.isFinite(n) || n <= 0) return undefined
+    if (n < 1000) return String(n)
+    if (n < 10000) return `${(n / 1000).toFixed(1)}k`
+    if (n < 1000000) return `${Math.round(n / 1000)}k`
+    return `${(n / 1000000).toFixed(1)}m`
+  }
+  const footer: FooterChrome = createFooterChrome({
+    enabled: true,
+    status: () => {
+      const s = usage.getSession(modelRef.current)
+      return {
+        mode,
+        model: modelRef.current ?? cfg.providers[0]?.models[0] ?? "no model",
+        cwd: cwd ?? process.cwd(),
+        context: fmtCtx(s?.totalTokens ?? 0),
+      }
+    },
+  })
+  process.on("exit", () => footer.detach())
 
   let shouldExit = false
   // Akumulasi baris yang diakhiri `\` — shell-like continuation di driver
@@ -604,6 +663,9 @@ export async function runRepl(ctx: CliSession): Promise<void> {
       let line: string | null
       try {
         const usePrompt = pending ? contPrompt : promptPrefix
+        // Footer di-print/repaint tepat sebelum prompt idle: sticky → pastikan
+        // region + posisikan kursor di baris input; print → baris scrollback.
+        footer.present()
         // idleMs mati DI SINI saja: prompt utama adalah home state proses —
         // null dihitung Ctrl+C (2x = exit), sehingga auto-batal akan
         // mengeluarkan user yang diam. Dialog transient (approval, add/edit,
@@ -620,11 +682,15 @@ export async function runRepl(ctx: CliSession): Promise<void> {
           nullStreak = 0
           continue
         }
-        // Ctrl+C/Ctrl+D saat idle: cetak ^C seperti shell; dua kali beruntun = keluar.
+        // Ctrl+C sekali saat idle = SALIN teks turn terakhir (keputusan user);
+        // dua kali beruntun = keluar. Esc/Ctrl+D juga resolve null — diperlakukan
+        // sama: tekan pertama copy, kedua keluar.
         nullStreak++
-        console.log("^C")
-        if (nullStreak >= 2) shouldExit = true
-        if (shouldExit) break
+        if (nullStreak >= 2) {
+          shouldExit = true
+          break
+        }
+        copyLastTurn()
         continue
       }
       nullStreak = 0
@@ -648,6 +714,9 @@ export async function runRepl(ctx: CliSession): Promise<void> {
   } finally {
     process.off("SIGINT", onSigint)
   }
+  // Reset region + cetak footer terakhir SEBELUM process.exit — jalur keluar
+  // normal; jalur crash dilindungi handler on("exit") di atas (idempotent).
+  footer.detach()
   await close()
   process.exit(0)
 }

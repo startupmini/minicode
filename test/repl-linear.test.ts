@@ -171,28 +171,30 @@ describe("REPL linier: siklus dasar", () => {
     await expect(p).rejects.toBeInstanceOf(ExitSentinel)
   })
 
-  test("Ctrl+C dua kali beruntun saat idle keluar", async () => {
+  test("Ctrl+C sekali idle = copy, dua kali beruntun = keluar", async () => {
     tty = installFakeTty()
     const h = makeHarness()
     const p = start(h)
     await waitForPrompt()
+    // Tanpa turn belum ada yang disalin — Ctrl+C pertama memberitahu jujur.
     await tty.send(KEY.ctrlC, 25)
-    expect(visible(tty)).toContain("^C")
+    expect(visible(tty)).toContain("nothing to copy")
     await waitForPrompt()
+    // Ctrl+C kedua beruntun = keluar (keputusan user: 1x copy, 2x exit).
     await tty.send(KEY.ctrlC, 25)
     await expect(p).rejects.toBeInstanceOf(ExitSentinel)
     expect(h.closed).toBe(true)
     expect(h.ran).toEqual([])
   })
 
-  test("Esc di baris kosong membatalkan prompt seperti Ctrl+C", async () => {
+  test("Esc di baris kosong = copy sekali, dua kali beruntun = keluar", async () => {
     tty = installFakeTty()
     const h = makeHarness()
     const p = start(h)
     await waitForPrompt()
-    // Esc sekali = batal (^C, nullStreak 1); REPL masih hidup.
+    // Esc sekali saat idle = sama dengan Ctrl+C pertama (null → copy).
     await tty.send(KEY.esc, 25)
-    expect(visible(tty)).toContain("^C")
+    expect(visible(tty)).toContain("nothing to copy")
     await waitForPrompt()
     // Esc dua kali beruntun = keluar, sama seperti Ctrl+C dua kali.
     await tty.send(KEY.esc, 25)
@@ -321,7 +323,7 @@ describe("REPL linier: interupsi busy", () => {
 })
 
 describe("REPL linier: mode & toggle", () => {
-  test("Shift+Tab cycle mode dan mengubah prefix prompt", async () => {
+  test("Shift+Tab cycle mode, mode tampil di footer bukan prefix", async () => {
     tty = installFakeTty()
     const h = makeHarness()
     const p = start(h)
@@ -330,9 +332,13 @@ describe("REPL linier: mode & toggle", () => {
     await tty.send(KEY.shiftTab, 25)
     expect(h.mode).toBe("ask") // auto -> ask
     const out = visible(tty)
-    // Tanpa baris "mode: ..." baru: prefiks prompt yang menunjukkan mode.
-    expect(out).not.toContain("mode:")
-    expect(out).toContain("ask ›")
+    // Prompt steril — mode tidak lagi di prefix, pindah ke footer (repaint
+    // di tempat via footer.refresh saat Shift+Tab).
+    expect(out).toContain("minicode ›")
+    expect(out).not.toContain("ask ›")
+    // Footer: spark ✦ + mode di-pad + • model • cwd.
+    expect(out).toContain("✦ ask")
+    expect(out).toContain("• m1")
     await waitForPrompt()
     await tty.send(KEY.ctrlC, 20)
     await waitForPrompt()
@@ -393,18 +399,15 @@ describe("REPL linier: mode & toggle", () => {
     await waitForPrompt()
     // Baris kosong + Tab: auto -> ask -> plan -> allowlist -> auto
     // (allow-all dilewati; bukan completion kosong).
-    const seq: [string, string][] = [
-      ["ask", "ask ›"],
-      ["plan", "plan ›"],
-      ["allowlist", "allowlist ›"],
-      ["auto", "auto ›"],
-    ]
-    for (const [m, prefix] of seq) {
+    const seq = ["ask", "plan", "allowlist", "auto"]
+    for (const m of seq) {
       await tty.send(KEY.tab, 25)
       expect(h.mode).toBe(m)
-      // Tanpa baris "mode: ..." baru: prefiks prompt yang menunjukkan mode.
+      // Prompt steril + mode terlihat di footer (bukan prefix, bukan "mode:").
+      expect(visible(tty)).toContain("minicode ›")
       expect(visible(tty)).not.toContain("mode:")
-      expect(visible(tty)).toContain(prefix)
+      expect(visible(tty)).toContain(`✦ ${m}`)
+      expect(visible(tty)).toContain("• m1")
       await waitForPrompt()
     }
     await typeLine("/exit")

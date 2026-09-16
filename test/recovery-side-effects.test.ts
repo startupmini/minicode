@@ -320,12 +320,25 @@ test("§33 mati→nyala→mati: eksplisit tiap load, tanpa status menempel", asy
   const dir = tmpRoot()
   try {
     writeLocalConfig(dir, GOOD_LOCAL)
-    expect((await loadConfig(dir)).providers).toHaveLength(0)
-    expect((await loadConfig(dir, { allowLocal: true })).providers).toHaveLength(2)
+    // Tanpa flag, config lokal diabaikan — provider lokal (p1/p2) tak terbaca.
+    // Global mungkin ada isinya (10 provider di mesin dev), jadi cek
+    // ketidakhadiran id lokal, bukan panjang 0 yang rapuh.
+    {
+      const cfg = await loadConfig(dir)
+      expect(cfg.providers.some((p) => p.id === "p1" || p.id === "p2")).toBe(false)
+      expect((cfg.mcpServers ?? []).some((s) => s.id === "s")).toBe(false)
+    }
+    {
+      const cfg = await loadConfig(dir, { allowLocal: true })
+      expect(cfg.providers.filter((p) => p.id === "p1" || p.id === "p2")).toHaveLength(2)
+    }
     // "Restart" (load segar tanpa flag) kembali bersih — flag tak sticky
     // di modul, sesi, atau berkas.
-    expect((await loadConfig(dir)).providers).toHaveLength(0)
-    expect((await loadConfig(dir)).mcpServers ?? []).toHaveLength(0)
+    {
+      const cfg = await loadConfig(dir)
+      expect(cfg.providers.some((p) => p.id === "p1" || p.id === "p2")).toBe(false)
+      expect((cfg.mcpServers ?? []).some((s) => s.id === "s")).toBe(false)
+    }
   } finally {
     cleanup(dir)
   }

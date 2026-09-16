@@ -1,0 +1,103 @@
+// Footer status REPL: 2 baris (garis tipis + status).
+//
+// Dipakai dua mekanisme dengan KONTEN yang sama: mode cetak (idle, dicetak di
+// atas prompt sebagai scrollback biasa) dan mode lengket (chrome DECSTBM,
+// dilukis di 3 baris dasar terminal). Modul ini murni render — tanpa state,
+// tanpa IO, tanpa timer, tanpa tahu mekanisme mana yang memakainya. Frame
+// animasi spark dan angka konteks DIKIRIM pemanggil lewat FooterStatus, jadi
+// render tetap deterministik dan bisa diuji tanpa menunggu waktu.
+//
+// Gaya (keputusan produk): footer hampir tak terlihat — garis + teks status
+// abu-abu gelap; SATU-SATUNYA yang berwarna adalah token mode (mapping sama
+// dengan prompt lama: plan kuning, ask biru, sisanya hijau).
+//
+// Tata letak: `✦ mode • model • cwd ……… 14.2k` — konteks rata kanan. Mode
+// di-pad ke lebar tetap agar teks di kanannya TIDAK bergeser saat mode berganti
+// (Shift+Tab): tanpa padding, `auto`→`allowlist` menggeser seluruh baris.
+import { sanitizeAnsi } from "./render/sanitize.ts"
+import { c, glyphs } from "./render/theme.ts"
+import { displayWidth, truncateToWidth } from "./render/width.ts"
+
+export interface FooterStatus {
+  mode: string
+  model: string
+  cwd: string
+  /** Jumlah konteks polos (mis. "14.2k"). Kosong = tak ditampilkan. */
+  context?: string
+  /**
+   * Frame animasi spark: 0 = idle (spark redup statis), >0 = busy (pulse
+   * putih↔abu). Chrome yang menaikkan frame saat turn berjalan; render hanya
+   * memetakan frame → glyph berwarna.
+   */
+  sparkFrame?: number
+}
+
+/** Lebar tetap kolom mode — `allowlist`/`allow-all` (9) adalah yang terpanjang. */
+const MODE_WIDTH = 9
+
+/** Buang prefix provider (`acme::deepseek-v4` → `deepseek-v4`). */
+export function shortModel(id: string): string {
+  const i = id.lastIndexOf("::")
+  return i >= 0 ? id.slice(i + 2) : id
+}
+
+/**
+ * Warna + PAD token mode. Padding dilakukan sebelum pewarnaan supaya lebar
+ * kolom mode tetap sama untuk semua mode (anti-geser), sementara warna tetap
+ * dipilih dari nama mode asli.
+ */
+export function paintFooterMode(mode: string): string {
+  const padded = sanitizeAnsi(mode).padEnd(MODE_WIDTH)
+  return mode === "plan" ? c.warning(padded) : mode === "ask" ? c.info(padded) : c.success(padded)
+}
+
+/** Spark glyph: redup saat idle, pulse putih↔abu saat busy (frame genap/ganjil). */
+function sparkGlyph(frame: number): string {
+  const g = glyphs.thinkingIcon
+  if (frame <= 0) return c.faint(g)
+  return frame % 2 === 0 ? c.white(g) : c.gray(g)
+}
+
+/**
+ * Render 2 baris footer untuk lebar `columns`. Baris status selalu tepat
+ * 1 baris visual (dipotong per kolom + `…`, tak pernah membungkus).
+ * Non-TTY/dimati diputuskan pemanggil (mekanisme), bukan di sini.
+ */
+export function renderFooter(s: FooterStatus, columns: number): string[] {
+  const cols = Math.max(10, Math.floor(columns) || 80)
+  // Garis setipis mungkin: `─` + faint (abu gelap) — hampir tak terlihat.
+  const rule = c.faint("─".repeat(cols))
+
+  const spark = sparkGlyph(s.sparkFrame ?? 0)
+  const mode = paintFooterMode(s.mode)
+  const dot = c.gray("•")
+  const sep = ` ${dot} `
+  const model = c.gray(sanitizeAnsi(shortModel(s.model)))
+  const cwdTxt = c.gray(sanitizeAnsi(s.cwd))
+
+  const full = `${spark} ${mode}${sep}${model}${sep}${cwdTxt}`
+  const mid = `${spark} ${mode}${sep}${model}`
+  const lean = `${spark} ${mode}`
+
+  const target = Math.max(4, cols - 1)
+  const ctx = s.context ? sanitizeAnsi(s.context) : ""
+  const ctxW = ctx ? displayWidth(ctx) : 0
+
+  // Rata kanan: konteks didorong ke kolom `target`. Bila tak muat di samping
+  // kiri, konteks dilepas (bukan memotong kiri).
+  const align = (left: string): string => {
+    const lw = displayWidth(left)
+    if (!ctx) return left
+    if (lw + ctxW + 1 > target) return left
+    const gap = Math.max(1, target - lw - ctxW)
+    return `${left}${" ".repeat(gap)}${c.gray(ctx)}`
+  }
+
+  // Tangga prioritas buang saat sempit: cwd → model (spark+mode+context kekal).
+  for (const left of [full, mid, lean]) {
+    const line = align(left)
+    if (displayWidth(line) <= target) return [rule, line]
+  }
+  // Bahkan `lean` tak muat (terminal sangat sempit): potong keras.
+  return [rule, truncateToWidth(align(lean), target, "…")]
+}

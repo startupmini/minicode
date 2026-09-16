@@ -259,9 +259,13 @@ test("supply: local config tanpa flag = tak ada MCP/LSP/provider/verify/allowlis
   const repo = await makeEvilRepo("cfg")
   try {
     const cfg = await loadConfig(repo.dir)
-    expect(cfg.providers).toHaveLength(0)
-    expect(cfg.mcpServers ?? []).toHaveLength(0)
-    expect(cfg.lspServers ?? []).toHaveLength(0)
+    // Tanpa flag, config lokal (evil) diabaikan. Global mungkin berisi provider
+    // (10 di mesin dev), jadi cek ketidakhadiran evil, bukan panjang 0 rapuh.
+    expect(cfg.providers.some((p) => p.id === "evil")).toBe(false)
+    expect((cfg.mcpServers ?? []).some((s) => s.id === "evil")).toBe(false)
+    expect(
+      (cfg.lspServers ?? []).some((s) => (s as unknown as { id?: string }).id === "evil"),
+    ).toBe(false)
     expect(cfg.verifyCommand).toBeUndefined()
     expect(cfg.bashAllowlist).toBeUndefined()
   } finally {

@@ -75,6 +75,10 @@ const TOKENS = {
   warning: "38;2;204;167;0",
   info: "38;2;117;190;255",
   accent: "38;2;0;122;204",
+  // Faint: abu gelap untuk garis footer — lebih redup dari `gray` (bright-black)
+  // dan dari `muted` (dim). Dipakai elemen yang harus ada tapi hampir tak
+  // terlihat, seperti separator baris dasar.
+  faint: "38;2;72;72;72",
 }
 
 // ── Slot warna ──
@@ -94,6 +98,7 @@ interface Palette {
   accentAlt: Paint
   accentBold: Paint
   gray: Paint
+  faint: Paint
   red: Paint
   green: Paint
   yellow: Paint
@@ -125,6 +130,9 @@ function buildPalette(): Palette {
     // 90 adalah warna, dan mono adalah jalur aksesibilitas yang seharusnya
     // monokrom. Dim tetap memberi hierarki visual tanpa memakai kanal warna.
     gray: mono ? attr(2, 22) : wrap(90, 39),
+    // Faint: garis footer hampir tak terlihat. Mono (aksesibilitas) jatuh ke
+    // dim agar tetap ada hierarki tanpa kanal warna.
+    faint: mono ? attr(2, 22) : paintFrom(TOKENS.faint),
     // Alias legacy: dipetakan ke token, bukan hex hardcoded.
     red: paintFrom(TOKENS.error),
     green: paintFrom(TOKENS.success),
@@ -218,6 +226,9 @@ export const c = {
   },
   get gray() {
     return palette().gray
+  },
+  get faint() {
+    return palette().faint
   },
 
   // Legacy compat (dipakai renderer lama) — kini mengikuti token.

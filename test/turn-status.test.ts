@@ -56,7 +56,7 @@ describe("turn-status: lifecycle deterministik", () => {
     await sleep(100)
     expect(err()).toBe("")
     await sleep(300) // total >250ms: grace melukis Thinking
-    expect(err()).toContain("✦")
+    expect(err()).toContain("·")
     status.detach()
   }, 4000)
 
@@ -65,7 +65,7 @@ describe("turn-status: lifecycle deterministik", () => {
     bus.emit("turn:started", { turn: 1 })
     bus.emit("provider:extension", { kind: "reasoning", data: {} })
     await sleep(40)
-    expect(err()).toContain("✦")
+    expect(err()).toContain("·")
     bus.emit("provider:text", { text: "menjawab\n" })
     await sleep(40)
     tty!.clear()
@@ -73,7 +73,7 @@ describe("turn-status: lifecycle deterministik", () => {
     // Tanpa latch, tiap chunk reasoning menyalakan garis lagi (strobo).
     bus.emit("provider:extension", { kind: "reasoning", data: {} })
     await sleep(200)
-    expect(err()).not.toContain("✦")
+    expect(err()).not.toContain("·")
     // Tool baru membuka latch: thinking antar-tool tampil lagi.
     bus.emit("execution:started", {
       execution: { call: { name: "grep", args: { path: "src" } } },
@@ -155,9 +155,10 @@ describe("turn-status: heartbeat", () => {
     bus.emit("turn:started", { turn: 1 })
     bus.emit("provider:extension", { kind: "reasoning", data: {} })
     await sleep(200)
-    // Ikon ✦ + titik spasi ("·", "· ·", "· · ·"), tidak ada timer detik
-    expect(err()).toContain("✦")
-    expect(err()).toMatch(/✦ {2}·( ·){0,2}/)
+    // Thinking line kini titik saja ("·", "· ·", "· · ·") — spark pindah ke
+    // footer; tidak ada timer detik.
+    expect(err()).toContain("·")
+    expect(err()).toMatch(/·( ·){0,2}/)
     expect(err()).not.toMatch(/\d+s/)
     status.detach()
   }, 5000)

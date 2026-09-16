@@ -11,7 +11,9 @@ wajib: update dokumen ini + test yang menjaganya (lihat "Peta proteksi").
 MiniCode adalah **shell-native CLI, bukan TUI**. Tanpa alternate screen, tanpa
 panel/sidebar/header permanen, tanpa layout yang di-redraw utuh. Output
 append-only ke scrollback; layar interaktif (picker/manager) transient dan
-menghapus diri sendiri.
+menghapus diri sendiri. **Satu-satunya chrome permanen yang diizinkan: footer
+status lengket** (`chrome.ts`, DECSTBM scroll-region) — dibuat demi prompt
+steril; wajib reset region di semua jalur keluar dan nol byte di non-TTY.
 
 ## Contract stdout/stderr
 
@@ -48,7 +50,20 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 animasi spinner,
 
 ## Invariant (nomor dipakai di peta proteksi)
 
-1. Shell-native: tanpa alternate screen/panel/persistent chrome.
+1. Shell-native: tanpa alternate screen/panel/persistent chrome — KECUALI
+   footer status lengket (`chrome.ts`), satu-satunya chrome permanen, dengan
+   reset region wajib di semua jalur keluar.
+ 13. Footer lengket: hanya aktif pada stdout TTY + terminal mampu (`MINICODE_FOOTER
+     ≠ off`, `rows ≥ 12`, bukan console legacy); non-TTY nol byte; reset `\x1b[r`
+     dijamin pada detach/exit (normal, SIGINT, `process.on("exit")`); repaint
+     memakai lebar/tinggi SAAT paint (resize listener); mode di-repaint di
+     tempat saat berubah (Shift+Tab) tanpa memindahkan kursor; `Esc` saat
+     turn = abort (lone-ESC 50ms) tanpa teks, `Ctrl+C 1x` saat idle = copy
+     (OSC 52) dan `2x` = keluar; mode pad lebar tetap, spark pulse saat
+     busy/redup saat idle, konteks rata kanan, garis `faint`.
+ 14. Idle binding: `Esc` / `Ctrl+C` / `Ctrl+D` resolve `null` (cancel);
+     `Ctrl+C` pertama = copy teks turn terakhir, kedua beruntun = keluar;
+     abort turn via lone `Esc` maupun `Ctrl+C` menghentikan spark footer.
 2. stdout/stderr contract seperti tabel di atas (TTY & non-TTY deterministic).
 3. Transient rendering satu ownership mechanism (`statusline.ts`).
 4. Permanent scrollback tidak bergantung pada transient painter.
@@ -70,9 +85,15 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 animasi spinner,
 
 ## Grammar (ringkas)
 
-prompt `minicode <mode> ›` · activity: garis transient stderr (`✦···`
-putih↔abu kelip-kelip tiap tick, ·→··→··· interval 80–320ms adaptif +
-`label-tool···`, tak pernah bare; kecepatan mengikuti reasoning) · section
+prompt `minicode ›` (steril — status pindah ke footer) · footer status
+`src/ui/runtime/chrome.ts` + `src/ui/footer.ts`: 2 baris dasar lengket (DECSTBM
+scroll-region) ATAU cetak fallback, berisi `✦ mode • model • cwd … 14.2k` (mode
+pad lebar tetap anti-geser; spark pulse saat busy/redup saat idle; konteks
+rata kanan polos `14.2k`; garis faint tipis); `MINICODE_FOOTER=off|print|
+sticky|auto` (default auto = lengket bila terminal mampu, cetak bila tidak;
+pipa selalu nol byte) · activity: garis transient stderr (`···`
+ ·→··→··· interval 80–320ms adaptif + `label-tool···`, tak pernah bare;
+kecepatan mengikuti reasoning) · section
 collapse: thinking + tool (bash/edit/content) MINIMIZED default (stderr) —
 satu baris `  + label`, isi di-buffer (200KB/entry, 500KB total) untuk
 `/expand` (sekali pakai, lalu buffer dikosongkan); `+`/`=`/`-`/`_`/Ctrl+T
@@ -103,9 +124,21 @@ error: `✗ pesan actionable` sekali per kegagalan (`takePendingError`).
    selalu method-call (tak pernah detached), `paintWrite` tak pernah
    melempar, dan transient self-disable permanen + restore write asli
    begitu marker terlihat — agen tetap jalan tanpa spinner.
+5. **Footer region bocor bila proses dibunuh `kill -9`** (tanpa kesempatan
+   reset `\x1b[r`): terminal hanya scroll di area atas sampai direset.
+   Mitigasi: reset di semua jalur keluar + handler `process.on("exit")`
+   sinkron; bila terjadi, ketik `reset` (pola standar, bukan bug baru).
+6. **Footer tertimpa program anak** yang menulis kursor ke baris dasar:
+   jendela basi ≤ 1 turn — chrome merepaint tiap idle (self-heal).
+7. **Program anak mengubah ukuran terminal** saat region aktif: resize
+   listener me-re-set region + repaint; jendela antara resize dan paint
+   bisa berkedip halus di terminal tanpa dukungan `?2026` synchronized.
 
 ## Peta proteksi (test → invariant)
 
+- `test/footer-render.test.ts` / `test/footer-chrome.test.ts` — I1/I6 (chrome
+  footer: non-TTY nol byte, mode off/print/sticky/auto, region DECSTBM,
+  reset-on-detach, repaint, reserve dropdown).
 - `test/terminal-contract.test.ts` — I2/I3/I5/I7/I8/I9/I10/I12 (konsolidasi).
 - `test/transient-arbitration.test.ts` — I3/I9 (foreign-write dikomit,
   repaint, overlap signal, non-TTY bebas kontrol).

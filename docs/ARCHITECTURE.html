@@ -464,7 +464,7 @@ footer.site .spacer { flex: 1; }
     <span class="mi">search</span><span>Cari modul, simbol, env…</span><kbd>Ctrl K</kbd>
   </div>
   <div class="top-actions">
-    <span class="vpill hide-m">v0.9.22 · Bun-only · 0 deps</span>
+    <span class="vpill hide-m">v0.9.23 · Bun-only · 0 deps</span>
     <button class="iconbtn" id="themeBtn" aria-label="Ganti tema terang/gelap" title="Ganti tema"><span class="mi">dark_mode</span></button>
   </div>
 </header>
@@ -743,6 +743,8 @@ footer.site .spacer { flex: 1; }
       <div class="mod"><div class="fname">render/diff.ts</div><div class="fdesc">Diff dua sisi (indexOf tanpa slice, reorder ambigu dahulukan add) + sorot kata berubah via LCS kecil.</div></div>
       <div class="mod"><div class="fname">runtime/statusline.ts</div><div class="fdesc">ARBITRASE SATU-SATUNYA untuk semua transient stderr: <code>acquireTransientPaint(kind)</code> (turn-painter vs wizard-spinner, overlap = signal <code>[transient-paint]</code>) + <code>paintWrite</code>; tulis asing non-UI saat painter aktif dikomit sebagai baris permanen; koordinasi suspend/resume baris status vs printer linier.</div><div class="exports">acquireTransientPaint · paintWrite · isTransientPainting · registerStatusLine · runWithoutStatus</div></div>
       <div class="mod"><div class="fname">runtime/spinner.ts</div><div class="fdesc">Spinner wizard (glyphs.spinnerFrames); TTY-only — tanpa byte kontrol pada non-TTY; ikut arbitrase transient statusline.</div><div class="exports">createSpinner</div></div>
+      <div class="mod"><div class="fname">footer.ts</div><div class="fdesc">Render footer status REPL (murni, tanpa IO): 2 baris — garis <code>faint</code> + <code>✦ mode • model • cwd … 14.2k</code>. Mode pad lebar tetap anti-geser, satu-satunya berwarna; spark pulse saat busy / redup saat idle; konteks rata kanan polos <code>14.2k</code>; <code>sanitizeAnsi</code> + potong per kolom. Non-TTY diputuskan mekanisme, bukan di sini.</div><div class="exports">renderFooter · shortModel · paintFooterMode · FooterStatus · MODE_WIDTH</div></div>
+      <div class="mod"><div class="fname">runtime/chrome.ts</div><div class="fdesc">Footer status LENGKET (satu-satunya chrome permanen): DECSTBM scroll-region 3 baris dasar, output turn hanya di area atas — footer tak ikut scroll. Gaya <code>MINICODE_FOOTER=off|print|sticky|auto</code> (auto = lengket bila terminal mampu, cetak bila tidak; pipa non-TTY nol byte). <code>setBusy()</code> menggerakkan pulse spark redup→pulse; <code>Esc</code> lone-50ms saat turn = abort tanpa teks. Reset region dijamin di semua jalur keluar; fail-closed, tak pernah melempar (pola statusline).</div><div class="exports">createFooterChrome · footerReserveRows · FooterChrome · FooterMode</div></div>
       <div class="mod"><div class="fname">input/prompt-engine.ts · input.ts</div><div class="fdesc">Engine input murni &amp; teruji: grapheme (Intl.Segmenter), state, dekode CSI/UTF-8 streaming, render spec; history (JSON per baris), askLine (+ onKey, multiline Ctrl+J, reverse-i-search Ctrl+R), askSecret; deletePrevUnit Thai/Lao-aware.</div><div class="exports">createState · applyKey · buildRenderSpec · decodeKeys · decodeKeysStream · toGraphemes · deletePrevUnit · MAX_VISIBLE · loadHistory · appendHistory · detectAnsi · askLine · askSecret</div></div>
       <div class="mod"><div class="fname">assistant/simple.ts · turn-status.ts</div><div class="fdesc">Printer linier (satu-satunya renderer, one-shot &amp; REPL): output append-only di scrollback; stdout = teks model/receipt, stderr = ledger tool &amp; diagnostik. Tool compact = satu baris <code>› nama target</code> (REPL default; env eksplisit menang; /compact / Ctrl+O membalik). Section besar (thinking/bash/edit/content) default minimize: satu baris <code>+ label</code>, isi di-buffer untuk /expand. Ledger SELALU ber-newline. Garis status turn lifecycle deterministik.</div><div class="exports">attachSimpleLogger · formatError · getLastTurnText · writeClipboardOsc52 · attachTurnStatus</div></div>
       <div class="mod"><div class="fname">approval/prompt.ts</div><div class="fdesc">View persetujuan tool call [y/a/n]; di-inject ke permission handler oleh cli/setup.ts; live-region screen reader saat MINICODE_A11Y=1.</div><div class="exports">promptAsk · ApprovalRequest</div></div>
@@ -1035,7 +1037,7 @@ bun run bench            # benchmark loop agen</pre></div>
 <footer class="site">
   <span>Minicode · Peta struktur hidup — terminal contract FROZEN (<a href="TERMINAL_CONTRACT.md">docs/TERMINAL_CONTRACT.md</a>)</span>
   <span class="spacer"></span>
-  <span>v0.9.22 · diperbarui 2026-09-15</span>
+  <span>v0.9.23 · diperbarui 2026-09-16</span>
 </footer>
 
 </div>

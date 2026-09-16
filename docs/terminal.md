@@ -13,10 +13,10 @@ Minicode **shell-native CLI, bukan TUI**. Tanpa alternate screen/panel/header pe
 - Warna hanya bila TTY (`stdout.isTTY`); `NO_COLOR` menang; `TERM`/`COLORTERM` tidak menyalakan warna di pipe.
 - Error `✗ pesan actionable` sekali per kegagalan (`takePendingError`) — bukan spam di setiap langkah.
 
-## Lima primitif tampilan
+## Enam primitif tampilan
 
 1. Prompt `minicode ›` (steril — status pindah ke footer)
-2. Footer status lengket — `✦ mode • model • cwd … 14.2k` (mode pad anti-geser; spark pulse saat busy/redup saat idle; konteks rata kanan; garis faint); `MINICODE_FOOTER=off|print|sticky|auto`
+2. Footer status lengket — `✦ mode • model • cwd … 14.2k` (mode pad anti-geser; spark pulse saat busy/redup saat idle; konteks rata kanan); `MINICODE_FOOTER=off|print|sticky|auto`
 3. Activity — garis transient di stderr
 4. Ledger — `  › name target` hijau / `  › name: …` merah (stderr, indent 2)
 5. Teks model — stdout, wrapped

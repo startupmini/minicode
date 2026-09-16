@@ -1,10 +1,8 @@
-# Keamanan
-
-
+\n
 ## Prinsip
 
 1. **Fail-closed di jalur tak pasti**: tool tanpa backend tersedia menolak (`code_run`), sandbox yang diminta tapi tidak tersedia tidak pura-pura aman (warn + `allowlist`), provider OAuth yang belum login dibuang dari daftar, auth non-TTY fail-fast.
-2. **Ukur, bukan klaim**: bash-guard divalidasi korpus manual (38 pola serangan + 15 perintah sah) + fuzz kombinatorial ber-seed ~13.000 varian; hasil **0 bypass / 0 over-block** di kedua lapis, terkunci sebagai regression test.
+2. **Ukur, bukan klaim**: bash-guard divalidasi korpus manual pola serangan + perintah sah dan fuzz kombinatorial ber-seed — jalankan `bun run gate:bash` dan `bun run extreme:fuzz` untuk angka terkini (exit 0 = 0 bypass / 0 over-block).
 3. **Teks eksternal = tidak terpercaya**: output tool, MCP, web, bahkan output verify dibungkus fence; `sanitizeAnsi` menyaring escape ANSI dari teks model/tool sebelum render.
 4. **Permission mengontrol pemanggilan, bukan capability**: satu approval = satu pasangan server+tool+args (MCP); capability di balik server tak bisa diketahui statis.
 
@@ -26,7 +24,7 @@
    | `curl -F file=@~/.ssh/id_rsa` | tak ada aturan upload | ditolak |
    | `bash <(curl x)` | tak ada aturan process substitution | ditolak |
    | `rm -rf ..`, `rm --recursive --force /`, `rm -rf /; :` | pola lama hanya kenal `/` dan `~` | ditolak |
-   | `command env`, `nice env`, dkk. (wrapper) | deteksi env-dump ter-anchor ke awal | ditolak via `stripCommandWrappers` (14 wrapper, 4 lapis) |
+   | `command env`, `nice env`, dkk. (wrapper) | deteksi env-dump ter-anchor ke awal | ditolak via `stripCommandWrappers` (buang wrapper berlapis) |
    | `echo x > ..\evil` (redirect keluar workspace) | allowlist `echo *` + guard tanpa aturan redirect | ditolak via `findRedirectTargets` (target di-resolve ke cwd; heredoc/fd/`/dev/null` dikecualikan) |
    | `echo x > "%TEMP%\evil"` (redirect + ekspansi env) | cek statis melihat literal `%TEMP%\…` di dalam cwd; cmd.exe mengekspansi SETELAH cek | ditolak: target berpola `%NAMA%` tak bisa dipastikan aman (red-team eksternal). `%` tunggal (`100%.txt`) tetap lolos |
    | `py -c …`, `python3.14 -c …` (launcher/versi) | regex hanya kenal `python|python2|python3|pypy` | ditolak via `pyw?|python[\d.]*|pypy[\d.]*` |
@@ -57,8 +55,9 @@ provider model pihak ketiga.
   tepercaya yang boleh diedit manusia** — termasuk edit langsung via file.
   Tulis out-of-band (di luar `write_memory`) ikut termuat apa adanya pada
   retrieval berikutnya. Jangan taruh instruksi dari repo tak dikenal tanpa
-  dibaca; `forget_memory` hanya menjangkau `.minicode/MEMORY.md` lokal +
-  vector store lokal (bukan hierarki global/root/CLAUDE).
+  dibaca; `forget_memory` menjangkau vector store + `.minicode/MEMORY.md` di
+  scope lokal DAN global (keduanya ikut di-search) — hierarki baca
+  `MEMORY.md` root/`CLAUDE.md` tidak ikut terhapus.
 - `sessions.db` + jurnal: transkrip sesi tersimpan plaintext di workspace
   (terbaca agen mana pun di workspace itu). Jurnal 0-byte = sesi terpasang
   yang belum bermutasi (by-design, bukan korupsi).

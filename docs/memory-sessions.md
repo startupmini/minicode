@@ -1,6 +1,4 @@
-# Memory & Sessions
-
-
+\n
 ## Memory dua lapis
 
 1. `MEMORY.md` hierarki (global → lokal → root → `CLAUDE.md` → `.minicode/rules/*.md`) selalu dimuat ke system prompt.

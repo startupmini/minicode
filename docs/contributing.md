@@ -23,7 +23,7 @@ Butuh `bun >= 1.0` (`bun:sqlite` tidak jalan di Node).
 bun x tsc --noEmit && bun run lint && bun test && bun run gate:coverage && bun run gate:pack
 ```
 
-Coverage naik → naikkan minimum di `scripts/coverage-gate.ts` (saat ini **80 funcs / 85 lines** — lines dikunci 85 setelah journal 82.42/85.17 dua run identik; funcs sengaja tidak dikunci 81 karena berayun 80.62–81.84 antar run dan membuat gate flaky).
+Coverage naik → naikkan minimum di `scripts/coverage-gate.ts` (saat ini **80 funcs / 84 lines** — funcs sengaja tidak dikunci 81 karena berayun antar run dan membuat gate flaky).
 
 Gerbang lain:
 

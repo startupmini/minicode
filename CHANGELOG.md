@@ -13,6 +13,13 @@
 ## [Unreleased]
 
 ### Fixed
+- **Audit 2026-09-16 (sanitasi render)**: teks reasoning/thinking, preview bash compact, dan label/target tool (`write_file`/`edit`/status) kini lewat `sanitizeAnsi` — payload `\x1b[2J` model tak lagi sampai ke terminal (`test/sanitize-render.test.ts` 5/5, terbukti gagal di kode lama).
+- **Audit 2026-09-16 (bash-guard)**: `pwsh -EncodedCommand`, wrapper `su/runuser/gosu/chroot/nsenter/cmd /c`, reader `certutil/tac/findstr/fc/comp`, dan `rm -rf //` + `/.*` kini ditahan; `isDangerousLink` tak lagi menuduh direktori POSIX; pembaca LSP/grep via `O_NOFOLLOW`; `assertSafeWriteTarget` live di tool tulis.
+- **Audit 2026-09-16 (budget/memory)**: `--budget` memutus mid-turn (`watchBudgetLimit` menggugurkan turn berjalan); ringkasan `exec` memakai total sesi; `forget_memory` menghapus scope lokal + global (vector + `MEMORY.md`); `MINICODE_MEMORY_SCOPE=global` dihormati; setup WAL SQLite tahan AV-lock (defer, bukan crash).
+- **Cleanup production**: hapus `full-test4.err`, `outputs/` (artefak agen), `scripts/demo-full.ts` + `human-sim.ts` (skrip manual personal), `experiments/extreme-security.ts` (digantikan test + gate), 8 fungsi mati; normalisasi EOL worktree (CRLF→LF) + `core.autocrlf=false` lokal; graf import: nol modul orphan di `src/cli`.
+- **Docs & web sinkron**: `forget_memory` dual-scope (`tools.md`, `security.md`), pemutus budget mid-turn (`pricing-budget.md`, `USAGE.md`, `quickstart.md`), invariant 14 (nav web), ledger `›` di proof landing, `ARCHITECTURE.html` + komentar `chrome.ts` disinkronkan.
+
+### Fixed
 - **Baterai SWE-Docker hidup**: 5 image era terbangun (`py36` butuh rewrite apt-archive + pin pytest 6.2.5, sudah di commit sebelumnya); `--verify-only` (validasi tanpa agen/API key); install+test satu container (filesystem ephemeral); `manifest.deps` (sympy→`mpmath==1.0.0`); `interpretCodes` (exit≠0/1 = harness ERROR, bukan FAIL model — kasus nyata collection-error sympy).
 - **Hasil validasi**: requests-1963 (6/7 vacuous httpbin-drift + 1 genuine → tetap low), pytest-11143 (FAIL benar → diskriminator), sympy-11400 (tak runnable: bare-ID + shim `py.test` gagal di pytest 6.2.5 MAUPUN era 3.0.7 → tetap low beralasan).
 

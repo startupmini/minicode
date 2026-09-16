@@ -1,6 +1,4 @@
-# Config — File & Lokasi Data
-
-
+\n
 ## Skema `.minicode/config.json`
 
 ```json

@@ -96,7 +96,7 @@ Habis itu, baca sesuai kebutuhan lewat tabel Navigasi di bawah — tak perlu ber
 | Threat model, prompt injection, supply chain | [Keamanan](security.md) |
 | Error umum + `doctor` | [Troubleshooting](troubleshooting.md) |
 | Peta lapisan, alur satu prompt | [Arsitektur](architecture.md) |
-| Kontrak stdout/stderr FROZEN, 12 invariant | [Kontrak Terminal](terminal.md) |
+| Kontrak stdout/stderr FROZEN, 14 invariant | [Kontrak Terminal](terminal.md) |
 | Ikut kontribusi, gate, batas lapisan | [Contributing](contributing.md) |
 | Perubahan per versi | [Changelog](changelog.md) |
 | Arsip panduan monolit lama (baca hanya bila perlu) | `USAGE.md` (file pendamping, status legacy) |
@@ -104,6 +104,6 @@ Habis itu, baca sesuai kebutuhan lewat tabel Navigasi di bawah — tak perlu ber
 ## Konvensi dokumen ini
 
 - Bahasa: **Indonesia**, istilah teknis tetap English (`provider`, `checkpoint`, `sandbox`).
-- Komentar kode di repo juga Indonesia (menjelaskan *mengapa*, bukan *apa*) — kecuali klaim `CONTRIBUTING.md` yang masih English-only dan sedang direkonsiliasi di halaman [Contributing](contributing.md).
+- Komentar kode di repo juga Indonesia (menjelaskan *mengapa*, bukan *apa*).
 - Setiap klaim perilaku merujuk ke `file:line` agar bisa diverifikasi dengan `read_file` + `offset`/`limit`.
 - Encoding UTF-8 tanpa BOM. Jangan commit rahasia (API key, token OAuth).

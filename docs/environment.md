@@ -9,8 +9,6 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 
 ## Runtime & limits
 
-
-
 | Variabel | Fungsi |
 |---|---|
 | `MINICODE_TIMEOUT_MS` | Default timeout (ms) bila `--timeout` tidak diset; `0` = Infinity |

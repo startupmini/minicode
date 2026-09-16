@@ -57,7 +57,7 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
     src: "src/policy/permission.ts",
   },
   terminal: {
-    desc: "Kontrak terminal FROZEN: stdout/stderr, 12 invariant, scrollback.",
+    desc: "Kontrak terminal FROZEN: stdout/stderr, 14 invariant, scrollback.",
     src: "docs/TERMINAL_CONTRACT.md",
   },
   quickstart: {

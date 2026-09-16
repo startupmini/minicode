@@ -1,6 +1,4 @@
-# Config & Provider
-
-
+\n
 ## 14 preset gateway
 
 `Gateway >` hanya menampilkan `[0] Label` tanpa URL (minimalis, tanpa bocor endpoint).

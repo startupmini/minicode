@@ -30,8 +30,8 @@ Beberapa keputusan desain lahir dari tidak mau berpura-pura:
 
 - **Angka tidak ditulis permanen** di dokumentasi — jalankan `bun test` / `bun run gate:coverage` / lihat CI. Halaman yang mengklaim jumlah test akan usang begitu dipush.
 - **Kegagalan dilaporkan apa adanya**: `auth login` menampilkan error server tanpa dipercantik; `--sync` jujur `{updated, failed}`; sandbox yang tidak tersedia **tidak** dilabeli aman — default turun ke `allowlist` dengan alasan dicetak sekali.
-- **Ukur, bukan klaim**: bash-guard divalidasi korpus serangan + fuzz ber-seed (~13.000 varian), bukan sekadar daftar regex. Lihat [Keamanan](security.md).
-- **SWE-bench Lite 0/20 dilaporkan apa adanya** dengan catatan validitas lingkungan (Python 3.14 vs era 2022), bukan disembunyikan. Lihat [Verify & Benchmark](verify-benchmark.md).
+- **Ukur, bukan klaim**: bash-guard divalidasi korpus serangan + fuzz ber-seed (jalankan `bun run gate:bash` / `bun run extreme:fuzz`). Lihat [Keamanan](security.md).
+- **Skor benchmark dilaporkan apa adanya** beserta batas validitasnya (lingkungan, ukuran sampel). Lihat [Verify & Benchmark](verify-benchmark.md).
 
 ## Zero-dep runtime
 

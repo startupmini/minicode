@@ -24,7 +24,7 @@ Istilah Minicode yang punya makna spesifik. Dokumentasi berbahasa Indonesia deng
 | **Hook** | Skrip `pre/post-run` dari `~/.minicode/hooks` + `.minicode/hooks`; mati default, `MINICODE_HOOKS=1` |
 | **Env scrub** | `sanitizeSpawnEnv` menghapus kata-kunci kredensial dari env subprocess |
 | **Secret scrubber** | Redaksi `sk-`/`ghp_`/`AKIA`/PEM/JWT/Bearer sebelum teks ke LLM |
-| **Ledger** | Baris `  ✓ name target` / `  ✗ name: …` di stderr — jejak aksi agent |
+| **Ledger** | Baris `  › name target` / `  › name: …` di stderr — jejak aksi agent |
 | **Scrollback** | Riwayat layar terminal; output minicode append-only di sana (bukan alternate screen) |
 | **Transient** | UI muncul-sekali yang menghapus dirinya (picker/wizard/statusline) — vs scrollback yang menetap |
 | **Composition root** | `cli/index.ts` + `cli/setup.ts`: satu tempat wiring DI (provider, RAG, session, tools) |

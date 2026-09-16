@@ -1,6 +1,4 @@
-# Otomasi & CI
-
-
+\n
 ## Tiga mode non-interaktif
 
 | Bentuk | Kapan dipakai |

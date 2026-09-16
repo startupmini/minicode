@@ -48,7 +48,7 @@ Sebelum agen jalan, baseline diuji dulu. Bila baseline sudah merah, catatan Heal
 ```bash
 minicode --ask "deploy script"          # human-in-loop confirmation card
 minicode --sandbox docker "task"        # bash di container ephemeral
-minicode --budget 0.50 "task besar"     # warn 80%, tolak prompt baru bila lewat
+minicode --budget 0.50 "task besar"     # warn 80%; pagu lewat → prompt baru ditolak + turn berjalan digugurkan
 minicode exec "prompt" --json           # headless CI: JSONL stream + summary
 minicode "/review src/a.ts"             # skill slash-command
 ```

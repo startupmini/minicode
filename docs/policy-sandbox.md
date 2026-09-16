@@ -34,18 +34,18 @@ Set terkait: `INTERNAL_WRITE_TOOLS` 6, `FILE_WRITE_TOOLS` 5, `GATED_TOOLS` 6 + `
 | `write_file .minicode/<apa-pun>` | ditolak fail-closed (kunci penuh segmen `.minicode/`; kecuali restore `.trash/` → workspace dan skrip `.minicode/hooks/`) |
 | `bash <(curl x)` | ditolak |
 | `rm -rf ..`, `rm --recursive --force /`, `rm -rf /; :` | ditolak |
-| `command env`, `nice env`, `exec 'env'` (wrapper geser posisi kata) | ditolak via `stripCommandWrappers` (14 wrapper, 4 lapis) |
+| `command env`, `nice env`, dkk. (wrapper) | deteksi env-dump ter-anchor ke awal | ditolak via `stripCommandWrappers` (buang wrapper berlapis) |
 
 Allowlist (juga default bila tanpa sandbox): `git status/diff/log/branch/show`, `bun test/run/x tsc`, `npm run/exec`, `npx`, `ls cat head tail wc grep rg find which echo pwd`. Tulis via shell (`mkdir cp mv rm touch`) ditahan — pakai `write_file`/`edit` yang ter-jail. `npm exec`/`npx`/`bun run`/`bun x` tak boleh ada ekspansi shell (`$`, backtick) atau redirection.
 
-Ukur, bukan klaim:
+Ukur, bukan klaim — jalankan sendiri untuk angka terkini:
 
 ```bash
-bun run gate:bash        # korpus manual: 38 pola serangan + 15 perintah sah
-bun run extreme:fuzz     # mutasi kombinatorial ber-seed, ~13.000 varian
+bun run gate:bash        # korpus manual pola serangan + perintah sah (0 bypass / 0 over-block = lulus)
+bun run extreme:fuzz     # mutasi kombinatorial ber-seed
 ```
 
-Hasil: **0 bypass / 0 over-block**. Fuzz menemukan 3 kelas yang korpus manual lewatkan, kini terkunci di `test/bash-fuzz-regression.test.ts`.
+Fuzz membangkitkan varian dari transformasi yang shell anggap setara (quote-split, indirection, wrapper, flag panjang, chaining); temuan terkunci sebagai regression test.
 
 > Batas jujur: analisis statis atas bahasa Turing-complete. `$(curl …)` dinamis tak bisa diselesaikan tanpa eksekusi — untuk itu sandbox OS ada.
 

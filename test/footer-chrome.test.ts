@@ -45,7 +45,7 @@ describe("footer chrome", () => {
 
   test("print: footer sebagai baris scrollback, tanpa region/reserve", () => {
     process.env.MINICODE_FOOTER = "print"
-    tty = installFakeTty({ rows: 30, columns: 60 })
+    tty = installFakeTty({ rows: 30, columns: 80 })
     const ch = createFooterChrome({ enabled: true, status })
     expect(ch.mode).toBe("print")
     expect(ch.reserveRows()).toBe(0)

@@ -73,9 +73,9 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
   const model = c.gray(sanitizeAnsi(shortModel(s.model)))
   const cwdTxt = c.gray(sanitizeAnsi(s.cwd))
 
-  const full = `${spark} ${mode}${sep}${model}${sep}${cwdTxt}`
-  const mid = `${spark} ${mode}${sep}${model}`
-  const lean = `${spark} ${mode}`
+  const full = `${spark}  ${mode}${sep}${model}${sep}${cwdTxt}`
+  const mid = `${spark}  ${mode}${sep}${model}`
+  const lean = `${spark}  ${mode}`
 
   const target = Math.max(4, cols - 1)
   const ctx = s.context ? sanitizeAnsi(s.context) : ""

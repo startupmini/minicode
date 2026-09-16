@@ -146,11 +146,7 @@ export function applyKey(
     if (!rows.length) return null
     return state.sel >= 0 && state.sel < rows.length ? rows[state.sel]! : null
   }
-  const pickFirst = (line: string) => {
-    const rows = hints(line)
-    if (!rows.length) return null
-    return rows[0]!
-  }
+
   // Setiap perubahan baris memakai aturan menu yang sama: menu terbuka bila
   // baris dimulai "/", dan seleksi dijepit ke jumlah hint yang baru.
   const withLine = (line: string, cursor: number): PromptState => {
@@ -172,13 +168,15 @@ export function applyKey(
 
   switch (key.type) {
     case "char": {
-      // Paste bisa memuat newline/tab/kontrol. Baris input adalah SATU baris;
-      // menyimpan "\n" di dalamnya membuat renderer menulis lebih banyak baris
-      // daripada yang dihitung, sehingga frame TUI melebihi tinggi terminal
-      // (terverifikasi: paste 3 baris pada terminal 24 baris menghasilkan 26).
-      // Newline & tab jadi spasi; byte kontrol lain dibuang.
+      // Paste bisa memuat newline/tab/kontrol. Dulu "\n" digepeng jadi spasi
+      // agar tidak melebihi tinggi terminal, tapi itu membuat copas code
+      // multilines cuma baris pertama (keluhan nyata). Sekarang "\n" dipertahankan
+      // sebagai baris baru — renderer `scrollableMultiline` sudah memperhitungkan
+      // tinggi (`nInGuess`, `maxVisible - footerReserveRows`) sehingga tidak
+      // menabrak footer. Tab jadi spasi; kontrol lain dibuang.
       const ins = key.ch
-        .replace(/\r\n|\r|\n|\t/g, " ")
+        .replace(/\r\n|\r/g, "\n")
+        .replace(/\t/g, " ")
         // biome-ignore lint/suspicious/noControlCharactersInRegex: membuang byte kontrol dari paste
         .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "")
       if (!ins) return { state, action: "none" }
@@ -236,11 +234,12 @@ export function applyKey(
       return { state: { ...state, sel: (state.sel + 1) % n }, action: "render" }
     }
     case "tab": {
-      // Hormati seleksi: setelah user menekan panah bawah, Tab harus melengkapi
-      // item yang disorot, bukan selalu item pertama.
-      const pick = pickSelected(state.line) ?? pickFirst(state.line)
-      if (!pick) return { state, action: "none" }
-      return { state: completeTo(pick), action: "render" }
+      // Tab sekarang HANYA putar mode (cycle `auto→ask→plan→allowlist`),
+      // ditangani di REPL via `onKey` agar selalu jalan bahkan saat mengetik.
+      // Completion dropdown tidak lagi pakai Tab — user pilih via ↑/↓ lalu
+      // Enter (lengkapi + kirim). Tanpa ini Tab saat mengetik tidak bisa
+      // ganti mode (keluhan nyata) dan menabrak completion.
+      return { state, action: "none" }
     }
     case "enter": {
       const pick = pickSelected(state.line)

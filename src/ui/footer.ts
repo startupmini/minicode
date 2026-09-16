@@ -1,8 +1,8 @@
-// Footer status REPL: 2 baris (garis tipis + status).
+// Footer status REPL: 1 baris status (tanpa garis — keputusan clean).
 //
 // Dipakai dua mekanisme dengan KONTEN yang sama: mode cetak (idle, dicetak di
 // atas prompt sebagai scrollback biasa) dan mode lengket (chrome DECSTBM,
-// dilukis di 3 baris dasar terminal). Modul ini murni render — tanpa state,
+// dilukis di 2 baris dasar terminal: blank + status). Modul ini murni render
 // tanpa IO, tanpa timer, tanpa tahu mekanisme mana yang memakainya. Frame
 // animasi spark dan angka konteks DIKIRIM pemanggil lewat FooterStatus, jadi
 // render tetap deterministik dan bisa diuji tanpa menunggu waktu.
@@ -59,14 +59,12 @@ function sparkGlyph(frame: number): string {
 }
 
 /**
- * Render 2 baris footer untuk lebar `columns`. Baris status selalu tepat
- * 1 baris visual (dipotong per kolom + `…`, tak pernah membungkus).
+ * Render 1 baris footer untuk lebar `columns` (+ 1 baris kosong di atasnya
+ * bila dilukis lengket). Tanpa garis separator — clean (keputusan user).
  * Non-TTY/dimati diputuskan pemanggil (mekanisme), bukan di sini.
  */
 export function renderFooter(s: FooterStatus, columns: number): string[] {
   const cols = Math.max(10, Math.floor(columns) || 80)
-  // Garis setipis mungkin: `─` + faint (abu gelap) — hampir tak terlihat.
-  const rule = c.faint("─".repeat(cols))
 
   const spark = sparkGlyph(s.sparkFrame ?? 0)
   const mode = paintFooterMode(s.mode)
@@ -96,8 +94,8 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
   // Tangga prioritas buang saat sempit: cwd → model (spark+mode+context kekal).
   for (const left of [full, mid, lean]) {
     const line = align(left)
-    if (displayWidth(line) <= target) return [rule, line]
+    if (displayWidth(line) <= target) return [line]
   }
   // Bahkan `lean` tak muat (terminal sangat sempit): potong keras.
-  return [rule, truncateToWidth(align(lean), target, "…")]
+  return [truncateToWidth(align(lean), target, "…")]
 }

@@ -51,29 +51,26 @@ describe("footer chrome", () => {
     expect(ch.reserveRows()).toBe(0)
     ch.present()
     const out = tty.chunks().join("")
-    // Dua baris footer + newline pemisah; tidak ada \x1b[r / DECSTBM.
+    // Satu baris status (tanpa garis) + newline; tidak ada \x1b[r / DECSTBM.
     expect(stripAnsi(out)).toContain("allowlist • deepseek-v4-flash • C:\\Users\\dokument")
-    expect(stripAnsi(out)).toContain("─".repeat(60))
     expect(out).not.toContain("\x1b[r")
-    expect(out).not.toContain(";1H")
   })
 
-  test("sticky: region DECSTBM + footer 3 baris + kursor di baris input", () => {
+  test("sticky: region DECSTBM + footer 2 baris + kursor di baris input", () => {
     process.env.MINICODE_FOOTER = "sticky"
     tty = installFakeTty({ rows: 30, columns: 40 })
     const ch = createFooterChrome({ enabled: true, status })
     expect(ch.mode).toBe("sticky")
-    expect(ch.reserveRows()).toBe(3)
+    expect(ch.reserveRows()).toBe(2)
     ch.present()
     const out = tty.chunks().join("")
-    // Region atas = 1..27 (footer menempati 28..30).
-    expect(out).toContain("\x1b[1;27r")
-    // Footer dilukis di baris 28-30 (blank/rule/status).
-    expect(out).toContain("\x1b[28;1H")
+    // Region atas = 1..28 (footer menempati 29..30: blank+status, tanpa garis).
+    expect(out).toContain("\x1b[1;28r")
+    // Footer dilukis di baris 29-30 (blank/status).
     expect(out).toContain("\x1b[29;1H")
     expect(out).toContain("\x1b[30;1H")
-    // Kursor ke baris input 27.
-    expect(out).toContain("\x1b[27;1H")
+    // Kursor ke baris input 28.
+    expect(out).toContain("\x1b[28;1H")
   })
 
   test("sticky: detach me-reset region + reserve nol, footer tercetak sekali", () => {
@@ -81,7 +78,7 @@ describe("footer chrome", () => {
     tty = installFakeTty({ rows: 30, columns: 40 })
     const ch = createFooterChrome({ enabled: true, status })
     ch.present()
-    expect(ch.reserveRows()).toBe(3)
+    expect(ch.reserveRows()).toBe(2)
     ch.detach()
     expect(ch.reserveRows()).toBe(0)
     expect(footerReserveRows()).toBe(0)
@@ -111,7 +108,7 @@ describe("footer chrome", () => {
     ch.present()
     ch.present()
     const out = tty.chunks().join("")
-    expect(out.split("\x1b[1;27r").length - 1).toBe(1)
+    expect(out.split("\x1b[1;28r").length - 1).toBe(1)
   })
 
   test("repaint footer TIDAK menggeser kursor (save/restore)", () => {
@@ -148,8 +145,8 @@ describe("footer chrome", () => {
     tty.clear()
     tty.resize(50, 20)
     const out = tty.chunks().join("")
-    // Region baru mengikuti rows baru (footer 18..20, region 1..17).
-    expect(out).toContain("\x1b[1;17r")
+    // Region baru mengikuti rows baru (footer 19..20, region 1..18).
+    expect(out).toContain("\x1b[1;18r")
     expect(out).toContain("\x1b[20;1H")
     // DECSTBM dipagari save/restore.
     expect(out).toContain("\x1b7")

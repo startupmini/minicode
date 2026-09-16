@@ -86,10 +86,11 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 animasi spinner,
 ## Grammar (ringkas)
 
 prompt `minicode ›` (steril — status pindah ke footer) · footer status
-`src/ui/runtime/chrome.ts` + `src/ui/footer.ts`: 2 baris dasar lengket (DECSTBM
-scroll-region) ATAU cetak fallback, berisi `✦ mode • model • cwd … 14.2k` (mode
-pad lebar tetap anti-geser; spark pulse saat busy/redup saat idle; konteks
-rata kanan polos `14.2k`; garis faint tipis); `MINICODE_FOOTER=off|print|
+`src/ui/runtime/chrome.ts` + `src/ui/footer.ts`: 1 baris status lengket
+(tanpa garis separator, blank+status = 2 baris reserve) ATAU cetak fallback,
+berisi `✦ mode • model • cwd … 14.2k` (mode pad 9 anti-geser; spark pulse
+saat busy/redup saat idle; konteks rata kanan `14.2k`; Tab selalu putar
+mode, completion via ↑/↓+Enter); `MINICODE_FOOTER=off|print|
 sticky|auto` (default auto = lengket bila terminal mampu, cetak bila tidak;
 pipa selalu nol byte) · activity: garis transient stderr (`···`
  ·→··→··· interval 80–320ms adaptif + `label-tool···`, tak pernah bare;

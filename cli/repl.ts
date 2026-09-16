@@ -210,7 +210,7 @@ export async function runRepl(ctx: CliSession): Promise<void> {
     else mode = permissionMode ?? mode // tak ada handle: jangan tampilkan label palsu
   }
 
-  const onKey = (key: PromptKey, line: string): boolean => {
+  const onKey = (key: PromptKey, _line: string): boolean => {
     // Ganti mode TANPA baris scrollback baru: askLine me-render ulang baris
     // berjalan setelah onKey (lihat input.ts); mode baru terlihat di footer
     // yang dicetak pada idle berikutnya. notify() di sini hanya menambah
@@ -223,10 +223,10 @@ export async function runRepl(ctx: CliSession): Promise<void> {
       footer.refresh()
       return true
     }
-    // Tab di baris kosong = putar mode (sama seperti Shift+Tab): auto →
-    // ask → plan → allowlist → auto, allow-all selalu dilewati (lihat
-    // cycleMode). "Build" = mode auto (tulis); tak ada mode bernama build.
-    if (key.type === "tab" && line === "") {
+    // Tab SELALU putar mode (keputusan user: tanpa peduli baris kosong/isi).
+    // Completion dropdown tidak lagi pakai Tab — user pilih via ↑/↓ lalu
+    // Enter. Tanpa ini Tab saat mengetik tidak bisa ganti mode (keluhan nyata).
+    if (key.type === "tab") {
       cycleMode()
       footer.refresh()
       return true

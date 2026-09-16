@@ -1,6 +1,6 @@
 // Footer lengket (sticky) — chrome terminal REPL.
 //
-// Mengunci 3 baris dasar terminal untuk footer (blank, garis tipis, status)
+// Mengunci 2 baris dasar terminal untuk footer (blank + status, tanpa garis)
 // lewat scroll-region DECSTBM (`\x1b[1;{top}r`): output turn hanya di area
 // atas, footer tidak pernah ikut scroll. Sama dengan kontrak transient
 // statusline.ts: TIDAK pernah melempar, fail-closed, self-disable bila runtime
@@ -91,15 +91,15 @@ function isWinLegacy(): boolean {
   )
 }
 
-/** Sticky butuh VT DECSTBM + baris cukup (3 dasar + ≥9 area kerja). */
+/** Sticky butuh VT DECSTBM + baris cukup (2 dasar + ≥9 area kerja). */
 function capable(rows: number): boolean {
   if (isWinLegacy()) return false
-  if (rows < 12) return false
+  if (rows < 10) return false
   return true
 }
 
-/** Posisi 1-indexed dari 3 baris dasar (blank, rule, status). */
-const FOOTER_ROWS = 3
+/** Posisi 1-indexed dari 2 baris dasar (blank + status, tanpa garis). */
+const FOOTER_ROWS = 2
 
 export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
   // Pipa/redirect: nol byte — kontrak deterministik machine output.
@@ -133,19 +133,15 @@ export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
     }
   }
 
-  // Lukis 3 baris dasar TANPA menggeser kursor pemanggil (DECSC/DECRC).
+  // Lukis 2 baris dasar TANPA menggeser kursor pemanggil (DECSC/DECRC).
   // Penting untuk refresh() saat prompt aktif: repaint footer tidak boleh
   // memindahkan posisi ketik, kalau tidak render berikutnya menimpa footer.
   const paintFooter = (r: number): void => {
     const cols = process.stdout.columns || 80
-    const [rule, status] = renderFooter({ ...opts.status(), sparkFrame: frame }, cols)
+    const [status] = renderFooter({ ...opts.status(), sparkFrame: frame }, cols)
     process.stdout.write(SAVE_CURSOR)
-    // Blank di baris r-2, rule di r-1, status di r.
-    // CATATAN: JANGAN menulis `cols` spasi di sini — menulis tepat selebar
-    // terminal dari kolom 1 membungkus ke baris berikutnya dan bisa memicu
-    // scroll. `\x1b[2K` sudah mengosongkan seluruh baris.
-    process.stdout.write(`\x1b[${r - 2};1H${CLEAR}`)
-    process.stdout.write(`\x1b[${r - 1};1H${CLEAR}${rule}`)
+    // Blank di r-1, status di r (tanpa garis — clean).
+    process.stdout.write(`\x1b[${r - 1};1H${CLEAR}`)
     process.stdout.write(`\x1b[${r};1H${CLEAR}${status}`)
     process.stdout.write(RESTORE_CURSOR)
   }
@@ -155,8 +151,8 @@ export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
     // DECSTBM memindahkan kursor ke home di sebagian emulasi VT — simpan/
     // kembalikan agar set region tidak melompatkan kursor ketik.
     process.stdout.write(SAVE_CURSOR)
-    // Region atas = 1..r-3 (footer + blank menempati r-2..r).
-    process.stdout.write(`\x1b[1;${r - 3}r`)
+    // Region atas = 1..r-2 (footer blank+status menempati r-1..r).
+    process.stdout.write(`\x1b[1;${r - 2}r`)
     process.stdout.write(RESTORE_CURSOR)
     regionOn = true
   }
@@ -165,7 +161,7 @@ export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
     try {
       if (!regionOn || detached) return
       const r = rows()
-      if (r < 12) {
+      if (r < 10) {
         // Terlalu pendek: lepas region agar tidak aneh; present berikutnya
         // akan me-reset ulang bila sudah muat. DECSTBM reset juga bisa
         // memindahkan kursor → save/restore seperti enableRegion.
@@ -190,7 +186,7 @@ export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
       if (detached) return
       try {
         const r = rows()
-        if (r < 12 || !regionOn) return
+        if (r < 10 || !regionOn) return
         paintFooter(r)
       } catch {}
     },
@@ -204,7 +200,7 @@ export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
             try {
               frame += 1
               const r = rows()
-              if (regionOn && r >= 12) paintFooter(r)
+              if (regionOn && r >= 10) paintFooter(r)
             } catch {
               // Runtime rewel: matikan animasi, jangan pernah gagalkan turn.
               stopPulse()
@@ -214,7 +210,7 @@ export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
           stopPulse()
           frame = 0
           const r = rows()
-          if (regionOn && r >= 12) paintFooter(r) // kembali redup seketika
+          if (regionOn && r >= 10) paintFooter(r) // kembali redup seketika
         }
       } catch {}
     },
@@ -222,7 +218,7 @@ export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
       if (detached) return
       try {
         const r = rows()
-        if (r < 12) return // terminal terlalu pendek — jangan sentuh apa pun
+        if (r < 10) return // terminal terlalu pendek — jangan sentuh apa pun
         if (!regionOn) {
           enableRegion(r)
           if (!resizeBound) {
@@ -235,8 +231,8 @@ export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
         // Satu frame sinkron agar repaint footer tidak robek.
         process.stdout.write(SYNC_START)
         paintFooter(r)
-        // Kursor ke baris input (tepat di atas blank footer).
-        process.stdout.write(`\x1b[${r - 3};1H`)
+        // Kursor ke baris input (tepat di atas blank footer — kini 2 baris total).
+        process.stdout.write(`\x1b[${r - 2};1H`)
         process.stdout.write(SYNC_END)
       } catch {}
     },
@@ -260,8 +256,8 @@ export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
         // memberi konteks tanpa region.
         if (mode === "sticky") {
           const cols = process.stdout.columns || 80
-          const [rule, status] = renderFooter(opts.status(), cols)
-          process.stdout.write(`\n\n${rule}\n${status}\n`)
+          const [status] = renderFooter(opts.status(), cols)
+          process.stdout.write(`\n${status}\n`)
         }
       } catch {}
     },
@@ -283,8 +279,8 @@ function makePrint(opts: FooterChromeOptions): FooterChrome {
       try {
         if (!process.stdout.isTTY) return
         const cols = process.stdout.columns || 80
-        const [rule, status] = renderFooter(opts.status(), cols)
-        process.stdout.write(`\n${rule}\n${status}\n`)
+        const [status] = renderFooter(opts.status(), cols)
+        process.stdout.write(`\n${status}\n`)
       } catch {}
     },
     detach() {},

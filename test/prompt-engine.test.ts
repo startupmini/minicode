@@ -79,9 +79,12 @@ test("tab picks selected item and closes menu", () => {
   s = applyKey(s, { type: "char", ch: "/" }, hints).state
   s = applyKey(s, { type: "char", ch: "m" }, hints).state
   expect(s.menuOpen).toBe(true)
+  // Tab kini HANYA putar mode (cycle `auto→ask→plan→allowlist`) via `onKey`
+  // di REPL, bukan melengkapi. Completion via ↑/↓ + Enter. Tanpa ini Tab
+  // saat mengetik tidak bisa ganti mode (keluhan nyata).
   const r = applyKey(s, { type: "tab" }, hints)
-  expect(r.state.line).toBe(cmds[4]!) // /models first match for "/m"
-  expect(r.state.menuOpen).toBe(false)
+  expect(r.state.line).toBe("/m")
+  expect(r.state.menuOpen).toBe(true)
 })
 
 test("enter picks selected item, submits", () => {
@@ -366,9 +369,10 @@ test("kursor: tab melengkapi lalu memindah kursor ke ujung", () => {
   let s = createState()
   s = applyKey(s, { type: "char", ch: "/" }, hints).state
   s = applyKey(s, { type: "char", ch: "m" }, hints).state
+  // Tab kini putar mode via onKey, bukan melengkapi di engine.
   const tabbed = applyKey(s, { type: "tab" }, hints)
-  expect(tabbed.state.line).toBe("/models")
-  expect(tabbed.state.cursor).toBe("/models".length)
+  expect(tabbed.state.line).toBe("/m")
+  expect(tabbed.state.cursor).toBe("/m".length)
 })
 
 test("tab menghormati seleksi, bukan selalu item pertama", () => {
@@ -377,8 +381,9 @@ test("tab menghormati seleksi, bukan selalu item pertama", () => {
   s = applyKey(s, { type: "char", ch: "m" }, hints).state
   s = applyKey(s, { type: "down" }, hints).state // sel=0 -> /models
   s = applyKey(s, { type: "down" }, hints).state // sel=1 -> /model
+  // Tab kini putar mode, bukan melengkapi — baris tetap "/m".
   const r = applyKey(s, { type: "tab" }, hints)
-  expect(r.state.line).toBe("/model")
+  expect(r.state.line).toBe("/m")
 })
 
 test("decodeKey: home/end/delete dalam bentuk CSI dan VT", () => {
@@ -495,8 +500,10 @@ test("byte kontrol tidak sampai ke baris input", () => {
 // lebih banyak baris daripada yang dihitung — frame melebihi tinggi terminal.
 test("paste multi-baris: newline jadi spasi, bukan masuk apa adanya", () => {
   const s = applyKey(createState(), { type: "char", ch: "baris1\nbaris2\r\nbaris3" }, hints).state
-  expect(s.line).toBe("baris1 baris2 baris3")
-  expect(s.line).not.toContain("\n")
+  // Newline dipertahankan sebagai baris baru agar copas code utuh (keluhan
+  // nyata: paste code dengan enter cuma baris pertama). Renderer multiline
+  // sudah memperhitungkan tinggi terminal + footer.
+  expect(s.line).toBe("baris1\nbaris2\nbaris3")
   expect(s.cursor).toBe(s.line.length)
 })
 
@@ -516,7 +523,7 @@ test("paste multi-baris menyisip di posisi kursor", () => {
   let s = typeAll("ab")
   s = applyKey(s, { type: "left" }, hints).state
   s = applyKey(s, { type: "char", ch: "X\nY" }, hints).state
-  expect(s.line).toBe("aX Yb")
+  expect(s.line).toBe("aX\nYb")
 })
 
 test("buildRenderSpec: cursorCol memperhitungkan lebar prompt", () => {

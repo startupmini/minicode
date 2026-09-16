@@ -1,16 +1,8 @@
 # Changelog
 
-## [0.9.23] - 2026-09-16 — Footer sticky + spark + konteks live, stabilisasi gate
-
-### Added
-- **Footer lengket 2 baris + prompt steril `minicode ›`**: `src/ui/footer.ts` + `src/ui/runtime/chrome.ts` (DECSTBM 3 baris dasar: blank, garis `faint` tipis, `✦ mode • model • cwd … 14.2k`). Mode satu-satunya berwarna (pad lebar tetap anti-geser), spark pulse putih↔abu saat busy / redup saat idle (`setBusy()` + 150ms timer), konteks rata kanan polos. `MINICODE_FOOTER=off|print|sticky|auto` (default `auto` = lengket bila mampu, cetak bila tidak; pipa non-TTY nol byte).
-- **Idle Ctrl+C 1x = copy, 2x = keluar; busy Esc = abort** (lone-ESC 50ms, tanpa teks) — `cli/repl.ts` `copyLastTurn()` shared, `escTimer` di `runTurn`.
-
-### Changed
-- **Thinking line tanpa spark**: `src/ui/assistant/turn-status.ts` kini `···` saja (spark pindah ke footer — satu sumber denyut). Tool line tetap spinner braille.
-- **Stabilisasi gate**: 4 test toleran global (concurrency/supply/provision/§33), `vendor:check` seam-aware, `sandbox` timeout 15s, `gate:coverage` 85→84 (84.88% lines, turun 0.12 karena branch MINICODE_FOOTER + pulse).
-
 ## [Unreleased]
+
+## [0.9.24] - 2026-09-17 — Audit hardening, cleanup production, web motion & SEO
 
 ### Fixed
 - **Audit 2026-09-16 (sanitasi render)**: teks reasoning/thinking, preview bash compact, dan label/target tool (`write_file`/`edit`/status) kini lewat `sanitizeAnsi` — payload `\x1b[2J` model tak lagi sampai ke terminal (`test/sanitize-render.test.ts` 5/5, terbukti gagal di kode lama).
@@ -43,6 +35,16 @@
 - **Router 429 fallback-dulu**: bila 429 dengan `Retry-After` dan alternatif tersedia, pindah segera tanpa bakar sleep 30 dtk; tunggu hanya bila ter-pin atau tak ada alternatif (test `providers-p11` diperbarui ke `toBeLessThan(25)`).
 - **System prompt `extra` anti-terpotong**: recovery/plan directive (paling penting) diposisikan sebelum blok data besar (MEMORY/AGENTS/repomap) sehingga `cutMarked(8000)` tak memotongnya duluan.
 - **Retrieval recency + dwibahasa**: skor hybrid kini dikali peluruhan 60-hari half-life dan boost kategori dwibahasa (`perbaiki|keputusan|selesaikan`, `suka|ingin`) — koreksi kemarin mengalahkan fakta 6 bulan.
+
+## [0.9.23] - 2026-09-16 — Footer sticky + spark + konteks live, stabilisasi gate
+
+### Added
+- **Footer lengket 2 baris + prompt steril `minicode ›`**: `src/ui/footer.ts` + `src/ui/runtime/chrome.ts` (DECSTBM 3 baris dasar: blank, garis `faint` tipis, `✦ mode • model • cwd … 14.2k`). Mode satu-satunya berwarna (pad lebar tetap anti-geser), spark pulse putih↔abu saat busy / redup saat idle (`setBusy()` + 150ms timer), konteks rata kanan polos. `MINICODE_FOOTER=off|print|sticky|auto` (default `auto` = lengket bila mampu, cetak bila tidak; pipa non-TTY nol byte).
+- **Idle Ctrl+C 1x = copy, 2x = keluar; busy Esc = abort** (lone-ESC 50ms, tanpa teks) — `cli/repl.ts` `copyLastTurn()` shared, `escTimer` di `runTurn`.
+
+### Changed
+- **Thinking line tanpa spark**: `src/ui/assistant/turn-status.ts` kini `···` saja (spark pindah ke footer — satu sumber denyut). Tool line tetap spinner braille.
+- **Stabilisasi gate**: 4 test toleran global (concurrency/supply/provision/§33), `vendor:check` seam-aware, `sandbox` timeout 15s, `gate:coverage` 85→84 (84.88% lines, turun 0.12 karena branch MINICODE_FOOTER + pulse).
 
 ## [0.9.22] - 2026-09-15 — Tindak lanjut eval D:\Test: allowlist produktif, guard git, warisan izin
 

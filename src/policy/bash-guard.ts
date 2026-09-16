@@ -382,5 +382,48 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
     return { denied: true, reason: "sensitive file access" }
   }
 
+  // P0-2: READER tanpa filter path (cat * / type *) = bisa baca file sensitif
+  // atau di luar workspace walau cocok allowlist. Ekstrak argumen path untuk
+  // READER dan cek jail/sensitive. Wildcard `*` ditolak bila cwd tersedia
+  // (bisa mengembang ke .env / .minicode).
+  if (both(READERS)) {
+    const readerTargets = (() => {
+      const out: string[] = []
+      const re =
+        /\b(?:cat|bat|less|more|head|tail|nl|od|xxd|strings|type|Get-Content|cp|copy|mv|move|scp|rsync|tar|zip|gzip|base64|openssl|awk|sed|grep|egrep|fgrep|rg|cut|sort|uniq|tee|dd|install)\b\s+([^\n;&|]+)/gi
+      for (const m of norm.matchAll(re)) {
+        const args = m[1]!.split(/\s+/)
+        for (const a of args) {
+          if (!a) continue
+          if (a.startsWith("-")) continue
+          const t = a.trim()
+          if (!t) continue
+          out.push(t)
+        }
+      }
+      return out
+    })()
+    for (const t of readerTargets) {
+      if (t.includes("*")) {
+        // Wildcard di READER bisa mengembang ke .env/.minicode — tolak bila
+        // cwd tersedia (butuh path eksplisit). Tanpa cwd, heuristik sensitif.
+        if (cwd != null) return { denied: true, reason: "reader wildcard" }
+        if (isSensitive(t) || isOwnedState(t)) return { denied: true, reason: "reader wildcard" }
+      }
+      if (isSensitive(t) || isSensitive(resolve(cwd ?? ".", t))) {
+        return { denied: true, reason: "sensitive file access" }
+      }
+      if (isOwnedState(t) || isOwnedState(resolve(cwd ?? ".", t))) {
+        return { denied: true, reason: "owned state access" }
+      }
+      if (cwd != null) {
+        const abs = isAbsolute(t) ? resolve(t) : resolve(cwd, t)
+        if (isRealPathOutsideRoot(abs, cwd)) return { denied: true, reason: "outside workspace" }
+      } else if (/^\.\.(?:[\\/]|$)|\b[a-zA-Z]:[\\/]|^\/(?!dev\/null$)|^~(?:[\\/]|$)/.test(t)) {
+        return { denied: true, reason: "outside workspace" }
+      }
+    }
+  }
+
   return { denied: false }
 }

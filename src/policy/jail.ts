@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs"
+import { lstatSync, realpathSync } from "node:fs"
 import { isAbsolute, relative, resolve, sep } from "node:path"
 
 // Satu sumber untuk aturan sandbox path — dipakai permission layer + setiap tool
@@ -74,6 +74,8 @@ export function isPathOutsideRoot(p: string, root: string): boolean {
 export function isRealPathOutsideRoot(p: string, root: string): boolean {
   if (!p) return false
   const abs = isAbsolute(p) ? resolve(p) : resolve(root, p)
+  // Symlink/hardlink di Windows lolos realpath pre-check TOCTOU — tolak langsung.
+  if (isDangerousLink(abs)) return true
   try {
     const real = realpathSync(abs)
     const realRoot = realpathSync(resolve(root))
@@ -92,4 +94,28 @@ export function isCwdOutsideRoot(cwd: string, root: string): boolean {
     // if realpath fails (ENOENT), fallback to logical check (treated as outside to be safe if non-existent)
     return isPathOutsideRoot(cwd, root)
   }
+}
+
+// P0-3: Windows tidak punya O_NOFOLLOW — TOCTOU symlink di Windows hanya
+// bisa ditahan via lstat pre-check. Hardlink (nlink>1) juga berbahaya karena
+// realpath tak melihatnya (hardlink = nama lain file yang sama).
+export function isSymlink(p: string): boolean {
+  try {
+    return lstatSync(p).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
+export function isHardlink(p: string): boolean {
+  try {
+    const s = lstatSync(p) as unknown as { nlink?: number }
+    return (s.nlink ?? 1) > 1
+  } catch {
+    return false
+  }
+}
+
+export function isDangerousLink(p: string): boolean {
+  return isSymlink(p) || isHardlink(p)
 }

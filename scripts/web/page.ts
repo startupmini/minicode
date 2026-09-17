@@ -41,11 +41,15 @@ export function renderPage(webDir: string, opts: PageOpts): string {
  * Satu pemilik konvensi tautan antar-dokumen (2026-09-17): `nama.md` yang
  * ditulis di sumber dipetakan ke rute situs — slug `readme` = index docs,
  * `PLAN.md` (disebut docs/README.md & PLAN.md) = halaman changelog (file
- * repo tak ikut di-deploy). Dipakai dua mapper: `mdLinksToHtml` (pipeline
- * HTML) dan `mdLinksAbsolute` (llms-full.txt, markdown mentah).
+ * repo tak ikut di-deploy) — bentuk `../PLAN.md` dari docs/changelog.md
+ * masuk juga. Dipakai dua mapper: `mdLinksToHtml` (pipeline HTML) dan
+ * `mdLinksAbsolute` (llms-full.txt, markdown mentah).
  */
 export function resolveDocLink(file: string, base: string): string {
-  const slug = file.replace(/\.md$/, "").toLowerCase()
+  const slug = file
+    .replace(/\.md$/, "")
+    .replace(/^\.\.\//, "")
+    .toLowerCase()
   if (slug === "plan") return `${base}/docs/changelog.html`
   if (slug === "readme") return `${base}/docs/`
   return `${base}/docs/${slug}.html`
@@ -53,16 +57,19 @@ export function resolveDocLink(file: string, base: string): string {
 
 /** Tautan antar-docs di pipeline HTML (hasil `mdToHtml`): href="x.md". */
 export function mdLinksToHtml(html: string, base = ""): string {
-  return html.replace(/href="([a-z0-9-]+\.md)(#[^"]*)?"/g, (_, f: string, h: string) => {
+  return html.replace(/href="([a-z0-9-]+|\.\.\/PLAN)\.md(#[^"]*)?"/g, (_, f: string, h: string) => {
     return `href="${resolveDocLink(f, base)}${h ?? ""}"`
   })
 }
 
 /** Sama untuk markdown mentah (llms-full.txt): ](x.md) → ](URL absolut). */
 export function mdLinksAbsolute(body: string, base: string): string {
-  return body.replace(/\]\(([a-z0-9-]+\.md)(#[^)\s]*)?\)/g, (_, f: string, h: string) => {
-    return `](${resolveDocLink(f, base)}${h ?? ""})`
-  })
+  return body.replace(
+    /\]\(([a-z0-9-]+|\.\.\/PLAN)\.md(#[^)\s]*)?\)/g,
+    (_, f: string, h: string) => {
+      return `](${resolveDocLink(f, base)}${h ?? ""})`
+    },
+  )
 }
 
 export function softwareJsonld(version: string): string {

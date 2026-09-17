@@ -752,6 +752,8 @@ describe("web audit 2026-09-16", () => {
 
     // Build asli: PLAN.md menyisipkan marker guard, halaman dirender satu
     // kali (file md stub TIDAK ikut), dan sidebar menandai halaman aktif.
+    // CI checkout segar tak menjalankan web:build — artefak dijaga web-check.
+    if (!existsSync(join(repoRoot, "site"))) return
     const html = readFileSync(join(repoRoot, "site", "docs", "changelog.html"), "utf8")
     expect(html).toContain("GUARD-CHLOG-SATU")
     // Anti-dobel-render: kalimat khas stub docs/changelog.md TIDAK boleh ikut.
@@ -761,6 +763,9 @@ describe("web audit 2026-09-16", () => {
   })
 
   test("SEO: llms.txt digenerate + breadcrumb JSON-LD + judul tak dobel", () => {
+    // Semua asersi membaca artefak build — CI checkout segar melewatkannya
+    // (web:build jalan di job web-check); lokal selalu ada setelah web:build.
+    if (!existsSync(join(repoRoot, "site"))) return
     // llms.txt (llmstxt.org) = kanal discovery AI-crawler; digenerate build
     // dari SUMMARY agar tak stale (statis lama = 404 live sebelum fix).
     const llms = readFileSync(join(repoRoot, "site", "llms.txt"), "utf8")
@@ -787,7 +792,9 @@ describe("web audit 2026-09-16", () => {
     expect(bc.itemListElement.map((e) => e.position)).toEqual([1, 2, 3])
     expect(bc.itemListElement[0]).toMatchObject({ name: "Beranda", item: "https://x.example/" })
     expect(bc.itemListElement[2]!.item).toBeUndefined()
-    // End-to-end: artefak docs memakai helper dengan struktur yang benar.
+    // End-to-end: artefak docs memakai helper dengan struktur yang benar
+    // (dilewati bila site/ belum ada — CI checkout segar).
+    if (!existsSync(join(repoRoot, "site"))) return
     const tools = readFileSync(join(repoRoot, "site", "docs", "tools.html"), "utf8")
     const ld = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(tools)![1]!
     const graph = (

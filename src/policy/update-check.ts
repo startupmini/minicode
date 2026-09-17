@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-const PKG_NAME = "minicode"
+const PKG_NAME = "minicode-ai"
 const CACHE_FILE = join(homedir(), ".minicode", "update-check.json")
 const TTL_MS = 24 * 60 * 60 * 1000
 const FETCH_TIMEOUT_MS = 2000

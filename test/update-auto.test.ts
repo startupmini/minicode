@@ -89,7 +89,7 @@ describe("installUpdate", () => {
       return { status: 0 }
     })
     expect(ok).toBe(true)
-    expect(seen).toEqual([["npm", "install", "-g", "minicode@latest"]])
+    expect(seen).toEqual([["npm", "install", "-g", "minicode-ai@latest"]])
     expect(installUpdate(() => ({ status: 1 }))).toBe(false)
     expect(
       installUpdate(() => {

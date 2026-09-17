@@ -25,7 +25,7 @@ Cek: `bun --version` harus keluar `1.4.x`. Kalau masih `command not found`, tutu
 **Langkah 2 — Pasang Minicode:**
 
 ```bash
-npm install -g minicode
+npm install -g minicode-ai
 # bin: minicode
 minicode --version  # harus 0.9.x
 ```
@@ -63,7 +63,7 @@ Docker **tidak** dipakai otomatis meski tersedia — menarik image tanpa diminta
 ## Update & uninstall
 
 Membuka `minicode` interaktif (TTY) selalu cek versi terbaru ke registry:
-bila ada, paket di-install (`npm install -g minicode@latest`) lalu
+bila ada, paket di-install (`npm install -g minicode-ai@latest`) lalu
 minicode restart sendiri ke versi baru — tanpa update manual. Berlaku hanya
 untuk salinan ter-install (checkout source tidak disentuh) dan tidak pernah
 memblokir: install gagal/offline = lanjut versi lama + pesan manual.
@@ -78,7 +78,7 @@ One-shot, `exec`, pipe, dan CI hanya menampilkan notifikasi (tanpa install).
 > memeriksa rilis di GitHub.
 
 ```bash
-npm update -g minicode   # manual, bila auto-update dimatikan
+npm update -g minicode-ai   # manual, bila auto-update dimatikan
 minicode sync          # refresh model baru dari semua provider
 minicode pricing sync  # refresh cache harga (3.162 model, ~213 KB)
 ```
@@ -87,7 +87,7 @@ Opt-out: `NO_UPDATE_CHECK=1` atau `MINICODE_AUTO_UPDATE=0`.
 
 Clone contributor: `cd minicode && git pull && bun install`.
 
-Uninstall = `npm uninstall -g minicode` (atau hapus clone + `bun unlink` bila memakai link). Config global tetap di `~/.minicode/` sampai kamu hapus manual; config lokal di `.minicode/` per repo. Uninstall tidak pernah menghapus state, sesi, memori, atau file proyekmu.
+Uninstall = `npm uninstall -g minicode-ai` (atau hapus clone + `bun unlink` bila memakai link). Config global tetap di `~/.minicode/` sampai kamu hapus manual; config lokal di `.minicode/` per repo. Uninstall tidak pernah menghapus state, sesi, memori, atau file proyekmu.
 
 ## Lokasi data
 

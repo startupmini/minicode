@@ -43,6 +43,9 @@ export interface SubAgentSpec {
   // parent allowlist melahirkan anak `auto` yang shell-nya justru lebih longgar
   // — inkonsistensi, bukan RCE: auto = default sesi utama juga). plan/readonly
   // tetap dipaksa explore di bawah (mode alat), bukan di sini (mode izin).
+  // F-07: parent `ask` JUGA dipaksa explore di execute() — anak `auto` dari
+  // parent ask adalah eskalasi (satu approval delegasi menjadi N aksi
+  // tak-disetujui), jadi pembatasan ditaruh di mode alat, bukan izin.
   permissionMode: "auto" | "allowlist"
   maxSteps: number
   timeoutMs: number
@@ -162,8 +165,13 @@ export const delegateTaskTool: Tool = {
     // Parent plan/readonly memaksa sub-agen read-only agar tidak jadi celah
     // izin (paksa explore). Mode live diambil dari ToolContext.permissionMode
     // yang diteruskan kernel per turn, bukan dari teks prompt.
+    // F-07: parent `ask` ikut dipaksa explore. Tanpa ini delegasi dari sesi
+    // ask melahirkan anak `auto` yang menulis file + shell TANPA prompt —
+    // eskalasi terhadap niat operator (satu approval delegate_task menjadi
+    // N aksi tak-disetujui). Anak ask-parent tetap berguna untuk recon
+    // (explore), sementara tulis/eksekusi kembali ke parent yang di-approve.
     const parentMode = (ctx as unknown as { permissionMode?: string }).permissionMode
-    const forcedExplore = parentMode === "plan" || parentMode === "readonly"
+    const forcedExplore = parentMode === "plan" || parentMode === "readonly" || parentMode === "ask"
     const m = forcedExplore ? "explore" : ((mode as string) ?? "explore")
     const requested = Number(maxSteps)
     const cap =
@@ -192,6 +200,24 @@ export const delegateTaskTool: Tool = {
     )
     const subTools =
       m === "explore" ? base.filter((t) => EXPLORE_TOOL_NAMES.includes(t.name)) : base
+    // F-07: anak tidak punya bash_output/bash_kill (diamputasi di atas),
+    // sehingga background:true di anak = proses yatim di tabel job global:
+    // tak bisa dibaca, tak bisa di-kill, menghabiskan slot parent. Tolak
+    // eksplisit di sini (tool layer tahu ia membangun sesi anak; kernel
+    // tak perlu tahu konsep parent/anak).
+    const subToolsGuarded: Tool[] = subTools.map((t) => {
+      if (t.name !== "bash") return t
+      return {
+        ...t,
+        execute: async (args, c) => {
+          if ((args as { background?: unknown })?.background === true)
+            throw new Error(
+              "background:true is not available to sub-agents (child scope has no bash_output/bash_kill — background jobs would be uncontrollable orphans). Run foreground instead.",
+            )
+          return t.execute(args, c)
+        },
+      }
+    })
     // Intent parent-side eksplisit (wiring generik sengaja melewati
     // delegate_task — childSessionId hanya diketahui di sini). Kebenaran efek
     // anak = jurnal anak, BUKAN finalText di bawah.
@@ -224,7 +250,7 @@ export const delegateTaskTool: Tool = {
 
         const session = await factory({
           provider,
-          tools: subTools,
+          tools: subToolsGuarded,
           cwd: parentCwd,
           // Parent allowlist → anak allowlist (lihat komentar tipe di atas).
           permissionMode: parentMode === "allowlist" ? "allowlist" : "auto",

@@ -5,7 +5,7 @@ import type { RecoveryAction } from "./errors.ts";
 import type { ExecutorDeps } from "./executor.ts";
 import type { StreamRequest, FinishReason } from "./provider.ts";
 import { snapshotMessages, snapshotState, snapshotStep, snapshotToolCall, snapshotToolResult, snapshotToolSchemas } from "./snapshot.ts";
-import { estimateMessages, estimateSystem, estimateTools } from "./tokens.ts";
+import { estimateSessionContext } from "./tokens.ts";
 import type { ToolSchema } from "./tool.ts";
 import type { ToolCall, ToolResult } from "./types.ts";
 import type { SessionInternal, Step, TurnResult } from "./session.ts";
@@ -40,7 +40,15 @@ export async function executeTurn(
   const steps: Step[] = [];
   let stepIndex = 0;
   let finalText: string | undefined;
-  let compacted = false;
+  // Kontrak kompaksi (Phase 6): DUA flag terpisah — budget compaction dan
+  // recovery compaction punya semantics berbeda. Flag tunggal dulu mengaburkan
+  // keduanya: kompaksi budget membakar satu-satunya retry recovery (padahal
+  // recovery belum pernah dicoba), dan sebaliknya. Recovery flag SELALU diset
+  // (anti loop abadi: force_compact_and_retry tidak dihitung maxProviderRetries);
+  // budget flag diset saat kompaksi budget dicoba (kompaksi per-turn, anti
+  // berulang tiap step O(n)).
+  let compactedForBudget = false;
+  let compactedForRecovery = false;
 
   while (true) {
     if (signal.aborted) throw abortError(signal);
@@ -53,16 +61,24 @@ export async function executeTurn(
       usedTokens: contextTokens(s),
       limitTokens: s.contextWindowTokens,
     });
-    if (s.budget.shouldCompact(pressure)) {
+    if (s.budget.shouldCompact(pressure) && !compactedForBudget) {
+      const before = s.store.messages.length;
       await compactStore(s, signal);
-      compacted = true;
-      s.events.emit({ type: "context:compacted", reason: `pressure:${pressure}` });
+      compactedForBudget = true;
+      // reason membedakan pemicu + apakah kompaksi benar-benar mengurangi
+      // (no-op = tidak ada yang bisa dibuang dari messages — operator harus
+      // tahu bedanya dari fixed overhead, bukan dari kompaksi sia-sia).
+      const reduced = s.store.messages.length < before;
+      s.events.emit({
+        type: "context:compacted",
+        reason: reduced ? `budget:${pressure}` : `budget:${pressure}:no-op`,
+      });
       pressure = s.budget.evaluate({
         usedTokens: contextTokens(s),
         limitTokens: s.contextWindowTokens,
       });
     }
-    if (pressure === "critical" && compacted) {
+    if (pressure === "critical" && compactedForBudget) {
       throw new AgentError("budget_exceeded", "context window exceeded after compaction");
     }
 
@@ -122,7 +138,10 @@ export async function executeTurn(
         }
         if (completed === "length") {
           errorMessage = "provider output reached length limit";
-          action = s.recovery.onLength(compacted);
+          // Kontrak (Phase 6): onLength membaca flag RECOVERY — bukan flag
+          // budget. Dulu flag tunggal membuat kompaksi budget membakar
+          // retry recovery ini.
+          action = s.recovery.onLength(compactedForRecovery);
         } else if (completed === "error") {
           action = { type: "throw" };
           errorMessage = "provider finished with error reason";
@@ -146,9 +165,12 @@ export async function executeTurn(
         case "throw":
           throw new AgentError("provider", errorMessage ?? "provider error", { cause: action });
         case "force_compact_and_retry": {
-          if (compacted) throw new AgentError("budget_exceeded", errorMessage ?? "context too large", { cause: action });
+          if (compactedForRecovery)
+            throw new AgentError("budget_exceeded", errorMessage ?? "context too large", { cause: action });
           await compactStore(s, signal);
-          compacted = true;
+          // Recovery flag SELALU diset (no-op pun): force_compact_and_retry
+          // tidak dihitung maxProviderRetries — no-op berulang = loop abadi.
+          compactedForRecovery = true;
           s.events.emit({ type: "context:compacted", reason: "recovery" });
           break;
         }
@@ -298,11 +320,9 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 function contextTokens(s: SessionInternal): number {
-  return (
-    estimateMessages(s.store.messages, s.estimator) +
-    estimateSystem(s.system, s.estimator) +
-    estimateTools(s.registry.list(), s.estimator)
-  );
+  // Kontrak (Phase 6): single source di tokens.ts `estimateSessionContext` —
+  // dipakai loop DAN Session getter sehingga tidak ada estimator duplikat.
+  return estimateSessionContext(s.store, s.system, s.registry.list(), s.estimator);
 }
 
 // The single compaction seam. Prefers the strategy's optional async method

@@ -2,7 +2,12 @@ import { spawn } from "node:child_process"
 import { resolve } from "node:path"
 import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
-import { GIT_NO_DIFF_DRIVERS, GIT_SAFE_BASE, gitFilterNeutralizers } from "../lib/git-hardening.ts"
+import {
+  discoverFilterDrivers,
+  GIT_NO_DIFF_DRIVERS,
+  GIT_SAFE_BASE,
+  gitFilterNeutralizers,
+} from "../lib/git-hardening.ts"
 import { resolveTrustedExecutable } from "../lib/trusted-exec.ts"
 import { isCwdOutsideRoot, isPathOutsideRoot } from "../policy/jail.ts"
 import { sanitizeSpawnEnv, scrubSecrets } from "../policy/scrub.ts"
@@ -27,15 +32,31 @@ function runGit(args: string[], cwd: string | undefined, signal: AbortSignal): P
       // sebagai flake, bukan bug nyata.
       signal: AbortSignal.any([signal, AbortSignal.timeout(LIMITS.GIT_TIMEOUT_MS)]),
     })
+    // F-15: cap SAAT streaming (bukan slice di akhir): `git diff`/`git log`
+    // di repo raksasa bisa ratusan MB — buffer tak terbatas = OOM sebelum
+    // truncate kernel sempat jalan. Satu-satunya tool tanpa cap sebelumnya.
+    const cap = LIMITS.GIT_OUTPUT_MAX_CHARS
     let out = "",
-      err = ""
-    p.stdout.on("data", (d) => (out += d))
-    p.stderr.on("data", (d) => (err += d))
+      err = "",
+      truncated = false
+    const push = (cur: string, d: Buffer): string => {
+      if (cur.length >= cap) {
+        truncated = true
+        return cur
+      }
+      const room = cap - cur.length
+      const s = d.toString()
+      if (s.length > room) truncated = true
+      return cur + s.slice(0, Math.max(0, room))
+    }
+    p.stdout.on("data", (d) => (out = push(out, d)))
+    p.stderr.on("data", (d) => (err = push(err, d)))
     p.on("error", reject)
     p.on("close", (code) => {
       const text = scrubSecrets((out + (err ? `\n${err}` : "")).trim())
-      if (code !== 0 && !text) reject(new Error(`git ${args.join(" ")} exit ${code}`))
-      else resolve(text || `(exit ${code})`)
+      const marked = truncated ? `${text}\n… [git output truncated]` : text
+      if (code !== 0 && !marked) reject(new Error(`git ${args.join(" ")} exit ${code}`))
+      else resolve(marked || `(exit ${code})`)
     })
     signal.addEventListener("abort", () => p.kill("SIGTERM"), { once: true })
   })
@@ -227,6 +248,21 @@ export const gitCommitTool: Tool = {
       // `--` memisahkan path dari opsi: nama file bernama `-f` tak jadi flag.
       await runGit(["add", "--", ...files], resolvedCwd, ctx.signal)
     }
+    // F-04: clean/smudge TIDAK dinetralkan di add/commit — semantik clean
+    // milik user (LFS), lihat git-hardening.ts. Sebagai gantinya, staging yang
+    // melewati filter repo yang DITEMUKAN dilaporkan eksplisit di hasil (bukan
+    // diam-diam): approval gate permission + peringatan ini adalah kontrolnya.
+    // Berlaku untuk paths MAUPUN all:true (`commit -a` juga menjalankan clean).
+    let filterWarning = ""
+    try {
+      const drivers = await discoverFilterDrivers(resolvedCwd)
+      if (drivers.length > 0) {
+        const names = drivers.map((d) => `filter.${d.name}`).join(", ")
+        filterWarning =
+          `\n\n[warn] repo defines custom git filters (${names}) that ran during staging — ` +
+          `review .gitattributes/.git/config in untrusted repos before committing.`
+      }
+    } catch {}
 
     // `-m` dengan pesan sebagai satu argumen: tak ada shell yang menginterpretasi
     // isinya, jadi backtick/`$()` di pesan commit tidak dieksekusi.
@@ -254,12 +290,12 @@ export const gitCommitTool: Tool = {
           const head = await runGit(["log", "--oneline", "-1"], resolvedCwd, ctx.signal).catch(
             () => "",
           )
-          return `already committed (retry aman — tanpa commit baru):\n${out}${head ? `\n\nHEAD: ${head}` : ""}`
+          return `already committed (retry aman — tanpa commit baru):\n${out}${head ? `\n\nHEAD: ${head}` : ""}${filterWarning}`
         }
       } catch {}
-      return `nothing to commit:\n${out}`
+      return `nothing to commit:\n${out}${filterWarning}`
     }
     const head = await runGit(["log", "--oneline", "-1"], resolvedCwd, ctx.signal).catch(() => "")
-    return `${out}${head ? `\n\nHEAD: ${head}` : ""}`
+    return `${out}${head ? `\n\nHEAD: ${head}` : ""}${filterWarning}`
   },
 }

@@ -20,7 +20,7 @@ import { snapshotState, snapshotTurnResult } from "./snapshot.ts";
 import type { Tool, ToolRegistry } from "./tool.ts";
 import { createToolRegistry } from "./tool.ts";
 import type { TokenEstimator } from "./tokens.ts";
-import { defaultTokenEstimator } from "./tokens.ts";
+import { defaultTokenEstimator, estimateSessionContext } from "./tokens.ts";
 import type { Message, ToolCall, ToolResult } from "./types.ts";
 
 export const DEFAULT_MAX_STEPS = 50;
@@ -119,6 +119,14 @@ export interface Session {
    */
   readonly state: Readonly<SessionState>;
   readonly events: EventBus;
+  /**
+   * Kontrak control-plane (Phase 6): angka konteks SAAT INI dari sumber
+   * kebenaran yang sama dengan pressure kernel (messages + system + tools,
+   * estimator sesi). Satu angka untuk driver/UI/budget — tanpa estimator
+   * duplikat. O(history) per akses (pola state snapshot); setiap akses
+   * menghitung ulang atas committed store.
+   */
+  readonly contextTokens: number;
   run(input: string, opts?: { signal?: AbortSignal; model?: string }): Promise<TurnResult>;
   abort(): void;
 }
@@ -198,6 +206,11 @@ export function createSession(config: SessionConfig): Session {
     },
     get events() {
       return events;
+    },
+    // Kontrak (Phase 6): angka dari sumber kebenaran yang sama dengan loop —
+    // estimateSessionContext (tokens.ts), bukan estimator duplikat.
+    get contextTokens() {
+      return estimateSessionContext(store, config.system, impl.registry.list(), impl.estimator);
     },
     async run(input, opts) {
       if (impl.running) throw new AgentError("busy", "session is already running");

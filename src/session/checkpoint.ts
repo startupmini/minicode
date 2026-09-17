@@ -5,17 +5,14 @@ import { join, relative, resolve } from "node:path"
 import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
 import { GIT_SAFE_BASE } from "../lib/git-hardening.ts"
+import { sanitizeSessionPart } from "../lib/session-id.ts"
 import { isPathOutsideRoot } from "../policy/jail.ts"
 import { appendUndoMarker, loadJournal } from "./journal.ts"
 import { diffTrees, ephemeralTree, restoreTree, snapshotTree } from "./shadow-git.ts"
 
+/** Alias back-compat: satu-satunya sanitizer kini di lib/session-id.ts (F-17). */
 export function sanitizeSessionId(id: string): string {
-  return (
-    id
-      .replace(/[^A-Za-z0-9._-]/g, "-")
-      .replace(/\.\.+/g, "-")
-      .slice(0, 60) || "default"
-  )
+  return sanitizeSessionPart(id)
 }
 
 // In-process lock per manifest path untuk mencegah lost-update checkpoint

@@ -126,7 +126,7 @@ test("delegate: explore = 12 read-only tepat; plan = 30 tanpa denylist", async (
   }
 })
 
-test("delegate: forced explore untuk parent plan/readonly; default explore", async () => {
+test("delegate: forced explore untuk parent plan/readonly/ask; default explore", async () => {
   const restore = providerEnv()
   const dir = tmpRoot()
   const prevTodo = todoSession.id
@@ -142,12 +142,44 @@ test("delegate: forced explore untuk parent plan/readonly; default explore", asy
     expect(out).toContain("sub-agent (explore) done")
     // Parent readonly meminta plan → dipaksa explore.
     await delegateTaskTool.execute({ prompt: "x", mode: "plan" }, ctxFor(dir, "readonly"))
+    // F-07: parent ask meminta plan → dipaksa explore (anak auto dari parent
+    // ask adalah eskalasi: satu approval menjadi N aksi tak-disetujui).
+    const outAsk = (await delegateTaskTool.execute(
+      { prompt: "x", mode: "plan" },
+      ctxFor(dir, "ask"),
+    )) as string
+    expect(outAsk).toContain("sub-agent (explore) done")
     // Tanpa mode → explore.
     await delegateTaskTool.execute({ prompt: "x" }, ctxFor(dir, "auto"))
-    expect(seen).toHaveLength(3)
+    expect(seen).toHaveLength(4)
     for (const s of seen) {
       expect(s.tools.map((t) => t.name).sort()).toEqual([...EXPLORE_TOOL_NAMES].sort())
     }
+  } finally {
+    todoSession.id = prevTodo
+    clearSubAgentSessionFactory()
+    restore()
+    await cleanup(dir)
+  }
+})
+
+test("delegate: bash anak menolak background:true (anti job yatim)", async () => {
+  const restore = providerEnv()
+  const dir = tmpRoot()
+  const prevTodo = todoSession.id
+  todoSession.id = "p-nobg"
+  try {
+    const seen: SubAgentSpec[] = []
+    setSubAgentSessionFactory(fakeFactory(seen))
+    await delegateTaskTool.execute({ prompt: "x", mode: "plan" }, ctxFor(dir, "auto"))
+    const childBash = seen[0]!.tools.find((t) => t.name === "bash")!
+    expect(childBash).toBeTruthy()
+    // Foreground diteruskan ke implementasi asli (di sini akan gagal eksekusi
+    // atau jalan — yang penting BUKAN ditolak guard; pakai cmd tak-valid
+    // agar deterministik tanpa spawn).
+    await expect(childBash.execute({ cmd: "x", background: true }, {} as never)).rejects.toThrow(
+      /not available to sub-agents/,
+    )
   } finally {
     todoSession.id = prevTodo
     clearSubAgentSessionFactory()

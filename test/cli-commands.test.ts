@@ -19,6 +19,10 @@ function dummyCtx(extra: { setModelOverride?: (m: string) => void } = {}) {
     skills: [],
     toolsCount: 20,
     setModelOverride: extra.setModelOverride ?? (() => {}),
+    // Kontrak control-plane (Phase 6): /status membedakan Context vs Usage vs
+    // Budget — dummy menyediakan angka tetap.
+    getContextTokens: () => 1024,
+    budgetState: () => "ok" as const,
   }
 }
 

@@ -1,3 +1,4 @@
+import { AgentError } from "#minicore/core/errors.ts"
 import type { EventBus } from "#minicore/core/index.ts"
 import { findPrice, loadPricingOverlay, type ModelPrice } from "./pricing.ts"
 
@@ -37,11 +38,14 @@ export function costFor(
 ): number | undefined {
   const p: ModelPrice | undefined = findPrice(model)
   if (!p) return undefined
+  // F-06: sanitasi segmen (defense-in-depth di atas toModelPrice): token
+  // negatif/non-finite tak boleh menghasilkan biaya negatif.
+  const clean = (n: number): number => (Number.isFinite(n) && n > 0 ? n : 0)
   const normalInput = cacheIncluded ? Math.max(0, input - cacheRead - cacheWrite) : input
-  const inputCost = (normalInput / 1_000_000) * p.input
-  const readCost = p.cacheRead ? (cacheRead / 1_000_000) * p.cacheRead : 0
-  const writeCost = p.cacheWrite ? (cacheWrite / 1_000_000) * p.cacheWrite : 0
-  const outputCost = (output / 1_000_000) * p.output
+  const inputCost = (clean(normalInput) / 1_000_000) * p.input
+  const readCost = p.cacheRead ? (clean(cacheRead) / 1_000_000) * p.cacheRead : 0
+  const writeCost = p.cacheWrite ? (clean(cacheWrite) / 1_000_000) * p.cacheWrite : 0
+  const outputCost = (clean(output) / 1_000_000) * p.output
   return inputCost + readCost + writeCost + outputCost
 }
 
@@ -54,16 +58,61 @@ const emptyUsage = (): Usage => ({
 })
 
 // Harness-P1: keputusan budget terpusat agar one-shot/REPL/exec sepakat.
-// strict = fail-closed: cost null (model tanpa harga) dianggap over, bukan
-// diabaikan. Non-strict mempertahankan perilaku lama (fail-open).
+// F-06: cost tak dikenal (model tanpa harga) + ADA pemakaian (tokens > 0) =
+// fail-closed ("unknown-strict") secara DEFAULT, bukan hanya di --budget-strict.
+// Perilaku lama (fail-open) membuat --budget diam-diam mati total untuk setiap
+// model baru di luar tabel harga. tokens == 0 (belum belanja apa pun, mis.
+// pre-check prompt baru) tetap "ok" agar prompt pertama tidak ditolak.
+// `strict` dipertahankan sebagai flag eksplisit (back-compat, perilaku sama).
 export function budgetStatus(
   budget: number | undefined,
   cost: number | undefined,
   strict: boolean,
+  tokens = 0,
 ): "ok" | "over" | "unknown-strict" {
   if (budget == null) return "ok"
   if (cost != null) return cost > budget ? "over" : "ok"
+  if (tokens > 0) return "unknown-strict"
   return strict ? "unknown-strict" : "ok"
+}
+
+/**
+ * Investigasi Phase 5 (probe E-3b/E-3c) — kontrak estimasi-vs-aktual untuk
+ * cost tak dikenal, DIPISAH dari budgetStatus agar keputusan ok/over tetap
+ * murni:
+ *
+ * - `tokens > 0` (ada pemakaian tercatat, harga tak dikenal) = **unknown**
+ *   dengan bukti belanja → fail-closed (start ditolak).
+ * - `tokens == 0` + cost unknown = dua kemungkinan tak terbedakan: (a) belum
+ *   belanja apa pun (sah, pre-check prompt baru), atau (b) provider tak
+ *   PERNAH mengirim usage event (telemetri hilang — F-27). strict-mode
+ *   instant-check memperlakukannya over → lockout total setiap prompt
+ *   pertama; itu lockout yang tidak diminta operator. Karena itu start dengan
+ *   tokens==0 SELALU boleh — budget-mati-diam didokumentasikan sebagai gap
+ *   F-27, bukan disembunyikan dengan lockout.
+ */
+export function budgetGateAllowsStart(
+  budget: number | undefined,
+  strict: boolean,
+  tokens: number,
+): boolean {
+  if (budget == null) return true
+  // tokens==0 → belum ada pemakaian tercatat: start SELALU boleh (pre-check
+  // prompt baru; lockout strict tidak diminta operator).
+  if (tokens === 0) return true
+  // Ada pemakaian + cost tak dikenal → unknown-strict (fail-closed) = start
+  // ditolak. Ada pemakaian + cost known → putuskan via budgetStatus (over =
+  // ditolak).
+  const st = budgetStatus(budget, undefined, strict, tokens)
+  return st !== "unknown-strict"
+}
+
+/** Reason abort budget dengan identitas kind (F-18): kernel abortError
+ * mempertahankan AgentError sehingga pemanggil bisa membedakan
+ * budget_exceeded dari abort user/timeout. Dibuat di sini (src boleh impor
+ * nilai #minicore) agar cli/ tak melanggar batas "hanya tipe" ke #minicore. */
+export function budgetExceededError(): Error {
+  return new AgentError("budget_exceeded", "budget exceeded")
 }
 
 /**
@@ -86,13 +135,16 @@ export function watchBudgetLimit(opts: {
   budget?: number
   strict?: boolean
   getCost: () => number | undefined
+  /** Total token sesi (untuk fail-closed unknown-cost, F-06). Default 0. */
+  getTokens?: () => number
   onOver: (status: "over" | "unknown-strict", cost: number | undefined) => void
 }): () => void {
   if (opts.budget == null) return () => {}
   let fired = false
   const check = () => {
     if (fired) return
-    const st = budgetStatus(opts.budget, opts.getCost(), opts.strict ?? false)
+    const tokens = opts.getTokens?.() ?? 0
+    const st = budgetStatus(opts.budget, opts.getCost(), opts.strict ?? false, tokens)
     if (st !== "ok") {
       fired = true
       opts.onOver(st, opts.getCost())
@@ -101,7 +153,12 @@ export function watchBudgetLimit(opts: {
   const off = opts.bus.on("provider:extension", (e) => {
     if (e.kind === "usage" || e.kind === "effective-model") check()
   })
-  check()
+  // Investigasi Phase 5 (E-3c): instant check saat pasang TIDAK boleh
+  // menggugurkan turn yang mulai dengan tokens==0 (belum ada pemakaian
+  // tercatat) di strict-mode — itu lockout total setiap prompt pertama.
+  // Gugur hanya bila sudah ada bukti belanja (tokens>0 + cost tak dikenal).
+  const tokensAtStart = opts.getTokens?.() ?? 0
+  if (tokensAtStart > 0) check()
   return () => {
     try {
       off()

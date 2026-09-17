@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process"
 import { resolve } from "node:path"
 import { LIMITS } from "../constants.ts"
+import { resolveTrustedExecutable } from "../lib/trusted-exec.ts"
 import { sanitizeSpawnEnv } from "../policy/scrub.ts"
 
 let osSandboxOk: boolean | null = null
@@ -11,7 +12,12 @@ function detectOsSandbox(): { available: boolean; type: "seatbelt" | "bwrap" | "
   if (process.platform === "darwin") {
     // seatbelt via sandbox-exec (macOS). Check availability
     try {
-      const r = spawnSync("sandbox-exec", ["-h"], { stdio: "ignore", timeout: 2000 })
+      // F-23: resolve absolut (lihat docker.ts) — berlaku di Windows untuk
+      // docker; di POSIX sebagai hygiene + determinisme PATH.
+      const r = spawnSync(resolveTrustedExecutable("sandbox-exec"), ["-h"], {
+        stdio: "ignore",
+        timeout: 2000,
+      })
       // sandbox-exec returns 0 or 64 with usage, consider available if binary exists
       const ok = r.error === undefined
       osSandboxOk = ok
@@ -25,7 +31,10 @@ function detectOsSandbox(): { available: boolean; type: "seatbelt" | "bwrap" | "
   }
   if (process.platform === "linux") {
     try {
-      const r = spawnSync("bwrap", ["--version"], { stdio: "ignore", timeout: 2000 })
+      const r = spawnSync(resolveTrustedExecutable("bwrap"), ["--version"], {
+        stdio: "ignore",
+        timeout: 2000,
+      })
       const ok = r.status === 0
       osSandboxOk = ok
       osSandboxType = ok ? "bwrap" : "none"
@@ -64,10 +73,14 @@ export function runInOsSandbox(
 ): Promise<{ code: number | null; output: string }> {
   const { available, type } = detectOsSandbox()
   if (!available) {
-    return Promise.resolve({
-      code: null,
-      output: "[os-sandbox] not available on this platform — fallback required",
-    })
+    // Fail-closed seam: pemanggil (bash/code_run) wajib cek osSandboxAvailable
+    // dulu; siapa pun yang memanggil langsung tanpa cek mendapat throw, bukan
+    // output berbentuk-sukses yang terlihat seperti isolasi berjalan.
+    return Promise.reject(
+      new Error(
+        "[os-sandbox] not available on this platform — refusing to run (no isolation backend)",
+      ),
+    )
   }
   const abs = resolve(cwd)
   const sanitizedEnv = sanitizeSpawnEnv(process.env, opts.env) as Record<string, string>
@@ -138,7 +151,10 @@ function runSpawn(
   timeoutMs: number,
 ): Promise<{ code: number | null; output: string }> {
   return new Promise((resolveResult) => {
-    const p = spawn(bin, args, {
+    // F-23: bin di-resolve absolut dari PATH terpercaya di sini (satu titik
+    // untuk seatbelt/bwrap) — spawn dengan cwd workspace di Windows bisa
+    // mengeksekusi <bin>.bat repo bila hanya nama telanjang.
+    const p = spawn(resolveTrustedExecutable(bin), args, {
       cwd,
       env,
       stdio: ["ignore", "pipe", "pipe"],

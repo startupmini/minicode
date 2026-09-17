@@ -27,7 +27,8 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | Variabel | Fungsi |
 |---|---|
 | `MINICODE_SANDBOX` | `docker` \| `os` (alias `bwrap`/`seatbelt`) \| `none` |
-| `MINICODE_SANDBOX_STRICT` | `1` → fail-closed: tolak bash bila isolasi yang diminta tak tersedia (default: warn + eksekusi langsung) |
+| `MINICODE_SANDBOX_STRICT` | `1` → tak pernah fallback host (redundan dengan default fail-closed untuk request eksplisit, tetap dihormati) |
+| `MINICODE_SANDBOX_ALLOW_FALLBACK` | `1` → satu-satunya jalan fallback host yang sadar bila backend tak tersedia |
 | `MINICODE_SANDBOX_IMAGE` | Image Docker (default `node:22-alpine` — hanya bawa node; python butuh image sendiri) |
 | `MINICODE_SANDBOX_MEMORY` | Memory cap (default `512m`) |
 | `MINICODE_GREP_ENGINE` | `js` → paksa walker internal, jangan pakai ripgrep |
@@ -47,7 +48,7 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 
 | Variabel | Fungsi |
 |---|---|
-| `MINICODE_BUDGET_STRICT` | `1` → fail-closed: cost tak dikenal (model tanpa harga) dianggap over budget |
+| `MINICODE_BUDGET_STRICT` | `1` → penegasan eksplisit fail-closed (cost tak dikenal + pemakaian = over; kini juga default `--budget`) |
 | `MINICODE_ALLOW_LOCAL_CONFIG` | `1` → percayai config lokal workspace (default: diabaikan) |
 
 ## Terminal & aksesibilitas

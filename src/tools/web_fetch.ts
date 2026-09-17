@@ -28,6 +28,33 @@ async function readBodyCapped(res: Response, controller: AbortController): Promi
   return out
 }
 
+// Snippet body error dengan cap streaming (F-15): cukup untuk diagnosis,
+// tak pernah buffer body utuh. Cancel stream setelah cap agar server
+// berhenti mengirim (hemat bandwidth + memori).
+async function readErrorSnippet(res: Response, maxChars = 4096): Promise<string> {
+  if (!res.body) return ""
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let out = ""
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (value) out += decoder.decode(value, { stream: true })
+      if (done || out.length >= maxChars) break
+    }
+  } catch {
+    return out.slice(0, maxChars)
+  } finally {
+    try {
+      await reader.cancel()
+    } catch {}
+    try {
+      reader.releaseLock()
+    } catch {}
+  }
+  return out.slice(0, maxChars)
+}
+
 export const webFetchTool: Tool = {
   name: "web_fetch",
   description:
@@ -69,7 +96,10 @@ export const webFetchTool: Tool = {
       // butuh pin-IP di level socket (di luar API fetch) — ditunda sadar,
       // bukan diklaim tertutup.
       let current = parsed
-      if (await isPrivateHostWithDns(current.hostname)) {
+      // F-21: noCache di SEMUA hop (sesuai komentar desain di atas): cache DNS
+      // 30 dtk memperlebar jendela rebinding + meracuni hasil negatif — tiap
+      // redirect harus resolve ulang, bukan memakai cache basi.
+      if (await isPrivateHostWithDns(current.hostname, { noCache: true })) {
         throw new Error(`blocked private host: ${current.hostname}`)
       }
       const headers = {
@@ -95,7 +125,7 @@ export const webFetchTool: Tool = {
         if (next.protocol !== "http:" && next.protocol !== "https:") {
           throw new Error(`redirect to disallowed protocol: ${next.protocol}`)
         }
-        if (await isPrivateHostWithDns(next.hostname)) {
+        if (await isPrivateHostWithDns(next.hostname, { noCache: true })) {
           throw new Error(`blocked private host (redirect target): ${next.hostname}`)
         }
         current = next
@@ -107,7 +137,10 @@ export const webFetchTool: Tool = {
       }
 
       if (!res.ok) {
-        const body = await res.text().catch(() => "")
+        // F-15: JANGAN res.text() mentah — error body raksasa (500MB dari
+        // server jahat) ter-buffer penuh sebelum slice(0,1000). Baca streaming
+        // dengan cap kecil (snippet diagnosis cukup 4k), lalu cancel.
+        const body = await readErrorSnippet(res)
         const snippet = scrubSecrets(body).slice(0, 1000)
         throw new Error(`fetch ${res.status} ${res.statusText}${snippet ? `: ${snippet}` : ""}`)
       }

@@ -105,6 +105,13 @@ export class McpHttpTransport implements McpTransportLike {
   ): Promise<unknown> {
     if (this.closed) throw new Error("MCP http: transport already closed")
     signal?.throwIfAborted()
+    // F-21: validasi ulang tiap request (bukan hanya saat connect): sesi MCP
+    // berumur panjang dan DNS bisa berubah setelah connect. Cache default
+    // (30 dtk) membuat cek ini murah; bukan penutup TOCTOU check-then-connect
+    // (itu fundamental, lihat web_fetch), melainkan penutup drift sesi.
+    if (!this.allowPrivate && (await isPrivateHostWithDns(this.url.hostname))) {
+      throw new Error(`MCP http: private host rejected: ${this.url.hostname}`)
+    }
     const id = ++this.seq
     const body = JSON.stringify({ jsonrpc: "2.0", id, method, params })
 
@@ -141,7 +148,9 @@ export class McpHttpTransport implements McpTransportLike {
         throw new Error(`MCP http: redirect not followed (${res.status}) — check the server URL`)
       }
       if (!res.ok) {
-        const snippet = (await res.text().catch(() => "")).slice(0, 400)
+        // F-15 sekelas: snippet error via readCapped (bounded), bukan
+        // res.text() mentah yang mem-buffer body utuh sebelum slice.
+        const snippet = (await readCapped(res).catch(() => "")).slice(0, 400)
         throw new Error(`MCP http: ${method} → HTTP ${res.status}${snippet ? `: ${snippet}` : ""}`)
       }
 

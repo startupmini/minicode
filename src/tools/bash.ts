@@ -8,6 +8,8 @@ import { isCwdOutsideRoot, isPathOutsideRoot } from "../policy/jail.ts"
 // re-export untuk backward compat (helper kini terpusat di policy/scrub)
 export { SECRET_ENV_RE, sanitizeSpawnEnv, stripSecretsEnv } from "../policy/scrub.ts"
 
+import { resolveTrustedExecutable } from "../lib/trusted-exec.ts"
+import { sandboxExplicitFallbackAllowed, sandboxStrict } from "../policy/sandbox-policy.ts"
 import { sanitizeSpawnEnv, scrubSecrets } from "../policy/scrub.ts"
 import { dockerAvailable, runInDocker } from "../sandbox/docker.ts"
 import { osSandboxAvailable, runInOsSandbox } from "../sandbox/os.ts"
@@ -43,14 +45,14 @@ class CappedBuffer {
   }
 }
 
-// MINICODE_SANDBOX_STRICT=1: jangan pernah fallback diam-diam ke eksekusi
-// langsung bila isolasi yang diminta tak tersedia — tolak eksplisit.
-// Default (tanpa flag) tetap warn+lanjut agar kompatibel (mis. Windows yang
-// tak punya bubblewrap/seatbelt). Fail-closed opt-in, bukan default-on.
-function sandboxStrict(): boolean {
-  const v = (process.env.MINICODE_SANDBOX_STRICT ?? "").trim().toLowerCase()
-  return v === "1" || v === "true" || v === "yes" || v === "on"
-}
+// F-03: request sandbox EKSPLISIT (MINICODE_SANDBOX=docker/os/...) tanpa
+// backend juga fail-closed secara default — lihat sandboxRefusalReason di
+// policy/sandbox-policy.ts (dipakai CLI) + cabang di bawah (dipakai jalur
+// env-langsung seperti MCP/sub-agen). Downgrade diam-diam ke host membuat
+// operator yakin terisolasi padahal tidak — satu baris [warn] bukan
+// persetujuan. Fallback eksplisit tetap tersedia via
+// MINICODE_SANDBOX_ALLOW_FALLBACK=1 (untuk mesin tanpa backend yang operator
+// sadari), dan tanpa MINICODE_SANDBOX sama sekali perilaku tetap direct.
 
 // Penanda truncation: output yang dipotong diam-diam tampak lengkap dan
 // menyesatkan model (temuan audit #02). Selalu tandai bila dipotong.
@@ -94,9 +96,17 @@ function reapFinishedJobs(): void {
 function killTree(p: ReturnType<typeof spawn>): void {
   try {
     if (process.platform === "win32" && p.pid !== undefined) {
-      const r = spawnSync("taskkill", ["/pid", String(p.pid), "/T", "/F"], {
-        stdio: "ignore",
-      })
+      // F-23: resolve absolut dari PATH terpercaya — spawn dengan cwd
+      // workspace bisa mengeksekusi taskkill.bat repo (hijack CWD Windows).
+      // Env juga disanitasi: proses ini berjalan di timeout dengan hak penuh.
+      const r = spawnSync(
+        resolveTrustedExecutable("taskkill"),
+        ["/pid", String(p.pid), "/T", "/F"],
+        {
+          stdio: "ignore",
+          env: sanitizeSpawnEnv(process.env),
+        },
+      )
       if (r.status === 0) return
     } else if (p.pid !== undefined) {
       // POSIX: bunuh seluruh grup proses (shell wrapper + cucu seperti
@@ -214,7 +224,10 @@ export const bashTool: Tool = {
         )
       }
       const id = startBackground(cmd as string, resolvedCwd)
-      return `background job started: ${id}\ncmd: ${String(cmd).slice(0, 200)}\ncollect output: bash_output({ id: "${id}" })`
+      // F-07: echo perintah di-scrub seperti output foreground — command line
+      // bisa membawa secret (`curl -H "Authorization: Bearer …"`), dan versi
+      // lama menaruhnya mentah ke konteks model.
+      return `background job started: ${id}\ncmd: ${scrubSecrets(String(cmd)).slice(0, 200)}\ncollect output: bash_output({ id: "${id}" })`
     }
 
     // Docker sandbox mode — run in ephemeral isolated container
@@ -229,13 +242,13 @@ export const bashTool: Tool = {
           return `exit ${res.code}\n${capMarked(text, 20000)}`
         return capMarked(text, 20000)
       }
-      if (sandboxStrict()) {
+      if (sandboxStrict() || !sandboxExplicitFallbackAllowed()) {
         throw new Error(
-          "[sandbox] MINICODE_SANDBOX=docker but docker unavailable and MINICODE_SANDBOX_STRICT=1 — refusing direct execution",
+          "[sandbox] MINICODE_SANDBOX=docker but docker unavailable — refusing direct execution (explicit sandbox request must not silently downgrade; set MINICODE_SANDBOX_ALLOW_FALLBACK=1 to allow host fallback explicitly)",
         )
       }
       process.stderr.write(
-        "[warn] MINICODE_SANDBOX=docker but docker unavailable — falling back to direct execution\n",
+        "[warn] MINICODE_SANDBOX=docker but docker unavailable — falling back to direct execution (explicit MINICODE_SANDBOX_ALLOW_FALLBACK=1)\n",
       )
     }
     // OS-native sandbox (Seatbelt macOS / bubblewrap Linux) — Codex/Gemini-like without Docker
@@ -254,20 +267,23 @@ export const bashTool: Tool = {
           return `exit ${res.code}\n${capMarked(text, 20000)}`
         return capMarked(text, 20000)
       }
-      if (sandboxStrict()) {
+      if (sandboxStrict() || !sandboxExplicitFallbackAllowed()) {
         throw new Error(
-          "[sandbox] OS sandbox unavailable and MINICODE_SANDBOX_STRICT=1 — refusing direct execution",
+          "[sandbox] OS sandbox unavailable — refusing direct execution (explicit sandbox request must not silently downgrade; set MINICODE_SANDBOX_ALLOW_FALLBACK=1 to allow host fallback explicitly)",
         )
       }
       process.stderr.write(
-        "[warn] MINICODE_SANDBOX=os but OS sandbox unavailable — falling back to direct execution\n",
+        "[warn] MINICODE_SANDBOX=os but OS sandbox unavailable — falling back to direct execution (explicit MINICODE_SANDBOX_ALLOW_FALLBACK=1)\n",
       )
     }
 
     return await new Promise((resolveOut, reject) => {
       const p = spawn(cmd as string, {
         shell: true,
-        cwd: resolvedCwd,
+        // F-24: selalu effectiveCwd (sessionRoot bila arg cwd absen), bukan
+        // undefined (= inherit process.cwd()). Jail/permission dievaluasi
+        // terhadap sessionRoot — eksekusi harus di direktori yang sama.
+        cwd: effectiveCwd,
         env: sanitizeSpawnEnv(process.env),
         signal: ctx.signal,
         // detached agar shell jadi group leader → killTree bisa bunuh

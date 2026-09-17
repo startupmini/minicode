@@ -25,6 +25,10 @@ const ctx = {
   toolsCount: 31,
   providerHint: "openai",
   setModelOverride: () => {},
+  // Kontrak control-plane (Phase 6): /status membedakan Context vs Usage vs
+  // Budget — dummy menyediakan angka tetap.
+  getContextTokens: () => 1024,
+  budgetState: () => "ok",
 } as unknown as Parameters<typeof handleBuiltinCommand>[1]
 
 const run = async (cmd: string) => {
@@ -120,6 +124,16 @@ describe("konsistensi bahasa keluaran", () => {
     const teks = (await run("/status")).join("\n")
     expect(teks).toContain("Session")
     expect(teks).toContain("Cost")
+  })
+
+  test("/status membedakan Context vs Usage vs Budget (kontrak Phase 6)", async () => {
+    const teks = (await run("/status")).join("\n")
+    // Dua konsep berbeda, dua angka: Context (kernel window estimate) dan
+    // Total (provider usage kumulatif) — tidak lagi satu angka ambigu.
+    expect(teks).toContain("Context:")
+    expect(teks).toContain("window estimate")
+    expect(teks).toContain("Total:")
+    expect(teks).toContain("Budget:")
   })
 
   test("/status Provider = efektif, lalu pin, terakhir hint wire", async () => {

@@ -4,6 +4,12 @@ import { LIMITS } from "../constants.ts"
 import { safeOpenRead } from "../lib/safe-open.ts"
 import { estimateImageTokens } from "../policy/context.ts"
 
+// Batas b64 = batas truncate kernel yang sebenarnya: toolResultMaxTokens
+// (default 4096) × DEFAULT_CHARS_PER_TOKEN (4) = 16.384 chars, dengan margin
+// kecil untuk header data-URL + baris metadata. Sinkron dengan komentar di
+// vendor tokens.ts — angka lain (BASH_OUTPUT×5) melanggar intent anti-korup.
+const IMAGE_B64_MAX_CHARS = 4096 * 4 - 200
+
 export const readImageTool: Tool = {
   name: "read_image",
   description:
@@ -42,11 +48,16 @@ export const readImageTool: Tool = {
       if (st.size > LIMITS.READ_FILE_MAX_BYTES)
         throw new Error(`image too large: ${st.size} bytes (max 2M)`)
       buf = await handle.readFile()
-      // Cek b64 agar tidak terpotong diam-diam oleh serializeContent (maxTokens*4)
+      // Cek b64 agar tidak terpotong diam-diam oleh serializeContent.
+      // Investigasi Phase 5 (probe E-1): batas kernel truncate yang SEBENARNYA
+      // = maxTokens(4096) × 4 = 16.384 chars (toolResultMaxTokens TIDAK pernah
+      // dioverride). Guard lama memakai BASH_OUTPUT_MAX_CHARS×5 = 100k — 6,1×
+      // di atas kernel → gambar >~12KB lolos guard lalu DIPOTONG TENGAH oleh
+      // kernel = base64 korup terkirim. Guard kini memakai angka kernel.
       const estB64 = Math.ceil((buf.byteLength * 4) / 3) + 30
-      if (estB64 > LIMITS.BASH_OUTPUT_MAX_CHARS * 5)
+      if (estB64 > IMAGE_B64_MAX_CHARS)
         throw new Error(
-          `image too large: base64 ~${estB64} chars > cap — compress first (e.g. via code_run sharp)`,
+          `image too large: base64 ~${estB64} chars exceeds the ${IMAGE_B64_MAX_CHARS}-char context limit — compress first (e.g. via code_run sharp)`,
         )
     } finally {
       await handle.close().catch(() => {})

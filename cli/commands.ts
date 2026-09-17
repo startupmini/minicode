@@ -30,6 +30,14 @@ export interface CommandContext {
   toolsCount: number
   providerHint?: string
   setModelOverride: (model: string) => void
+  /** Kontrak control-plane (Phase 6): angka konteks SAAT INI dari sumber
+   * kebenaran kernel (estimateSessionContext) — bukan usage kumulatif.
+   * Dibedakan dari Input/Output/Total (provider usage) di /status. */
+  getContextTokens: () => number
+  /** Status budget sesi (ok | over | unknown-strict) — keputusan terpusat
+   * budgetStatus; /status menampilkannya eksplisit, bukan menyimpulkan dari
+   * angka. */
+  budgetState: () => "ok" | "over" | "unknown-strict"
 }
 
 /**
@@ -210,9 +218,11 @@ export async function handleBuiltinCommand(
     case "status": {
       // Kumulatif sesi, bukan turn terakhir — judulnya menjanjikan "biaya sesi".
       const u = ctx.usage.getSession(ctx.currentModel)
-      // Provider EFEKTIF dulu (hasil routing/fallback), lalu id dari pin
-      // `provider::model`, terakhir hint wire. Sebelumnya selalu hint wire
-      // ("openai") walau yang dipakai opencode-zen — label bohong.
+      // Kontrak control-plane (Phase 6): DUA angka berbeda, dua konsep —
+      // Context = ukuran jendela saat ini (kernel, estimateSessionContext);
+      // Total = pemakaian kumulatif provider (usage event). Dulu hanya Total
+      // yang tampil (label "konteks" di footer menyesatkan); kini /status
+      // membedakan Context vs Usage vs Cost vs Budget eksplisit.
       const pinned = ctx.currentModel?.includes("::")
         ? ctx.currentModel.slice(0, ctx.currentModel.indexOf("::"))
         : undefined
@@ -221,10 +231,16 @@ export async function handleBuiltinCommand(
       console.log(`  Model:    ${ctx.currentModel ?? "default"}`)
       console.log(`  Provider: ${provider}`)
       console.log(`  Tools:    ${ctx.toolsCount}`)
-      console.log(`  Input:    ${u.inputTokens.toLocaleString()}`)
-      console.log(`  Output:   ${u.outputTokens.toLocaleString()}`)
-      console.log(`  Total:    ${u.totalTokens.toLocaleString()}`)
-      console.log(`  Cost:     ${u.cost != null ? formatUsd(u.cost) : "N/A"}`)
+      console.log(`  Context:  ~${ctx.getContextTokens().toLocaleString()} tok (window estimate)`)
+      console.log(`  Input:    ${u.inputTokens.toLocaleString()} (provider usage)`)
+      console.log(`  Output:   ${u.outputTokens.toLocaleString()} (provider usage)`)
+      console.log(`  Total:    ${u.totalTokens.toLocaleString()} (session cumulative)`)
+      console.log(
+        `  Cost:     ${u.cost != null ? formatUsd(u.cost) : "N/A"} (estimated from price table)`,
+      )
+      console.log(
+        `  Budget:   ${ctx.budgetState()}${u.cost == null ? " (cost unknown — model without pricing)" : ""}`,
+      )
       console.log("")
       return { handled: true }
     }

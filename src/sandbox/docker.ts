@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process"
 import { resolve } from "node:path"
 import { LIMITS } from "../constants.ts"
+import { resolveTrustedExecutable } from "../lib/trusted-exec.ts"
 import { sanitizeSpawnEnv } from "../policy/scrub.ts"
 
 let dockerOk: boolean | null = null
@@ -9,10 +10,16 @@ let dockerOk: boolean | null = null
 export function dockerAvailable(): boolean {
   if (dockerOk !== null) return dockerOk
   try {
-    const r = spawnSync("docker", ["version", "--format", "{{.Server.Version}}"], {
-      stdio: "ignore",
-      timeout: 5000,
-    })
+    // F-23: resolve absolut dari PATH terpercaya — di Windows spawn mencari
+    // CWD lebih dulu sehingga docker.bat di workspace bisa membajak cek ini.
+    const r = spawnSync(
+      resolveTrustedExecutable("docker"),
+      ["version", "--format", "{{.Server.Version}}"],
+      {
+        stdio: "ignore",
+        timeout: 5000,
+      },
+    )
     dockerOk = r.status === 0
   } catch {
     dockerOk = false
@@ -82,7 +89,7 @@ export function runInDocker(
   return new Promise((resolveResult) => {
     // env selalu disanitasi dari hasil merge final — secret (API_KEY/TOKEN/...)
     // tidak pernah diwarisi container walau caller lupa strip.
-    const p = spawn("docker", args, {
+    const p = spawn(resolveTrustedExecutable("docker"), args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: sanitizeSpawnEnv(process.env, opts.env),
     })

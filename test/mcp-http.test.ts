@@ -279,6 +279,13 @@ describe("MCP http: keamanan", () => {
     await expect(t.connect()).rejects.toThrow(/private host rejected/)
   })
 
+  test("F-21: request() validasi ulang tanpa connect dulu", async () => {
+    // Validasi bukan hanya saat connect: sesi berumur panjang + DNS berubah
+    // setelah connect tetap tertahan di tiap request.
+    const t = new McpHttpTransport({ url: "http://127.0.0.1:9/mcp" })
+    await expect(t.request("ping")).rejects.toThrow(/private host rejected/)
+  })
+
   test("metadata endpoint cloud ditolak", async () => {
     const t = new McpHttpTransport({ url: "http://169.254.169.254/latest/meta-data" })
     await expect(t.connect()).rejects.toThrow(/private host rejected/)

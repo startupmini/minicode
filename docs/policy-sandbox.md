@@ -59,9 +59,9 @@ Fuzz membangkitkan varian dari transformasi yang shell anggap setara (quote-spli
 | `--allow-all` / `--ask` / `--plan` / `--allowlist` diberikan | Pilihan dihormati, tanpa peringatan |
 | `--sandbox none` | Opt-out sadar; tanpa downgrade |
 | `--sandbox docker` | Container ephemeral (`--network none`, 512m, 1 CPU, `node:22-alpine`) |
-| `--sandbox docker` tapi daemon mati | Turun ke `allowlist` + peringatan (tidak pura-pura terisolasi) |
+| `--sandbox docker` tapi daemon mati | TOLAK sebelum jalan (fail-closed) + cara opt-in fallback eksplisit; tidak pura-pura terisolasi |
 
-`MINICODE_SANDBOX_STRICT=1` = fail-closed bila isolasi yang diminta tak tersedia (default warn + lanjut). `MINICODE_SANDBOX_IMAGE` ganti image (default `node:22-alpine` hanya bawa node). `code_run` selalu lewat sandbox runner dan menolak bila backend tak tersedia.
+`MINICODE_SANDBOX_STRICT=1` = tak pernah fallback host (redundan dengan default fail-closed untuk request eksplisit, tetap dihormati). `MINICODE_SANDBOX_ALLOW_FALLBACK=1` = satu-satunya jalan fallback host yang sadar bila backend tak tersedia. `MINICODE_SANDBOX_IMAGE` ganti image (default `node:22-alpine` hanya bawa node). `code_run` selalu lewat sandbox runner dan menolak bila backend tak tersedia.
 
 ## Lapisan lain
 

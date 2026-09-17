@@ -8,7 +8,7 @@ const BOOLEAN_FLAGS = new Set([
   "--verify",
   "--allowlist",
   "--json", // dipakai `exec --json` dan `--help --json`
-  "--budget-strict", // fail-closed: cost tak dikenal dianggap over budget
+  "--budget-strict", // penegasan eksplisit fail-closed (kini juga default --budget)
   "--allow-local-config", // opt-in: baca .minicode/config.json + allowlist lokal (default mati)
 ])
 const VALUE_FLAGS = new Set([

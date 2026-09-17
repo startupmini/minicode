@@ -88,3 +88,24 @@ export function estimateTools(tools: readonly ToolSchema[], est: TokenEstimator)
 export function estimateSystem(system: string | undefined, est: TokenEstimator): number {
   return system ? est(system) : 0;
 }
+
+/**
+ * Seam kontrak control-plane (Phase 6): SATU sumber angka konteks —
+ * messages + system + tools, semuanya yang dikirim per request. Dipakai
+ * loop (pressure) DAN Session getter (ekspos ke driver/UI/budget) sehingga
+ * tidak ada estimator duplikat untuk kebutuhan tampilan. Fungsi murni atas
+ * argumen — tidak ada ketergantungan SessionInternal (menghindari circular
+ * import session↔loop).
+ */
+export function estimateSessionContext(
+  store: { messages: readonly Message[] },
+  system: string | undefined,
+  tools: readonly ToolSchema[],
+  est: TokenEstimator,
+): number {
+  return (
+    estimateMessages(store.messages, est) +
+    estimateSystem(system, est) +
+    estimateTools(tools, est)
+  );
+}

@@ -278,6 +278,40 @@ test("§14 slot tulis longgar: path BEDA boleh tumpang (konkuren nyata)", async 
   }
 })
 
+test("§14 bash dalam batch pure-write: serial via slot tulis (F-08)", async () => {
+  // F-08 (refined): bash tidak punya file-lock (getFilePath null), TETAPI
+  // slot tulis tunggal (default writeConcurrency 1) tetap menserialkan batch
+  // pure-write. Test ini mengunci perilaku itu: bash lambat + edit pada file
+  // yang sama tidak boleh tumpang (tanpa ini = lost update).
+  const dir = tmpRoot()
+  try {
+    const order: string[] = []
+    const registry = createToolRegistry([
+      memTool("bash", order, { ms: 60, onRun: () => "shell-ok" }) as never,
+      memTool("edit", order, {
+        onRun: (a) => {
+          const { path, content } = a as { path: string; content: string }
+          writeFileSync(join(dir, path), content)
+          return "edited"
+        },
+      }) as never,
+    ])
+    const ex = parallelExecutor()
+    const results = await ex.execute(
+      [
+        wcall("1", "bash", { cmd: "echo x >> f.txt" }),
+        wcall("2", "edit", { path: "f.txt", content: "baru" }),
+      ],
+      { ...execDeps(dir), registry } as never,
+    )
+    expect(order).toEqual(["bash:start", "bash:end", "edit:start", "edit:end"])
+    expect(results.map((r) => r.isError ?? false)).toEqual([false, false])
+    expect(readFileSync(join(dir, "f.txt"), "utf8")).toBe("baru")
+  } finally {
+    await cleanup(dir)
+  }
+})
+
 test("§14 10 read konkuren: semua identik, tanpa tulis siluman", async () => {
   const dir = tmpRoot()
   try {

@@ -73,7 +73,13 @@ function makeHarness(
     path: `virtual:${s.name}.md`,
   }))
   const ctx = {
-    session: { events: createFakeBus(), state: { history: [], turnCount: 0, stepCount: 0 } },
+    session: {
+      events: createFakeBus(),
+      state: { history: [], turnCount: 0, stepCount: 0 },
+      // Kontrak control-plane (Phase 6): footer/prompt membaca angka konteks
+      // dari kernel (contextTokens getter), bukan usage kumulatif.
+      contextTokens: 1024,
+    },
     cfg: { providers: [{ id: "prov", providerHint: "openai", models: ["m1"] }] },
     cwd: process.cwd(),
     sessionId: "sess-1",

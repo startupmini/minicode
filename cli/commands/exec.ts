@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { resolve as resolvePath } from "node:path"
 import { createRateLimiter } from "../../src/policy/ratelimit.ts"
-import { resolveSandbox } from "../../src/policy/sandbox-policy.ts"
+import { resolveSandbox, sandboxRefusalReason } from "../../src/policy/sandbox-policy.ts"
 import { scrubSecrets } from "../../src/policy/scrub.ts"
 import { budgetStatus } from "../../src/policy/usage.ts"
 import { getSubmittedResult } from "../../src/tools/submit_result.ts"
@@ -40,6 +40,13 @@ export async function handleExec(
   // permission default turun ke allowlist. Headless CI justru paling butuh ini —
   // di sana tak ada manusia yang bisa menyetujui prompt.
   const requestedSandbox = getArg("--sandbox") ?? process.env.MINICODE_SANDBOX
+  // F-03: sama seperti jalur interaktif — permintaan eksplisit tanpa backend
+  // = tolak sebelum jalan (fail-closed).
+  const sandboxRefusal = sandboxRefusalReason(requestedSandbox)
+  if (sandboxRefusal) {
+    console.error(sandboxRefusal)
+    process.exit(1)
+  }
   const sandbox = resolveSandbox(requestedSandbox, allowAll || ask || plan || allowlistFlag)
   if (sandbox.mode === "none") delete process.env.MINICODE_SANDBOX
   else process.env.MINICODE_SANDBOX = sandbox.mode
@@ -113,12 +120,12 @@ export async function handleExec(
     // Harness-P1: exec sebelumnya mengabaikan --budget total (flag diteruskan
     // tapi tak pernah diperiksa). Samakan dengan one-shot: over → exit 1.
     const ue = ctx.usage.getSession(ctx.modelRef.current)
-    const bStatus = budgetStatus(budget, ue.cost, budgetStrict)
+    const bStatus = budgetStatus(budget, ue.cost, budgetStrict, ue.totalTokens)
     if (bStatus !== "ok") {
       const msg =
         bStatus === "over" && ue.cost != null && budget != null
           ? `[budget] ${formatUsd(ue.cost)} > ${formatUsd(budget)} - over budget, stopping.`
-          : `[budget] cost unknown (model without pricing) - over budget under --budget-strict, stopping.`
+          : `[budget] cost unknown (model without pricing) with ${ue.totalTokens} tokens spent - over budget, stopping.`
       unsub()
       await ctx.close()
       if (jsonMode)

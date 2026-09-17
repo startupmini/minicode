@@ -58,6 +58,8 @@ export const LIMITS = {
   /** Tool git (status/diff/log/commit). Longgar karena `git_commit` menjalankan
    * beberapa operasi berurutan dan mesin sibuk membuat spawn git lambat. */
   GIT_TIMEOUT_MS: 20_000,
+  /** F-15: cap output git saat streaming (git_diff/log di repo raksasa). */
+  GIT_OUTPUT_MAX_CHARS: 500_000,
   /** Executor & sub-agents — tuned for 4-core laptop (6/1) vs 8/2 server */
   DEFAULT_MAX_STEPS: 50,
   EXECUTOR_CONCURRENCY: 6,
@@ -68,6 +70,16 @@ export const LIMITS = {
   SUB_AGENT_TIMEOUT_MS: 120_000,
   /** Network / providers */
   RETRY_AFTER_MAX_MS: 30_000,
+  /** F-11: timeout per request provider (server hung = turn hung tanpa ini).
+   * Longgar (5 mnt) karena reasoning stream sah bisa bermenit-menit; timeout
+   * turn (default 10–15 mnt) tetap backstop terluar. */
+  PROVIDER_REQUEST_TIMEOUT_MS: 300_000,
+  /** F-16: cap akumulasi teks per stream (anti-OOM); hanya memotong kasus
+   * patologis (~250rb token teks dalam satu turn). */
+  PROVIDER_TEXT_MAX_CHARS: 1_000_000,
+  /** Investigasi Phase 5: cap reasoning stream (terbukti TANPA cap = akumulasi
+   * tak terbatas — satu-satunya jalur loop `reasoning +=` tanpa batas). */
+  PROVIDER_REASON_MAX_CHARS: 2_000_000,
   DOCKER_TIMEOUT_MS: 30_000,
   DETECT_MODELS_TIMEOUT_MS: 4_000,
   DETECT_GLOBAL_TIMEOUT_MS: 6_000,

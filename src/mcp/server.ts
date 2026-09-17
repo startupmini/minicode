@@ -5,9 +5,9 @@ import { scrubSecrets } from "../policy/scrub.ts"
 import {
   appendMutationIntent,
   appendMutationTerminal,
-  classifyTool,
   finalizeJournal,
   hashArgs,
+  isMutationTool,
   verifyPaths,
 } from "../session/journal.ts"
 import { allTools } from "../tools/index.ts"
@@ -120,9 +120,10 @@ async function invokeTool(
     }
   }
 
-  // Journal mutation (hanya kelas mutasi): intent → terminal. Server mode tak
-  // punya turn/session kernel, jadi sesi jurnal tetap "mcp-server".
-  const mutating = classifyTool(tool.name) === "mutation"
+  // Journal mutation (kelas mutasi + unknown fail-closed, F-14): intent →
+  // terminal. Server mode tak punya turn/session kernel, jadi sesi jurnal
+  // tetap "mcp-server".
+  const mutating = isMutationTool(tool.name)
   let intent: { id: string; seq: number } | null = null
   if (mutating) {
     intent = await appendMutationIntent({

@@ -24,6 +24,7 @@ import { createHash } from "node:crypto"
 import { mkdir, open, readFile } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { atomicWriteText } from "../lib/atomic-write.ts"
+import { sanitizeSessionPart } from "../lib/session-id.ts"
 
 export type JournalState = "pending" | "committed" | "failed"
 
@@ -136,7 +137,13 @@ export function classifyTool(name: string): "mutation" | "none" | "unknown" {
 }
 
 export function isMutationTool(name: string): boolean {
-  return classifyTool(name) === "mutation"
+  // F-14: unknown = mutasi (fail-closed). Tool baru yang lupa didaftarkan di
+  // MUTATION_TOOLS/NON_MUTATION_TOOLS tetap terjurnal + ter-recovery, bukan
+  // buta. Biaya salah-klasifikasi hanya baris jurnal ekstra untuk tool baca
+  // yang terlupa — jauh lebih murah daripada efek tulis yang tak tercatat.
+  // classifyTool tetap mengembalikan "unknown" (taksonomi untuk test-time
+  // guard `tool belum diklasifikasikan` di journal.test.ts).
+  return classifyTool(name) !== "none"
 }
 
 // delegate_task dicatat eksplisit oleh tool-nya sendiri (butuh childSessionId
@@ -194,14 +201,9 @@ export function verifyPaths(tool: string, args: unknown, cwd: string): string[] 
 // ── Lokasi & state penulis ──
 
 function sanitizeId(s: string): string {
-  // Cerminan sanitizeSessionId checkpoint.ts (modul terisolasi: duplikasi
-  // 3 baris disengaja agar journal tak bergantung modul checkpoint).
-  return (
-    s
-      .replace(/[^A-Za-z0-9._-]/g, "-")
-      .replace(/\.{2,}/g, "-")
-      .slice(0, 60) || "x"
-  )
+  // F-17: delegasi ke sanitizer bersama (dulu duplikasi 3 baris dengan
+  // pemetaan sedikit berbeda dari checkpoint/shadow).
+  return sanitizeSessionPart(s)
 }
 
 export function journalPath(sessionId: string, cwd?: string): string {

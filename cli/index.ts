@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs"
 import { resolve as resolvePath } from "node:path"
 import { createMinicodeSession } from "../src/app/session.ts"
 import { createRateLimiter } from "../src/policy/ratelimit.ts"
-import { resolveSandbox } from "../src/policy/sandbox-policy.ts"
+import { resolveSandbox, sandboxRefusalReason } from "../src/policy/sandbox-policy.ts"
 import { budgetStatus } from "../src/policy/usage.ts"
 import { attachMutationJournal } from "../src/session/journal.ts"
 import { findSkill, renderSkill } from "../src/skills/loader.ts"
@@ -62,7 +62,7 @@ Options:
   --sandbox <mode>    bash sandbox: docker (ephemeral, no network)
   --ratelimit <rpm>   LLM requests per minute
   --budget <usd>      session cost limit
-  --budget-strict     fail-closed: unknown cost counts as over budget
+  --budget-strict     unknown cost + spend counts as over budget (fail-closed default)
   --tool-scope <s>    full (default) | explore (read-only subset)
 
 REPL: /help /provider /model /sync /status /sessions /init /exit /mode /undo /redo /clear /copy /history /compact /thinking /expand /minimize
@@ -166,7 +166,7 @@ if (args.includes("-h") || args.includes("--help")) {
           { flag: "--sandbox <docker|os>", desc: "bash sandbox" },
           { flag: "--ratelimit <rpm>", desc: "LLM requests/min" },
           { flag: "--budget <usd>", desc: "session cost limit" },
-          { flag: "--budget-strict", desc: "unknown cost counts as over budget" },
+          { flag: "--budget-strict", desc: "unknown cost + spend counts as over budget (default)" },
           { flag: "--tool-scope <full|explore>", desc: "tool subset (explore = read-only)" },
           { flag: "--json", desc: "JSON output (help/exec)" },
         ],
@@ -232,6 +232,14 @@ if (timeoutRaw && (!Number.isFinite(timeoutMs) || (timeoutMs as number) < 0)) {
 // sambil menampilkan label aman. Lihat src/policy/sandbox-policy.ts.
 const explicitPermission = allowAll || ask || plan || allowlist
 const requestedSandbox = getArg("--sandbox") ?? process.env.MINICODE_SANDBOX
+// F-03: permintaan sandbox EKSPLISIT tanpa backend = tolak sebelum jalan
+// (fail-closed). resolveSandbox di bawah tetap menghitung downgrade allowlist
+// untuk notice, tetapi proses tidak lanjut ke eksekusi host.
+const sandboxRefusal = sandboxRefusalReason(requestedSandbox)
+if (sandboxRefusal) {
+  console.error(sandboxRefusal)
+  process.exit(1)
+}
 const sandbox = resolveSandbox(requestedSandbox, explicitPermission)
 if (sandbox.mode === "none") delete process.env.MINICODE_SANDBOX
 else process.env.MINICODE_SANDBOX = sandbox.mode
@@ -410,7 +418,7 @@ if (enterRepl) {
     // --verify/self-heal bisa menjalankan beberapa dan reset() di antaranya.
     const u = usage.getSession(modelRef.current)
     let overBudget = false
-    const status = budgetStatus(b, u.cost, strict ?? false)
+    const status = budgetStatus(b, u.cost, strict ?? false, u.totalTokens)
     if (status === "over" && u.cost != null && b != null) {
       process.stderr.write(
         c.red(`[budget] ${formatUsd(u.cost)} > ${formatUsd(b)} - over budget, stopping.\n`),
@@ -419,7 +427,7 @@ if (enterRepl) {
     } else if (status === "unknown-strict" && b != null) {
       process.stderr.write(
         c.red(
-          `[budget] cost unknown (model without pricing) - over budget under --budget-strict, stopping.\n`,
+          `[budget] cost unknown (model without pricing) with ${u.totalTokens} tokens spent - over budget, stopping.\n`,
         ),
       )
       overBudget = true

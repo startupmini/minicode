@@ -144,9 +144,12 @@ function npmNpxSafe(cmd: string): boolean {
 }
 
 function matchBashAllowlist(cmd: string, pattern: string): boolean {
-  // prevent shell chaining bypass: if cmd contains ; & | and pattern does not explicitly allow them, deny
+  // prevent shell chaining bypass: if cmd contains ; & | and pattern does not explicitly allow them, deny.
+  // F-20: newline adalah chaining juga (`echo hi\nenv`) — pola allowlist tak
+  // pernah mengandung newline sehingga multiline selalu deny di mode ini
+  // (fail-closed untuk mode paling ketat; skrip multiline sah milik auto).
   const trimmed = cmd.trim()
-  if (/[;&|]/.test(trimmed) && !/[;&|]/.test(pattern)) return false
+  if (/[;&|\n]/.test(trimmed) && !/[;&|]/.test(pattern)) return false
   const re = new RegExp(
     `^${pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`,
     "i",

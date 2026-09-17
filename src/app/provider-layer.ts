@@ -3,6 +3,7 @@ import { loadConfig, type MinicodeConfig } from "../config.ts"
 import type { RateLimiter } from "../policy/ratelimit.ts"
 import { createAnthropicProvider } from "../providers/anthropic.ts"
 import { buildProviderListAsync } from "../providers/build.ts"
+import { withStreamGuards } from "../providers/guards.ts"
 import { createRouterProvider } from "../providers/router.ts"
 
 let currentRouter: ReturnType<typeof createRouterProvider> | null = null
@@ -70,20 +71,28 @@ export async function createProviderLayer(opts: {
     const apiKey = process.env.OPENAI_API_KEY ?? process.env.AGENT_API_KEY
     if (apiKey)
       providers.push(
-        createOpenAICompatProvider({
-          baseUrl,
-          apiKey,
-          models: [process.env.AGENT_MODEL ?? "gpt-4o-mini"],
-          defaultModel: process.env.AGENT_MODEL ?? "gpt-4o-mini",
-        }),
+        // Investigasi Phase 5 (I8): fallback env-var dibuat lewat
+        // withStreamGuards yang SAMA dengan jalur config (build.ts) — dulu
+        // dibuat langsung, tanpa timeout per-request dan tanpa text-cap
+        // (kontrak "satu titik bangun ter-guard" dilewati jalur ini).
+        withStreamGuards(
+          createOpenAICompatProvider({
+            baseUrl,
+            apiKey,
+            models: [process.env.AGENT_MODEL ?? "gpt-4o-mini"],
+            defaultModel: process.env.AGENT_MODEL ?? "gpt-4o-mini",
+          }),
+        ),
       )
     const anthKey = process.env.ANTHROPIC_API_KEY
     if (anthKey)
       providers.push(
-        createAnthropicProvider({
-          apiKey: anthKey,
-          models: [process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4"],
-        }) as unknown as Provider,
+        withStreamGuards(
+          createAnthropicProvider({
+            apiKey: anthKey,
+            models: [process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4"],
+          }) as unknown as Provider,
+        ),
       )
   }
   if (providers.length === 0 && (opts.enterRepl || opts.prompt)) {

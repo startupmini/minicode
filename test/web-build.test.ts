@@ -773,17 +773,21 @@ describe("web audit 2026-09-16", () => {
     // utk agent yg lebih suka satu fetch; (2) robots.txt menyebut crawler AI
     // eksplisit; (3) FAQPage = jawaban yg paling sering dikutip assistant.
     if (!existsSync(join(repoRoot, "site"))) return
-    // llms-full: seluruh entri SUMMARY ada, berurutan, dengan URL kanonik.
+    // llms-full: seluruh entri SUMMARY ada, berurutan (invariant diukur di
+    // header `> Sumber HTML:` — URL juga muncul di body setelah link-relatif
+    // di-rewrite absolut, jadi indexOf mentah bukan invariant yang benar),
+    // dan NOL link markdown relatif tersisa (rusak di konteks root situs).
     const full = readFileSync(join(repoRoot, "site", "llms-full.txt"), "utf8")
     const sumRaw = readFileSync(join(repoRoot, "docs", "SUMMARY.md"), "utf8")
     const slugs: string[] = [...sumRaw.matchAll(/\]\(([a-z0-9-]+)\.md\)/g)].map((m) => m[1]!)
     let at = -1
     for (const s of slugs) {
-      const needle = s === "readme" ? "/docs/" : `/docs/${s}.html`
+      const needle = `> Sumber HTML: ${s === "readme" ? "https://minicode.fun/docs/" : `https://minicode.fun/docs/${s}.html`}`
       const i = full.indexOf(needle)
       expect(i, `llms-full urut: ${s}`).toBeGreaterThan(at)
       at = i
     }
+    expect(full).not.toMatch(/\]\([a-z0-9-]+\.md/)
     expect(full).toContain("# Status eksekusi")
     // robots: crawler AI utama eksplisit di-allow; admin tetap disallow.
     const robots = readFileSync(join(repoRoot, "site", "robots.txt"), "utf8")

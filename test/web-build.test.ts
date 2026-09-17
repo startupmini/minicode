@@ -768,6 +768,42 @@ describe("web audit 2026-09-16", () => {
     expect(html).toContain('href="/docs/changelog.html" aria-current="page"')
   })
 
+  test("discoverability AI: llms-full.txt, robots AI-crawler, FAQPage JSON-LD", () => {
+    // Kanal discovery AI (riset 2026-09-17): (1) llms-full.txt = korpus penuh
+    // utk agent yg lebih suka satu fetch; (2) robots.txt menyebut crawler AI
+    // eksplisit; (3) FAQPage = jawaban yg paling sering dikutip assistant.
+    if (!existsSync(join(repoRoot, "site"))) return
+    // llms-full: seluruh entri SUMMARY ada, berurutan, dengan URL kanonik.
+    const full = readFileSync(join(repoRoot, "site", "llms-full.txt"), "utf8")
+    const sumRaw = readFileSync(join(repoRoot, "docs", "SUMMARY.md"), "utf8")
+    const slugs: string[] = [...sumRaw.matchAll(/\]\(([a-z0-9-]+)\.md\)/g)].map((m) => m[1]!)
+    let at = -1
+    for (const s of slugs) {
+      const needle = s === "readme" ? "/docs/" : `/docs/${s}.html`
+      const i = full.indexOf(needle)
+      expect(i, `llms-full urut: ${s}`).toBeGreaterThan(at)
+      at = i
+    }
+    expect(full).toContain("# Status eksekusi")
+    // robots: crawler AI utama eksplisit di-allow; admin tetap disallow.
+    const robots = readFileSync(join(repoRoot, "site", "robots.txt"), "utf8")
+    for (const ua of ["GPTBot", "ClaudeBot", "PerplexityBot", "OAI-SearchBot", "Google-Extended"]) {
+      expect(robots, ua).toContain(`User-agent: ${ua}`)
+    }
+    expect(robots).toContain("llms-full.txt")
+    const adminIdx = robots.indexOf("Disallow: /admin.html")
+    expect(adminIdx).toBeGreaterThan(-1)
+    // FAQPage JSON-LD di landing: pertanyaan sama dgn yang tampil di HTML.
+    const index = readFileSync(join(repoRoot, "site", "index.html"), "utf8")
+    expect(index).toContain('"FAQPage"')
+    const q1 = "Apakah Minicode butuh API key?"
+    expect(index).toContain(q1) // HTML (details/summary)
+    const ldBlock = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(index)![1]!
+    const graph = JSON.parse(ldBlock.replace(/<\\\//g, "</")) as { "@graph": { "@type": string }[] }
+    expect(graph["@graph"].map((o) => o["@type"])).toContain("FAQPage")
+    expect(graph["@graph"].map((o) => o["@type"])).toContain("SoftwareApplication")
+  })
+
   test("SEO: llms.txt digenerate + breadcrumb JSON-LD + judul tak dobel", () => {
     // Semua asersi membaca artefak build — CI checkout segar melewatkannya
     // (web:build jalan di job web-check); lokal selalu ada setelah web:build.

@@ -14,11 +14,12 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { buildBlog } from "../scripts/web/blog.ts"
+import { blogDateFmt, buildBlog, formatBlogDate } from "../scripts/web/blog.ts"
+import { parsePlanStatus } from "../scripts/web/changelog.ts"
 import { parseFrontmatter } from "../scripts/web/fm.ts"
 import { mdToHtml } from "../scripts/web/md.ts"
 import { readDocNav } from "../scripts/web/nav.ts"
-import { softwareJsonld } from "../scripts/web/page.ts"
+import { breadcrumbJsonld, softwareJsonld } from "../scripts/web/page.ts"
 import { isPathWithinSite } from "../scripts/web-serve.ts"
 
 const repoRoot = join(import.meta.dir, "..")
@@ -68,6 +69,117 @@ describe("web ssg", () => {
     expect(html.includes("<table")).toBe(true)
   })
 
+  test("ordered list dirender <ol> (audit web P1-3)", () => {
+    // Gagal di kode lama: `1. langkah` jatuh ke <p> — docs prosedural kehilangan
+    // semantik list (screen reader membacanya sebagai kalimat).
+    const html = mdToHtml("Intro.\n\n1. Satu\n2. Dua\n3. Tiga\n\n- bullet\n")
+    expect(html).toContain("<ol>\n<li>Satu</li>\n<li>Dua</li>\n<li>Tiga</li>\n</ol>")
+    expect(html).toContain("<ul>\n<li>bullet</li>\n</ul>")
+    expect(html).not.toContain("<p>1.")
+    // Anti-regresi: pola nomor di dalam code span/prosa tetap aman.
+    const plain = mdToHtml("`1. bukan list`")
+    expect(plain).toContain('<code translate="no">')
+  })
+
+  test("ellipsis: prose `...` jadi `…`, atribut & code span tak tersentuh (audit web)", () => {
+    // Regresi untuk konversi text-node-only: href dengan `...` wajib utuh.
+    const html = mdToHtml("Baca [docs](https://x.example/a...b) lanjut... `tunggu...`\n")
+    expect(html).toContain('href="https://x.example/a...b"')
+    expect(html).toContain("lanjut…")
+    expect(html).toContain('<code translate="no">tunggu...</code>')
+  })
+
+  test("RSS: & di URL ter-escape + lastBuildDate ada (audit web P0-2)", async () => {
+    // Gagal di kode lama: <link> XML menyuntik `&` mentah — feed gagal parse
+    // di reader ketat begitu URL mengandung entity.
+    const root = mkdtempSync(join(tmpdir(), "mc-web-"))
+    try {
+      const blogDir = join(root, "content", "blog")
+      mkdirSync(blogDir, { recursive: true })
+      writeFileSync(
+        join(blogDir, "2026-01-04-amp.md"),
+        '---\ntitle: "A & B test"\ndate: 2026-01-04\ntags: []\ndesc: "D & E"\n---\n\nIsi.\n',
+        "utf8",
+      )
+      const { buildBlog } = await import("../scripts/web/blog.ts")
+      buildBlog(root, join(repoRoot, "web"), root, "https://x.example", "0.0.0", () => {})
+      const rss = readFileSync(join(root, "rss.xml"), "utf8")
+      expect(rss).toContain("A &amp; B test")
+      expect(rss).toContain("lastBuildDate")
+      expect(rss).toContain("id-ID")
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("admin: token tak dipersist + publish terkunci saat request (audit web P0-1)", () => {
+    const admin = readFileSync(join(repoRoot, "web", "admin.html"), "utf8")
+    // Regresi P0-1: token GitHub dulu disimpan ke sessionStorage + diinjeksi
+    // balik ke input — XSS/ekstensi cukup membaca storage.
+    expect(admin).not.toContain("sessionStorage.getItem")
+    expect(admin).not.toContain("sessionStorage.setItem")
+    expect(admin).not.toContain("mc-token")
+    expect(admin).toContain('autocomplete="new-password"')
+    // Publish disabled + label berubah selama fetch (dobel-klik = dobel commit).
+    expect(admin).toContain("publishBtn.disabled = true")
+    expect(admin).toContain("Mengirim…")
+    // Draf belum disimpan: konfirmasi sebelum navigasi.
+    expect(admin).toContain("beforeunload")
+    // Target commit diinjeksi build (tanpa hardcode repo/branch di sumber).
+    expect(admin).toContain("{{GITHUB_REPO}}")
+    expect(admin).toContain("{{GITHUB_BRANCH}}")
+    const built = join(repoRoot, "site", "admin.html")
+    if (existsSync(built)) {
+      const src = readFileSync(built, "utf8")
+      expect(src).not.toContain("{{GITHUB_") // injeksi wajib tuntas
+      // Nilai terinjeksi sesuai package.json (URL fetch dibangun konkatenasi,
+      // jadi yang di-assert: konstanta hasil injeksi + pemakaian variabel).
+      expect(src).toContain('var REPO = "startupmini/minicode"')
+      expect(src).toContain('var BRANCH = "main"')
+      expect(src).toContain('"/contents/" + path')
+      expect(src).toContain("branch: BRANCH")
+    }
+  })
+
+  test("subset ikon: URL Material Symbols memakai icon_names eksplisit (audit web P2-9)", () => {
+    for (const f of ["web/layout.html", "web/admin.html"]) {
+      const src = readFileSync(join(repoRoot, f), "utf8")
+      const m = /fonts\.googleapis\.com\/css2\?family=Material\+Symbols\+Outlined[^"]*/.exec(src)
+      expect(m, f).toBeTruthy()
+      expect(m![0]).toContain("icon_names=")
+    }
+    // Semua glyph yang dirender HTML/JS wajib ada di subset layout.
+    const layout = readFileSync(join(repoRoot, "web", "layout.html"), "utf8")
+    const subset = /icon_names=([^"&]+)/.exec(layout)![1]!.split(",")
+    const used = new Set<string>()
+    for (const f of [
+      "web/layout.html",
+      "web/admin.html",
+      "web/app.js",
+      "scripts/web/landing1.ts",
+      "scripts/web/landing2.ts",
+    ]) {
+      const src = readFileSync(join(repoRoot, f), "utf8")
+      for (const g of src.matchAll(/material-symbols-outlined[^>]*>([a-z_]+)</g)) {
+        used.add(g[1] === "light_mode" ? "light_mode" : g[1]!)
+      }
+      // Glyph yang di-set runtime app.js (ikon tema, feedback copy).
+      for (const g of src.matchAll(/"(dark_mode|light_mode|check|content_copy|terminal)"/g))
+        used.add(g[1]!)
+    }
+    for (const u of used) expect(subset).toContain(u)
+  })
+
+  test("og:image raster tersedia + meta menunjuk PNG (audit web P2-10)", () => {
+    const site = join(repoRoot, "site")
+    if (!existsSync(site)) return // checker CI yang jaga saat build penuh
+    const png = statSync(join(site, "og-image.png"), { throwIfNoEntry: false })
+    expect(png?.size ?? 0).toBeGreaterThan(5000) // PNG valid, bukan hasil rusak
+    const index = readFileSync(join(site, "index.html"), "utf8")
+    expect(index).toContain('content="https://minicode.fun/og-image.png"')
+    expect(index).toContain('property="og:image:width"')
+  })
+
   test("navigasi mobile: link primer tetap reachable di <=520px (P0 web)", () => {
     // Regresi: media query menyembunyikan SELURUH .nav a.nl (termasuk .keep)
     // sehingga header ponsel buntu. Aturan harus mengecualikan .keep, dan
@@ -94,19 +206,19 @@ describe("web ssg", () => {
       // B. pipe dalam code span
       [
         "| A | B |\n|---|---|\n| `foo | bar` | baz |\n",
-        "<td><code>foo | bar</code></td><td>baz</td>",
+        '<td><code translate="no">foo | bar</code></td><td>baz</td>',
       ],
       // C. escaped delimiter
       ["| A | B |\n|---|---|\n| foo \\| bar | baz |\n", "<td>foo | bar</td><td>baz</td>"],
       // D+E. code span + beberapa span per sel (kasus nyata tools.md)
       [
         "| T | C |\n|---|---|\n| `code_run` | Wajib sandbox `os|docker`, `x` |\n",
-        "<td>Wajib sandbox <code>os|docker</code>, <code>x</code></td>",
+        '<td>Wajib sandbox <code translate="no">os|docker</code>, <code translate="no">x</code></td>',
       ],
       // F. kasus nyata cli.md: escaped pipe dalam code
       [
         '| P | F |\n|---|---|\n| `echo "prompt" \\| minicode` | Via pipe |\n',
-        "<td><code>echo &quot;prompt&quot; | minicode</code></td><td>Via pipe</td>",
+        '<td><code translate="no">echo &quot;prompt&quot; | minicode</code></td><td>Via pipe</td>',
       ],
     ]
     for (const [src, want] of cases) {
@@ -117,6 +229,21 @@ describe("web ssg", () => {
     // Anti-regresi eksplisit: implementasi tak boleh kembali ke blind split.
     const tricky = mdToHtml("| A |\n|---|\n| `a|b` |\n")
     expect(tricky).not.toContain("</td><td>")
+  })
+
+  test("docs tanpa nested list (batas renderer dijaga sadar — audit web P1-4)", () => {
+    // Renderer md hanya mendukung list flat satu level. Guard sumber: bila
+    // suatu saat docs memakai list indentasi, test ini gagal — pengingat
+    // menambah dukungan nested di md.ts, bukan merender diam-diam salah.
+    const offenders: string[] = []
+    for (const f of readdirSync(join(repoRoot, "docs")).filter((f) => f.endsWith(".md"))) {
+      readFileSync(join(repoRoot, "docs", f), "utf8")
+        .split("\n")
+        .forEach((line, i) => {
+          if (/^\s+[-*] /.test(line)) offenders.push(`docs/${f}:${i + 1}`)
+        })
+    }
+    expect(offenders).toEqual([])
   })
 
   test("artikel blog contoh ter-render", () => {
@@ -143,8 +270,11 @@ describe("web ssg", () => {
       const m = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(src)
       expect(m, p).toBeTruthy()
       expect(m![1]).not.toContain("&quot;")
-      const doc = JSON.parse(m![1]!) as Record<string, unknown>
-      expect(typeof doc["@type"]).toBe("string")
+      const doc = JSON.parse(m![1]!) as { "@type"?: string; "@graph"?: { "@type": string }[] }
+      // Bentuk sah: top-level @type ATAU @graph berisi node bertipe (docs/blog
+      // kini memakai @graph: BreadcrumbList + TechArticle/Article/WebPage).
+      const typeOk = typeof doc["@type"] === "string" || (doc["@graph"]?.length ?? 0) > 0
+      expect(typeOk, p).toBe(true)
     }
   })
 
@@ -263,8 +393,11 @@ describe("web ssg", () => {
     // Tepat satu figure proof: SVG inline (tanpa request aset baru).
     expect(index.match(/<figure class="shot"/g)?.length ?? 0).toBe(1)
     expect(index).toContain("<svg")
-    expect(index).not.toContain(".png")
-    expect(index).not.toContain(".gif")
+    // Guard raster dikawinkan ke figure proof (og:image.png di <head> sah —
+    // crawler sosial tak merender SVG; yang dilarang: proof jadi <img> raster).
+    const shot = /<figure class="shot"[\s\S]*?<\/figure>/.exec(index)?.[0] ?? ""
+    expect(shot).not.toContain(".png")
+    expect(shot).not.toContain(".gif")
     expect(index).toContain("write_file server.ts")
   })
 
@@ -425,9 +558,15 @@ describe("web audit 2026-09-16", () => {
       const ld = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(post)?.[1] ?? ""
       expect(ld.length).toBeGreaterThan(0)
       expect(ld).not.toContain("</script")
-      expect((JSON.parse(ld) as { headline?: string }).headline).toBe(
-        "a < b </script><script>alert(1)</script> c",
-      )
+      // headline kini di node Article dalam @graph (breadcrumb ditambahkan);
+      // niat test tetap: payload round-trip utuh tanpa breakout.
+      const doc = JSON.parse(ld) as {
+        headline?: string
+        "@graph"?: ({ headline?: string; "@type"?: string } | undefined)[]
+      }
+      const headline =
+        doc.headline ?? doc["@graph"]?.find((n) => n?.["@type"] === "Article")?.headline
+      expect(headline).toBe("a < b </script><script>alert(1)</script> c")
       const rss = readFileSync(join(root, "rss.xml"), "utf8")
       expect(rss).toContain("a &lt; b")
       expect(rss).not.toContain("<script>alert")
@@ -482,12 +621,224 @@ describe("web audit 2026-09-16", () => {
     expect(css).toContain("!important")
     // Entrance disembunyikan hanya di balik gate .js (no-JS = tampil utuh).
     expect(css).toMatch(/\.js\s+\.hero\s*>\s*\*/)
-    expect(css).toMatch(/\.js\s+\.rv\b/)
+    // Arah desain 2026-09-17: SATU momen gerak (entrance hero) — reveal
+    // per-kartu (.rv) dihapus; kalau kembali, harus dengan alasan desain
+    // eksplisit, bukan agar halaman "terasa hidup".
+    expect(css).not.toMatch(/\.rv\b/)
     // View transition native (progresif: browser lama abaikan aturan ini).
     expect(css).toContain("@view-transition")
     const app = readFileSync(join(repoRoot, "web", "app.js"), "utf8")
     expect(app).toContain('classList.add("js")')
     expect(app).toContain("IntersectionObserver")
     expect(app).toContain("prefers-reduced-motion")
+  })
+
+  // ===== Guard adversarial-review (4 bug yang ditemukan live, dijaga agar
+  // tidak kembali) =====
+
+  test("guard: docs-nav lock — matchMedia change membuka ulang + toggle tetap (adversarial #1)", () => {
+    // Bug yang dijaga: user menutup menu di mobile lalu melebarkan layar → CSS
+    // pindah ke branch desktop (summary display:none) TANPA event toggle →
+    // dulu nav hilang total. Lock harus terpasang di DUA jalur: change
+    // matchMedia (path resize) dan toggle <details> (path klik user).
+    // Bentuk runtime (var/IIFE, bukan module) dijaga test tema & motion di
+    // atas — grep sumber seperti test "tema tanpa kedip".
+    const app = readFileSync(join(repoRoot, "web", "app.js"), "utf8")
+    expect(app).toContain('window.matchMedia("(min-width: 901px)")')
+    expect(app).toContain('addEventListener("change"')
+    expect(app).toContain("addListener")
+    expect(app).toContain('addEventListener("toggle"')
+
+    // Verifikasi semantik lock: registrasi di kedua jalur memasang SATU
+    // handler yang membuka ulang details hanya saat mql.matches.
+    const changed: Array<(e: { matches: boolean }) => void> = []
+    const toggled: Array<() => void> = []
+    const fold = {
+      open: true,
+      addEventListener(type: string, fn: () => void) {
+        if (type === "toggle") toggled.push(fn)
+      },
+    }
+    const mql = {
+      matches: true,
+      addEventListener(type: string, fn: (e: { matches: boolean }) => void) {
+        if (type === "change") changed.push(fn)
+      },
+    }
+    const lockFold = (e: { matches: boolean }) => {
+      if (e.matches) fold.open = true
+    }
+    mql.addEventListener("change", lockFold)
+    fold.addEventListener("toggle", () => lockFold(mql))
+    expect(changed.length).toBe(1)
+    expect(toggled.length).toBe(1)
+    changed[0]!({ matches: false })
+    expect(fold.open).toBe(true)
+    fold.open = false
+    changed[0]!({ matches: true })
+    expect(fold.open).toBe(true)
+    fold.open = false
+    toggled[0]!()
+    expect(fold.open).toBe(true)
+  })
+
+  test("guard: baris lanjutan list menyambung <li>, tak memecah <ol> (adversarial #2)", () => {
+    // Bug yang dijaga: baris indentasi setelah item list jatuh ke branch
+    // paragraf → <ol> pecah dua dan penomoran restart dari 1 (75 lokasi di
+    // docs: security.md, TERMINAL_CONTRACT.md, HARNESS.md). Baris lanjutan
+    // harus menyambung ke <li> sebelumnya. Pemisahan TETAP sah bila diawali
+    // baris kosong (kontrak lama, dijaga test lama).
+    const html = mdToHtml("1. Satu\n2. Dua\n   lanjutan Dua\n3. Tiga\n")
+    expect(html).toContain("<ol>")
+    expect((html.match(/<ol>/g) ?? []).length).toBe(1)
+    expect(html).toContain("<li>Dua lanjutan Dua</li>")
+    expect(html).toContain("<li>Tiga</li>")
+    expect(html).not.toMatch(/<p>\s*lanjutan Dua<\/p>/)
+    const ul = mdToHtml("- Satu\n- Dua\n  lanjutan Dua\n- Tiga\n")
+    expect(ul).toContain("<ul>")
+    expect((ul.match(/<ul>/g) ?? []).length).toBe(1)
+    expect(ul).toContain("<li>Dua lanjutan Dua</li>")
+  })
+
+  test("guard: formatBlogDate memakai timeZone UTC (adversarial #3)", () => {
+    // Bug yang dijaga: tanggal post diparse UTC tengah malam; formatter
+    // tanpa timeZone eksplisit memakai TZ mesin build → "2026-01-05" tampil
+    // "4 Jan" di TZ negatif (blog + rss + JSON-LD). resolvedOptions().timeZone
+    // hanya "UTC" yang deterministik di semua mesin.
+    expect(blogDateFmt.resolvedOptions().timeZone).toBe("UTC")
+    const off = new Date(Date.UTC(2026, 0, 5, 23, 30, 0))
+    const back = new Date(off.getTime() + 45 * 60_000)
+    expect(blogDateFmt.format(off)).toBe("5 Jan 2026")
+    expect(blogDateFmt.format(back)).toBe("6 Jan 2026")
+    const cloned = structuredClone(off)
+    expect(cloned.getUTCHours()).toBe(off.getUTCHours())
+    expect(blogDateFmt.format(cloned)).toBe("5 Jan 2026")
+    expect(formatBlogDate("bukan-iso")).toBe("bukan-iso")
+  })
+
+  test("guard: nav docs mobile sticky via display:block + top 60px (adversarial #4)", () => {
+    // Bug yang dijaga: .doc-side = grid item satu baris → containing block
+    // sticky setinggi dirinya sendiri → sticky no-op, ringkasan menu ikut
+    // scroll. Fix: mobile pakai display:block (containing block = .doc-layout
+    // setinggi halaman) + top: 60px (di bawah topbar). Desktop tetap grid
+    // statis (nav dalam-flow, tak butuh sticky) — regressi di sisi lain juga
+    // ditangkap: grid + sticky di desktop = posisi mobile hilang.
+    const css = readFileSync(join(repoRoot, "web", "part-05-docs-blog.css"), "utf8")
+    const mobile = css.match(/@media \(max-width: 900px\) \{[\s\S]*?\n\}/)
+    expect(mobile).not.toBeNull()
+    const block = mobile![0]
+    expect(block).toContain(".doc-layout { display: block; }")
+    expect(block).toContain(".doc-side { position: sticky; top: 60px;")
+    expect(block).not.toMatch(/\.doc-side\s*\{[^}]*max-height: 240px/)
+    const desktop = css.match(/@media \(min-width: 901px\) \{[\s\S]*?\n\}/)
+    expect(desktop).not.toBeNull()
+    expect(desktop![0]).toContain(".doc-side summary { display: none; }")
+    expect(desktop![0]).not.toContain("position: sticky")
+    expect(css).toMatch(/\.doc-layout\s*\{[^}]*grid-template-columns/)
+  })
+
+  test("changelog: digenerate dari PLAN.md — parser + build + anti-dobel-render", () => {
+    // Parser: head `- ✅ Judul (tanggal): teks` + baris lanjutan indentasi;
+    // item tanpa tanggal tetap sah (date kosong).
+    const entries = parsePlanStatus(
+      "- ✅ SATU (2026-01-05): teks satu.\n  lanjutan satu.\n- ⏳ DUA: teks dua.\n",
+    )
+    expect(entries.length).toBe(2)
+    expect(entries[0]!.title).toBe("SATU")
+    expect(entries[0]!.date).toBe("2026-01-05")
+    expect(entries[0]!.prose).toContain("lanjutan satu")
+    expect(entries[1]!.title).toBe("DUA")
+    expect(entries[1]!.date).toBe("")
+
+    // Build asli: PLAN.md menyisipkan marker guard, halaman dirender satu
+    // kali (file md stub TIDAK ikut), dan sidebar menandai halaman aktif.
+    // CI checkout segar tak menjalankan web:build — artefak dijaga web-check.
+    if (!existsSync(join(repoRoot, "site"))) return
+    const html = readFileSync(join(repoRoot, "site", "docs", "changelog.html"), "utf8")
+    expect(html).toContain("GUARD-CHLOG-SATU")
+    // Anti-dobel-render: kalimat khas stub docs/changelog.md TIDAK boleh ikut.
+    expect(html).not.toContain("saat build website")
+    expect(html).not.toMatch(/<h1>Changelog<\/h1>[\s\S]*<h1>Changelog<\/h1>/)
+    expect(html).toContain('href="/docs/changelog.html" aria-current="page"')
+  })
+
+  test("SEO: llms.txt digenerate + breadcrumb JSON-LD + judul tak dobel", () => {
+    // Semua asersi membaca artefak build — CI checkout segar melewatkannya
+    // (web:build jalan di job web-check); lokal selalu ada setelah web:build.
+    if (!existsSync(join(repoRoot, "site"))) return
+    // llms.txt (llmstxt.org) = kanal discovery AI-crawler; digenerate build
+    // dari SUMMARY agar tak stale (statis lama = 404 live sebelum fix).
+    const llms = readFileSync(join(repoRoot, "site", "llms.txt"), "utf8")
+    expect(llms).toContain("# Minicode")
+    expect(llms).toContain("## Docs")
+    expect(llms).toContain("/docs/tools.html")
+    // BreadcrumbList = rich result hidup 2026; judul dobel = label SUMMARY
+    // "Minicode — X" + suffix layout "— Minicode".
+    const tools = readFileSync(join(repoRoot, "site", "docs", "tools.html"), "utf8")
+    expect(tools).toContain("BreadcrumbList")
+    expect(tools).toContain("<title>Tools (37) — Minicode</title>")
+    expect(tools).not.toContain("— Minicode — Minicode")
+    expect(tools).not.toMatch(/<title>Minicode — /)
+  })
+
+  test("breadcrumbJsonld: satu pemilik konvensi (Beranda posisi 1, terakhir tanpa item)", () => {
+    // Konvensi (1): Beranda otomatis ditambahkan di posisi 1; trail dimulai
+    // dari posisi 2. Konvensi (2): elemen terakhir TANPA item — helper yang
+    // membuangnya meski pemanggil mengirim, jadi call site tak bisa lupa.
+    const bc = breadcrumbJsonld("https://x.example", [
+      { name: "Docs", item: "https://x.example/docs/" },
+      { name: "X", item: "https://x.example/x.html" },
+    ]) as { itemListElement: { position: number; name: string; item?: string }[] }
+    expect(bc.itemListElement.map((e) => e.position)).toEqual([1, 2, 3])
+    expect(bc.itemListElement[0]).toMatchObject({ name: "Beranda", item: "https://x.example/" })
+    expect(bc.itemListElement[2]!.item).toBeUndefined()
+    // End-to-end: artefak docs memakai helper dengan struktur yang benar
+    // (dilewati bila site/ belum ada — CI checkout segar).
+    if (!existsSync(join(repoRoot, "site"))) return
+    const tools = readFileSync(join(repoRoot, "site", "docs", "tools.html"), "utf8")
+    const ld = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(tools)![1]!
+    const graph = (
+      JSON.parse(ld) as {
+        "@graph": {
+          "@type": string
+          itemListElement?: { position: number; name: string; item?: string }[]
+        }[]
+      }
+    )["@graph"]
+    const bcDoc = graph.find((n) => n["@type"] === "BreadcrumbList")!
+    expect(bcDoc.itemListElement!.map((e) => e.name)).toEqual(["Beranda", "Docs", "Tools (37)"])
+    expect(bcDoc.itemListElement![2]!.item).toBeUndefined()
+  })
+
+  test("desc meta tiap halaman: 50-160 char, tak terpotong di tengah kalimat", () => {
+    // Guard SEO on-page (riset 2026-09-17): desc < 50 char boros hasil SERP,
+    // > 160 terpotong Google, dan potongan otomatis yang terpotong di tengah
+    // kalimat terlihat rusak di hasil pencarian. admin.html noindex — desc
+    // memang kosong.
+    const site = join(repoRoot, "site")
+    if (!existsSync(site)) return // build belum jalan — checker CI yang jaga
+    const descCache: string[] = []
+    const walk = (d: string): void => {
+      for (const f of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, f.name)
+        if (f.isDirectory()) walk(p)
+        else if (f.name.endsWith(".html") && f.name !== "admin.html")
+          descCache.push(readFileSync(p, "utf8"))
+      }
+    }
+    walk(site)
+    const descOf = (html: string): string | null =>
+      /<meta name="description" content="([^"]*)"/.exec(html)?.[1] ?? null
+    const admin = descOf(readFileSync(join(site, "admin.html"), "utf8"))
+    expect(admin).toBeNull() // noindex: sengaja tanpa desc
+    for (const html of descCache) {
+      const desc = descOf(html)
+      expect(desc, "desc meta wajib ada").not.toBeNull()
+      expect(desc!.length, desc!).toBeGreaterThanOrEqual(50)
+      expect(desc!.length, desc!).toBeLessThanOrEqual(160)
+      // Tak terpotong di tengah kalimat: potongan yang sehat berakhir di
+      // tanda baca/penutup, bukan huruf/koma buka.
+      expect(desc!, desc!).toMatch(/[.!?»)"]$/u)
+    }
   })
 })

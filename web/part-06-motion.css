@@ -75,17 +75,9 @@ pre,
 .js .hero > *:nth-child(5) { animation-delay: 0.34s; }
 .js .hero > *:nth-child(6) { animation-delay: 0.42s; }
 .js .hero > *:nth-child(7) { animation-delay: 0.5s; }
-.js .rv {
-  opacity: 0;
-  transform: translateY(12px);
-  transition:
-    opacity var(--t-slow) ease,
-    transform var(--t-slow) ease;
-}
-.js .rv.in {
-  opacity: 1;
-  transform: none;
-}
+/* Reveal-on-scroll per-kartu DIHAPUS (arah desain 2026-09-17): satu momen
+   gerak saja — entrance hero. Tulis ulang aturan ini hanya bila ada alasan
+   nyata, bukan agar halaman "terasa hidup". */
 
 /* ── P1: penanda aktif TOC saat scroll (kelas dipasang app.js) ── */
 .toc a.on {
@@ -112,8 +104,7 @@ pre,
   html {
     scroll-behavior: auto;
   }
-  .js .hero > *,
-  .js .rv {
+  .js .hero > * {
     opacity: 1 !important;
     transform: none !important;
   }

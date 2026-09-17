@@ -2,10 +2,10 @@
 title: "Kenapa Minicode bekerja di terminal biasa, bukan layar khusus"
 date: 2026-09-10
 tags: [minicode, cli, desain]
-desc: "Minicode tampil di terminal biasa, bukan layar khusus: hasil kerja muncul berurutan, mudah dibaca kembali, tanpa tampilan tersembunyi."
+desc: "Kenapa coding agent CLI Minicode tampil di terminal biasa, bukan layar khusus: hasil kerja berurutan di scrollback, tanpa panel tersembunyi."
 ---
 
-Minicode bekerja di terminal biasa. Ia tidak membuka layar khusus yang menutupi tampilan Anda, dan tidak menyembunyikan apa yang sedang terjadi di balik panel tersembunyi. Semua hasil kerja muncul di layar seperti biasa, urut dari yang pertama sampai yang terakhir.
+Minicode adalah coding agent CLI yang bekerja di terminal biasa. Ia tidak membuka layar khusus yang menutupi tampilan Anda, dan tidak menyembunyikan apa yang sedang terjadi di balik panel tersembunyi. Semua hasil kerja muncul di scrollback seperti biasa, urut dari yang pertama sampai yang terakhir.
 
 ## Cara Minicode menangani tampilan
 

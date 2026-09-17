@@ -1,71 +1,114 @@
-/* Docs single-column + blog + admin + footer. Prev/Next hanya di bawah. */
+/* Docs single-column + blog + admin + footer. Prev/Next hanya di bawah.
+   Judul docs/blog = mono (konsisten dengan display landing); isi tetap sans. */
 
 .doc-body { max-width: var(--w-doc); }
-.doc-body h1 { font-size: 24px; letter-spacing: -0.015em; margin: 18px 0 4px; line-height: 1.25; }
-.doc-body h2 { font-size: 17px; letter-spacing: -0.01em; margin: 30px 0 7px; line-height: 1.4; }
-.doc-body h3 { font-size: 14px; margin: 21px 0 5px; line-height: 1.4; }
+.doc-body h1 { font: 700 22px/1.3 var(--mono); margin: 18px 0 4px; }
+.doc-body h2 { font: 600 16px/1.4 var(--mono); margin: 30px 0 7px; }
+/* 600 (bukan 650): tercakup rentang variabel Inter 400..700 — tanpa ini,
+   650 memaksa browser sintesis bobot di sekitar 600/700. */
+.doc-body h3 { font-size: 14px; font-weight: 600; margin: 21px 0 5px; line-height: 1.4; }
 /* Anchor heading (FIX#7): hover-reveal `#`, target highlight saat deep-link.
-   scroll-margin agar heading tak tertutup topbar sticky saat lompat anchor. */
-.doc-body h2[id], .doc-body h3[id], .article h2[id] { scroll-margin-top: 84px; }
-.doc-body h2[id] .hl, .doc-body h3[id] .hl { opacity: 0; text-decoration: none; margin-right: 6px; font-weight: 400; }
-.doc-body h2[id]:hover .hl, .doc-body h3[id]:hover .hl,
-.doc-body h2[id] .hl:focus-visible, .doc-body h3[id] .hl:focus-visible { opacity: 1; }
+   scroll-margin agar heading tak tertutup topbar sticky saat lompat anchor.
+   h1 ikut: dokumen multi-H1 sah, anchor-nya harus konsisten. */
+.doc-body h1[id], .doc-body h2[id], .doc-body h3[id], .article h1[id], .article h2[id] { scroll-margin-top: 84px; }
+.doc-body h2[id] .hl, .doc-body h3[id] .hl, .doc-body h1[id] .hl { opacity: 0; text-decoration: none; margin-right: 6px; font-weight: 400; }
+.doc-body h2[id]:hover .hl, .doc-body h3[id]:hover .hl, .doc-body h1[id]:hover .hl,
+.doc-body h2[id] .hl:focus-visible, .doc-body h3[id] .hl:focus-visible, .doc-body h1[id] .hl:focus-visible { opacity: 1; }
 .doc-body :target { outline: 2px solid var(--acc); outline-offset: 4px; border-radius: 4px; }
 /* TOC halaman panjang: flat, tanpa container — indentasi + label kecil. */
 .toc { margin: 14px 0 4px; padding: 0; }
-.toc p { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--faint); margin: 0 0 6px; }
+.toc p { font: 600 12px var(--mono); color: var(--faint); margin: 0 0 6px; }
 .toc ul { list-style: none; padding: 0; margin: 0; }
 .toc li { margin: 3px 0; padding-left: 12px; position: relative; }
 .toc li::before { content: "–"; position: absolute; left: 0; color: var(--faint); }
 .toc a { font-size: 13px; }
 .doc-body p { margin: 10px 0; color: var(--ink); }
+/* Changelog dari PLAN.md: entri pakai skala h2 .doc-body; tanggal = data
+   kecil mono tabular, redup — bukan hiasan. */
+.cl-item { margin: 26px 0 0; }
+.cl-item time { font: 500 13px var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .doc-body ul, .doc-body ol { padding-left: 19px; margin: 9px 0; }
 .doc-body li { margin: 3px 0; }
 .doc-body li::marker { color: var(--acc); }
 .doc-body table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 12px; display: block; overflow-x: auto; }
-.doc-body th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); padding: 6px 9px; }
+.doc-body th { text-align: left; font: 600 12px var(--mono); color: var(--faint); padding: 6px 9px; }
 .doc-body td { padding: 7px 9px; vertical-align: top; }
 .doc-body pre { margin: 12px 0; }
-/* Navigasi bawah: teks polos Â« Prev / Next Â» tanpa judul, tanpa box. */
+/* Navigasi bawah: teks polos ‹ Prev / Next › tanpa judul, tanpa box. */
 .doc-nav { display: flex; justify-content: space-between; align-items: center; gap: 12px; max-width: var(--w-doc); margin: 56px auto 0; }
 .doc-nav a { color: var(--mut); font-size: 13.5px; font-weight: 600; padding: 10px 0; }
 .doc-nav a:hover { color: var(--acc); text-decoration: none; background: none; }
 .doc-nav span { width: 0; }
-/* Sidebar docs â€” dua kolom: menu kiri sticky + konten kanan. */
+/* Sidebar docs — dua kolom: menu kiri sticky + konten kanan. */
 .doc-layout { max-width: 1200px; margin: 0 auto; padding: 36px 24px 72px; display: grid; grid-template-columns: 210px minmax(0,1fr); gap: 40px; align-items: start; }
-.doc-side { position: sticky; top: 76px; max-height: calc(100vh - 96px); overflow-y: auto; padding-right: 8px; }
+/* overscroll-behavior: sampai ujung daftar, scroll tak merambat ke body. */
+.doc-side { position: sticky; top: 76px; max-height: calc(100vh - 96px); overflow-y: auto; overscroll-behavior: contain; padding-right: 8px; }
+/* Re-envision nav docs: desktop = nav selalu terbuka (summary disembunyikan,
+   `open` dari markup + sinkron app.js tak bisa menutupnya). */
+@media (min-width: 901px) {
+  .doc-side summary { display: none; }
+}
 .doc-main { max-width: var(--w-doc); margin-left: 0; }
-.ds-g { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--faint); margin: 18px 0 4px; }
+.ds-g { font: 600 12px var(--mono); color: var(--faint); margin: 18px 0 4px; }
 .ds-g:first-child { margin-top: 0; }
 .ds-i { display: block; font-size: 13px; color: var(--mut); padding: 4px 9px; margin: 1px -9px; border-radius: 6px; text-decoration: none; }
 .ds-i:hover { color: var(--ink); background: var(--soft); }
 .ds-i.on { color: var(--acc-text); font-weight: 600; background: var(--soft); }
 @media (max-width: 900px) {
-  .doc-layout { grid-template-columns: 1fr; gap: 18px; }
-  /* Sidebar 27 entri di atas konten pada layar kecil: batasi tinggi + scroll
-     sendiri agar konten tak terdorong jauh ke bawah. */
-  .doc-side { position: static; max-height: 240px; overflow-y: auto; border-bottom: 1px solid var(--soft); padding-bottom: 14px; }
+  /* display:block (bukan grid): grid item satu baris = containing block
+     sticky setinggi dirinya — sticky no-op. Block menempel sepanjang baca. */
+  .doc-layout { display: block; }
+  /* Menu docs = <details> collapsible sticky: konten dulu, menu satu tap. */
+  .doc-side { position: sticky; top: 60px; max-height: none; overflow-y: visible; padding-right: 0; margin-bottom: 18px; z-index: 40; }
+  .doc-side .ds-fold { background: var(--bg); }
+  .doc-side summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: var(--soft);
+    font: 600 13px var(--mono);
+    color: var(--ink);
+    list-style: none;
+  }
+  .doc-side summary::-webkit-details-marker { display: none; }
+  .doc-side summary::after { content: "▾"; color: var(--faint); }
+  .doc-side details[open] summary::after { content: "▴"; }
+  /* Terbuka: daftar sendiri yang scroll (contain), bukan seluruh halaman. */
+  .doc-side details[open] {
+    max-height: min(60vh, 480px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: 10px;
+  }
+  /* Anchor tak tertutup ringkasan sticky (topbar 60 + summary ±44). */
+  .doc-body h1[id], .doc-body h2[id], .doc-body h3[id], .article h1[id], .article h2[id] {
+    scroll-margin-top: 116px;
+  }
 }
 .blog { max-width: 720px; margin: 0 auto; padding: 52px 24px 80px; }
-.blog h1 { font-size: clamp(24px, 3.5vw, 34px); letter-spacing: -0.02em; margin: 12px 0 6px; }
+.blog h1 { font: 700 clamp(24px, 3.5vw, 32px)/1.2 var(--mono); margin: 12px 0 6px; }
 .post-list { margin-top: 30px; }
 .post-row { display: block; padding: 20px 0; color: var(--ink); }
 .post-row:hover { text-decoration: none; }
-.post-row:hover h3 { color: var(--acc-text); }
+.post-row:hover h2 { color: var(--acc-text); }
 .post-date { font: 500 11.5px var(--mono); color: var(--faint); }
-.post-row h3 { font-size: 18px; letter-spacing: -0.01em; margin: 4px 0; line-height: 1.35; }
+/* h2 (bukan h3): hirarki benar di bawah h1 halaman — dulu lompat h1→h3. */
+.post-row h2 { font: 600 16.5px/1.4 var(--mono); margin: 4px 0; }
 .post-row p { color: var(--mut); font-size: 13.5px; max-width: 62ch; }
+/* Tags = teks dipisah koma (dirender di blog.ts, bukan span+pseudo). */
 .tags { color: var(--faint); font-size: 12px; margin-top: 6px; }
-.tags span + span::before { content: " Â· "; }
 .article { max-width: var(--w-doc); margin: 0 auto; padding: 44px 24px 80px; }
-.article h1 { font-size: clamp(22px, 3.5vw, 32px); letter-spacing: -0.02em; line-height: 1.18; }
+.article h1 { font: 700 clamp(22px, 3.5vw, 30px)/1.25 var(--mono); }
 .article .lede { color: var(--mut); font-size: 15.5px; margin: 10px 0 22px; }
-.article h2 { font-size: 17px; margin: 30px 0 7px; letter-spacing: -0.01em; line-height: 1.4; }
+.article h2 { font: 600 16px/1.4 var(--mono); margin: 30px 0 7px; }
 .article p { margin: 11px 0; }
 .article ul, .article ol { padding-left: 19px; margin: 10px 0; }
-/* Admin â€” form flat. Judul satu skala dengan blog, tanpa keterangan. */
+/* Admin — form flat. Judul satu skala dengan blog, tanpa keterangan. */
 .admin { max-width: 600px; margin: 0 auto; padding: 52px 24px 88px; }
-.admin h1 { font-size: 26px; letter-spacing: -0.02em; margin-bottom: 26px; }
+.admin h1 { font: 700 24px var(--mono); margin-bottom: 26px; }
 .field { margin: 14px 0; }
 .field label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 5px; }
 .field input, .field textarea { width: 100%; font: 13px var(--sans); color: var(--ink); background: var(--soft); padding: 10px 13px; border-radius: 6px; border-style: none; border-width: 0; appearance: none; -webkit-appearance: none; }
@@ -83,7 +126,7 @@ html[data-theme="dark"] .status.ok { background: #16283b; color: #7fd1a3; }
 .footer { margin-top: 44px; background: var(--soft); padding: 52px 0 30px; }
 .footer-in { max-width: var(--w); margin: 0 auto; padding: 0 24px; display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 30px; }
 .footer .brand { color: var(--ink); }
-.footer h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--faint); margin-bottom: 9px; }
+.footer h4 { font: 600 12.5px var(--mono); color: var(--faint); margin-bottom: 9px; }
 .footer a { color: var(--mut); font-size: 13px; display: block; margin: 5px 0; }
 .footer a:hover { color: var(--ink); }
 .footer p { font-size: 13px; color: var(--mut); max-width: 34ch; margin-top: 9px; }

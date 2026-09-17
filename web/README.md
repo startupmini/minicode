@@ -17,10 +17,55 @@ tanpa dependensi runtime baru.
 
 ```bash
 bun run web:css     # gabung part-*.css -> styles.css
-bun run web:build   # bangun site/
+bun run web:build   # bangun site/ (rasterisasi og-image.png via @resvg/resvg-js)
 bun run web:serve   # preview http://localhost:3000
 bun run web:check   # validasi link + anti-rahasia
 ```
+
+`web:build` tidak menjalankan `web:css` — jalankan `web:css` dulu bila
+mengubah `part-*.css`.
+
+## Checklist rilis web — verifikasi pasca-deploy
+
+Jalankan berurutan setiap kali deploy Pages selesai. Prinsip: **field p75
+(CrUX) adalah kriteria; lab hanya diagnostik** — jangan dicampur.
+
+### Fase 1 — Verifikasi deploy (hari yang sama, ±5 menit)
+
+- [ ] `https://minicode.fun` menyajikan versi baru — cek string versi di footer (`v…` sama dengan `package.json`)
+- [ ] `/docs/changelog.html` berisi entri PLAN terbaru (marker terbaru terlihat)
+- [ ] `/rss.xml` valid + `lastBuildDate` diperbarui
+- [ ] `/admin.html` Publish jalan (fetch `repos/…/contents` tak 404)
+- [ ] Spot-check: 1 halaman docs + 1 posting blog + `/og-image.png` (bukan 404)
+
+### Fase 2 — Lab CWV (hari yang sama, ±10 menit)
+
+Chrome DevTools → Performance → reload dengan **cache disabled + 4× CPU
+throttle**, atau Lighthouse mobile di PSI: https://pagespeed.web.dev/analysis?url=https%3A%2F%2Fminicode.fun
+
+- [ ] LCP < 2,5 s · TBT rendah (proksi INP di lab) · CLS < 0,1
+- [ ] LCP element = H1 hero (bukan font/aset yang terlambat)
+- [ ] Ketiga font `200` dari `fonts.gstatic.com` (Network, tanpa 404/redirect)
+- [ ] Tidak ada error konsol
+
+### Fase 3 — CrUX field p75 (terjadwal: +2, +6, +12 minggu pasca-deploy)
+
+```bash
+MINICODE_PSI_KEY=… bun run web:vitals   # tanpa key: kuota publik terbatas
+```
+
+CrUX = jendela bergulir **28 hari** + ambang volume: situs Pages kecil sering
+"no data" — itu bukan kegagalan, itu sinyal untuk menunggu trafik. Skrip
+otomatis menandai sumbernya (`[field]` vs `[lab]`) dan jatuh ke Lighthouse
+bila CrUX kosong. Kriteria rilis: LCP p75 < 2,5 s · INP p75 < 200 ms ·
+CLS p75 < 0,1 (seluruhnya GOOD).
+
+**Baseline** (isi tabel di bawah pada tiap pengukuran; simpan nilai, bukan
+tangkapan layar):
+
+| Tanggal | Sumber | LCP p75 | INP p75 / TBT | CLS p75 | Catatan |
+|---|---|---|---|---|---|
+| — | — | — | — | — | — |
 
 ## Tulis artikel
 
@@ -31,7 +76,16 @@ Atau buka `/admin.html` setelah deploy, login GitHub, tulis, Publish.
 
 Konsep "Flat Paper": tanpa border, garis, shadow. Hierarki dari tipografi +
 spasi + blok background. Font docs satu tingkat lebih kecil (12.5px).
-Ikon Material Symbols Outlined via Google Fonts dengan fallback sembunyi.
+Ikon Material Symbols Outlined via Google Fonts (subset `icon_names`, hanya
+yang benar-benar dirender) dengan fallback sembunyi.
+
+Arah 2026-09-17 (audit frontend-design): **JetBrains Mono = suara merek** —
+display, judul docs/blog, label data, dan wordmark memakai mono (produk ini
+hidup di terminal); body prosa tetap Inter. Nomor hanya untuk urutan nyata
+("Cara kerja" 1–5 ala ledger). Tanpa eyebrow tracked-caps di tiap heading,
+tanpa panah tempelan di link, tanpa ikon dekoratif di kartu, tanpa pola `·`
+antar-meta. Satu momen gerak: entrance hero (reveal-on-scroll per kartu
+dihapus sadar).
 
 ## Motion
 

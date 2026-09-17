@@ -71,6 +71,11 @@ if (res.status !== 0 && !/\d+ pass/.test(output)) {
 const failCount = Number(/(\d+) fail/.exec(output)?.[1] ?? "0")
 if (failCount > 0) {
   console.error(`[coverage-gate] ${failCount} test failing — gate tidak dievaluasi`)
+  // Cetak nama test yang gagal — tanpa ini, reporter dots menelan nama dan
+  // kegagalan spesifik-coverage jadi mustahil didiagnosis dari log CI.
+  for (const line of output.match(/^\(fail\).*$/gm) ?? []) {
+    console.error(`  ${line.slice(0, 160)}`)
+  }
   process.exit(1)
 }
 

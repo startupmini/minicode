@@ -12,7 +12,9 @@ export interface DocEntry {
 }
 
 const DOC_META: Record<string, { desc: string; src: string }> = {
-  README: {
+  // Key = slug (readDocNav selalu lowercase) — key "README" dulu tak pernah
+  // kena lookup dan halaman docs/index jatuh ke desc fallback 29 char.
+  readme: {
     desc: "Dokumentasi Minicode: coding agent CLI shell-native di atas MiniCore.",
     src: "docs/README.md",
   },
@@ -61,10 +63,13 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
     src: "docs/TERMINAL_CONTRACT.md",
   },
   quickstart: {
-    desc: "Dari nol ke prompt pertama yang ter-verify dalam 5 menit.",
+    desc: "Quickstart Minicode: dari nol ke prompt pertama yang ter-verify dalam 5 menit.",
     src: "cli/router.ts",
   },
-  cli: { desc: "Mode CLI, flags, dan environment variables Minicode.", src: "cli/router.ts" },
+  cli: {
+    desc: "Referensi CLI Minicode: mode, flags, dan environment variables.",
+    src: "cli/router.ts",
+  },
   "choosing-mode": {
     desc: "Pilih permission mode dari tujuan: baca, ubah, approve, plan, CI, otonom.",
     src: "src/policy/permission.ts",
@@ -91,20 +96,29 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
     src: "src/memory/vector.ts",
   },
   "mcp-lsp": {
-    desc: "MCP stdio dan Streamable HTTP plus LSP diagnostics.",
+    desc: "MCP dan LSP di Minicode: stdio, Streamable HTTP, dan LSP diagnostics.",
     src: "src/mcp/client.ts",
   },
   "verify-benchmark": {
     desc: "Auto-verify self-heal, benchmark, dan SWE-bench Lite.",
     src: "bench/runner.ts",
   },
-  troubleshooting: { desc: "FAQ error umum dan minicode doctor.", src: "cli/commands/doctor.ts" },
-  contributing: { desc: "Setup dev, gate, batas lapisan, dan aturan kode.", src: "AGENTS.md" },
+  troubleshooting: {
+    desc: "Solusi error umum Minicode: minicode doctor, koneksi gagal, dan path Windows.",
+    src: "cli/commands/doctor.ts",
+  },
+  contributing: {
+    desc: "Kontribusi ke Minicode: setup dev, gate test, batas lapisan, dan aturan kode.",
+    src: "AGENTS.md",
+  },
   architecture: {
-    desc: "Tiga lapisan, alur satu prompt, dan kontrak terminal.",
+    desc: "Arsitektur Minicode: tiga lapisan, alur satu prompt, dan kontrak terminal.",
     src: "docs/ARCHITECTURE.html",
   },
-  changelog: { desc: "Perubahan per versi Minicode.", src: "CHANGELOG.md" },
+  changelog: {
+    desc: "Changelog Minicode: perubahan per versi, dari rencana eksekusi.",
+    src: "CHANGELOG.md",
+  },
 }
 
 export function readDocNav(repoRoot: string): DocEntry[] {

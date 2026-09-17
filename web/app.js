@@ -1,4 +1,4 @@
-// JS web minicode: tema + copy button + reveal-on-scroll + scrollspy.
+// JS web minicode: tema + copy button + nav docs + scrollspy TOC.
 // Tanpa dependensi, tanpa framework. Semua enhancement progresif: tanpa JS
 // (atau reduced-motion) halaman tampil utuh — gate class .js di bawah.
 (function () {
@@ -43,24 +43,19 @@
       else done();
     });
   });
-  // Reveal-on-scroll: kartu landing muncul halus sekali, lalu lepas pantau.
-  // Target struktural yang sudah ada (tanpa ubah markup): kartu fitur,
-  // item FAQ, dan heading section.
-  if (canObserve) {
-    var io = new IntersectionObserver(function (es) {
-      es.forEach(function (e) {
-        if (!e.isIntersecting) return;
-        e.target.classList.add("in");
-        io.unobserve(e.target);
-      });
-    }, { rootMargin: "0px 0px -8% 0px", threshold: 0.12 });
-    var rvs = document.querySelectorAll(".feat-list > *, .faq > details, section h2");
-    for (var i = 0; i < rvs.length; i++) {
-      var el = rvs[i];
-      el.classList.add("rv");
-      el.style.transitionDelay = (i % 4) * 70 + "ms";
-      io.observe(el);
-    }
+  // Desktop: nav docs SELALU terbuka (re-envision nav). Lock dua jalur:
+  // matchMedia "change" menutup path resize (user tutup menu di mobile lalu
+  // lebarkan layar — CSS pindah branch tanpa event toggle; dulu nav hilang),
+  // "toggle" menutup path klik user. Tanpa JS: tetap terbuka dari markup.
+  var fold = document.querySelector(".doc-side .ds-fold");
+  var desktopNav = window.matchMedia("(min-width: 901px)");
+  if (fold) {
+    var lockFold = function (e) { if (e.matches) fold.open = true; };
+    if (desktopNav.addEventListener) desktopNav.addEventListener("change", lockFold);
+    else if (desktopNav.addListener) desktopNav.addListener(lockFold); // Safari lama
+    fold.addEventListener("toggle", function () {
+      if (desktopNav.matches) fold.open = true;
+    });
   }
   // Scrollspy TOC dokumen: tandai link section yang sedang terlihat.
   var tocAs = Array.prototype.slice.call(document.querySelectorAll(".toc a[href^='#']"));

@@ -336,7 +336,15 @@ describe("bash background", () => {
         if (e.kind === "bash-output") chunks.push(String((e.data as { text?: string }).text ?? ""))
       },
     } as unknown as ToolContext
-    await bashTool.execute({ cmd: echoCmd }, emitCtx)
+    const p = bashTool.execute({ cmd: echoCmd }, emitCtx)
+    // Proses super-cepat (echo) di runner CI berbeban bisa resolve sebelum
+    // engine mengirim event 'data' ke listener — esensi yang diuji = emit
+    // path bekerja dan membawa isi, BUKAN sinkronitas engine. Tunggu dengan
+    // deadline (pola waitUntil yang sama seperti test background di atas);
+    // emit path rusak (regresi) tetap gagal lewat deadline, bukan terselamatkan.
+    const ok = await waitUntil(() => chunks.join("").includes("halo-bg"))
+    await p
+    expect(ok).toBe(true)
     expect(chunks.join("")).toContain("halo-bg")
   })
 })

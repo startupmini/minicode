@@ -31,8 +31,82 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
 
 ---
 
-## Status eksekusi terbaru (update 2026-09-09)
+## Status eksekusi terbaru (update 2026-09-17)
 
+- ✅ SEO Riset+Eval+Fix (2026-09-17): audit live minicode.fun (robots+sitemap
+  ok, www/http 301 ke apex-https, 404 code benar) + riset gallery rich-result
+  Google 2026 (SoftwareApp butuh rating — TIDAK difabrikasi; Article/
+  Breadcrumb masih hidup). Fix: llms.txt digenerate dari SUMMARY (404 →
+  peta AI-crawler), BreadcrumbList JSON-LD di docs/blog/changelog, dedup
+  judul "Minicode — X — Minicode". Search API mati saat riset — kompetitor
+  SERP belum diverifikasi; lainnya dari dokumen Google langsung.
+- ✅ CHECKLIST RILIS WEB (2026-09-17): checklist pasca-deploy 3 fase di
+  `web/README.md` (verifikasi deploy → lab CWV → CrUX field p75 pada +2/6/12
+  minggu) + skrip `web:vitals` (PSI API, nol dependensi; tandai [field] vs
+  [lab], jatuh ke Lighthouse bila CrUX "no data", pesan 429 actionable).
+  Baseline CWV dibiarkan kosong-jujur: butuh Chrome/trafik, diisi di tabel
+  README saat pengukuran pertama.
+- ✅ CHANGELOG WEB (2026-09-17): halaman /docs/changelog.html kini
+  digenerate otomatis dari section ini saat build (marker guard test:
+  GUARD-CHLOG-SATU); docs/changelog.md jadi stub anchor SUMMARY.
+- ✅ AUDIT WEB + FIX P0–P2 (uncommitted, 2026-09-17): hanya lapisan web
+  (`web/`, `scripts/web*`, workflow, test web) — runtime minicode tak disentuh.
+  P0: token GitHub admin tak lagi dipersist ke sessionStorage (+
+  `autocomplete=new-password`, publish disabled saat request, beforeunload
+  draf); RSS `&` di link/guid ter-escape + `lastBuildDate` + `id-ID`.
+  P1: ordered list md dirender `<ol>` sungguhan (dulu `<p>`); delay reveal
+  via custom property `--d` (bukan inline transitionDelay); reset CSS
+  selektif (list/table/details tak lagi dipatuhin `*{margin:0}`); job CI
+  `web-check` untuk PR (dulu hanya push main).
+  P2: subset ikon Material Symbols via `icon_names` (verifikasi curl:
+  1 @font-face); og:image dirasterisasi ke PNG 1200×630 via
+  `@resvg/resvg-js` (dev-dep; gagal render → SVG fallback, build tak
+  gagal); `text-wrap: balance/pretty`, `tabular-nums`, `…` tipografis
+  text-node-only; `web:build` tak lagi double-run CSS assembler;
+  `layoutCache` per-path. Guard baru: `<ol>`, ellipsis href-utuh, RSS
+  escape, admin bebas-storage-token, subset ikon, og PNG, docs-tanpa-
+  nested-list. Gate: `web:check` 12/12, `test/web-build.test.ts` 29/29,
+  `bun test` 2025 pass 0 fail, tsc + lint 0 warn.
+  PERF (skill performance, static — tanpa trace di env ini): Inter statis
+  5 instance → variable `wght@400..700` (1 file/subset); ikon axis variable
+  → pin statis `@24,400,0,0` (1 @font-face); JBM admin cukup 600;700;
+  `font-weight` 650 → 600 (cakup rentang variabel, tanpa sintesis);
+  Speculation Rules prerender `/docs/*` eagerness moderate (progresif).
+  DITOLAK sadar: inline critical CSS (total CSS ±4–5 KB gzip — satu request
+  render-blocking lebih murah daripada dobel HTML); preload URL kit gstatic
+  (URL kit berubah per subset — rapuh); Cache-Control custom (GitHub Pages
+  tidak mengizinkan header custom).
+- ✅ RE-ENVISION NAV DOCS (2026-09-17): subsistem terlemah = nav docs mobile
+  (27 link men-stack di atas konten). Dibangun ulang ke `<details>` collapsible
+  sticky di bawah topbar: konten selalu pertama, menu satu tap; desktop
+  selalu-terbuka (sinkron `toggle` di app.js, summary disembunyikan CSS);
+  no-JS mobile = terdegradasi terbuka (dulu), desktop utuh dari markup.
+  Scroll-margin anchor mobile naik ke 116px (topbar+summary). Link, highlight
+  aktif, kelompok SUMMARY, sticky — semua dari draft lama dipertahankan.
+  Verifikasi permukaan nyata: harness inline css+js hasil build dieksekusi
+  preview (desktopLock=true, 27 entri, active="Tools (37)", mobile rules 8),
+  bukan hanya grep. Harness dihapus setelah uji.
+- ✅ ADVERSARIAL REVIEW (2026-09-17): 4 bug hasil review ditemukan + diperbaiki
+  (a) nav hilang di desktop: user tutup menu di mobile → lebarkan layar, CSS
+  pindah branch tanpa event toggle → kini matchMedia('change') membuka ulang
+  (+ fallback addListener Safari lama); (b) sticky no-op mobile: aside = grid
+  item satu baris → containing block setinggi dirinya → .doc-layout mobile
+  jadi display:block; (c) pemecah <ol>: baris indentasi lanjutan item jatuh ke
+  <p> → list pecah, penomoran restart (75 lokasi di docs, security.md dst.) →
+  renderer menyambung ke <li> sebelumnya; blank TETAP memutus (kontrak lama);
+  (d) tanggal blog tanpa timeZone UTC → geser mundur sehari di mesin TZ
+  negatif → timeZone:'UTC'. Ketiganya diverifikasi live (harness inline css
+  +js build asli): matchMedia path, sticky posisi, <ol> utuh, fonts 200 dari
+  gstatic (Inter variable, JBM, ikon subset).
+- ✅ GUARD ADVERSARIAL (2026-09-17): 4 test baru di web-build.test.ts menjaga
+  bug adversarial agar tak kembali — masing-masing TERBUKTI GAGAL via mutasi
+  kode lama (hapus listener change / blok lanjutan / timeZone non-UTC / CSS
+  grid+top:0), lalu sumber dipulihkan: (1) lock nav docs di DUA jalur
+  (matchMedia change + toggle, addListener fallback); (2) baris lanjutan list
+  menyambung <li>, <ol> tak pecah (blank tetap memutus); (3) blogDateFmt
+  diekspor (pola diekspor-untuk-test), timeZone UTC + format "5 Jan 2026";
+  (4) mobile display:block + sticky top:60px, desktop grid + summary:none.
+  Gate `2045 pass 0 fail / tsc / lint 0 warn / web:check 12/12`.
 - ✅ P0-P9 tuntas dan dihapus dari plan (commit `e143db2` 0.9.0 + `b8b5749` 0.9.1): guardrail, coverage, overlay, English-only, tema, data-at-rest, session, tool-layer, env/command, CLI hardening, memory/RAG P0-P2.
 - ✅ P12 UI Shell-Max DIEKSEKUSI `b8b5749` (9.3/10): `/copy` OSC52, Ctrl+R/Ctrl+J, statusline rich, wrap/table/diff/picker, harness output-driven. Gate `tsc PASS / lint 9 warn / 1224 pass 0 fail / coverage 81.44/83.65 / pack 22/22`.
 - ✅ P13 P0 + P10 P0 + P11 P0 DIEKSEKUSI (`ff70d65` 0.9.2 + `e1c7839`/`346a932` 0.9.3/0.9.4): `--cwd` repo-wide, O_NOFOLLOW, pricing refresh, max_tokens 8192, thought_signature side-map, 4 tool, memori kategori/scope, code_run tanpa shell, trash bersama.

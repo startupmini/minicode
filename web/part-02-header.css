@@ -1,7 +1,10 @@
 /* Header: flat, satu baris, tanpa garis pemisah. Tombol tema = ikon saja. */
 .topbar { position: sticky; top: 0; z-index: 50; background: var(--bg); }
+/* Ikon term-cap satu ukuran (audit web P2: ganti inline style di layout). */
+.term-cap .material-symbols-outlined { font-size: 13px; }
 .topbar-in { max-width: var(--w); margin: 0 auto; padding: 14px 24px; display: flex; align-items: center; gap: 22px; }
-.brand { display: inline-flex; align-items: center; gap: 9px; font-weight: 650; font-size: 16px; color: var(--ink); letter-spacing: -0.01em; }
+/* Wordmark = yang diketik di terminal: mono, bukan sans tebal. */
+.brand { display: inline-flex; align-items: center; gap: 9px; font: 600 15px var(--mono); color: var(--ink); letter-spacing: -0.01em; }
 .brand:hover { text-decoration: none; }
 .brand-logo { width: 28px; height: 28px; border-radius: 8px; display: block; }
 .nav { display: flex; gap: 2px; margin-left: auto; align-items: center; }

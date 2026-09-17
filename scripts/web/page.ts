@@ -17,9 +17,15 @@ export interface PageOpts {
 }
 
 let layoutCache = ""
+let layoutCachePath = ""
 
 export function renderPage(webDir: string, opts: PageOpts): string {
-  if (!layoutCache) layoutCache = readFileSync(join(webDir, "layout.html"), "utf8")
+  // Cache per-path (audit web: cache lama global per-proses — test yang
+  // memakai webDir berbeda dalam satu proses bisa membaca layout stale).
+  if (!layoutCache || layoutCachePath !== webDir) {
+    layoutCache = readFileSync(join(webDir, "layout.html"), "utf8")
+    layoutCachePath = webDir
+  }
   return layoutCache
     .replaceAll("{{TITLE}}", escAttr(opts.title))
     .replaceAll("{{DESC}}", escAttr(opts.desc))
@@ -55,4 +61,22 @@ export function softwareJsonld(version: string): string {
     license: "https://opensource.org/licenses/MIT",
     offers: { "@type": "Offer", price: "0" },
   }).replaceAll("</", "<\\/")
+}
+
+/**
+ * Node BreadcrumbList untuk @graph halaman. Satu pemilik dua konvensi:
+ * (1) `Beranda` selalu position 1 — helper yang menambahkannya, (2) elemen
+ * terakhir TANPA `item` (rekomendasi Google) — ditegakkan di sini meski
+ * pemanggil mengirimnya. Kembalikan objek; stringify+escape di call site.
+ */
+export function breadcrumbJsonld(
+  base: string,
+  trail: { name: string; item?: string }[],
+): Record<string, unknown> {
+  const items = [
+    { "@type": "ListItem", position: 1, name: "Beranda", item: `${base}/` },
+    ...trail.map((t, i) => ({ "@type": "ListItem", position: i + 2, ...t })),
+  ]
+  delete items[items.length - 1]!.item
+  return { "@type": "BreadcrumbList", itemListElement: items }
 }

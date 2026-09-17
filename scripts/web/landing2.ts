@@ -1,43 +1,39 @@
 // Potongan konten landing (bagian 2): kapabilitas, kecocokan, FAQ.
+// Ikon kartu dihapus (arah desain 2026-09-17): hierarki dari tipografi, bukan
+// dekorasi; elemen datar tanpa background — kartu berfungsi sebagai blok teks.
 export function landingFeatures(): string {
   const feats = [
     [
-      "build",
       "Semua operasi lewat satu gerbang",
       "File, shell, git, web, dan memori dijalankan sebagai tool terjail — 37 tool bawaan plus MCP/LSP bila Anda daftarkan.",
       "/docs/tools.html",
       "Referensi tools",
     ],
     [
-      "tune",
       "Otonomi sesuai selera",
       "Baca saja, rencanakan dulu, setujui satu-satu, atau otonom penuh dengan sandbox dan budget. Ganti kapan pun.",
       "/docs/choosing-mode.html",
       "Pilih mode",
     ],
     [
-      "history",
       "Ingat dan bisa kembali",
       "Memori lintas sesi yang bisa dilupakan; checkpoint tiap turn dengan /undo; sesi bisa dilanjutkan.",
       "/docs/memory-sessions.html",
       "Memory & sessions",
     ],
     [
-      "hub",
       "Ganti model tanpa pindah alat",
       "14 gateway termasuk lokal via Ollama; router fallback saat rate-limit; OAuth tanpa API key untuk provider yang mendukung.",
       "/docs/config-providers.html",
       "Config & provider",
     ],
     [
-      "verified",
       "Hasil yang diperiksa",
       "--verify menguji baseline dulu lalu self-heal; JSONL deterministik untuk CI.",
       "/docs/verify-benchmark.html",
       "Verify & benchmark",
     ],
     [
-      "extension",
       "Otomasi yang jujur",
       "Headless dengan event JSON terstruktur; gagal dilaporkan apa adanya, bukan disamarkan.",
       "/docs/exec.html",
@@ -46,8 +42,8 @@ export function landingFeatures(): string {
   ]
   const cards = feats
     .map(
-      ([ic, h, p, href, more]) =>
-        `<div class="feat"><h3><span class="material-symbols-outlined">${ic}</span>${h}</h3><p>${p}</p><a class="more" href="${href}">${more} →</a></div>`,
+      ([h, p, href, more]) =>
+        `<div class="feat"><h3>${h}</h3><p>${p}</p><a class="more" href="${href}">${more}</a></div>`,
     )
     .join("")
   return `<section id="fitur"><h2>Kemampuan.</h2><p class="sub">Apa yang bisa dilakukan — tiap klaim bisa diverifikasi di dokumentasi dan source.</p><div class="feat-list">${cards}</div></section>`

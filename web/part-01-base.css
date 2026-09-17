@@ -18,7 +18,10 @@
      di gelap — kontras dua arah, bukan satu warna hardcoded. */
   --on-acc: #ffffff;
   --sans: "Inter", ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+  /* JetBrains Mono = suara merek: produk ini hidup di terminal, jadi display
+     + code + data memakai satu keluarga mono (bukan ui-monospace default).
+     Fallback native tetap utuh bila font gagal termuat. */
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
   --w: 1080px;
   --w-doc: 720px;
   /* Font dokumentasi: satu tingkat di bawah body (15px - 2 = 13.5px asal,
@@ -54,8 +57,23 @@ html[data-theme="dark"] {
   --code-fg: #e6e8ee;
   --on-acc: #0c0d10;
 }
-* { box-sizing: border-box; margin: 0; padding: 0; }
-html { scroll-behavior: smooth; }
+/* Reset selektif (audit web P1-7): box-sizing universal, tapi nol spasi hanya
+   untuk elemen yang memang di-restyle di bawah. Dulu `* { margin:0;padding:0 }`
+   mematikan indentasi list, spasi figure/blockquote, dan padding UA details
+   lalu dipulihkan per-selector — elemen baru tanpa rule eksplisit muncul
+   tanpa spasi sama sekali. ul/ol sengaja mempertahankan padding-left UA. */
+*, *::before, *::after { box-sizing: border-box; }
+body, h1, h2, h3, h4, p, figure, blockquote, pre, dl, dd, fieldset, legend { margin: 0; padding: 0; }
+ul, ol { margin: 0; }
+html { scroll-behavior: smooth; scroll-padding-top: 84px; }
+/* Sentuh: hilangkan delay dobel-tap + highlight biru UA; feedback tetap dari
+   hover/focus state sendiri. scroll-padding: elemen fokus/anchor tak tertutup
+   topbar sticky (setinggi topbar ± 12px). */
+a, button, summary, input, textarea { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+/* Tema gelap: color-scheme menyinkronkan scrollbar & kontrol native dengan
+   tema (dulu terang di dark karena hanya meta theme-color). */
+html { color-scheme: light; }
+html[data-theme="dark"] { color-scheme: dark; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
 }
@@ -74,6 +92,11 @@ button { font: inherit; color: inherit; background: none; border-style: none; bo
 .skip { position: absolute; left: -9999px; top: 0; z-index: 200; background: var(--acc); color: var(--on-acc); padding: 8px 14px; border-radius: 0 0 8px 0; }
 .skip:focus { left: 0; }
 code { font-family: var(--mono); font-size: 0.85em; background: var(--soft); color: var(--ink); padding: 0.06em 0.3em; border-radius: 6px; overflow-wrap: anywhere; }
+/* Tipografi (guideline): heading tanpa widow (balance), prose rata kiri lebih
+   rapi (pretty) — progresif, browser lama abaikan. Angka mono/date tabular. */
+h1, h2, h3 { text-wrap: balance; }
+.doc-body p, .article p, .lead, .sub, .post-row p { text-wrap: pretty; }
+.term-cap, .post-date, .kicker { font-variant-numeric: tabular-nums; }
 pre { background: var(--code-bg); color: var(--code-fg); padding: 14px 16px; border-radius: var(--r); overflow-x: auto; font: 12px/1.7 var(--mono); }
 pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
 .material-symbols-outlined { font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24; font-size: 17px; vertical-align: -3px; user-select: none; }

@@ -1,5 +1,5 @@
 ---
-title: "Rencana dulu sebelum eksekusi dengan plan mode"
+title: "Plan mode Minicode: rencana dulu sebelum eksekusi"
 date: 2026-09-12
 tags: [minicode, plan-mode, tutorial]
 desc: "Jalankan minicode --plan untuk membaca, mencari, dan menyusun rencana tanpa mengubah apa pun — termasuk daftar todo dan delegasi read-only."

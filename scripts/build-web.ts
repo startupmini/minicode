@@ -5,7 +5,7 @@ import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { buildBlog } from "./web/blog.ts"
 import { buildChangelog, buildDocs } from "./web/docs.ts"
-import { landingHero, landingHow, landingWhy } from "./web/landing1.ts"
+import { landingHero, landingHow, landingTasks } from "./web/landing1.ts"
 import { landingFaq, landingFeatures, landingFit, landingSafety } from "./web/landing2.ts"
 import { buildLlmsTxt } from "./web/llms.ts"
 import { renderPage, softwareJsonld } from "./web/page.ts"
@@ -41,10 +41,12 @@ function write(rel: string, content: string): void {
   writeFileSync(dest, content, "utf8")
 }
 
+// Dua section yang dipertukarkan eksperimen A/B dibungkus `.pair`: keduanya
+// memang bersebelahan, jadi pembungkus ini satu-satunya perubahan struktur
+// yang dibutuhkan CSS `order` (tanpa memindahkan DOM — lihat part-04).
 const landing =
   landingHero(version) +
-  landingHow() +
-  landingWhy() +
+  `<div class="pair">${landingHow()}${landingTasks()}</div>` +
   landingFeatures() +
   landingFit() +
   landingSafety() +
@@ -56,6 +58,9 @@ write(
     desc: "Minicode — coding agent CLI open source untuk terminal: tiap langkah terlihat di scrollback, tiap aksi sensitif lewat izin Anda. MIT, zero-dep, Bun.",
     canon: `${base}/`,
     body: landing,
+    // body.home: penanda landing — eksperimen urutan A/B (`body.home main`
+    // jadi flex column + `order`) hanya boleh menyentuh halaman ini.
+    bodyClass: "home",
     version,
     jsonld: softwareJsonld(version),
   }),

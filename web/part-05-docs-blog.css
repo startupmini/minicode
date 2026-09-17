@@ -1,46 +1,74 @@
 /* Docs single-column + blog + admin + footer. Prev/Next hanya di bawah.
-   Judul docs/blog = mono (konsisten dengan display landing); isi tetap sans. */
+   Rombak 2026-09-17: halaman docs memakai BAHASA DESAIN LANDING — kicker,
+   judul mono skala display, daftar isi bernomor ala ledger, navigasi
+   prev/next bertajuk, dan hub docs berupa grid kelompok dari SUMMARY.
+   Isi referensi tetap sans 14px; prosa diratakan kanan-kiri di base CSS. */
+
+/* Header halaman (docs + changelog). Kicker = kelompok SUMMARY, jadi pembaca
+   tahu posisinya tanpa melihat sidebar. Judul sengaja TIDAK di dalam
+   .doc-body: di sini memakai skala display, sedangkan .doc-body h1 adalah
+   H1 tambahan di tengah artikel. */
+.doc-head h1 { font: 700 clamp(24px, 3.4vw, 32px)/1.2 var(--mono); margin: 10px 0 0; max-width: 26ch; }
+.doc-head .lede { color: var(--mut); font-size: 15.5px; margin: 12px 0 0; max-width: 62ch; }
 
 .doc-body { max-width: var(--w-doc); }
-.doc-body h1 { font: 700 22px/1.3 var(--mono); margin: 18px 0 4px; }
-.doc-body h2 { font: 600 16px/1.4 var(--mono); margin: 30px 0 7px; }
+.doc-body h1 { font: 700 22px/1.3 var(--mono); margin: 26px 0 4px; }
+.doc-body h2 { font: 700 clamp(17px, 2.1vw, 19px)/1.35 var(--mono); margin: 34px 0 8px; }
 /* 600 (bukan 650): tercakup rentang variabel Inter 400..700 — tanpa ini,
    650 memaksa browser sintesis bobot di sekitar 600/700. */
-.doc-body h3 { font-size: 14px; font-weight: 600; margin: 21px 0 5px; line-height: 1.4; }
+.doc-body h3 { font: 600 14px/1.4 var(--mono); margin: 24px 0 5px; }
 /* Anchor heading (FIX#7): hover-reveal `#`, target highlight saat deep-link.
    scroll-margin agar heading tak tertutup topbar sticky saat lompat anchor.
    h1 ikut: dokumen multi-H1 sah, anchor-nya harus konsisten. */
 .doc-body h1[id], .doc-body h2[id], .doc-body h3[id], .article h1[id], .article h2[id] { scroll-margin-top: 84px; }
-.doc-body h2[id] .hl, .doc-body h3[id] .hl, .doc-body h1[id] .hl { opacity: 0; text-decoration: none; margin-right: 6px; font-weight: 400; }
-.doc-body h2[id]:hover .hl, .doc-body h3[id]:hover .hl, .doc-body h1[id]:hover .hl,
-.doc-body h2[id] .hl:focus-visible, .doc-body h3[id] .hl:focus-visible, .doc-body h1[id] .hl:focus-visible { opacity: 1; }
+.doc-body h2[id] .hl, .doc-body h3[id] .hl, .doc-body h1[id] .hl, .article h2[id] .hl, .article h1[id] .hl { opacity: 0; text-decoration: none; margin-right: 6px; font-weight: 400; }
+.doc-body h2[id]:hover .hl, .doc-body h3[id]:hover .hl, .doc-body h1[id]:hover .hl, .article h2[id]:hover .hl, .article h1[id]:hover .hl,
+.doc-body h2[id] .hl:focus-visible, .doc-body h3[id] .hl:focus-visible, .doc-body h1[id] .hl:focus-visible, .article h2[id] .hl:focus-visible, .article h1[id] .hl:focus-visible { opacity: 1; }
 .doc-body :target { outline: 2px solid var(--acc); outline-offset: 4px; border-radius: 4px; }
-/* TOC halaman panjang: flat, tanpa container — indentasi + label kecil. */
-.toc { margin: 14px 0 4px; padding: 0; }
-.toc p { font: 600 12px var(--mono); color: var(--faint); margin: 0 0 6px; }
-.toc ul { list-style: none; padding: 0; margin: 0; }
-.toc li { margin: 3px 0; padding-left: 12px; position: relative; }
-.toc li::before { content: "–"; position: absolute; left: 0; color: var(--faint); }
-.toc a { font-size: 13px; }
-.doc-body p { margin: 10px 0; color: var(--ink); }
+.doc-body p { margin: 11px 0; color: var(--ink); }
 /* Changelog dari PLAN.md: entri pakai skala h2 .doc-body; tanggal = data
    kecil mono tabular, redup — bukan hiasan. */
-.cl-item { margin: 26px 0 0; }
+.cl-item { margin: 30px 0 0; }
+/* Entri changelog memakai <section>, dan aturan `section` landing
+   (max-width + padding 52px 24px) bocor ke dalam artikel docs: entri dulu
+   ter-indent 24px dengan jarak atas ganda. Direset di sini. */
+.doc-body section.cl-item { max-width: none; padding: 0; }
 .cl-item time { font: 500 13px var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .doc-body ul, .doc-body ol { padding-left: 19px; margin: 9px 0; }
 .doc-body li { margin: 3px 0; }
 .doc-body li::marker { color: var(--acc); }
-.doc-body table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 12px; display: block; overflow-x: auto; }
+/* TOC halaman panjang: daftar bernomor ala ledger landing — urutan section
+   memang berurutan, jadi nomornya informasi. Marker ASLI <ol> dipakai (bukan
+   counter ::before) supaya nomor tetap bagian semantik list; diletakkan
+   setelah aturan list .doc-body agar padding/margin-nya tidak tertimpa. */
+.toc { margin: 22px 0 4px; padding: 0; }
+.toc > p { font: 600 12px var(--mono); color: var(--faint); margin: 0 0 8px; }
+.toc ol { list-style: decimal; margin: 0; padding-left: 22px; }
+.toc li { margin: 5px 0; }
+.toc li::marker { color: var(--acc); font-weight: 600; }
+.toc a { font-size: 13px; color: var(--mut); }
+.doc-body table, .article table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 12px; display: block; overflow-x: auto; }
 .doc-body th { text-align: left; font: 600 12px var(--mono); color: var(--faint); padding: 6px 9px; }
 .doc-body td { padding: 7px 9px; vertical-align: top; }
 .doc-body pre { margin: 12px 0; }
-/* Navigasi bawah: teks polos ‹ Prev / Next › tanpa judul, tanpa box. */
-.doc-nav { display: flex; justify-content: space-between; align-items: center; gap: 12px; max-width: var(--w-doc); margin: 56px auto 0; }
-.doc-nav a { color: var(--mut); font-size: 13.5px; font-weight: 600; padding: 10px 0; }
-.doc-nav a:hover { color: var(--acc); text-decoration: none; background: none; }
+/* Navigasi bawah: label mono kecil + judul halaman tujuan. Tanpa judul
+   (bentuk lama) pembaca harus mengklik untuk tahu ke mana lanjutnya. */
+.doc-nav { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; max-width: var(--w-doc); margin: 54px 0 0; }
+.doc-nav a { display: flex; flex-direction: column; gap: 3px; padding: 8px 0; }
+.doc-nav a.next { text-align: right; margin-left: auto; }
+.doc-nav .dn-k { font: 500 11.5px var(--mono); color: var(--faint); }
+/* min-width:0 + overflow-wrap: flex item tidak menyusut di bawah min-content
+   secara default → judul panjang membuat baris navigasi melebar keluar kolom
+   dan halaman bisa di-pan horizontal di ponsel. */
+.doc-nav a { min-width: 0; }
+.doc-nav .dn-t { color: var(--ink); font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.doc-nav a:hover { text-decoration: none; }
+.doc-nav a:hover .dn-t { color: var(--acc-text); }
 .doc-nav span { width: 0; }
-/* Sidebar docs — dua kolom: menu kiri sticky + konten kanan. */
-.doc-layout { max-width: 1200px; margin: 0 auto; padding: 36px 24px 72px; display: grid; grid-template-columns: 210px minmax(0,1fr); gap: 40px; align-items: start; }
+/* Sidebar docs — dua kolom: menu kiri sticky + konten kanan. Lebar total
+   1010px (bukan 1200px): dengan kolom baca 640px, sisa ruang kosong di
+   kanan dulu terlalu lebar sehingga halaman terasa mengambang. */
+.doc-layout { max-width: 1010px; margin: 0 auto; padding: 40px 24px 72px; display: grid; grid-template-columns: 200px minmax(0,1fr); gap: 48px; align-items: start; }
 /* overscroll-behavior: sampai ujung daftar, scroll tak merambat ke body. */
 .doc-side { position: sticky; top: 76px; max-height: calc(100vh - 96px); overflow-y: auto; overscroll-behavior: contain; padding-right: 8px; }
 /* Re-envision nav docs: desktop = nav selalu terbuka (summary disembunyikan,
@@ -50,6 +78,28 @@
 }
 .doc-main { max-width: var(--w-doc); margin-left: 0; }
 .ds-g { font: 600 12px var(--mono); color: var(--faint); margin: 18px 0 4px; }
+
+/* ── Hub docs (/docs/): hero + grid kelompok dari SUMMARY ──
+   Halaman index adalah "landing untuk dokumentasi": tanpa sidebar (grid di
+   bawah memuat semua tautan yang sama), kolom baca tetap 640px agar prosa
+   nyaman dibaca, grid boleh lebih lebar. */
+.doc-layout.hub { grid-template-columns: minmax(0, 1fr); max-width: 1000px; gap: 0; }
+.doc-layout.hub .doc-head h1 { font-size: clamp(26px, 4vw, 38px); max-width: 22ch; }
+/* Kolom baca tetap 640px, grid boleh lebar penuh 1000px — ritme hero landing
+   (teks sempit, daftar lebar). Tanpa ini grid hanya 640px = 2 kolom. */
+.doc-layout.hub .doc-main { max-width: none; }
+.doc-layout.hub .doc-head, .doc-layout.hub .doc-body { max-width: var(--w-doc); }
+/* Artikel hub menyusul SETELAH direktori — jarak blok, bukan margin heading. */
+.doc-layout.hub .doc-body { margin-top: 46px; }
+.doc-grid { margin-top: 48px; }
+.doc-grid > h2 { font: 700 clamp(19px, 2.4vw, 24px)/1.25 var(--mono); margin-bottom: 8px; }
+.dg { margin-top: 28px; }
+.dg-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px 32px; margin-top: 12px; }
+.dc { display: block; }
+.dc .dc-t { display: block; font: 600 13.5px var(--mono); color: var(--ink); }
+.dc .dc-d { display: block; font-size: 13px; color: var(--mut); margin-top: 5px; }
+.dc:hover { text-decoration: none; }
+.dc:hover .dc-t { color: var(--acc-text); }
 .ds-g:first-child { margin-top: 0; }
 .ds-i { display: block; font-size: 13px; color: var(--mut); padding: 4px 9px; margin: 1px -9px; border-radius: 6px; text-decoration: none; }
 .ds-i:hover { color: var(--ink); background: var(--soft); }
@@ -76,10 +126,14 @@
   .doc-side summary::-webkit-details-marker { display: none; }
   .doc-side summary::after { content: "▾"; color: var(--faint); }
   .doc-side details[open] summary::after { content: "▴"; }
-  /* Terbuka: daftar sendiri yang scroll (contain), bukan seluruh halaman. */
+  /* Terbuka: daftar sendiri yang scroll (contain), bukan seluruh halaman.
+     overflow-x: hidden wajib — item menu punya margin negatif (bleed hover
+     desktop) yang membuat daftar lebih lebar dari kolomnya di ponsel, dan
+     scrollbar horizontal muncul di dalam menu. */
   .doc-side details[open] {
     max-height: min(60vh, 480px);
     overflow-y: auto;
+    overflow-x: hidden;
     overscroll-behavior: contain;
     padding-bottom: 10px;
   }
@@ -87,6 +141,12 @@
   .doc-body h1[id], .doc-body h2[id], .doc-body h3[id], .article h1[id], .article h2[id] {
     scroll-margin-top: 116px;
   }
+  /* Prev/next bertajuk tidak muat berdampingan di kolom ±342px — dulu dua
+     tautan judul panjang mendorong halaman melebar dan ponsel bisa di-pan
+     ke samping. Di ponsel: tumpuk; arah tetap (prev kiri, next kanan). */
+  .doc-nav { flex-direction: column; gap: 4px; }
+  .doc-nav a { width: 100%; }
+  .doc-nav a.next { margin-left: 0; }
 }
 .blog { max-width: 720px; margin: 0 auto; padding: 52px 24px 80px; }
 .blog h1 { font: 700 clamp(24px, 3.5vw, 32px)/1.2 var(--mono); margin: 12px 0 6px; }

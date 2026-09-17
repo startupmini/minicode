@@ -33,6 +33,64 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
 
 ## Status eksekusi terbaru (update 2026-09-17)
 
+- ✅ UJI A/B URUTAN LANDING + ANALITIK LOKAL (2026-09-17): varian A = "Cara
+  kerja" dulu, B = "Serahkan tugas" dulu. Ditukar lewat CSS `order` dari
+  `data-order` di `<html>` yang dipasang pre-paint di `web/layout.html` — DOM
+  tetap kanonik (SEO, urutan tab, screen reader, tanpa-JS = A), tanpa kedip.
+  Dua section bersebelahan dibungkus `.pair` (`build-web.ts`). **Bug ditemukan
+  saat verifikasi preview:** percobaan pertama memakai `main { display: flex }`
+  + `main > * { order: 10 }` dan MENGANGKAT semua section lain ke atas (nilai
+  order sama menang atas posisi dokumen) — sudah diganti dan dijaga test
+  ("body.home main {" dilarang). Penetapan 50/50 sticky per browser + override
+  `?order=a|b` (tidak dipersistenkan; pengukuran dilewati agar sampel bersih).
+  Metrik lokal (`minicode-exp-v1`): kunjungan, kedalaman gulir maks, jangkauan
+  section (band tengah viewport), aksi di bagian Tugas, waktu aktif; flush
+  idempoten per sesi (milestone 25%, ganti-tab, pagehide) sehingga bacaan
+  panjang tidak hilang. Laporan `/?exp=report` (tabel per varian + jangkauan +
+  peringatan n<30 + salin JSON), `?exp=reset`, opt-out `?exp=off`/DNT=1.
+  NOL request keluar — dijaga test (fetch/XHR/sendBeacon/cookie dilarang di
+  app.js), sesuai janji "tanpa analitik keluar". Konsekuensi jujur: agregasi
+  lintas pengunjung manual (salin JSON per penguji), bukan otomatis. Section
+  landing `#cocok`/`#batasan`/`#faq` diberi id agar jangkauan bisa dilaporkan.
+  Guard: 3 test baru. Gate `46 pass 0 fail / tsc / lint 0 warn / web:check
+  12/12`.
+
+- ✅ SCROLLBAR DISEMBUNYIKAN (2026-09-17): permintaan desain — trek+thumb
+  native (termasuk versi "tipis" lama) tidak flat. `* { scrollbar-width:
+  none; -ms-overflow-style: none }` + `*::-webkit-scrollbar { width:0;
+  height:0; display:none }` di `part-01-base.css`; aturan lama
+  (`thin` + `scrollbar-color` + thumb/track) dihapus, bukan ditumpuk.
+  Fungsi TIDAK dikorbankan: `overflow` container tak disentuh, jadi roda
+  mouse, trackpad, sentuh, keyboard (PageUp/Down, spasi, Home/End),
+  drag-select, dan gulir internal `pre`/tabel/menu docs tetap jalan —
+  diverifikasi di preview: `scrollbar-width` computed `none`, dokumen
+  `scrollTop=700` terpasang, `pre` mencapai batas gulir (26/26px).
+  Konsekuensi sadar: indikator posisi halaman & drag bar hilang.
+  Guard: 1 test baru (aturan ada + aturan lama absen + container gulir
+  tak dimatikan) + test lama "design language flat" disinkronkan dari
+  `scrollbar-width: thin` → `none`. Gate `43 pass 0 fail / tsc / lint
+  0 warn / web:check 12/12`.
+
+- ✅ ROMBAK HALAMAN DOCS + PROSA JUSTIFY (2026-09-17): seluruh halaman docs
+  kini memakai bahasa desain landing — `<header class="doc-head">` dengan
+  kicker kelompok SUMMARY + judul mono skala display; daftar isi halaman
+  panjang jadi ledger bernomor (nomor bawaan heading di-strip dari label agar
+  tak dobel); prev/next di bawah memawa judul halaman tujuan. Hub `/docs/`
+  jadi "landing dokumentasi": tanpa sidebar, direktori `<nav class="doc-grid">`
+  digenerate dari SUMMARY (judul + desc DOC_META) di bawah header, dan section
+  `## Navigasi` README dibuang DI WEB saja (`stripMdSection`; README tetap utuh
+  untuk repo). Paragraf prosa dijustify site-wide (hanya paragraf — heading,
+  daftar, tabel, kode tetap rata kiri) + `hyphens: auto` + baris terakhir rata
+  kiri; `--w-doc` 720→640px dan `--fs-doc` 12.5→14px karena baris ±115 karakter
+  bikin celah antarkata menganga; `text-wrap: pretty` dibuang (diabaikan saat
+  justify). Bug nyata yang ketemu saat verifikasi preview: menu docs ponsel
+  terbuka di ATAS konten (kini ditutup app.js hanya di layar kecil), scrollbar
+  horizontal di dalam menu, dan prev/next bertajuk yang tidak muat berdampingan
+  di kolom ±342px (kini ditumpuk di ≤900px). Guard baru: header docs, TOC tanpa
+  nomor dobel, hub (grid ⊇ SUMMARY, tanpa sidebar, tabel Navigasi absen),
+  justifier base CSS, menu ponsel tertutup. Gate `2039 pass 0 fail / tsc / lint
+  0 warn / web:check 12/12`.
+
 - ✅ SEO Riset+Eval+Fix (2026-09-17): audit live minicode.fun (robots+sitemap
   ok, www/http 301 ke apex-https, 404 code benar) + riset gallery rich-result
   Google 2026 (SoftwareApp butuh rating — TIDAK difabrikasi; Article/
@@ -56,6 +114,22 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   (part-06-motion.css), terverifikasi LCP = H1 di lab ulang DAN di produksi
   pasca-deploy (2,4 s, satu kandidat H1, score 95). Baseline tercatat
   di web/README.md. Field CrUX tetap menunggu fase 3 (+2/6/12 minggu).
+- ✅ ARTIKEL #1 RISET KEYWORD (2026-09-17): "Alternatif Claude Code yang
+  open source: Minicode di terminal" — perbandingan jujur (tabel 8 baris
+  berkait ke docs), sisi yang belum dimiliki ditulis terbuka, migrasi
+  kebiasaan CLAUDE.md → AGENTS.md, target kueri "claude code alternative
+  open source". Tabel markdown kini ikut distyle di .article.
+- ✅ KONTEN LANDING "SERAHKAN TUGAS" (2026-09-17): riset inventaris konten
+  landing kompetitor (aider, Claude Code docs, OpenCode, Codex CLI) menemukan
+  pemuat konversi yang hilang: contoh tugas nyata yang bisa disalin. Section
+  baru: 4 perintah nyata (fix test, upgrade deps, --plan, commit) + tombol
+  salin per baris (data-copy), link ke docs/exec. Angka skala ala kompetitor
+  sengaja TIDAK dipalsukan — kejujuran tetap pembeda.
+- ✅ ROMBAK LANDING (2026-09-17): konsep "Bukti, bukan janji" — hero kini
+  klaim → install-bar (CTA primer, blok gelap prompt) → transkrip nyata
+  sebagai objek hero; section "Kenapa berbeda" dihapus (duplikat janji hero
+  + safety); "Cara kerja" jadi strip 5 kolom bernomor di band --soft;
+  guard test proof disinkronkan (class boleh bertambah, tetap tepat satu).
 - ✅ AUDIT WEB + FIX P0–P2 (uncommitted, 2026-09-17): hanya lapisan web
   (`web/`, `scripts/web*`, workflow, test web) — runtime minicode tak disentuh.
   P0: token GitHub admin tak lagi dipersist ke sessionStorage (+

@@ -1,25 +1,54 @@
-/* Hero + blok terminal + CTA. Landing single-column, ritme longgar.
-   Display = mono (suara merek, output terminal): h1/h2 tanpa uppercase dan
-   tanpa letter-spacing negatif ala sans — mono punya ritem sendiri. */
+/* Hero + install-bar + proof. Rombak 2026-09-17 — konsep "Bukti, bukan janji":
+   klaim dulu, lalu install sebagai CTA primer halaman (aksi pertama yang
+   nyata dilakukan developer), lalu transkrip nyata sebagai objek hero.
+   Display = mono (suara merek): h1/h2 tanpa uppercase, tanpa tracking negatif. */
 .hero { padding: 84px 24px 44px; max-width: var(--w); margin: 0 auto; }
-/* Kicker mono sentence-case tanpa tracked-caps: meta sederhana di atas
-   hero, bukan eyebrow dekoratif di atas TIAP heading. */
+/* Kicker mono sentence-case: meta sederhana di atas hero, bukan eyebrow
+   dekoratif di atas TIAP heading. */
 .kicker { font: 500 12.5px var(--mono); color: var(--acc-text); }
 .hero h1 { font: 700 clamp(26px, 4vw, 42px)/1.18 var(--mono); margin: 16px 0 14px; max-width: 26ch; }
 .lead { font-size: 16px; color: var(--mut); max-width: 60ch; }
+
+/* Install-bar: blok gelap ala prompt — perintah nyata + aksi salin di dalam.
+   Ini satu-satunya elemen gelap di atas lipatan: mata jatuh ke sini. */
+.install {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin-top: 26px;
+  background: var(--code-bg);
+  color: var(--code-fg);
+  border-radius: var(--r);
+}
+.install-cmd {
+  display: block;
+  font: 600 14px/1 var(--mono);
+  color: inherit;
+  background: none;
+  padding: 15px 6px 15px 18px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.install .copybtn { color: inherit; flex: none; }
+.hero-links { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 14px; font: 500 13px var(--mono); color: var(--faint); }
+.hero-links a { font-weight: 600; }
+
 .cta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
 .btn { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 13.5px; padding: 10px 18px; border-radius: 6px; }
 .btn-p { background: var(--acc); color: var(--on-acc); }
 .btn-p:hover { text-decoration: none; opacity: 0.92; }
 .btn-s { background: var(--soft); color: var(--ink); }
 .btn-s:hover { text-decoration: none; opacity: 0.85; }
-.term { background: var(--code-bg); color: var(--code-fg); border-radius: var(--r); margin-top: 36px; overflow: hidden; max-width: 700px; }
+
+/* Bukti produk (FIX#10): transkrip sesi statis, inline SVG tanpa request.
+   Figure menggabungkan .term (jendela) + .shot (caption) — objek hero. */
+.term { background: var(--code-bg); color: var(--code-fg); border-radius: var(--r); overflow: hidden; max-width: 700px; }
+.hero .term { margin-top: 34px; }
 .term-cap { display: flex; align-items: center; gap: 8px; padding: 9px 14px; font: 11.5px var(--mono); color: var(--faint); }
 .term-cap .sp { margin-left: auto; }
 .term pre { border-radius: 0; background: none; padding: 14px 16px; }
 .copybtn { background: none; color: inherit; cursor: pointer; display: inline-flex; padding: 8px; margin: -5px; border-radius: 6px; opacity: 0.7; }
 .copybtn:hover { opacity: 1; }
-/* Bukti produk (FIX#10): transkrip sesi statis, inline SVG tanpa request. */
-.shot { margin-top: 28px; max-width: 700px; }
 .shot svg { display: block; width: 100%; height: auto; }
 .shot figcaption { color: var(--mut); font-size: 12.5px; margin-top: 8px; }

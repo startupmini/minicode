@@ -142,9 +142,31 @@ describe("watchBudgetLimit: pemutus mid-turn", () => {
       bus,
       budget: 0.1,
       getCost: () => u.getSession().cost,
+      getTokens: () => u.getSession().totalTokens,
       onOver: (st) => calls.push(st),
     })
     expect(calls).toEqual(["over"])
+    stop()
+  })
+
+  test("strict + tokens=0 saat pasang → TIDAK lockout (E-3c, Phase 5)", () => {
+    // Investigasi Phase 5: instant-check saat pasang dengan cost unknown +
+    // tokens==0 = lockout total setiap prompt pertama. Kini instant check
+    // hanya gugur bila ada bukti belanja (tokens>0).
+    const bus = createEventBus()
+    const u = createUsageCollector(bus, "model-tanpa-harga-xyz")
+    let fired = 0
+    const stop = watchBudgetLimit({
+      bus,
+      budget: 1,
+      strict: true,
+      getCost: () => u.getSession().cost,
+      getTokens: () => u.getSession().totalTokens,
+      onOver: () => fired++,
+    })
+    expect(fired).toBe(0) // tokens=0 → tidak lockout
+    emitUsage(bus, 100, 50) // setelah pemakaian tercatat → fail-closed
+    expect(fired).toBe(1)
     stop()
   })
 
@@ -178,7 +200,9 @@ describe("watchBudgetLimit: pemutus mid-turn", () => {
     stop()
   })
 
-  test("non-strict + cost tak dikenal = fail-open seperti dulu", () => {
+  test("non-strict + cost tak dikenal + ada pemakaian = fail-closed (F-06)", () => {
+    // Perilaku lama fail-open ("seperti dulu") membuat --budget diam-diam
+    // mati untuk model tanpa harga. Kini: unknown cost + tokens > 0 = over.
     const bus = createEventBus()
     const u = createUsageCollector(bus, "model-yang-tidak-ada-di-tabel-harga")
     let fired = 0
@@ -186,9 +210,25 @@ describe("watchBudgetLimit: pemutus mid-turn", () => {
       bus,
       budget: 1,
       getCost: () => u.getSession().cost,
+      getTokens: () => u.getSession().totalTokens,
       onOver: () => fired++,
     })
     emitUsage(bus, 100, 50)
+    expect(fired).toBe(1)
+    stop()
+  })
+
+  test("cost tak dikenal + nol token = ok (pre-check prompt baru lolos)", () => {
+    const bus = createEventBus()
+    const u = createUsageCollector(bus, "model-yang-tidak-ada-di-tabel-harga")
+    let fired = 0
+    const stop = watchBudgetLimit({
+      bus,
+      budget: 1,
+      getCost: () => u.getSession().cost,
+      getTokens: () => u.getSession().totalTokens,
+      onOver: () => fired++,
+    })
     expect(fired).toBe(0)
     stop()
   })

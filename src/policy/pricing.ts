@@ -117,13 +117,21 @@ function toModelPrice(
   cacheRead: unknown,
   cacheWrite: unknown,
 ): ModelPrice | null {
+  // F-06: harga negatif/NaN/Infinity dari overlay lokal (atau payload aneh)
+  // tidak boleh menjadi biaya negatif — biaya negatif MENGURANGI sessionCost
+  // sehingga --budget tak pernah memicu. Negatif = data rusak = unknown.
   if (typeof input !== "number" || typeof output !== "number") return null
   if (!Number.isFinite(input) || !Number.isFinite(output)) return null
+  if (input < 0 || output < 0) return null
+  const cleanCache = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined
+  const cr = cleanCache(cacheRead)
+  const cw = cleanCache(cacheWrite)
   return {
     input,
     output,
-    ...(typeof cacheRead === "number" ? { cacheRead } : {}),
-    ...(typeof cacheWrite === "number" ? { cacheWrite } : {}),
+    ...(cr !== undefined ? { cacheRead: cr } : {}),
+    ...(cw !== undefined ? { cacheWrite: cw } : {}),
   }
 }
 

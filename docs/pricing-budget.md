@@ -27,7 +27,9 @@ minicode --budget 0.05 --budget-strict "task ketat"
 
 - Peringatan kuning 80%.
 - Lewat budget: one-shot `exit(1)`, REPL `break` loop, `exec` menegakkan sama seperti one-shot (pernah ada bug `exec` mengabaikan `--budget`, sudah diperbaiki).
-- Pagu juga diputus MID-TURN: watcher biaya live (`watchBudgetLimit` di `cli/setup.ts`) menggugurkan turn yang sedang berjalan begitu lewat — dulu tool loop / siklus self-heal bisa belanja tanpa batas dalam satu turn. Strict menggugurkan begitu ada pemakaian bercost-takdikenal.
-- `--budget-strict` / `MINICODE_BUDGET_STRICT=1` = fail-closed: cost tak dikenal (model tanpa harga) dianggap over budget, bukan diabaikan.
+- Pagu juga diputus MID-TURN: watcher biaya live (`watchBudgetLimit` di `cli/setup.ts`) menggugurkan turn yang sedang berjalan begitu lewat — dulu tool loop / siklus self-heal bisa belanja tanpa batas dalam satu turn. Abort budget membawa identitas kind `budget_exceeded` (bukan `aborted` generik) agar terbedakan dari Ctrl+C user.
+- Cost tak dikenal (model tanpa harga) + ADA pemakaian = fail-closed secara DEFAULT: dianggap over budget, bukan diabaikan (dulu hanya di `--budget-strict`; perilaku lama membuat `--budget` diam-diam mati untuk model baru). Nol token (belum belanja, mis. pre-check prompt baru) tetap lolos.
+- `--budget-strict` / `MINICODE_BUDGET_STRICT=1` = penegasan eksplisit perilaku fail-closed di atas (back-compat; perilaku sama dengan default).
+- Harga negatif/NaN/Infinity dari overlay lokal ditolak saat ekstraksi (bukan biaya negatif yang mengurangi total).
 - Tampil di bawah $1 memakai 4 desimal (`$0.0601 > $0.0500`), bukan `$0.00` yang menyesatkan.
 - `/status` dan (opt-in `MINICODE_STATUSLINE=rich`) spinner menampilkan token kumulatif + biaya sesi. Kumulatif sesi dipisah dari per-turn (`get()` vs `getSession()`) — bug lama membuat `/cost` selalu 0 setelah turn pertama.

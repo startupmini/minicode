@@ -12,10 +12,21 @@ import {
   type PermissionMode,
 } from "../policy/permission.ts"
 
-// P2 cap wrapper: limit retryAfter to 30s without mutating original error
-const cappedRecovery = {
+// P2 cap wrapper: limit retryAfter to 30s without mutating original error.
+// F-12: sanitasi PENUH di satu titik sentral (mencakup adapter vendor yang
+// tak boleh disentuh): non-finite (Infinity/NaN) atau negatif → buang
+// (pakai backoff kernel); sangat besar → cap. Tanpa ini retryAfter=Infinity
+// menjadi setTimeout(Infinity) ≈ 1ms → hot fast-retry, bukan tunggu lama.
+// Diekspor agar teruji langsung (pola repo: pure/diekspor-untuk-test).
+export const cappedRecovery = {
   onError(error: ProviderError, attempt: number): RecoveryAction {
-    if (error.retryAfterMs != null && error.retryAfterMs > LIMITS.RETRY_AFTER_MAX_MS) {
+    const ra = error.retryAfterMs
+    if (ra != null && (!Number.isFinite(ra) || ra < 0)) {
+      const clean = new ProviderError(error.category, error.message, undefined)
+      Object.assign(clean, { cause: (error as unknown as { cause?: unknown }).cause })
+      return defaultRecoveryPolicy.onError(clean, attempt)
+    }
+    if (ra != null && ra > LIMITS.RETRY_AFTER_MAX_MS) {
       const capped = new ProviderError(error.category, error.message, LIMITS.RETRY_AFTER_MAX_MS)
       // preserve extra fields if any
       Object.assign(capped, { cause: (error as unknown as { cause?: unknown }).cause })
@@ -80,6 +91,31 @@ export async function createMinicodeSession(
     ...rest
   } = opts
   if (!provider) throw new Error("createMinicodeSession: provider is required")
+  // F-09: sanitasi batas di lapisan app (mencakup pemanggil library langsung,
+  // bukan hanya CLI yang sudah sanitasi di cli/setup.ts + cli/index.ts).
+  // Tanpa ini: timeoutMs NaN/negatif = abort instan; maxSteps 0/negatif =
+  // selalu throw, Infinity = loop luar tak terbatas; concurrency 0 = zero
+  // worker → hasil undefined (korupsi diam-diam). Nilai tak valid → default
+  // kernel (hilangkan kunci), bukan error — sesi tetap jalan aman.
+  {
+    const t = (rest as Record<string, unknown>).timeoutMs
+    if (typeof t === "number" && (!Number.isFinite(t) || t < 0))
+      delete (rest as Record<string, unknown>).timeoutMs
+    const m = (rest as Record<string, unknown>).maxSteps
+    if (typeof m !== "number" || !Number.isFinite(m) || m < 1)
+      delete (rest as Record<string, unknown>).maxSteps
+    else (rest as Record<string, unknown>).maxSteps = Math.floor(m)
+  }
+  const safeConcurrency =
+    typeof concurrency === "number" && Number.isFinite(concurrency) && concurrency > 0
+      ? Math.floor(concurrency)
+      : undefined
+  const safeWriteConcurrency =
+    typeof writeConcurrency === "number" &&
+    Number.isFinite(writeConcurrency) &&
+    writeConcurrency > 0
+      ? Math.floor(writeConcurrency)
+      : undefined
   const permissions = createPermissionHandler({
     mode: permissionMode ?? "auto",
     root: cwd,
@@ -108,8 +144,8 @@ export async function createMinicodeSession(
     estimator: minicodeEstimator,
     recovery: cappedRecovery,
     executor: parallelExecutor({
-      concurrency: concurrency ?? LIMITS.EXECUTOR_CONCURRENCY,
-      writeConcurrency: writeConcurrency ?? LIMITS.EXECUTOR_WRITE_CONCURRENCY,
+      concurrency: safeConcurrency ?? LIMITS.EXECUTOR_CONCURRENCY,
+      writeConcurrency: safeWriteConcurrency ?? LIMITS.EXECUTOR_WRITE_CONCURRENCY,
     }),
     cwd,
     ...(turnCount !== undefined ? { turnCount } : {}),

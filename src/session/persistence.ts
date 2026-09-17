@@ -132,55 +132,74 @@ export async function saveSession(
     const ins = db.prepare(
       "INSERT INTO messages (session_id, seq, role, content, toolCalls, toolCallId, name, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    const known =
-      (
-        db.prepare("SELECT COUNT(*) as c FROM messages WHERE session_id = ?").get(id) as {
-          c: number
-        } | null
-      )?.c ?? 0
-    if (messages.length >= known) {
+    type StoredMsg = {
+      role: string
+      content: unknown
+      toolCalls?: unknown
+      toolCallId?: string
+      name?: string
+    }
+    const norm = (m: StoredMsg): [string, string, string, string | null, string | null] => [
+      m.role,
+      safeContent(m.content),
+      safeContent(m.toolCalls ?? null),
+      (m.toolCallId ?? null) as string | null,
+      (m.name ?? null) as string | null,
+    ]
+    // F-05: JANGAN pakai messages.length sebagai proksi perubahan. Kompaksi
+    // (atau replace apa pun) bisa mengganti N pesan dengan N pesan BERBEDA —
+    // panjang sama, isi beda. Tanpa verifikasi prefix, tulis dilewat dan
+    // resume memuat sejarah basi. Bandingkan prefix tersimpan dengan incoming:
+    // sama persis = re-save (bukan turn baru, jaga guard anti turn-hantu);
+    // prefix sama + tumbuh = append; selain itu = rewrite penuh.
+    const stored = db
+      .prepare(
+        "SELECT seq, role, content, toolCalls, toolCallId, name FROM messages WHERE session_id = ? ORDER BY seq",
+      )
+      .all(id) as {
+      seq: number
+      role: string
+      content: string
+      toolCalls: string
+      toolCallId: string | null
+      name: string | null
+    }[]
+    const known = stored.length
+    let prefixSame = stored.length <= messages.length
+    if (prefixSame) {
+      for (let i = 0; i < stored.length; i++) {
+        const want = norm(messages[i] as StoredMsg)
+        const got = stored[i]!
+        if (
+          got.seq !== i ||
+          got.role !== want[0] ||
+          got.content !== want[1] ||
+          got.toolCalls !== want[2] ||
+          (got.toolCallId ?? null) !== want[3] ||
+          (got.name ?? null) !== want[4]
+        ) {
+          prefixSame = false
+          break
+        }
+      }
+    }
+    const changed = !prefixSame || stored.length !== messages.length
+    if (changed && prefixSame) {
       // incremental append-only: cukup insert pesan baru (umumnya 1 turn)
       for (let i = known; i < messages.length; i++) {
-        const m = messages[i] as {
-          role: string
-          content: unknown
-          toolCalls?: unknown
-          toolCallId?: string
-          name?: string
-        }
-        ins.run(
-          id,
-          i,
-          m.role,
-          safeContent(m.content),
-          safeContent(m.toolCalls ?? null),
-          m.toolCallId ?? null,
-          m.name ?? null,
-          now,
-        )
+        const m = messages[i] as StoredMsg
+        const w = norm(m)
+        ins.run(id, i, w[0], w[1], w[2], w[3], w[4], now)
       }
-    } else {
-      // history menyusut (compaction/reset) → tulis ulang penuh agar tidak ada
-      // pesan basi yang tertinggal untuk resume
+    } else if (changed) {
+      // history menyusut (compaction/reset) ATAU prefix berubah dengan panjang
+      // sama (kompaksi N→N) → tulis ulang penuh agar tidak ada pesan basi
+      // yang tertinggal untuk resume
       db.prepare("DELETE FROM messages WHERE session_id = ?").run(id)
       for (let i = 0; i < messages.length; i++) {
-        const m = messages[i] as {
-          role: string
-          content: unknown
-          toolCalls?: unknown
-          toolCallId?: string
-          name?: string
-        }
-        ins.run(
-          id,
-          i,
-          m.role,
-          safeContent(m.content),
-          safeContent(m.toolCalls ?? null),
-          m.toolCallId ?? null,
-          m.name ?? null,
-          now,
-        )
+        const m = messages[i] as StoredMsg
+        const w = norm(m)
+        ins.run(id, i, w[0], w[1], w[2], w[3], w[4], now)
       }
     }
     if (usage) {
@@ -188,9 +207,9 @@ export async function saveSession(
       // Menyimpan ulang riwayat yang sama (retry/crash antara save dan
       // finalize) sebelumnya menambah turn_idx hantu — suppressor stitch
       // palsu di decideRecovery (turn yang tak pernah durable dikira ada).
-      // Aturan: tumbuh (pesan baru) atau susut (rewrite pasca-kompaksi) =
-      // turn terjadi; sama persis = re-save, bukan turn baru.
-      if (messages.length !== known) {
+      // Aturan: tumbuh (pesan baru), susut, atau isi berubah (rewrite
+      // pasca-kompaksi) = turn terjadi; sama persis = re-save, bukan turn baru.
+      if (changed) {
         const maxRow = db
           .prepare("SELECT MAX(turn_idx) as m FROM turns WHERE session_id = ?")
           .get(id) as { m: number | null } | null

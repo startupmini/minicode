@@ -37,8 +37,8 @@ Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `s
 | `--sandbox none` | Matikan sandbox otomatis (opt-out sadar) |
 | `--sandbox os` | Paksa OS-native (bwrap/seatbelt). Sudah otomatis bila tersedia |
 | `--ratelimit <rpm>` | Batas request LLM per menit |
-| `--budget <usd>` | Batas biaya sesi; warn 80%, exit/break bila lewat |
-| `--budget-strict` | Fail-closed: cost tak dikenal dianggap over budget |
+| `--budget <usd>` | Batas biaya sesi; warn 80%, exit/break bila lewat; cost tak dikenal + pemakaian = over (fail-closed default) |
+| `--budget-strict` | Penegasan eksplisit fail-closed di atas (back-compat) |
 | `--tool-scope <s>` | `full` (default) \| `explore` = subset read-only 12 tool |
 | `--plan` | Read-only plan mode |
 | `--allowlist` | Bash hanya perintah aman |
@@ -77,7 +77,8 @@ Kepala tabel penuh ada di [Environment Variables](environment.md); yang paling s
 |---|---|
 | `MINICODE_VERIFY_CMD` | Custom verify command |
 | `MINICODE_SANDBOX` | `docker` \| `os` \| `none` |
-| `MINICODE_SANDBOX_STRICT=1` | Fail-closed bila isolasi tak tersedia |
+| `MINICODE_SANDBOX_STRICT=1` | Tak pernah fallback host (default request eksplisit sudah fail-closed) |
+| `MINICODE_SANDBOX_ALLOW_FALLBACK=1` | Izinkan fallback host secara eksplisit bila backend tak tersedia |
 | `MINICODE_BUDGET_STRICT=1` | Sama dengan `--budget-strict` |
 | `MINICODE_ALLOW_LOCAL_CONFIG=1` | Sama dengan `--allow-local-config` |
 | `MINICODE_TOOL_SCOPE=explore` | Subset read-only |

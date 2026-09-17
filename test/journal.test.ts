@@ -119,6 +119,17 @@ test("journal: seluruh 37 tool terklasifikasi; unknown fail-loud di test", () =>
   expect(classifyTool("read_file")).toBe("none")
 })
 
+test("journal: unknown fail-closed → terjurnal sebagai mutasi (F-14)", () => {
+  // classifyTool tetap "unknown" (taksonomi), TETAPI isMutationTool true:
+  // tool masa depan yang lupa didaftarkan tetap punya intent/terminal,
+  // bukan recovery buta. Guard test-time di atas tetap menangkapnya agar
+  // didaftarkan eksplisit.
+  expect(classifyTool("future_tool_xyz")).toBe("unknown")
+  expect(isMutationTool("future_tool_xyz")).toBe(true)
+  expect(isMutationTool("read_file")).toBe(false)
+  expect(isMutationTool("write_file")).toBe(true)
+})
+
 test("journal: daftar MUTATION persis 12 + dotted", () => {
   const names = allTools
     .map((t) => t.name)
@@ -190,7 +201,7 @@ test("journal wiring: mutation started→pending, completed→committed", async 
   }
 })
 
-test("journal wiring: error → failed; non-mutasi/unknown/delegate dilewati", async () => {
+test("journal wiring: error → failed; non-mutasi/delegate dilewati, unknown terjurnal (F-14)", async () => {
   const dir = tmpRoot()
   try {
     const bus = fakeBus()
@@ -203,9 +214,15 @@ test("journal wiring: error → failed; non-mutasi/unknown/delegate dilewati", a
     bus.fire("execution:completed", completed("nope_tool", {}, "n1"))
     bus.fire("execution:started", started("delegate_task", { prompt: "x" }, "d1"))
     bus.fire("execution:completed", completed("delegate_task", { prompt: "x" }, "d1"))
-    const recs = await waitLines("w2", dir, 2)
-    // Hanya bash: pending + failed. read/unknown/delegate = nol baris.
-    expect(recs.map((r) => `${r.tool}:${r.state}`)).toEqual(["bash:pending", "bash:failed"])
+    const recs = await waitLines("w2", dir, 4)
+    // bash: pending + failed. read/delegate = nol baris. nope_tool (unknown)
+    // kini ikut terjurnal fail-closed: pending + committed.
+    expect(recs.map((r) => `${r.tool}:${r.state}`)).toEqual([
+      "bash:pending",
+      "nope_tool:pending",
+      "bash:failed",
+      "nope_tool:committed",
+    ])
   } finally {
     await cleanup(dir)
   }

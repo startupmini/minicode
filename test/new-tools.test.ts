@@ -98,6 +98,21 @@ test("read_image: menolak luar workspace & tak ada & raksasa", async () => {
   await expect(readImageTool.execute({ path: "big.png" }, ctx())).rejects.toThrow(/too large/)
 })
 
+test("read_image: gambar yang lolos 2MB TAPI melewati batas b64 kernel ditolak (E-1)", async () => {
+  // Investigasi Phase 5: guard lama (BASH_OUTPUT×5=100k) meloloskan b64 hingga
+  // 100k chars, padahal kernel truncate di 16.384 → base64 korup terkirim.
+  // 32KB file → b64 ≈ 43.721 chars: lolos guard lama, kini ditolak dengan
+  // alasan eksplisit (compress first), bukan gambar korup diam-diam.
+  writeFileSync(join(dir, "over-b64.png"), Buffer.alloc(32 * 1024, 0))
+  await expect(readImageTool.execute({ path: "over-b64.png" }, ctx())).rejects.toThrow(
+    /exceeds the .*-char context limit/,
+  )
+  // 1×1 PNG tetap lolos (jauh di bawah batas).
+  writeFileSync(join(dir, "small.png"), PNG_1X1)
+  const r = (await readImageTool.execute({ path: "small.png" }, ctx())) as string
+  expect(r).toContain("data:image/png;base64,")
+})
+
 test("code_run: menolak tanpa sandbox", async () => {
   delete process.env.MINICODE_SANDBOX
   await expect(

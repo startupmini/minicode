@@ -136,6 +136,8 @@ export async function runRepl(ctx: CliSession): Promise<void> {
     runPromptWithVerify,
     close,
   } = ctx
+  // Kontrak control-plane (Phase 6): sumber kebenaran konteks = kernel.
+  const { session } = ctx
 
   // Kernel tidak mengekspos `config`, jadi handle permission datang dari
   // createMinicodeSession lewat CliSession. Tanpa ini Shift+Tab hanya mengubah
@@ -172,6 +174,13 @@ export async function runRepl(ctx: CliSession): Promise<void> {
     providerHint: cfg.providers[0]?.providerHint,
     setModelOverride: (m) => {
       persistModelChoice(m, modelRef)
+    },
+    // Kontrak control-plane (Phase 6): angka konteks dari sumber kebenaran
+    // kernel (estimateSessionContext) — bukan usage kumulatif.
+    getContextTokens: () => session.contextTokens,
+    budgetState: () => {
+      const u = usage.getSession()
+      return budgetStatus(budget, u.cost, budgetStrict ?? false, u.totalTokens)
     },
   }
 
@@ -304,7 +313,7 @@ export async function runRepl(ctx: CliSession): Promise<void> {
   // peringatan 80% dicetak sekali.
   async function runTurn(finalPrompt: string, original: string): Promise<void> {
     const spent = usage.getSession(modelRef.current)
-    const preStatus = budgetStatus(budget, spent.cost, budgetStrict ?? false)
+    const preStatus = budgetStatus(budget, spent.cost, budgetStrict ?? false, spent.totalTokens)
     if (preStatus === "over" && spent.cost != null && budget != null) {
       console.log(
         c.red(
@@ -316,7 +325,7 @@ export async function runRepl(ctx: CliSession): Promise<void> {
     if (preStatus === "unknown-strict") {
       console.log(
         c.red(
-          `[budget] cost unknown (model without pricing) — --budget-strict rejects new prompts. /exit to quit.`,
+          `[budget] cost unknown (model without pricing) with ${spent.totalTokens} tokens spent — over budget, new prompts rejected. /exit to quit.`,
         ),
       )
       return
@@ -641,12 +650,15 @@ export async function runRepl(ctx: CliSession): Promise<void> {
   const footer: FooterChrome = createFooterChrome({
     enabled: true,
     status: () => {
-      const s = usage.getSession(modelRef.current)
       return {
         mode,
         model: modelRef.current ?? cfg.providers[0]?.models[0] ?? "no model",
         cwd: cwd ?? process.cwd(),
-        context: fmtCtx(s?.totalTokens ?? 0),
+        // Kontrak control-plane (Phase 6): angka footer = UKURAN JENDELA
+        // saat ini (kernel contextTokens, estimateSessionContext) — bukan
+        // totalTokens kumulatif provider (dulu salah konsep; sama dengan
+        // /status yang kini membedakan keduanya).
+        context: fmtCtx(session.contextTokens),
       }
     },
   })

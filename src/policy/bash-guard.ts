@@ -152,7 +152,10 @@ const READERS =
 
 /** Dump environment — `printenv` sudah lama diblok, sisanya belum. */
 const ENV_DUMP =
-  /(?:^|[;&|]\s*)(?:printenv|env|set|export\s+-p|declare\s+-[xp]|compgen\s+-v)\s*(?:$|[;&|]|\|)/i
+  // F-20: `\n` adalah pemisah perintah setara `;` — tanpa ini `echo hi\nenv`
+  // lolos (anchor lama hanya [;&|]). Berlaku untuk semua aturan ber-anchor
+  // awal-perintah di berkas ini.
+  /(?:^|[;&|\n]\s*)(?:printenv|env|set|export\s+-p|declare\s+-[xp]|compgen\s+-v)\s*(?:$|[;&|\n]|\|)/i
 
 /** Referensi eksplisit ke variabel env yang berbau kredensial. */
 const ENV_SECRET_REF =
@@ -285,7 +288,7 @@ const STATIC_DENY: [RegExp, string][] = [
   // apa saja dan spasi bebas — fuzz menemukan varian yang terpecah oleh
   // substitusi variabel masih lolos bentuk ketat. `\}` opsional karena
   // normalisasi bisa menghilangkan bagian setelah pipe.
-  [/(?:^|[;&|=]\s*)[\w:]+\s*\(\)\s*\{[^}]*\|[^}]*&/, "fork bomb"],
+  [/(?:^|[;&|=\n]\s*)[\w:]+\s*\(\)\s*\{[^}]*\|[^}]*&/, "fork bomb"],
   [/\bmkfs\b/i, "format filesystem"],
   [/\bdd\s+if=/i, "raw disk write"],
   [/\bchmod\s+(-R\s+)?777\b/i, "permission 777"],
@@ -329,9 +332,14 @@ const STATIC_DENY: [RegExp, string][] = [
     "git config injection via env",
   ],
   [
-    /(?:^|[;&|]\s*)(?:base64|xxd)[^\n]*\|\s*(?:sh|bash|python|python3|node|perl)\b/i,
+    /(?:^|[;&|\n]\s*)(?:base64|xxd)[^\n]*\|\s*(?:sh|bash|python|python3|node|perl)\b/i,
     "decode|shell",
   ],
+  // F-20: upload berkas via PowerShell — UPLOAD_FLAG hanya kenal
+  // curl/wget/nc. Bentuk eksfiltrasi: Invoke-WebRequest -Method POST -Body
+  // (Get-Content rahasia) atau -InFile <berkas>. Download polos (-OutFile)
+  // TETAP lolos (seperti curl tanpa -d @file): bukan upload.
+  [/\b(?:Invoke-WebRequest|iwr)\b[^\n]*?(?:-InFile\b|Get-Content)/i, "file upload to network"],
 ]
 
 /**

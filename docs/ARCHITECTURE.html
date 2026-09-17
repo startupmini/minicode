@@ -907,8 +907,9 @@ export const kalkulatorTool: Tool = {
     <tr><td><code>MINICODE_SANDBOX</code></td><td>mode sandbox: <code>docker</code> / <code>os</code> / <code>none</code></td><td><code>cli/index.ts · cli/commands/exec.ts</code></td></tr>
     <tr><td><code>MINICODE_SANDBOX_IMAGE</code></td><td>image docker (default <code>node:22-alpine</code>)</td><td><code>src/sandbox/docker.ts</code></td></tr>
     <tr><td><code>MINICODE_SANDBOX_MEMORY</code></td><td>batas memori container (default <code>512m</code>)</td><td><code>src/sandbox/docker.ts</code></td></tr>
-    <tr><td><code>MINICODE_SANDBOX_STRICT</code></td><td><code>1</code> → fail-closed: tolak bash bila isolasi yang diminta tak tersedia</td><td><code>src/tools/bash.ts</code></td></tr>
-    <tr><td><code>MINICODE_BUDGET_STRICT</code></td><td><code>1</code> → cost tak dikenal dianggap over budget (sama dengan <code>--budget-strict</code>)</td><td><code>cli/index.ts · cli/repl.ts · cli/commands/exec.ts</code></td></tr>
+    <tr><td><code>MINICODE_SANDBOX_STRICT</code></td><td><code>1</code> → tak pernah fallback host (request eksplisit sudah fail-closed secara default)</td><td><code>src/policy/sandbox-policy.ts · src/tools/bash.ts</code></td></tr>
+    <tr><td><code>MINICODE_SANDBOX_ALLOW_FALLBACK</code></td><td><code>1</code> → izinkan fallback host secara eksplisit bila backend tak tersedia</td><td><code>src/policy/sandbox-policy.ts · src/tools/bash.ts</code></td></tr>
+    <tr><td><code>MINICODE_BUDGET_STRICT</code></td><td><code>1</code> → penegasan eksplisit fail-closed cost-tak-dikenal (kini juga default <code>--budget</code>)</td><td><code>cli/index.ts · cli/repl.ts · cli/commands/exec.ts</code></td></tr>
     <tr><td><code>MINICODE_PROVIDER_ORDER</code></td><td>reorder provider, mis. <code>openai,anthropic,deepseek</code>, tanpa edit config</td><td><code>src/app/provider-layer.ts</code></td></tr>
     <tr><td><code>MINICODE_EMBED_MODEL</code></td><td>model embedding (default <code>text-embedding-3-small</code>)</td><td><code>src/memory/vector.ts</code></td></tr>
     <tr><td><code>MINICODE_GREP_ENGINE</code></td><td><code>js</code> → paksa engine JS, lewati ripgrep</td><td><code>src/tools/grep.ts</code></td></tr>

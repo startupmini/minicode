@@ -147,11 +147,15 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
           throw new ProviderError("auth", `auth rejected (${res.status}): ${txt.slice(0, 500)}`)
         }
         // Samakan dengan adapter lain: konteks kepanjangan = compact-and-retry
-        // di loop, bukan retry-buta 3x lalu throw. Frasa pencocokan sama
-        // dengan openai-compat/anthropic agar perilaku konsisten antar provider.
+        // di loop, bukan retry-buta 3x lalu throw. Frasa diselaraskan dengan
+        // openai-compat/anthropic (`context_length`, `maximum context`,
+        // `prompt is too long`) + `context window`. Sengaja TANPA kata
+        // telanjang `token`/`too long`/`context`: "invalid token" atau
+        // "tokenizer error" bukan kepanjangan konteks — mengklasifikasikannya
+        // sebagai context_length_exceeded menghancurkan riwayat sia-sia.
         if (
           (res.status === 400 || res.status === 422) &&
-          /context|maximum context|too long|token/i.test(txt)
+          /context_length|maximum context|prompt is too long|context window/i.test(txt)
         ) {
           throw new ProviderError(
             "context_length_exceeded",
@@ -168,6 +172,33 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let buf = ""
+      // F-01: akumulasi function_call per item (Responses tidak punya delta
+      // gaya chat completions; argumen mengalir via
+      // response.function_call_arguments.delta lalu item final via
+      // response.output_item.done). Tanpa ini tool yang dideklarasikan di
+      // request tidak pernah dieksekusi — agen tampak selesai padahal buta.
+      const pendingCalls = new Map<string, { id: string; name: string; args: string }>()
+      let finished = false
+      const parseCallArgs = (raw: string): unknown => {
+        if (!raw) return {}
+        try {
+          return JSON.parse(raw)
+        } catch {
+          return { raw }
+        }
+      }
+      const yieldCall = function* (
+        id: string,
+        name: string,
+        argsRaw: string,
+      ): Generator<ProviderEvent> {
+        if (finished) {
+          // Cermin openai-compat: tool setelah finish = stream rusak, jangan
+          // eksekusi ganda diam-diam — gagal keras sebagai network retryable.
+          throw new ProviderError("network", "tool call after finish")
+        }
+        yield { type: "tool_call", id: id || name, name, args: parseCallArgs(argsRaw) }
+      }
       try {
         while (true) {
           if (signal.aborted) throw new DOMException("Aborted", "AbortError")
@@ -180,66 +211,144 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
             buf = buf.slice(idx + 1)
             if (line.startsWith("data:")) {
               const payload = line.slice(5).trim()
-              if (payload === "[DONE]") return
+              // F-02: [DONE] = akhir stream yang sukses. Versi lama `return`
+              // tanpa finish sehingga kernel melempar "stream ended without a
+              // finish reason" + 3 retry sia-sia atas respons yang valid.
+              if (payload === "[DONE]") {
+                for (const [, acc] of pendingCalls) {
+                  yield* yieldCall(acc.id, acc.name, acc.args)
+                }
+                pendingCalls.clear()
+                if (!finished) {
+                  finished = true
+                  yield { type: "finish", reason: "stop" }
+                }
+                return
+              }
+              // Hanya JSON rusak yang di-skip di sini: error dari yieldCall
+              // (mis. tool-setelah-finish) HARUS merambat ke kernel, jangan
+              // sampai tertelan catch di bawah.
+              let data: Record<string, unknown>
               try {
-                const data = JSON.parse(payload) as Record<string, unknown>
-                // response.completed → simpan id untuk chaining turn berikut.
-                // Format nyata: {type:"response.completed", response:{id:"resp_…"}}.
-                const dtype = data.type as string | undefined
-                if (dtype === "response.completed" || dtype === "completed") {
-                  const resp = data.response as { id?: unknown; usage?: unknown } | undefined
-                  const rid = resp?.id ?? data.id
-                  if (typeof rid === "string" && rid) lastResponseByModel.set(modelKey, rid)
-                  // Tanpa usage event, Responses tak pernah menyumbang token ke
-                  // budget/cost (buta spend). Bentuk shape sama dengan adapter
-                  // openai-compat agar kolektor tak perlu tahu provider.
-                  const u = resp?.usage as
-                    | { input_tokens?: unknown; output_tokens?: unknown; total_tokens?: unknown }
-                    | undefined
-                  if (
-                    u &&
-                    (u.input_tokens != null || u.output_tokens != null || u.total_tokens != null)
-                  ) {
-                    yield {
-                      type: "extension",
-                      kind: "usage",
-                      data: {
-                        inputTokens:
-                          typeof u.input_tokens === "number" ? u.input_tokens : undefined,
-                        outputTokens:
-                          typeof u.output_tokens === "number" ? u.output_tokens : undefined,
-                        totalTokens:
-                          typeof u.total_tokens === "number" ? u.total_tokens : undefined,
-                      },
-                    }
+                data = JSON.parse(payload) as Record<string, unknown>
+              } catch {
+                continue
+              }
+              // response.completed → simpan id untuk chaining turn berikut.
+              // Format nyata: {type:"response.completed", response:{id:"resp_…"}}.
+              const dtype = data.type as string | undefined
+              if (dtype === "response.completed" || dtype === "completed") {
+                const resp = data.response as { id?: unknown; usage?: unknown } | undefined
+                const rid = resp?.id ?? data.id
+                if (typeof rid === "string" && rid) lastResponseByModel.set(modelKey, rid)
+                // Tanpa usage event, Responses tak pernah menyumbang token ke
+                // budget/cost (buta spend). Bentuk shape sama dengan adapter
+                // openai-compat agar kolektor tak perlu tahu provider.
+                const u = resp?.usage as
+                  | { input_tokens?: unknown; output_tokens?: unknown; total_tokens?: unknown }
+                  | undefined
+                if (
+                  u &&
+                  (u.input_tokens != null || u.output_tokens != null || u.total_tokens != null)
+                ) {
+                  yield {
+                    type: "extension",
+                    kind: "usage",
+                    data: {
+                      inputTokens: typeof u.input_tokens === "number" ? u.input_tokens : undefined,
+                      outputTokens:
+                        typeof u.output_tokens === "number" ? u.output_tokens : undefined,
+                      totalTokens: typeof u.total_tokens === "number" ? u.total_tokens : undefined,
+                    },
                   }
                 }
-                const rawDelta: unknown = (data.delta as unknown) ?? data
-                const drec = (
-                  typeof rawDelta === "object" && rawDelta !== null
-                    ? (rawDelta as Record<string, unknown>)
-                    : {}
-                ) as Record<string, unknown> & { output_text?: string }
-                const text =
-                  (typeof rawDelta === "string" ? rawDelta : undefined) ??
-                  drec.text ??
-                  drec.content ??
-                  drec.output_text
-                if (typeof text === "string" && text) yield { type: "text", text }
-                const finish =
-                  (data as { finish_reason?: string }).finish_reason ??
-                  (drec as { finish_reason?: string }).finish_reason
-                if (finish)
-                  yield {
-                    type: "finish",
-                    reason:
-                      finish === "length"
-                        ? "length"
-                        : finish === "tool_calls"
-                          ? "tool_calls"
-                          : "stop",
+              }
+              const rawDelta: unknown = (data.delta as unknown) ?? data
+              const drec = (
+                typeof rawDelta === "object" && rawDelta !== null
+                  ? (rawDelta as Record<string, unknown>)
+                  : {}
+              ) as Record<string, unknown> & { output_text?: string }
+              // Bentuk function_call Responses: item diumumkan via
+              // output_item.added, argumen mengalir via
+              // function_call_arguments.delta, item final via output_item.done.
+              //Juga tangani bentuk ringkas satu-event {type:"function_call",...}
+              // yang dipakai sebagian gateway.
+              const item = data.item as
+                | {
+                    id?: unknown
+                    type?: unknown
+                    call_id?: unknown
+                    name?: unknown
+                    arguments?: unknown
                   }
-              } catch {}
+                | undefined
+              if (dtype === "response.output_item.added" && item?.type === "function_call") {
+                const key =
+                  typeof item.id === "string" && item.id
+                    ? item.id
+                    : typeof item.call_id === "string"
+                      ? item.call_id
+                      : `item_${pendingCalls.size}`
+                const cid = typeof item.call_id === "string" && item.call_id ? item.call_id : key
+                pendingCalls.set(key, {
+                  id: cid,
+                  name: typeof item.name === "string" ? item.name : "",
+                  args: typeof item.arguments === "string" ? item.arguments : "",
+                })
+              } else if (dtype === "response.function_call_arguments.delta") {
+                const key =
+                  typeof data.item_id === "string" && data.item_id
+                    ? data.item_id
+                    : ([...pendingCalls.keys()].pop() ?? "")
+                const acc = pendingCalls.get(key)
+                if (acc && typeof data.delta === "string") acc.args += data.delta
+              } else if (dtype === "response.output_item.done" && item?.type === "function_call") {
+                const key =
+                  typeof item.id === "string" && pendingCalls.has(item.id)
+                    ? item.id
+                    : ([...pendingCalls.keys()].pop() ?? "")
+                const acc = pendingCalls.get(key)
+                const id = (typeof item.call_id === "string" && item.call_id) || acc?.id || key
+                const name = (typeof item.name === "string" && item.name) || acc?.name || ""
+                const argsRaw =
+                  (typeof item.arguments === "string" && item.arguments) || acc?.args || ""
+                pendingCalls.delete(key)
+                if (name) yield* yieldCall(id, name, argsRaw)
+              } else if (data.type === "function_call" && typeof data.name === "string") {
+                const id =
+                  typeof data.call_id === "string"
+                    ? data.call_id
+                    : typeof data.id === "string"
+                      ? data.id
+                      : data.name
+                yield* yieldCall(
+                  id,
+                  data.name,
+                  typeof data.arguments === "string" ? data.arguments : "",
+                )
+              }
+              const text =
+                (typeof rawDelta === "string" ? rawDelta : undefined) ??
+                drec.text ??
+                drec.content ??
+                drec.output_text
+              if (typeof text === "string" && text) yield { type: "text", text }
+              const finish =
+                (data as { finish_reason?: string }).finish_reason ??
+                (drec as { finish_reason?: string }).finish_reason
+              if (finish) {
+                finished = true
+                yield {
+                  type: "finish",
+                  reason:
+                    finish === "length"
+                      ? "length"
+                      : finish === "tool_calls"
+                        ? "tool_calls"
+                        : "stop",
+                }
+              }
             }
             idx = buf.indexOf("\n")
           }
@@ -247,7 +356,15 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
       } finally {
         reader.releaseLock()
       }
-      yield { type: "finish", reason: "stop" }
+      // Provider quirky bisa berakhir tanpa finish eksplisit: flush sisa
+      // function_call yang terakumulasi (argumen parsial → {raw}, ditolak
+      // validateArgs sebagai observasi error — aman), lalu finish stop agar
+      // kernel tidak menganggap stream terputus.
+      for (const [, acc] of pendingCalls) {
+        yield* yieldCall(acc.id, acc.name, acc.args)
+      }
+      pendingCalls.clear()
+      if (!finished) yield { type: "finish", reason: "stop" }
     },
   }
   return provider

@@ -65,11 +65,34 @@ function hashOf(root: string, files: string[]): string {
 
 const vendorFiles = collect(target)
 
+// Verdict terhadap hash yang tercatat di VENDOR.md untuk jalur tanpa-sibling:
+// sebelumnya cabang ini hanya melaporkan keberadaan vendor tanpa verifikasi
+// apa pun (pesan tanpa kata "sinkron" membuat vendor:check tak teruji di
+// mesin tanpa sibling). Bandingkan hash kerja vs tercatat.
+function vendorMdRecordedHash(): string | null {
+  try {
+    const md = readFileSync(join(target, "VENDOR.md"), "utf8")
+    return /^- hash: `([0-9a-f]+)`/m.exec(md)?.[1] ?? null
+  } catch {
+    return null
+  }
+}
+
+function noSourceVerdict(): string {
+  const current = hashOf(target, vendorFiles)
+  const recorded = vendorMdRecordedHash()
+  const verdict =
+    recorded != null && recorded === current
+      ? "sinkron dengan VENDOR.md"
+      : `TIDAK sinkron dengan VENDOR.md (kerja ${current} vs tercatat ${recorded ?? "-"})`
+  return `(${vendorFiles.length} file, ${current}) — ${verdict}`
+}
+
 if (!existsSync(source)) {
   // Tanpa sibling kita tidak bisa sync — tapi vendor yang sudah ada tetap sah.
   if (vendorFiles.length > 0) {
     console.log(
-      `[vendor] ../minicore tidak ada — memakai vendor/minicore yang sudah ada (${vendorFiles.length} file, ${hashOf(target, vendorFiles)})`,
+      `[vendor] ../minicore tidak ada — memakai vendor/minicore yang sudah ada ${noSourceVerdict()}`,
     )
     process.exit(0)
   }
@@ -87,7 +110,7 @@ if (sourceFiles.length === 0) {
   // padahal vendor sinkron — "[vendor] tidak ada file untuk disalin".
   if (vendorFiles.length > 0) {
     console.log(
-      `[vendor] source ${source} kosong — memakai vendor/minicore yang sudah ada (${vendorFiles.length} file, ${hashOf(target, vendorFiles)})`,
+      `[vendor] source ${source} kosong — memakai vendor/minicore yang sudah ada ${noSourceVerdict()}`,
     )
     process.exit(0)
   }

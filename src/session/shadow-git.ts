@@ -4,6 +4,7 @@ import { rm } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { LIMITS } from "../constants.ts"
 import { GIT_NO_DIFF_DRIVERS, GIT_SAFE_BASE, gitFilterNeutralizers } from "../lib/git-hardening.ts"
+import { sanitizeSessionPart } from "../lib/session-id.ts"
 import { resolveTrustedExecutable } from "../lib/trusted-exec.ts"
 import { sanitizeSpawnEnv } from "../policy/scrub.ts"
 
@@ -174,13 +175,12 @@ export async function snapshotTree(
  * pernah membuat operasi gagal total: `sess/../..~weird:id` menghasilkan path
  * index `\.git\..~weird:id-...` yang ditolak Windows (`Invalid argument`), dan
  * `..`/`~`/`:` juga ilegal di nama ref.
+ *
+ * F-17: delegasi ke sanitizer bersama (lib/session-id.ts) — dulu varian lokal
+ * dengan pemetaan `..` berbeda dari checkpoint/journal.
  */
 function sanitizeRefPart(s: string): string {
-  const cleaned = s
-    .replace(/[^A-Za-z0-9._-]+/g, "-")
-    .replace(/\.\.+/g, ".")
-    .replace(/^[.-]+|[.-]+$/g, "")
-  return cleaned.slice(0, 60) || "x"
+  return sanitizeSessionPart(s)
 }
 
 /** Perubahan antara dua tree, dibatasi ke path di dalam workspace. */

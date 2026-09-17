@@ -16,7 +16,12 @@ import { closeAll as mcpCloseAll } from "../src/mcp/client.ts"
 import { addMemory } from "../src/memory/vector.ts"
 import { createLlmCompaction } from "../src/policy/compaction.ts"
 import type { RateLimiter } from "../src/policy/ratelimit.ts"
-import { createUsageCollector, primePricing, watchBudgetLimit } from "../src/policy/usage.ts"
+import {
+  budgetExceededError,
+  createUsageCollector,
+  primePricing,
+  watchBudgetLimit,
+} from "../src/policy/usage.ts"
 import {
   buildBaselineNote,
   buildVerifySnippet,
@@ -310,15 +315,35 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     process.stderr.write(`[warn] checkpoint reconcile failed: ${(e as Error).message}\n`)
   }
 
+  // Kontrak control-plane (Phase 6, E5): usage kompaksi LLM dikirim ke bus
+  // sesi (event usage standar) — dulu blind spot accounting (kompaksi memakai
+  // provider sendiri di luar bus; belanja LLM ini tak terlihat budget).
+  // Late-binding: onUsage dipanggil di tengah turn, saat session sudah ada.
+  let sessionEvents: {
+    emit: (e: { type: "provider:extension"; kind: string; data: unknown }) => void
+  } | null = null
   const compaction = process.env.DEEPSEEK_API_KEY
     ? createLlmCompaction({
         apiKey: process.env.DEEPSEEK_API_KEY,
         baseUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1",
         model: "deepseek-chat",
         cwd: cwd ?? process.cwd(),
+        onUsage: (u) => {
+          try {
+            // Angka sudah dinormalisasi di compactWithLlm (negatif/NaN → skip).
+            sessionEvents?.emit({
+              type: "provider:extension",
+              kind: "usage",
+              data: {
+                inputTokens: u.inputTokens,
+                outputTokens: u.outputTokens,
+                totalTokens: u.totalTokens,
+              },
+            })
+          } catch {}
+        },
       })
     : undefined
-
   const { sessionTools } = await startupPhase("tool-layer", () =>
     setupToolLayer(cfg, toolScope ?? "full", permissionMode),
   )
@@ -370,6 +395,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       ...(compaction ? { compaction } : {}),
     }),
   )
+  // Kontrak control-plane (Phase 6): late-binding bus untuk usage kompaksi —
+  // onUsage dipanggil di tengah turn, saat bus sudah hidup.
+  sessionEvents = session.events
 
   const effectiveInitialModel = modelRef.current ?? cfg.providers[0]?.models[0] ?? "default"
 
@@ -538,7 +566,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       // menolak prompt BARU, sehingga tool loop / siklus self-heal bisa
       // belanja tanpa batas dalam satu turn. Watcher membaca biaya LIVE dari
       // collector dan menggugurkan turn via controller gabungan begitu pagu
-      // lewat (atau cost tak dikenal di --budget-strict). Tanpa --budget =
+      // lewat (atau cost tak dikenal + pemakaian — fail-closed default). Tanpa --budget =
       // no-op (sinyal parent diteruskan apa adanya, zero-cost).
       // `formatUsd` diimpor di bawah (sebelum return) tapi selalu terinisiasi
       // sebelum runOnce pertama dipanggil — aman dipakai di closure ini.
@@ -553,13 +581,17 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         budget,
         strict: budgetStrict ?? false,
         getCost: () => usage.getSession().cost,
+        getTokens: () => usage.getSession().totalTokens,
         onOver: (st, cost) => {
           process.stderr.write(
             st === "over" && cost != null && budget != null
               ? `[budget] ${formatUsd(cost)} > ${formatUsd(budget)} - over budget, stopping turn.\n`
-              : `[budget] cost unknown (model without pricing) - over budget under --budget-strict, stopping turn.\n`,
+              : `[budget] cost unknown (model without pricing) - over budget, stopping turn.\n`,
           )
-          ctl.abort(new Error("budget exceeded"))
+          // F-18: abort dengan identitas kind budget_exceeded (bukan Error
+          // polos) agar kernel melaporkannya sebagai budget_exceeded, bukan
+          // "aborted" generik yang tak terbedakan dari Ctrl+C user.
+          ctl.abort(budgetExceededError())
         },
       })
       try {

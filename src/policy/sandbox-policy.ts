@@ -109,3 +109,49 @@ export function resolveSandbox(
         "Use --allow-all / --ask to choose yourself, or --sandbox docker for isolation.",
   }
 }
+
+function flagOn(v: string | undefined): boolean {
+  const s = (v ?? "").trim().toLowerCase()
+  return s === "1" || s === "true" || s === "yes" || s === "on"
+}
+
+/** STRICT: tak pernah fallback host bila isolasi yang diminta tak tersedia. */
+export function sandboxStrict(): boolean {
+  return flagOn(process.env.MINICODE_SANDBOX_STRICT)
+}
+
+/** Fallback host eksplisit: satu-satunya jalan downgrade yang sadar. */
+export function sandboxExplicitFallbackAllowed(): boolean {
+  return flagOn(process.env.MINICODE_SANDBOX_ALLOW_FALLBACK)
+}
+
+/**
+ * F-03: permintaan sandbox EKSPLISIT (`--sandbox docker|os` / env) tanpa
+ * backend = tolak (fail-closed), kecuali fallback diizinkan eksplisit via
+ * MINICODE_SANDBOX_ALLOW_FALLBACK=1 (dan tidak STRICT).
+ *
+ * Kembalikan pesan penolakan, atau null bila boleh jalan. Pure terhadap
+ * argumen + probes agar teruji; flag env dibaca langsung (keputusan operator,
+ * bukan state yang bisa di-inject repo).
+ */
+export function sandboxRefusalReason(
+  requested: string | undefined,
+  probes: { os?: () => boolean; docker?: () => boolean } = {},
+): string | null {
+  const req = (requested ?? "").trim().toLowerCase()
+  const needDocker = req === "docker"
+  const needOs = req === "os" || req === "bwrap" || req === "seatbelt"
+  if (!needDocker && !needOs) return null
+  const hasOs = probes.os ?? osSandboxAvailable
+  const hasDocker = probes.docker ?? dockerAvailable
+  if (needDocker ? hasDocker() : hasOs()) return null
+  if (sandboxExplicitFallbackAllowed() && !sandboxStrict()) return null
+  const what = needDocker
+    ? "MINICODE_SANDBOX=docker but docker is unavailable"
+    : "OS sandbox is unavailable on this machine"
+  return (
+    `[sandbox] ${what} — refusing to run without isolation ` +
+    `(explicit sandbox request must not silently downgrade; ` +
+    `set MINICODE_SANDBOX_ALLOW_FALLBACK=1 to allow host fallback explicitly)`
+  )
+}

@@ -4,6 +4,7 @@ import { createOpenAICompatProvider } from "#minicore/providers/openai-compat.ts
 import type { MinicodeConfig } from "../config.ts"
 import { createAnthropicProvider } from "./anthropic.ts"
 import { allowedEfforts, thinkingFamily, withEffortFallback } from "./effort.ts"
+import { withStreamGuards } from "./guards.ts"
 import { getValidAccessToken } from "./oauth.ts"
 import { createResponsesProvider } from "./responses.ts"
 
@@ -22,27 +23,33 @@ export function buildProviderList(cfg: MinicodeConfig): ModelProvider[] {
   for (const p of cfg.providers) {
     if (p.providerHint === "responses") {
       out.push(
-        createResponsesProvider({
-          id: p.id,
-          baseUrl: p.baseUrl,
-          apiKey: p.apiKey,
-          models: p.models,
-          defaultModel: p.models[0],
-          ...(p.reasoningEffort ? { reasoningEffort: p.reasoningEffort } : {}),
-        }),
+        // F-11/F-16: guard stream (timeout + text-cap) di satu titik bangun —
+        // berlaku untuk semua adapter termasuk vendor yang tak boleh disentuh.
+        withStreamGuards(
+          createResponsesProvider({
+            id: p.id,
+            baseUrl: p.baseUrl,
+            apiKey: p.apiKey,
+            models: p.models,
+            defaultModel: p.models[0],
+            ...(p.reasoningEffort ? { reasoningEffort: p.reasoningEffort } : {}),
+          }),
+        ),
       )
     } else if (p.providerHint === "anthropic" || p.baseUrl.includes("anthropic")) {
       // String effort diteruskan mentah; adapter memilih bentuk wire per
       // MODEL per request (legacy budget vs adaptive vs omit).
       out.push(
-        createAnthropicProvider({
-          id: p.id,
-          apiKey: p.apiKey,
-          baseUrl: p.baseUrl,
-          models: p.models,
-          defaultModel: p.models[0],
-          ...(p.reasoningEffort ? { reasoningEffort: p.reasoningEffort } : {}),
-        }) as unknown as ModelProvider,
+        withStreamGuards(
+          createAnthropicProvider({
+            id: p.id,
+            apiKey: p.apiKey,
+            baseUrl: p.baseUrl,
+            models: p.models,
+            defaultModel: p.models[0],
+            ...(p.reasoningEffort ? { reasoningEffort: p.reasoningEffort } : {}),
+          }) as unknown as ModelProvider,
+        ),
       )
     } else {
       const isZen =
@@ -60,22 +67,24 @@ export function buildProviderList(cfg: MinicodeConfig): ModelProvider[] {
       // custom gateway) — effort hanya untuk model reasoning yang levelnya
       // didukung; sisanya langsung tanpa effort + fail-soft bila ditolak.
       if (!p.reasoningEffort) {
-        out.push(createOpenAICompatProvider(base))
+        out.push(withStreamGuards(createOpenAICompatProvider(base)))
         continue
       }
       const effort = p.reasoningEffort
       out.push(
-        withEffortFallback(
-          createOpenAICompatProvider({ ...base, reasoningEffort: effort }),
-          createOpenAICompatProvider(base),
-          {
-            providerId: p.id,
-            effort,
-            shouldSend: (model: string): boolean => {
-              if (thinkingFamily(model) !== "openai-reasoning") return false
-              return allowedEfforts(model).includes(effort as "low" | "medium" | "high")
+        withStreamGuards(
+          withEffortFallback(
+            createOpenAICompatProvider({ ...base, reasoningEffort: effort }),
+            createOpenAICompatProvider(base),
+            {
+              providerId: p.id,
+              effort,
+              shouldSend: (model: string): boolean => {
+                if (thinkingFamily(model) !== "openai-reasoning") return false
+                return allowedEfforts(model).includes(effort as "low" | "medium" | "high")
+              },
             },
-          },
+          ),
         ),
       )
     }

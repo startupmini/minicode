@@ -35,6 +35,13 @@ const commandCtx = {
   skills: [],
   toolsCount: 0,
   setModelOverride() {},
+  // Kontrak control-plane (Phase 6): /status membedakan Context vs Usage.
+  getContextTokens() {
+    return 1024
+  },
+  budgetState() {
+    return "ok"
+  },
 } as unknown as Parameters<typeof handleBuiltinCommand>[1]
 
 // Cermin logika dispatch builtin di driver REPL (dulu onOverlay).

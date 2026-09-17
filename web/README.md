@@ -65,7 +65,8 @@ tangkapan layar):
 
 | Tanggal | Sumber | LCP p75 | INP p75 / TBT | CLS p75 | Catatan |
 |---|---|---|---|---|---|
-| 2026-09-17 | Lab Lighthouse 13.4.1 mobile, minicode.fun, headless Chrome lokal (bukan field) | 1,9 s | TBT 0 ms | 0,002 | Score 98 · LCP element: ikon (entrance hero menyembunyikan H1) → **fixed**: H1 dikecualikan dari `rise`, terverifikasi LCP = H1 di lab lokal |
+| 2026-09-17 | Lab Lighthouse 13.4.1 mobile, minicode.fun, headless Chrome lokal (bukan field) | 1,9 s | TBT 0 ms | 0,002 | Pra-fix: LCP element = glif ikon (entrance hero menyembunyikan H1) → fixed: H1 dikecualikan dari `rise` |
+| 2026-09-17 | Lab Lighthouse 13.4.1 mobile, minicode.fun pasca-fix (headless lokal) | 2,4 s | TBT 0 ms | 0,002 | LCP element = **H1** (satu kandidat) ✓ · score 95 · 0 error konsol · variansi run lab ±0,5 s |
 | — | — | — | — | — | — |
 
 ## Tulis artikel

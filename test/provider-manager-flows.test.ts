@@ -130,6 +130,11 @@ describe.serial("provider-manager: add (a)", () => {
     const seq = tty.answerSequence(["0", "sk-1", "n"])
     await tty.send("a")
     await seq
+    // Save terjadi SETELAH "Detecting models…" async — assert layar/config
+    // segera setelah seq = race (terbukti flaky di CI 35205151463). Tunggu
+    // state-nya; pola sama seperti test global di bawah.
+    await waitFor(async () => (await readConfig(localConfigPath())).providers.length === 1)
+    await waitFor(() => visible(tty).includes("saved"))
     const out = visible(tty)
     expect(out).toContain("Add provider")
     expect(out).toContain("saved")
@@ -165,6 +170,9 @@ describe.serial("provider-manager: add (a)", () => {
     ])
     await tty.send("a")
     await seq
+    // Custom URL juga menjalani detect async sebelum save — tunggu config
+    // ter-tulis sebelum dibaca (kelas race yang sama).
+    await waitFor(() => existsSync(localConfigPath()))
     const cfg = JSON.parse(await readFile(localConfigPath(), "utf8")) as {
       providers: { baseUrl: string }[]
     }

@@ -2,10 +2,10 @@
 title: "Rename paket npm: minicode-ai"
 date: 2026-09-17
 tags: [release, npm]
-desc: "Rilis Minicode yang tertahan sejak 0.9.21 akhirnya terbit sebagai minicode-ai. Kenapa nama berubah, apa yang tidak berubah, dan cara migrasi satu perintah."
+desc: "Rilis Minicode yang tertahan tiga hari akhirnya terbit sebagai minicode-ai. Kenapa nama berubah, apa yang tidak berubah, dan cara migrasi satu perintah."
 ---
 
-Sejak 0.9.21, rilis Minicode tidak pernah sampai ke npm — publish selalu gagal, dan beberapa bulan terakhir kita tahu penyebabnya bukan bug. Hari ini masalahnya selesai: paket terbit dengan nama baru.
+Sejak 0.9.21, rilis Minicode tidak pernah sampai ke npm — publish selalu gagal, dan tiga hari investigasi membuktikan penyebabnya bukan bug di kodenya: scope registry yang mati, aturan nama, dan token CI. Hari ini masalahnya selesai: paket terbit dengan nama baru.
 
 ```bash
 npm install -g minicode-ai

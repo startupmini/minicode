@@ -71,31 +71,57 @@ export function landingSafety(): string {
   return `<section id="batasan"><h2>Batasan yang jujur.</h2><p class="sub">Model bisa salah paham — karena itu efek penting butuh izin, variabel kredensial di-strip dari subprocess, dan repo asing tidak dipercaya secara default. Yang belum bisa dijamin juga ditulis terbuka.</p><p class="flow">Izin → Jail → Guard → Validasi → Eksekusi → Jurnal</p><div class="cta"><a class="btn btn-s" href="/docs/security-model.html">Baca Security Model</a></div></section>`
 }
 
+// Satu sumber FAQ (2026-09-17): HTML landing dan JSON-LD FAQPage dibangun
+// dari array yang sama — dulu duplikat dua tempat bisa saling stale.
+// Jawaban berformat HTML ringan (<code>, &amp;) — di JSON-LD di-strip
+// menjadi teks polos (schema.org text tidak mem-parse HTML).
+export const FAQS: [string, string][] = [
+  [
+    "Apakah Minicode butuh API key?",
+    "Tergantung provider. Yang mendukung OAuth (mis. Qwen): <code>minicode auth login qwen</code> memakai device-code, tanpa API key. Provider lain tetap memakai API key — detail di Config &amp; Provider.",
+  ],
+  [
+    "Apakah Minicode jalan di Windows?",
+    "Ya, via Bun. Isolasi OS-native tidak ada di Windows — default turun ke allowlist, atau <code>--sandbox docker</code>.",
+  ],
+  [
+    "Kenapa biaya model tampil N/A?",
+    "<code>minicode pricing sync</code> lalu <code>pricing show &lt;model&gt;</code>.",
+  ],
+  ["Apa yang dipulihkan /undo?", "Perubahan file turn terakhir yang dilacak git."],
+  [
+    "Kenapa MCP localhost ditolak?",
+    "Anti-SSRF. Usulkan <code>--allow-private</code> saat <code>config mcp add</code>.",
+  ],
+  ["Apakah Minicode butuh Node.js?", "Tidak. Wajib Bun ≥ 1.0 karena <code>bun:sqlite</code>."],
+  [
+    "Siapa yang membayar biaya model?",
+    "Anda, ke provider pilihan Anda. Minicode gratis (MIT) tanpa analitik keluar; telemetri lokal bisa dimatikan. <code>--budget</code> + <code>pricing sync</code> mengontrol biaya.",
+  ],
+]
+
+export function faqPageJsonld(base: string): string {
+  const strip = (s: string): string =>
+    s
+      .replaceAll("<code>", "")
+      .replaceAll("</code>", "")
+      .replaceAll("&amp;", "&")
+      .replaceAll("&lt;", "<")
+      .replaceAll("&gt;", ">")
+  return JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    url: `${base}/#faq`,
+    mainEntity: FAQS.map(([q, a]) => ({
+      "@type": "Question",
+      name: q,
+      acceptedAnswer: { "@type": "Answer", text: strip(a) },
+    })),
+  }).replaceAll("</", "<\\/")
+}
+
 export function landingFaq(): string {
-  const faqs = [
-    [
-      "Butuh API key?",
-      "Tergantung provider. Yang mendukung OAuth (mis. Qwen): <code>minicode auth login qwen</code> memakai device-code, tanpa API key. Provider lain tetap memakai API key — detail di Config &amp; Provider.",
-    ],
-    [
-      "Jalan di Windows?",
-      "Ya, via Bun. Isolasi OS-native tidak ada di Windows — default turun ke allowlist, atau <code>--sandbox docker</code>.",
-    ],
-    [
-      "Biaya tampil N/A?",
-      "<code>minicode pricing sync</code> lalu <code>pricing show &lt;model&gt;</code>.",
-    ],
-    ["/undo memulihkan apa?", "Perubahan file turn terakhir yang dilacak git."],
-    [
-      "MCP localhost ditolak?",
-      "Anti-SSRF. Usulkan <code>--allow-private</code> saat <code>config mcp add</code>.",
-    ],
-    ["Butuh Node.js?", "Tidak. Wajib Bun ≥ 1.0 karena <code>bun:sqlite</code>."],
-    [
-      "Siapa yang membayar model?",
-      "Anda, ke provider pilihan Anda. Minicode gratis (MIT) tanpa analitik keluar; telemetri lokal bisa dimatikan. <code>--budget</code> + <code>pricing sync</code> mengontrol biaya.",
-    ],
-  ]
+  const faqs = FAQS.map(([q, a]) => [q, a] as [string, string])
   const items = faqs
     .map(
       ([q, a]) => `<details><summary>${q}</summary><div class="faq-a"><p>${a}</p></div></details>`,

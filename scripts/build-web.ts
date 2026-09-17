@@ -6,8 +6,15 @@ import { join } from "node:path"
 import { buildBlog } from "./web/blog.ts"
 import { buildChangelog, buildDocs } from "./web/docs.ts"
 import { landingHero, landingHow, landingTasks } from "./web/landing1.ts"
-import { landingFaq, landingFeatures, landingFit, landingSafety } from "./web/landing2.ts"
+import {
+  faqPageJsonld,
+  landingFaq,
+  landingFeatures,
+  landingFit,
+  landingSafety,
+} from "./web/landing2.ts"
 import { buildLlmsTxt } from "./web/llms.ts"
+import { buildLlmsFullTxt } from "./web/llms-full.ts"
 import { renderPage, softwareJsonld } from "./web/page.ts"
 
 const repoRoot = join(import.meta.dir, "..")
@@ -62,7 +69,13 @@ write(
     // jadi flex column + `order`) hanya boleh menyentuh halaman ini.
     bodyClass: "home",
     version,
-    jsonld: softwareJsonld(version),
+    // FAQPage + SoftwareApplication dalam satu @graph: jawaban FAQ = konten
+    // yang paling sering dikutip AI-assistant & rich result Google (riset
+    // discoverability 2026-09-17).
+    jsonld: JSON.stringify({
+      "@context": "https://schema.org",
+      "@graph": [JSON.parse(softwareJsonld(version)), JSON.parse(faqPageJsonld(base))],
+    }).replaceAll("</", "<\\/"),
   }),
 )
 const urls = [
@@ -72,13 +85,42 @@ const urls = [
   ...buildBlog(repoRoot, webDir, siteDir, base, version, write),
 ]
 
+write("llms.txt", buildLlmsTxt(repoRoot, base, version))
+write("llms-full.txt", buildLlmsFullTxt(repoRoot, base, version))
 write(
   "robots.txt",
-  `User-agent: *\nAllow: /\nDisallow: /admin.html\nSitemap: ${base}/sitemap.xml\n`,
+  // AI-crawler eksplisit (riset discoverability 2026-09-17): semua di-ALLOW.
+  // `User-agent: *` saja cukup secara mekanis, tapi sektor eksplisit membuat
+  // kebijakan situs terbaca sendiri oleh tiap bot — dan jadi tempat
+  // dokumentasi bila suatu hari ada crawler yang mau diblokir.
+  [
+    "User-agent: *",
+    "Allow: /",
+    "Disallow: /admin.html",
+    "",
+    "# AI crawlers — dokumentasi minicode.fun bebas dibaca & dikutip",
+    ...[
+      "GPTBot",
+      "OAI-SearchBot",
+      "ChatGPT-User",
+      "ClaudeBot",
+      "Claude-SearchBot",
+      "Claude-User",
+      "PerplexityBot",
+      "Perplexity-User",
+      "Google-Extended",
+      "Applebot-Extended",
+      "Bytespider",
+      "CCBot",
+      "meta-externalagent",
+      "Amazonbot",
+    ].map((ua) => `User-agent: ${ua}\nAllow: /\nDisallow: /admin.html`),
+    "",
+    `Sitemap: ${base}/sitemap.xml`,
+    "",
+    "# Peta markdown untuk AI/agent: llms.txt (indeks) & llms-full.txt (korpus penuh)",
+  ].join("\n") + "\n",
 )
-// llms.txt (llmstxt.org): peta md untuk AI-crawler — digenerate dari SUMMARY
-// (sumber sama dengan sitemap) agar tak stale (riset SEO 2026-09-17).
-write("llms.txt", buildLlmsTxt(repoRoot, base, version))
 write(
   "sitemap.xml",
   `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">` +

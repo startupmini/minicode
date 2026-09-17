@@ -13,10 +13,16 @@
     "agent",
     "cli",
     "coding-agent",
+    "coding-assistant",
+    "terminal",
     "llm",
+    "llm-agent",
     "mcp",
     "lsp",
-    "bun"
+    "bun",
+    "openai",
+    "anthropic",
+    "ollama"
   ],
   "homepage": "https://github.com/startupmini/minicode#readme",
   "repository": {

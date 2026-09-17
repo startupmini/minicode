@@ -33,6 +33,19 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
 
 ## Status eksekusi terbaru (update 2026-09-17)
 
+- ✅ DISCOVERABILITY AI/AGENT (2026-09-17): situs mudah ditemukan & dipelajari
+  AI-assistant/agent yang browsing: (1) `llms-full.txt` — korpus seluruh docs
+  dalam satu markdown (±140 KB) digenerate dari SUMBER sama dgn sitemap
+  (SUMMARY) + status PLAN; komplemen `llms.txt` (peta, sudah ada); (2)
+  `robots.txt` menyebut 14 crawler AI eksplisit (GPTBot, ClaudeBot,
+  PerplexityBot, OAI-SearchBot, Google-Extended, dst) semua di-ALLOW —
+  kebijakan situs terbaca sendiri oleh tiap bot; (3) FAQPage JSON-LD di
+  landing dari SATU sumber FAQ (diekspor `FAQS`, HTML & JSON-LD tak bisa
+  saling stale) — jawaban FAQ = konten paling sering dikutip assistant;
+  (4) metadata GitHub: description + homepage minicode.fun + 10 topics;
+  (5) keywords npm diperluas (terminal, llm-agent, openai, anthropic,
+  ollama). Guard test menjaga llms-full urut vs SUMMARY, robots AI, dan
+  @graph FAQPage+SoftwareApplication.
 - ✅ RENAME PAKET NPM 0.9.26 — `@miniroom/minicode` → `minicode-ai`
   (2026-09-17): akar gagal rilis 0.9.24/0.9.25 = PUT ke registry → 404 (scope
   `@miniroom` tak lagi bisa publish); `minicode-cli` sudah diambil pihak lain;

@@ -33,6 +33,12 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
 
 ## Status eksekusi terbaru (update 2026-09-17)
 
+- ✅ SCRIPT `web:indexnow` + CHECKLIST GSC (2026-09-17): submit indeks tidak
+  lagi curl manual di sesi — `bun run web:indexnow` baca site/sitemap.xml,
+  validasi host (CNAME), tolak URL asing, cek key file LIVE di produksi
+  (syarat protokol), POST urlList; `--dry-run` utk QA. Checklist Search
+  Console manual (submit sitemap, request indexing, pantau Pages/Performance)
+  terdokumentasi di web/README.md — langkah browser-only pemilik.
 - ✅ DISCOVERABILITY AI/AGENT (2026-09-17): situs mudah ditemukan & dipelajari
   AI-assistant/agent yang browsing: (1) `llms-full.txt` — korpus seluruh docs
   dalam satu markdown (±140 KB) digenerate dari SUMBER sama dgn sitemap

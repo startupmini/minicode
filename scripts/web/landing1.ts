@@ -4,7 +4,7 @@
 // (aksi pertama yang nyata dilakukan developer); klaim menyusul dengan link
 // verifikasi ke docs. Semua H1/link/id menjaga guard test narasi landing.
 export function landingHero(version: string): string {
-  const install = "npm install -g @miniroom/minicode"
+  const install = "npm install -g minicode"
   return `<section class="hero">
 <p class="kicker">v${version}, MIT, zero-dep, Bun</p>
 <h1>Coding agent CLI yang menunjukkan semua kerjanya.</h1>

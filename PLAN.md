@@ -33,6 +33,15 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
 
 ## Status eksekusi terbaru (update 2026-09-17)
 
+- ✅ RENAME PAKET NPM 0.9.26 — `@miniroom/minicode` → `minicode` (2026-09-17):
+  akar gagal rilis 0.9.24/0.9.25 = PUT ke registry → 404 (scope `@miniroom`
+  tak lagi bisa publish); `minicode-cli` sudah diambil pihak lain, nama bare
+  `minicode` tersedia dan persis nama produk. Satu kontrak baru:
+  `npm install -g minicode` (bin tetap `minicode`, config/state
+  `~/.minicode/` tak berubah). Referensi diganti di package.json,
+  update-check/auto-update (notifikasi + auto-update), README,
+  docs/getting-started, landing, blog; guard release-readiness kini
+  MENYEGAL nama scoped lama di permukaan install. Tag `v0.9.26` → Publish.
 - ✅ UJI A/B URUTAN LANDING + ANALITIK LOKAL (2026-09-17): varian A = "Cara
   kerja" dulu, B = "Serahkan tugas" dulu. Ditukar lewat CSS `order` dari
   `data-order` di `<html>` yang dipasang pre-paint di `web/layout.html` — DOM

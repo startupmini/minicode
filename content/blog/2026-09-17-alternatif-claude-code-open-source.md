@@ -52,7 +52,7 @@ Sebagian besar kebiasaan bisa dipindahkan tanpa kehilangan:
 ## Cara mencoba dalam 5 menit
 
 ```bash
-npm install -g @miniroom/minicode
+npm install -g minicode
 minicode doctor
 minicode "jelaskan struktur repo ini"
 ```

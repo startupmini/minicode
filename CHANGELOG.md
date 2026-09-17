@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.9.26] - 2026-09-17 — Rename paket npm: `minicode`
+
+### Changed
+- **Paket npm pindah dari `@miniroom/minicode` ke `minicode` (nama bare)**:
+  rilis 0.9.24/0.9.25 gagal karena PUT ke registry mengembalikan 404 — scope
+  `@miniroom` tak lagi bisa publish. `minicode-cli` sudah dimiliki pihak lain;
+  `minicode` tersedia dan persis nama produk. Bin tetap `minicode`; config &
+  state `~/.minicode/` tidak berubah. Migrasi pengguna 0.9.20 (rilis npm
+  terakhir yang sukses):
+  `npm uninstall -g @miniroom/minicode && npm install -g minicode`.
+  Notifikasi update dan auto-update mengarah ke paket baru; install contract
+  diselaraskan di README, docs/getting-started, landing, dan blog; guard
+  `release-readiness` kini menolak sisa nama scoped lama di permukaan install.
+- Web: rombak halaman docs (doc-head, TOC ledger, hub `/docs/`), justify prosa
+  dengan kolom baca 640px, scrollbar disembunyikan tanpa mematikan fungsi
+  gulir, eksperimen A/B urutan landing 100% lokal + panel laporan `?exp=report`.
+
 ## [0.9.25] - 2026-09-17 — Control plane architecture + hardening pasca-audit independen
 
 ### Fixed

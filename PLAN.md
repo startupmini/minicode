@@ -42,7 +42,10 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   `~/.minicode/` tak berubah). Referensi diganti di package.json,
   update-check/auto-update (notifikasi + auto-update), README,
   docs/getting-started, landing, blog; guard release-readiness kini
-  MENYEGAL nama scoped lama di permukaan install. Tag `v0.9.26` → Publish.
+  MENYEGAL nama scoped lama di permukaan install. Tag `v0.9.26` → Publish →
+  `minicode-ai@0.9.26` TERBIT (workflow hijau, tarball terverifikasi dari
+  registry). Pengumuman publik: blog `rename-paket-npm-minicode-ai` +
+  changelog.
 - ✅ UJI A/B URUTAN LANDING + ANALITIK LOKAL (2026-09-17): varian A = "Cara
   kerja" dulu, B = "Serahkan tugas" dulu. Ditukar lewat CSS `order` dari
   `data-order` di `<html>` yang dipasang pre-paint di `web/layout.html` — DOM

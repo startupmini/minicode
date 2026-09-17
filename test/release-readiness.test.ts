@@ -83,16 +83,18 @@ describe("release: metadata paket", () => {
 })
 
 describe("release: satu kontrak instalasi di semua permukaan", () => {
-  // Kontrak instalasi (2026-09-17): paket pindah dari `@miniroom/minicode`
-  // ke nama bare `minicode` — scope `@miniroom` di registry sudah 404 saat
-  // PUT (rilis 0.9.24/0.9.25 gagal), `minicode` tersedia dan persis nama
-  // produk. Bentuk bare kini KONTRAK resmi; nama scoped lama tidak boleh
+  // Kontrak instalasi (2026-09-17): paket pindah dari `@miniroom/minicode` ke
+  // `minicode-ai`. Riwayat: scope `@miniroom` 404 saat PUT (rilis 0.9.24/0.9.25
+  // gagal); nama bare `minicode` ditolak aturan kemiripan registry (mirip
+  // `mini-code`); `minicode-cli` milik pihak lain. `minicode-ai` tersedia dan
+  // disetujui pemilik. Bin tetap `minicode`; nama scoped lama tidak boleh
   // tersisa di permukaan install mana pun.
-  test("instalasi = nama bare `minicode` + Bun-first; nama scoped lama tak boleh tersisa", () => {
+  test("instalasi = `minicode-ai` + Bun-first; nama lama tak boleh tersisa", () => {
     for (const f of ["README.md", "docs/getting-started.md", "scripts/web/landing1.ts"]) {
       const src = read(f)
-      expect(src).toContain("npm install -g minicode")
+      expect(src).toContain("npm install -g minicode-ai")
       expect(src).not.toContain("@miniroom/minicode")
+      expect(src).not.toMatch(/npm install -g minicode(?!-ai)/)
     }
     const firstIdx = (src: string, needles: string[]): number => {
       const hits = needles.map((n) => src.indexOf(n)).filter((i) => i >= 0)
@@ -102,13 +104,13 @@ describe("release: satu kontrak instalasi di semua permukaan", () => {
       const src = read(f)
       const bunIdx = firstIdx(src, ["Bun >=", "bun >= 1.0", "Bun ≥"])
       expect(bunIdx).toBeGreaterThanOrEqual(0)
-      expect(bunIdx).toBeLessThan(src.indexOf("npm install -g minicode"))
+      expect(bunIdx).toBeLessThan(src.indexOf("npm install -g minicode-ai"))
     }
   })
 
   test("uninstall/update mendokumentasikan state preservation", () => {
     const src = read("docs/getting-started.md")
-    expect(src).toContain("npm uninstall -g minicode")
+    expect(src).toContain("npm uninstall -g minicode-ai")
     expect(src).toMatch(/tidak pernah menghapus state/i)
   })
 })

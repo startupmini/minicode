@@ -2,16 +2,20 @@
 
 ## [Unreleased]
 
-## [0.9.26] - 2026-09-17 — Rename paket npm: `minicode`
+## [0.9.26] - 2026-09-17 — Rename paket npm: `minicode-ai`
 
 ### Changed
-- **Paket npm pindah dari `@miniroom/minicode` ke `minicode` (nama bare)**:
-  rilis 0.9.24/0.9.25 gagal karena PUT ke registry mengembalikan 404 — scope
-  `@miniroom` tak lagi bisa publish. `minicode-cli` sudah dimiliki pihak lain;
-  `minicode` tersedia dan persis nama produk. Bin tetap `minicode`; config &
-  state `~/.minicode/` tidak berubah. Migrasi pengguna 0.9.20 (rilis npm
-  terakhir yang sukses):
-  `npm uninstall -g @miniroom/minicode && npm install -g minicode`.
+- **Paket npm pindah dari `@miniroom/minicode` ke `minicode-ai`**: rilis
+  0.9.24/0.9.25 gagal karena PUT ke registry mengembalikan 404 — scope
+  `@miniroom` tak lagi bisa publish. Nama bare `minicode` juga terbukti
+  tertutup (403 "too similar to `mini-code`"), `minicode-cli` milik pihak
+  lain; `minicode-ai` tersedia dan disetujui pemilik. Bin tetap `minicode`;
+  config & state `~/.minicode/` tidak berubah. Migrasi pengguna 0.9.20
+  (rilis npm terakhir yang sukses):
+  `npm uninstall -g @miniroom/minicode && npm install -g minicode-ai`.
+  Catatan nama: nama bare `minicode` ditolak aturan kemiripan registry
+  (terbukti 403 "too similar to `mini-code`") — `minicode-ai` adalah nama
+  final yang disetujui pemilik.
   Notifikasi update dan auto-update mengarah ke paket baru; install contract
   diselaraskan di README, docs/getting-started, landing, dan blog; guard
   `release-readiness` kini menolak sisa nama scoped lama di permukaan install.

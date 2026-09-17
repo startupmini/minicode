@@ -11,23 +11,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { readDocNav } from "./nav.ts"
-
-// Link markdown relatif di body docs (`](cli.md)`) rusak di konteks
-// /llms-full.txt — konteks URL-nya root situs, bukan /docs/. Dipetakan ke
-// URL HTML absolut (slug `readme` = /docs/). Sama konvensinya dengan
-// mdLinksToHtml, tapi untuk sintaks markdown (body di sini tak di-HTML-kan).
-export function mdLinksAbsolute(body: string, base: string): string {
-  // `](../PLAN.md)` (dari docs/README.md dan PLAN.md sendiri): file repo tak
-  // ikut di-deploy — di situs, konten yang sama = halaman changelog.
-  return body
-    .replace(/\]\(([a-z0-9-]+\.md)(#[^)\s]*)?\)/g, (_, f: string, h: string) => {
-      const slug = String(f).replace(/\.md$/, "").toLowerCase()
-      const dest = slug === "readme" ? `${base}/docs/` : `${base}/docs/${slug}.html`
-      return `](${dest}${h ?? ""})`
-    })
-    .replaceAll("](/PLAN.md)", `](${base}/docs/changelog.html)`)
-    .replaceAll("](../PLAN.md)", `](${base}/docs/changelog.html)`)
-}
+import { mdLinksAbsolute } from "./page.ts"
 
 export function buildLlmsFullTxt(repoRoot: string, base: string, version: string): string {
   const out: string[] = [

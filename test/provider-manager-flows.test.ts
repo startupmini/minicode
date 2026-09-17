@@ -125,16 +125,23 @@ async function openManager(
 describe.serial("provider-manager: add (a)", () => {
   test("preset + scope local menyimpan provider ke config lokal", async () => {
     tty = installFakeTty({ rows: 24 })
+    const t = tty // lokal typed untuk dipakai di dalam callback (narrowing
+    // variabel modul tidak bertahan lintas closure).
     const mgr = await openManager()
     // "0" = preset pertama (OpenAI), "sk-1" = API key, "n" = simpan lokal.
     const seq = tty.answerSequence(["0", "sk-1", "n"])
     await tty.send("a")
     await seq
     // Save terjadi SETELAH "Detecting models…" async — assert layar/config
-    // segera setelah seq = race (terbukti flaky di CI 35205151463). Tunggu
-    // state-nya; pola sama seperti test global di bawah.
-    await waitFor(async () => (await readConfig(localConfigPath())).providers.length === 1)
-    await waitFor(() => visible(tty).includes("saved"))
+    // segera setelah seq = race (terbukti flaky di CI 35205151463). Config
+    // LOKAL belum ada sebelum save pertama: guard existsSync dulu, kalau tidak
+    // readConfig melempar ENOENT dari dalam waitFor (bukan timeout).
+    await waitFor(
+      async () =>
+        existsSync(localConfigPath()) &&
+        (await readConfig(localConfigPath())).providers.length === 1,
+    )
+    await waitFor(() => visible(t).includes("saved"))
     const out = visible(tty)
     expect(out).toContain("Add provider")
     expect(out).toContain("saved")

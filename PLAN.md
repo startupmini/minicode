@@ -53,7 +53,8 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   minicode.fun — score 98, LCP 1,9 s, TBT 0 ms, CLS 0,002, 0 error konsol.
   Satu kriteria gagal lalu diperbaiki: entrance hero menyembunyikan H1 sehingga
   LCP element = glif ikon, bukan H1 — H1 kini dikecualikan dari `rise`
-  (part-06-motion.css), terverifikasi LCP = H1 di lab ulang. Baseline tercatat
+  (part-06-motion.css), terverifikasi LCP = H1 di lab ulang DAN di produksi
+  pasca-deploy (2,4 s, satu kandidat H1, score 95). Baseline tercatat
   di web/README.md. Field CrUX tetap menunggu fase 3 (+2/6/12 minggu).
 - ✅ AUDIT WEB + FIX P0–P2 (uncommitted, 2026-09-17): hanya lapisan web
   (`web/`, `scripts/web*`, workflow, test web) — runtime minicode tak disentuh.

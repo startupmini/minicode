@@ -153,6 +153,53 @@ Menguji apakah "Serahkan tugas" lebih baik diletakkan **sebelum** "Cara kerja".
   lintas pengunjung, itu keputusan sadar yang mengubah janji situs — bukan
   pekerjaan mekanis.
 
+## Discoverability AI & indeksasi
+
+Situs dibuat mudah ditemukan & dipelajari AI-assistant/agent yang browsing:
+
+- **`llms.txt`** (peta) & **`llms-full.txt`** (korpus penuh, ±140 KB) —
+  digenerate saat build dari SUMBER yang sama dengan sitemap (SUMMARY.md +
+  status PLAN.md), jadi tidak bisa stale. `mdLinksAbsolute` (resolver
+  `resolveDocLink` di `page.ts`) memetakan link `*.md` di body ke URL HTML
+  absolut — link relatif akan rusak di konteks root situs.
+- **robots.txt**: 14 crawler AI eksplisit di-ALLOW (GPTBot, ClaudeBot,
+  PerplexityBot, OAI-SearchBot, Google-Extended, dst) + daftar dipetakan di
+  `scripts/build-web.ts` — tambah bot baru di satu tempat itu.
+- **FAQPage + SoftwareApplication JSON-LD** di landing, dari SATU sumber FAQ
+  (`FAQS` di `landing2.ts`) — HTML dan JSON-LD tidak bisa saling stale.
+
+**Ping sitemap sudah mati** (Google `/ping` 404, Bing 410 — deprecated
+2025). Jalur push yang masih hidup: **IndexNow** — key file `<key>.txt` di
+root site di-build dari `web/indexnow-key.txt` (bukan rahasia; protokol
+membuktikan kontrol host), robots memuat petunjuknya.
+
+Setelah tiap deploy (atau saat ada halaman baru):
+
+```bash
+bun run web:build && bun run web:indexnow            # submit semua URL
+bun run web:indexnow --dry-run                       # QA tanpa POST
+```
+
+Script memvalidasi sitemap + host (dari `site/CNAME`) + key file LIVE di
+produksi (syarat protokol) sebelum mengirim; mismatch = deploy belum jalan.
+
+### Checklist Search Console (manual, sekali per properti — butuh browser pemilik)
+
+Search Console API tak terjangkau dari CLI repo (scope `webmasters` di luar
+allowlist gcloud), jadi langkah ini manual:
+
+1. Buka [search.google.com/search-console](https://search.google.com/search-console)
+   → properti `minicode.fun` (domain sudah terverifikasi).
+2. **Sitemaps** → ketik `sitemap.xml` → Submit. Status "Success" + 34 URL
+   terbaca. Ulangi hanya bila ada error baru (sitemap otomatis di-crawl ulang).
+3. **URL Inspection** (kolom pencarian atas) → `https://minicode.fun/` →
+   tunggu hasil → **REQUEST INDEXING**. Lakukan juga untuk halaman baru yang
+   penting (mis. post blog pengumuman).
+4. **Pages** (menu kiri) → pantau "Indexed / Not indexed" — first crawl biasa
+   1–3 hari; situs baru penuh 1–2 minggu.
+5. **Performance** (setelah ±2 minggu) → lihat query yang membawa impression,
+   pakai sebagai umpan konten berikutnya.
+
 ## Motion
 
 Satu token durasi (`--t: 0.15s`, `--t-slow: 0.5s`, di `part-01-base.css`);

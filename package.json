@@ -84,6 +84,7 @@
     "web:build": "bun scripts/build-web.ts",
     "web:serve": "bun --hot scripts/web-serve.ts",
     "web:check": "bun scripts/web-check.ts",
+    "web:indexnow": "bun scripts/web-indexnow.ts",
     "web:vitals": "bun scripts/web-vitals.ts"
   },
   "dependencies": {},

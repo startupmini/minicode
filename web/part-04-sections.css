@@ -1,6 +1,31 @@
-/* Section landing: daftar teks bersih, bukan kartu-pill. Heading section =
-   mono (bahasa display merek), konsisten dengan hero. */
+/* ── Eksperimen urutan landing (A/B lokal, 2026-09-17) ──
+   Varian B menaruh "Serahkan tugas" SEBELUM "Cara kerja". Keduanya memang
+   bersebelahan di DOM, jadi pembungkus `.pair` (kolom flex kecil) cukup
+   menukar posisinya lewat `order` — tanpa memindahkan DOM, tanpa menyentuh
+   section lain, dan tanpa enumerasi `order` untuk seisi halaman (percobaan
+   pertama: `main` jadi flex + semua anak diberi satu order → section lain
+   ikut terangkat ke atas; itu bug, bukan pilihan desain).
+   Urutan dokumen tetap kanonik → SEO, urutan tab, screen reader, dan
+   tampilan tanpa JS semuanya = varian A. Tanpa kedip: `data-order` dipasang
+   skrip sinkron di <head>. */
+body.home .pair { display: flex; flex-direction: column; }
+/* Flex item menyusut ke lebar konten (margin:auto menonaktifkan stretch):
+   dulu #tugas menyempit 1080→616px di KEDUA varian — geometri kontrol ikut
+   berubah, eksperimen tak sah. width:100% mengembalikan lebar section
+   non-band; band tetap full-bleed lewat padding sendiri. */
+body.home .pair > section { width: 100%; }
+body.home .pair > #cara-kerja { order: 1; }
+body.home .pair > #tugas { order: 2; }
+html[data-order="b"] body.home .pair > #cara-kerja { order: 2; }
+html[data-order="b"] body.home .pair > #tugas { order: 1; }
+
+/* Section landing: heading mono + flat content group — grouping lewat
+   whitespace + tipografi, bukan background/radius. */
 section { max-width: var(--w); margin: 0 auto; padding: 52px 24px; }
+/* Band: satu blok --soft per halaman sebagai tulang punggung ritme —
+   section di dalamnya bolong (transparan) supaya band terbaca satu bidang. */
+section.band { background: var(--soft); max-width: none; padding-left: max(24px, calc((100% - var(--w)) / 2 + 24px)); padding-right: max(24px, calc((100% - var(--w)) / 2 + 24px)); }
+section.band > * { max-width: var(--w); }
 section h2 { font: 700 clamp(19px, 2.6vw, 26px)/1.25 var(--mono); margin-bottom: 8px; }
 section .sub { color: var(--mut); font-size: 15px; max-width: 60ch; margin-bottom: 26px; }
 /* Section landing: flat content group — tanpa kartu (audit desain: grouping
@@ -8,22 +33,47 @@ section .sub { color: var(--mut); font-size: 15px; max-width: 60ch; margin-botto
 .feat-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 34px 40px; }
 .feat { padding: 0; }
 .feat h3 { font: 600 13.5px var(--mono); margin-bottom: 6px; }
-/* "Cara kerja" adalah urutan nyata 5 langkah — diberi nomor ala ledger
-   (counter CSS, mono aksen). Section non-sekuensial tetap tanpa nomor. */
-.how-list { list-style: none; padding: 0; margin: 0; counter-reset: langkah; }
-.how-list > li { position: relative; padding-left: 30px; }
+/* "Cara kerja" adalah urutan nyata 5 langkah — strip kolom di band (nomor
+   ledger counter CSS, mono aksen). Mobile: kolom tunggal, tetap urutan. */
+.how-list { list-style: none; padding: 0; margin: 0; counter-reset: langkah; display: grid; grid-template-columns: repeat(5, 1fr); gap: 30px 26px; }
+.how-list > li { position: relative; padding-left: 30px; counter-increment: langkah; }
 .how-list > li::before {
   content: counter(langkah) ".";
-  counter-increment: langkah;
   position: absolute;
   left: 0;
   top: 1px;
   font: 600 13px var(--mono);
   color: var(--acc);
 }
+@media (max-width: 900px) { .how-list { grid-template-columns: 1fr; } }
 .feat p { font-size: 13px; color: var(--mut); margin-top: 0; }
 /* Link lanjutan polos: tanpa panah tempelan (pola default yang dibuang). */
 .feat a.more { display: inline-block; margin-top: 9px; font-size: 13px; font-weight: 600; }
+/* Serahkan tugas: baris perintah nyata + salin. Flat — label prose, perintah
+   di strip gelap ala prompt (satu bahasa dgn install-bar hero). */
+.task { margin-top: 14px; }
+.task-label { font-weight: 600; font-size: 13.5px; margin-bottom: 6px; }
+.task-cmd {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 640px;
+  background: var(--code-bg);
+  color: var(--code-fg);
+  border-radius: var(--r);
+}
+.task-cmd code {
+  display: block;
+  flex: 1;
+  font: 500 12.5px/1.4 var(--mono);
+  background: none;
+  color: inherit;
+  padding: 11px 4px 11px 14px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.task-cmd .copybtn { color: inherit; flex: none; opacity: 0.85; }
+.task-more { margin-top: 18px; font-size: 13px; }
 .feat ul { list-style: none; padding: 0; margin: 6px 0 0; }
 .feat ul li { font-size: 13px; color: var(--mut); padding: 5px 0 5px 14px; position: relative; }
 .feat ul li::before { content: "–"; position: absolute; left: 0; color: var(--faint); }
@@ -34,3 +84,19 @@ section .sub { color: var(--mut); font-size: 15px; max-width: 60ch; margin-botto
 .faq details p { color: var(--mut); font-size: 13px; margin-top: 6px; max-width: 620px; }
 /* Alur keamanan landing: satu baris mono, tanpa grafis gembok. */
 .flow { font-family: var(--mono); font-size: 12.5px; color: var(--mut); margin: 4px 0 18px; overflow-x: auto; white-space: nowrap; }
+
+/* Panel laporan eksperimen lokal (`?exp=report`) — alat untuk pemilik situs,
+   datanya dari browser ini sendiri. Tidak dirender tanpa parameter itu, jadi
+   pengunjung biasa tak pernah melihatnya. Flat, memakai token yang sama. */
+.exp { background: var(--soft); padding: 20px 24px; }
+.exp-in { max-width: var(--w); margin: 0 auto; }
+.exp h2 { font: 600 13px var(--mono); margin-bottom: 4px; }
+.exp .exp-sub { font-size: 12.5px; color: var(--mut); margin-bottom: 14px; }
+.exp table { border-collapse: collapse; font-size: 12.5px; }
+.exp caption { text-align: left; font: 600 11.5px var(--mono); color: var(--faint); padding-bottom: 6px; }
+.exp th, .exp td { text-align: left; padding: 4px 16px 4px 0; vertical-align: top; }
+.exp th { font: 600 11.5px var(--mono); color: var(--faint); }
+.exp td { font-variant-numeric: tabular-nums; }
+.exp .exp-warn { font-size: 12.5px; color: var(--mut); margin-top: 10px; max-width: 74ch; }
+.exp .exp-actions { display: flex; gap: 16px; align-items: center; margin-top: 12px; font-size: 12.5px; }
+.exp .exp-actions .copybtn { font-size: 12.5px; font-weight: 600; margin: 0; padding: 0; opacity: 1; }

@@ -62,11 +62,13 @@ export function landingFit(): string {
     "Mencari hosted environment / ekosistem plugin raksasa",
   ]
   const list = (items: string[]) => `<ul>${items.map((x) => `<li>${x}</li>`).join("")}</ul>`
-  return `<section><h2>Kapan Minicode cocok?</h2><div class="feat-list"><div class="feat"><h3>Cocok bila Anda…</h3>${list(yes)}</div><div class="feat"><h3>Bukan pilihan tepat bila…</h3>${list(no)}</div></div></section>`
+  // id dipakai dua hal: deep-link (/#cocok) dan pengukuran jangkauan section
+  // eksperimen urutan — section tanpa id tak bisa dibedakan saat dilaporkan.
+  return `<section id="cocok"><h2>Kapan Minicode cocok?</h2><div class="feat-list"><div class="feat"><h3>Cocok bila Anda…</h3>${list(yes)}</div><div class="feat"><h3>Bukan pilihan tepat bila…</h3>${list(no)}</div></div></section>`
 }
 
 export function landingSafety(): string {
-  return `<section><h2>Batasan yang jujur.</h2><p class="sub">Model bisa salah paham — karena itu efek penting butuh izin, variabel kredensial di-strip dari subprocess, dan repo asing tidak dipercaya secara default. Yang belum bisa dijamin juga ditulis terbuka.</p><p class="flow">Izin → Jail → Guard → Validasi → Eksekusi → Jurnal</p><div class="cta"><a class="btn btn-s" href="/docs/security-model.html">Baca Security Model</a></div></section>`
+  return `<section id="batasan"><h2>Batasan yang jujur.</h2><p class="sub">Model bisa salah paham — karena itu efek penting butuh izin, variabel kredensial di-strip dari subprocess, dan repo asing tidak dipercaya secara default. Yang belum bisa dijamin juga ditulis terbuka.</p><p class="flow">Izin → Jail → Guard → Validasi → Eksekusi → Jurnal</p><div class="cta"><a class="btn btn-s" href="/docs/security-model.html">Baca Security Model</a></div></section>`
 }
 
 export function landingFaq(): string {
@@ -99,5 +101,5 @@ export function landingFaq(): string {
       ([q, a]) => `<details><summary>${q}</summary><div class="faq-a"><p>${a}</p></div></details>`,
     )
     .join("")
-  return `<section><h2>FAQ</h2><div class="faq">${items}</div><div class="cta"><a class="btn btn-s" href="/docs/troubleshooting.html">Troubleshooting</a></div></section>`
+  return `<section id="faq"><h2>FAQ</h2><div class="faq">${items}</div><div class="cta"><a class="btn btn-s" href="/docs/troubleshooting.html">Troubleshooting</a></div></section>`
 }

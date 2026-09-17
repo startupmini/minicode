@@ -74,7 +74,7 @@ describe("isNewer", () => {
 
 describe("isInstalledCopy", () => {
   test("path node_modules = ter-install; path source = bukan", () => {
-    expect(isInstalledCopy("/x/node_modules/@miniroom/minicode/cli/index.ts")).toBe(true)
+    expect(isInstalledCopy("/x/node_modules/minicode/cli/index.ts")).toBe(true)
     expect(isInstalledCopy("C:\\npm\\node_modules\\@miniroom\\minicode\\cli\\index.ts")).toBe(true)
     expect(isInstalledCopy("/repo/minicode/cli/index.ts")).toBe(false)
     expect(isInstalledCopy("")).toBe(false)
@@ -89,7 +89,7 @@ describe("installUpdate", () => {
       return { status: 0 }
     })
     expect(ok).toBe(true)
-    expect(seen).toEqual([["npm", "install", "-g", "@miniroom/minicode@latest"]])
+    expect(seen).toEqual([["npm", "install", "-g", "minicode@latest"]])
     expect(installUpdate(() => ({ status: 1 }))).toBe(false)
     expect(
       installUpdate(() => {

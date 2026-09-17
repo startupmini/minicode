@@ -40,7 +40,7 @@ minicode (coding-agent — self-contained, tanpa sibling clone)
 # cek: bun --version  -> 1.4.x
 
 # 1. Minicode:
-npm install -g @miniroom/minicode
+npm install -g minicode
 # bin: minicode
 
 # sekarang jalan di mana aja:

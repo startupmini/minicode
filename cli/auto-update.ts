@@ -84,7 +84,7 @@ export async function maybeAutoUpdate(
   if (!ok) {
     process.stderr.write(
       c.yellow(
-        `Auto-update gagal — lanjut versi ${version}. Update manual: npm update -g @miniroom/minicode\n`,
+        `Auto-update gagal — lanjut versi ${version}. Update manual: npm update -g minicode\n`,
       ),
     )
     return

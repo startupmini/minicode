@@ -23,10 +23,14 @@
      Fallback native tetap utuh bila font gagal termuat. */
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
   --w: 1080px;
-  --w-doc: 720px;
-  /* Font dokumentasi: satu tingkat di bawah body (15px - 2 = 13.5px asal,
-     naikkan reduksi jadi 12.5px) agar halaman referensi padat. */
-  --fs-doc: 12.5px;
+  /* Ukuran kolom BACA (docs + blog). 640px, bukan 720px: teks prosa kini
+     rata kanan-kiri (justify), dan justify butuh baris ±80–90 karakter —
+     di 720px/12.5px barisnya ±115 karakter sehingga celah antarkata melebar
+     jadi "sungai" putih. 640px pada 14px memberi ±82 karakter. */
+  --w-doc: 640px;
+  /* Font dokumentasi: satu tingkat di bawah body (15px). Dulu 12.5px —
+     terlalu kecil untuk baris 640px dan makin sulit dengan justify. */
+  --fs-doc: 14px;
   --r: 8px;
   /* Durasi gerak tunggal: mikro-interaksi 0.15s, entrance 0.5s. */
   --t: 0.15s;
@@ -38,13 +42,15 @@ body { transition: background-color 0.15s ease, color 0.15s ease; }
   html { scroll-behavior: auto; }
   body { transition: none; }
 }
-/* Scrollbar minimal: tipis, tanpa trek, thumb samar. Native tetap fallback.
-   Tanpa border shorthand (aturan flat repo) — thumb solid ramping. */
-* { scrollbar-width: thin; scrollbar-color: var(--faint) transparent; }
-*::-webkit-scrollbar { width: 8px; height: 8px; }
-*::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb { background: var(--faint); border-radius: 4px; }
-*::-webkit-scrollbar-thumb:hover { background: var(--mut); }
+/* Scrollbar DISEMBUNYIKAN, bukan dimatikan (permintaan desain 2026-09-17:
+   trek+thumb native terlihat tidak flat). Yang hilang hanya tampilannya —
+   gulir tetap jalan lewat roda mouse, trackpad, sentuh, keyboard (PageUp/Down,
+   spasi, Home/End), dan drag-select; `overflow` di container TIDAK disentuh.
+   Tiga mekanisme per browser: scrollbar-width (Firefox), ::-webkit-scrollbar
+   (Chromium/Safari), -ms-overflow-style (Edge warisan). Konsekuensi sadar: tak
+   ada indikator posisi halaman maupun drag pada bar — diterima pemilik. */
+* { scrollbar-width: none; -ms-overflow-style: none; }
+*::-webkit-scrollbar { width: 0; height: 0; display: none; }
 html[data-theme="dark"] {
   --bg: #121316;
   --soft: #1a1c20;
@@ -53,7 +59,7 @@ html[data-theme="dark"] {
   --faint: #868e99;
   --acc: #6e92f7;
   --acc-text: #8fb0ff;
-  --code-bg: #0d0e10;
+  --code-bg: #08090b;
   --code-fg: #e6e8ee;
   --on-acc: #0c0d10;
 }
@@ -92,10 +98,25 @@ button { font: inherit; color: inherit; background: none; border-style: none; bo
 .skip { position: absolute; left: -9999px; top: 0; z-index: 200; background: var(--acc); color: var(--on-acc); padding: 8px 14px; border-radius: 0 0 8px 0; }
 .skip:focus { left: 0; }
 code { font-family: var(--mono); font-size: 0.85em; background: var(--soft); color: var(--ink); padding: 0.06em 0.3em; border-radius: 6px; overflow-wrap: anywhere; }
-/* Tipografi (guideline): heading tanpa widow (balance), prose rata kiri lebih
-   rapi (pretty) — progresif, browser lama abaikan. Angka mono/date tabular. */
+/* Tipografi (guideline): heading tanpa widow (balance). Angka mono/date tabular. */
 h1, h2, h3 { text-wrap: balance; }
-.doc-body p, .article p, .lead, .sub, .post-row p { text-wrap: pretty; }
+/* Prosa rata kanan-kiri (2026-09-17) — HANYA paragraf: heading, daftar,
+   tabel, dan blok kode tetap rata kiri agar tetap mudah dipindai.
+   - Baris terakhir sengaja rata kiri (text-align-last): standar baca, dan
+     justifikasi baris terakhir menghasilkan jarak kata yang aneh.
+   - hyphens:auto menyerap celah antarkata; butuh atribut lang yang punya
+     kamus di browser (`<html lang="id">` sudah ada). Tak ada kamus = no-op,
+     bukan teks rusak.
+   - `text-wrap: pretty` DIHAPUS dari daftar ini: pretty diabaikan browser
+     saat teks dijustify, jadi menyimpannya cuma menyesatkan pembaca CSS.
+   Selector sempit dengan sengaja: `.feat p` (kolom grid ±280px) dan
+   `.footer p` (34ch) terlalu sempit untuk dijustify. */
+.lead, .sub, .lede, .doc-body p, .article p, .post-row p, .faq details p {
+  text-align: justify;
+  text-align-last: left;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+}
 .term-cap, .post-date, .kicker { font-variant-numeric: tabular-nums; }
 pre { background: var(--code-bg); color: var(--code-fg); padding: 14px 16px; border-radius: var(--r); overflow-x: auto; font: 12px/1.7 var(--mono); }
 pre code { background: none; padding: 0; color: inherit; font-size: inherit; }

@@ -83,14 +83,16 @@ describe("release: metadata paket", () => {
 })
 
 describe("release: satu kontrak instalasi di semua permukaan", () => {
-  // Nama tak-scoped diblokir registry (mirip `mini-code`) — kontrak instalasi
-  // = `npm install -g @miniroom/minicode` (bin tetap `minicode`). Bentuk
-  // bare `npm install -g minicode` TAK BOLEH dianjurkan (gagal/takut salah paket).
-  test("instalasi = scoped npm + Bun-first; tanpa anjuran bare", () => {
+  // Kontrak instalasi (2026-09-17): paket pindah dari `@miniroom/minicode`
+  // ke nama bare `minicode` — scope `@miniroom` di registry sudah 404 saat
+  // PUT (rilis 0.9.24/0.9.25 gagal), `minicode` tersedia dan persis nama
+  // produk. Bentuk bare kini KONTRAK resmi; nama scoped lama tidak boleh
+  // tersisa di permukaan install mana pun.
+  test("instalasi = nama bare `minicode` + Bun-first; nama scoped lama tak boleh tersisa", () => {
     for (const f of ["README.md", "docs/getting-started.md", "scripts/web/landing1.ts"]) {
       const src = read(f)
-      expect(src).toContain("npm install -g @miniroom/minicode")
-      expect(src).not.toContain("npm install -g minicode")
+      expect(src).toContain("npm install -g minicode")
+      expect(src).not.toContain("@miniroom/minicode")
     }
     const firstIdx = (src: string, needles: string[]): number => {
       const hits = needles.map((n) => src.indexOf(n)).filter((i) => i >= 0)
@@ -100,13 +102,13 @@ describe("release: satu kontrak instalasi di semua permukaan", () => {
       const src = read(f)
       const bunIdx = firstIdx(src, ["Bun >=", "bun >= 1.0", "Bun ≥"])
       expect(bunIdx).toBeGreaterThanOrEqual(0)
-      expect(bunIdx).toBeLessThan(src.indexOf("npm install -g @miniroom/minicode"))
+      expect(bunIdx).toBeLessThan(src.indexOf("npm install -g minicode"))
     }
   })
 
   test("uninstall/update mendokumentasikan state preservation", () => {
     const src = read("docs/getting-started.md")
-    expect(src).toContain("npm uninstall -g @miniroom/minicode")
+    expect(src).toContain("npm uninstall -g minicode")
     expect(src).toMatch(/tidak pernah menghapus state/i)
   })
 })

@@ -77,7 +77,12 @@ Atau buka `/admin.html` setelah deploy, login GitHub, tulis, Publish.
 ## Desain
 
 Konsep "Flat Paper": tanpa border, garis, shadow. Hierarki dari tipografi +
-spasi + blok background. Font docs satu tingkat lebih kecil (12.5px).
+spasi + blok background. Font docs satu tingkat lebih kecil dari body (14px),
+kolom baca 640px. **Scrollbar disembunyikan** (2026-09-17): `scrollbar-width:
+none` + `::-webkit-scrollbar { display: none }` — trek+thumb native terlihat
+tidak flat. Yang dihapus hanya tampilannya; gulir tetap jalan (roda, trackpad,
+sentuh, keyboard) karena `overflow` container tidak disentuh. Konsekuensi
+sadar: tak ada indikator posisi halaman maupun drag pada bar.
 Ikon Material Symbols Outlined via Google Fonts (subset `icon_names`, hanya
 yang benar-benar dirender) dengan fallback sembunyi.
 
@@ -88,6 +93,65 @@ hidup di terminal); body prosa tetap Inter. Nomor hanya untuk urutan nyata
 tanpa panah tempelan di link, tanpa ikon dekoratif di kartu, tanpa pola `·`
 antar-meta. Satu momen gerak: entrance hero (reveal-on-scroll per kartu
 dihapus sadar).
+
+### Prosa rata kanan-kiri (2026-09-17)
+
+Paragraf prosa dijustify (`part-01-base.css`), **hanya paragraf**: heading,
+daftar, tabel, dan blok kode tetap rata kiri agar tetap mudah dipindai.
+Baris terakhir rata kiri (`text-align-last`) + `hyphens: auto` (no-op bila
+browser tak punya kamus bahasa `id`). Selector sengaja sempit — `.feat p`
+(kolom ±280px) dan `.footer p` (34ch) terlalu sempit untuk dijustify.
+`text-wrap: pretty` dibuang dari prosa karena diabaikan browser saat teks
+dijustify. Lebar kolom baca jadi 640px (dari 720px): justify di baris ±115
+karakter menghasilkan "sungai" celah antarkata.
+
+### Halaman docs = bahasa desain landing (2026-09-17)
+
+Semua halaman docs memakai `<header class="doc-head">`: kicker = kelompok
+SUMMARY (`readDocNav`), judul mono skala display, lalu isi. Daftar isi halaman
+panjang jadi ledger bernomor; prev/next di bawah kini memawa judul halaman
+tujuan (dulu hanya "‹ Prev").
+
+`/docs/` (hub) diperlakukan seperti landing kecil: tanpa sidebar — direktori
+`<nav class="doc-grid">` digenerate dari SUMMARY (judul + desc kurasi
+`DOC_META`) tepat di bawah header, lalu prosa. Section `## Navigasi` README
+dibuang dari **web saja** (`stripMdSection`) karena itu tabel yang sama 28
+baris; `docs/README.md` tetap utuh untuk pembaca repo. Di ponsel, menu
+sidebar `<details>` mulai TERTUTUP (`app.js`) supaya konten tetap pertama;
+tanpa JS markup tetap terbuka (degradasi jujur).
+
+## Eksperimen urutan landing (A/B, 100% lokal)
+
+Menguji apakah "Serahkan tugas" lebih baik diletakkan **sebelum** "Cara kerja".
+
+- **Varian**: `a` = Cara kerja dulu (DOM apa adanya), `b` = Tugas dulu.
+- **Mekanisme**: keduanya bersebelahan di DOM, dibungkus `.pair` di
+  `scripts/build-web.ts`; `order` di `web/part-04-sections.css` menukar posisi
+  visualnya dari `data-order` pada `<html>` yang dipasang **pre-paint** oleh
+  skrip di `web/layout.html` (tanpa kedip). DOM tetap kanonik → SEO, urutan
+  tab, screen reader, dan pengunjung tanpa JS semuanya dapat varian A.
+  Catatan: karena `.pair` flex, `section` di dalamnya wajib `width: 100%`
+  — `margin: 0 auto` menonaktifkan *stretch* flex, dan dulu `#tugas`
+  menyempit 1080→616px di kedua varian (geometri kontrol ikut berubah).
+- **Penetapan**: 50/50, `Math.random()`, sticky per browser
+  (`localStorage: minicode-exp-order`). Uji manual: `?order=a` / `?order=b`
+  (override tidak dipersistenkan dan pengukuran dilewati, agar sampel bersih).
+- **Metrik** (disimpan di browser pengunjung, `minicode-exp-v1`): kunjungan per
+  varian, kedalaman gulir maksimum, jangkauan tiap section (band tengah
+  viewport), aksi di bagian Tugas (klik tombol salin/tautan), waktu aktif.
+  Penulisan idempoten per sesi → aman di-flush berkali-kali (milestone 25%,
+  ganti tab, `pagehide`).
+- **Laporan**: buka `/?exp=report` di browser yang datanya ingin dilihat —
+  tabel per varian + jangkauan section + peringatan sampel kecil + tombol
+  salin JSON. `?exp=reset` menghapus data + penetapan varian. `?exp=off` /
+  `?exp=on` mematikan/menyalakan pengukuran; `navigator.doNotTrack === "1"`
+  juga melewati pengukuran.
+- **Tanpa analitik keluar**: tidak ada satu pun request jaringan — dijamin
+  guard test (app.js dilarang memuat `fetch(`/`XMLHttpRequest`/`sendBeacon`/
+  `document.cookie`). Konsekuensinya: agregasi lintas pengunjung TIDAK otomatis;
+  pemilik harus mengumpulkan JSON dari tiap penguji. Kalau nanti butuh angka
+  lintas pengunjung, itu keputusan sadar yang mengubah janji situs — bukan
+  pekerjaan mekanis.
 
 ## Motion
 

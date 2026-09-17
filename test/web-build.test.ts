@@ -16,6 +16,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { blogDateFmt, buildBlog, formatBlogDate } from "../scripts/web/blog.ts"
 import { parsePlanStatus } from "../scripts/web/changelog.ts"
+import { renderDocGrid, renderDocHead, renderDocNav, stripMdSection } from "../scripts/web/docs.ts"
 import { parseFrontmatter } from "../scripts/web/fm.ts"
 import { mdToHtml } from "../scripts/web/md.ts"
 import { readDocNav } from "../scripts/web/nav.ts"
@@ -390,12 +391,13 @@ describe("web ssg", () => {
     const site = join(repoRoot, "site")
     if (!existsSync(site)) return
     const index = readFileSync(join(site, "index.html"), "utf8")
-    // Tepat satu figure proof: SVG inline (tanpa request aset baru).
-    expect(index.match(/<figure class="shot"/g)?.length ?? 0).toBe(1)
+    // Tepat satu figure proof: SVG inline (tanpa request aset baru). Class
+    // boleh bertambah (shot term — tergabung dgn jendela terminal, rombak hero).
+    expect(index.match(/<figure class="shot[ "]/g)?.length ?? 0).toBe(1)
     expect(index).toContain("<svg")
     // Guard raster dikawinkan ke figure proof (og:image.png di <head> sah —
     // crawler sosial tak merender SVG; yang dilarang: proof jadi <img> raster).
-    const shot = /<figure class="shot"[\s\S]*?<\/figure>/.exec(index)?.[0] ?? ""
+    const shot = /<figure class="shot[ "][\s\S]*?<\/figure>/.exec(index)?.[0] ?? ""
     expect(shot).not.toContain(".png")
     expect(shot).not.toContain(".gif")
     expect(index).toContain("write_file server.ts")
@@ -471,11 +473,13 @@ describe("web ssg", () => {
     expect(docIndex).not.toContain("doc-meta")
     expect(docIndex).not.toContain("doc-rail")
     expect(docIndex).not.toContain("side-link")
-    // Prev/Next di bawah, teks polos, tanpa judul halaman di box.
+    // Prev/Next di bawah: label mono + judul halaman tujuan (rombak docs
+    // 2026-09-17). Dulu hanya "‹ Prev"/"Next ›" tanpa judul — pembaca baru
+    // tahu tujuan navigasinya setelah mengklik.
     const docTools = readFileSync(join(site, "docs", "tools.html"), "utf8")
-    expect(docTools).toContain(">‹ Prev<")
-    expect(docTools).toContain("Next ›<")
-    expect(docTools).not.toContain("Sebelumnya</span>")
+    expect(docTools).toContain('<span class="dn-k">‹ Sebelumnya</span><span class="dn-t">')
+    expect(docTools).toContain('<span class="dn-k">Berikutnya ›</span><span class="dn-t">')
+    expect(docTools).not.toContain(">‹ Prev<")
   })
 
   test("design language flat: tanpa shadow/gradient, radius kecil, kartu flat", () => {
@@ -499,8 +503,10 @@ describe("web ssg", () => {
     }
     // Kartu .feat = flat content group (tanpa background).
     expect(code).not.toMatch(/\.feat\s*\{[^}]*background/)
-    // Scrollbar minimal ada; dead selector .tbl/.prov-line tidak kembali.
-    expect(code).toContain("scrollbar-width: thin")
+    // Scrollbar disembunyikan (2026-09-17, ganti "tipis"): native trek+thumb
+    // tidak flat. Guard detail ada di test khusus scrollbar; di sini cukup
+    // pastikan aturannya ada di CSS gabungan, plus dead selector tak kembali.
+    expect(code).toContain("scrollbar-width: none")
     expect(code).not.toContain(".tbl")
     expect(code).not.toContain(".prov-line")
     // Audit website 2026-09-16: selector yatim tanpa konsumen HTML/JS.
@@ -808,6 +814,228 @@ describe("web audit 2026-09-16", () => {
     const bcDoc = graph.find((n) => n["@type"] === "BreadcrumbList")!
     expect(bcDoc.itemListElement!.map((e) => e.name)).toEqual(["Beranda", "Docs", "Tools (37)"])
     expect(bcDoc.itemListElement![2]!.item).toBeUndefined()
+  })
+
+  test("guard: header docs — kicker kelompok + judul di luar .doc-body (rombak docs)", () => {
+    // Rombak 2026-09-17: halaman docs memakai bahasa desain landing — kicker
+    // (kelompok SUMMARY) + judul mono skala display di <header class="doc-head">.
+    // Bug yang dijaga: judul kembali ke dalam .doc-body (bentuk lama) sehingga
+    // skalanya jatuh ke ukuran isi dan kicker hilang; dan TOC kembali ke <ul>
+    // (daftar bullet) sehingga penomoran counter CSS tak punya elemen <li>.
+    const site = join(repoRoot, "site")
+    if (!existsSync(site)) return // build belum jalan — checker CI yang jaga
+    // Bentuk unit: kicker → judul → lede opsional, teks dari SUMMARY/README
+    // di-escape (judul dengan `&` tidak boleh merusak heading).
+    const headUnit = renderDocHead("Memulai", "A & B", "<p>lede</p>")
+    expect(headUnit).toBe(
+      '<header class="doc-head"><p class="kicker">Memulai</p><h1>A &amp; B</h1><p class="lede"><p>lede</p></p></header>',
+    )
+    expect(renderDocHead("Docs", "X")).not.toContain('class="lede"')
+
+    const navUnit = renderDocNav(
+      [
+        { group: "G", title: "Satu", file: "a.md", slug: "a" },
+        { group: "G", title: "Dua", file: "b.md", slug: "b" },
+        { group: "G", title: "Tiga", file: "c.md", slug: "c" },
+      ],
+      0,
+    )
+    // Elemen pertama: tak ada prev (slot <span> kosong), next bertajuk.
+    expect(navUnit).toContain('<span></span><a class="next" href="/docs/b.html">')
+    expect(navUnit).toContain('<span class="dn-t">Dua</span>')
+
+    const tools = readDocNav(repoRoot).find((e) => e.slug === "tools")!
+    const html = readFileSync(join(site, "docs", "tools.html"), "utf8")
+    expect(html).toContain('<header class="doc-head">')
+    expect(html).toContain(`<p class="kicker">${tools.group}</p>`)
+    expect(html).toContain(`<h1>${tools.title}</h1>`)
+    expect(html).not.toMatch(/<article class="doc-body"><h1>/)
+    expect(html).toMatch(/<nav class="toc"[^>]*><p>Daftar isi<\/p><ol>/)
+  })
+
+  test("guard: TOC tak menomori ganda heading yang sudah bernomor", () => {
+    // Bug yang dijaga: quickstart.md memakai heading bernomor ("## 1. Jalan
+    // pertama") dan counter CSS di .toc li::before menambah nomor kedua →
+    // tampil "1. 1. Jalan pertama" di daftar isi.
+    const site = join(repoRoot, "site")
+    if (!existsSync(site)) return
+    const html = readFileSync(join(site, "docs", "quickstart.html"), "utf8")
+    const toc = /<nav class="toc"[\s\S]*?<\/nav>/.exec(html)
+    expect(toc).not.toBeNull()
+    // Label bersih, anchor tetap memakai id dari teks asli (href stabil).
+    expect(toc![0]).toContain(
+      '<li><a href="#1-jalan-pertama-1-menit">Jalan pertama 1 menit</a></li>',
+    )
+    expect(toc![0]).not.toContain(">1. Jalan pertama")
+  })
+
+  test("guard: hub docs — grid dari SUMMARY, tanpa sidebar, tabel Navigasi dibuang", () => {
+    // Rombak 2026-09-17: /docs/ jadi "landing dokumentasi" — header + direktori
+    // grid (dari SUMMARY) di ATAS artikel, tanpa sidebar (isinya identik) dan
+    // tanpa tabel Navigasi README (duplikat). Bug yang dijaga: grid kembali ke
+    // bawah (direktori tak terjangkau di ponsel) atau sidebar/tabel balik lagi
+    // sehingga daftar yang sama tampil dua kali.
+    const nav = readDocNav(repoRoot)
+    const grid = renderDocGrid(nav)
+    expect(grid).toContain('class="doc-grid"')
+    // Satu kartu per halaman SUMMARY selain hub itu sendiri.
+    expect((grid.match(/class="dc"/g) ?? []).length).toBe(nav.length - 1)
+    expect(grid).not.toContain('href="/docs/"')
+    for (const e of nav) {
+      if (e.slug === "readme") continue
+      const href = e.slug === "changelog" ? "/docs/changelog.html" : `/docs/${e.slug}.html`
+      expect(grid, e.slug).toContain(`href="${href}"`)
+    }
+
+    // stripMdSection: heading + isi sampai heading berikutnya, heading lain utuh.
+    const stub =
+      "# T\n\n## Satu\n\nis\n\n## Navigasi\n\n| a | b |\n|---|---|\n| c | d |\n\n## Tiga\n\ntetap\n"
+    const stripped = stripMdSection(stub, "Navigasi")
+    expect(stripped).not.toContain("## Navigasi")
+    expect(stripped).not.toContain("| c | d |")
+    expect(stripped).toContain("## Satu")
+    expect(stripped).toContain("## Tiga")
+
+    // Sumber README tetap utuh untuk pembaca repo (hanya web yang membuang).
+    const readme = readFileSync(join(repoRoot, "docs", "README.md"), "utf8")
+    expect(readme).toContain("## Navigasi")
+
+    const site = join(repoRoot, "site")
+    if (!existsSync(site)) return
+    const hub = readFileSync(join(site, "docs", "index.html"), "utf8")
+    expect(hub).toContain('class="doc-layout hub"')
+    expect(hub).not.toContain('class="doc-side"')
+    // Grid mendahului artikel (direktori dulu, prosa menyusul).
+    expect(hub.indexOf('class="doc-grid"')).toBeLessThan(
+      hub.indexOf('<article class="doc-body doc-hub">'),
+    )
+    expect(hub).not.toContain("| Anda ingin...")
+  })
+
+  test("guard: prosa rata kanan-kiri (justify) + hyphenation di base CSS", () => {
+    // Permintaan desain 2026-09-17: paragraf prose rata kanan-kiri, tapi
+    // heading/daftar/tabel tetap rata kiri, dan baris terakhir tetap kiri.
+    // Bug yang dijaga: justify diterapkan terlalu luas (`.feat p` di kolom
+    // ±280px dan `.footer p` 34ch = celah antarkata menganga) atau aturan
+    // `text-wrap: pretty` dibiarkan (diabaikan browser saat teks dijustify).
+    const base = readFileSync(join(repoRoot, "web", "part-01-base.css"), "utf8")
+    const justify = base.match(/\.lead[^{]*\{[^}]*text-align:\s*justify[^}]*\}/)
+    expect(justify).not.toBeNull()
+    const block = justify![0]
+    expect(block).toContain(".doc-body p")
+    expect(block).toContain(".article p")
+    expect(block).toContain("text-align-last: left")
+    expect(block).toContain("hyphens: auto")
+    expect(block).not.toContain(".feat p")
+    expect(block).not.toContain(".footer p")
+    // Hanya aturan nyata yang dihitung — komentar justru MENYEBUT pretty
+    // sebagai hal yang dibuang, jadi pola harus menuntut titik-koma penutup.
+    expect(base).not.toMatch(/text-wrap:\s*pretty\s*;/)
+  })
+
+  test("guard: eksperimen urutan A/B — DOM kanonik, tukar lewat `order` di dalam .pair", () => {
+    // Bug yang dijaga (nyata, ditemukan saat verifikasi preview): mencoba
+    // menukar urutan dengan `main { display: flex }` + `main > * { order: 10 }`
+    // mengangkat SELURUH section lain ke atas karena nilai order yang sama
+    // mengalahkan posisi dokumen. Bentuk yang benar: dua section bersebelahan
+    // dibungkus `.pair`, jadi hanya keduanya yang punya order eksplisit.
+    const css = readFileSync(join(repoRoot, "web", "part-04-sections.css"), "utf8")
+    expect(css).toContain("body.home .pair { display: flex; flex-direction: column; }")
+    // Flex item menyusut ke lebar konten (margin:auto menonaktifkan stretch):
+    // dulu #tugas menyempit 1080→616px di KEDUA varian — geometri kontrol
+    // ikut berubah. width:100% mengembalikan lebar section.
+    expect(css).toContain("body.home .pair > section { width: 100%; }")
+    expect(css).toMatch(/body\.home \.pair > #cara-kerja \{ order: 1; \}/)
+    expect(css).toMatch(/body\.home \.pair > #tugas \{ order: 2; \}/)
+    // Varian B = penukaran, bukan hapus urutan: kedua selector harus ada.
+    expect(css).toMatch(/html\[data-order="b"\] body\.home \.pair > #cara-kerja \{ order: 2; \}/)
+    expect(css).toMatch(/html\[data-order="b"\] body\.home \.pair > #tugas \{ order: 1; \}/)
+    // `main` sendiri TIDAK boleh jadi flex — itu bentuk bug di atas.
+    expect(css).not.toMatch(/body\.home main\s*\{/)
+
+    const site = join(repoRoot, "site")
+    if (!existsSync(site)) return
+    const index = readFileSync(join(site, "index.html"), "utf8")
+    // DOM tetap urutan kanonik A (cara-kerja sebelum tugas) apa pun variannya:
+    // itu yang dibaca crawler, screen reader, dan pengguna tanpa JS.
+    expect(index.indexOf('id="cara-kerja"')).toBeLessThan(index.indexOf('id="tugas"'))
+    expect(index).toContain('<div class="pair">')
+    // Section tanpa id tak bisa dilaporkan (jangkauan per-section) — semua
+    // section landing yang diukur wajib punya id.
+    for (const id of ["cara-kerja", "tugas", "fitur", "cocok", "batasan", "faq"]) {
+      expect(index, id).toContain(`id="${id}"`)
+    }
+  })
+
+  test("guard: penetapan varian pre-paint + kunci sama dengan app.js", () => {
+    // Tanpa penetapan di <head>, pengguna melihat varian A lalu berkedip ke B
+    // (app.js deferred) — dan eksperimennya jadi tidak sah: yang diukur adalah
+    // versi yang di-render, bukan yang dijanjikan. Kunci localStorage harus
+    // sama di layout dan app.js (pola yang sama dengan tema).
+    const layout = readFileSync(join(repoRoot, "web", "layout.html"), "utf8")
+    expect(layout).toContain("minicode-exp-order")
+    expect(layout).toContain('setAttribute("data-order"')
+    expect(layout.indexOf("minicode-exp-order")).toBeLessThan(layout.indexOf("stylesheet"))
+    const app = readFileSync(join(repoRoot, "web", "app.js"), "utf8")
+    expect(app).toContain("minicode-exp-order")
+    // Varian harus acak 50/50 hanya bila belum pernah ditetapkan.
+    expect(layout).toContain('o!=="a"&&o!=="b"')
+    expect(layout).toContain("Math.random()<0.5")
+  })
+
+  test("guard: analitik eksperimen LOKAL — nol request keluar, DNT dihormati", () => {
+    // Janji situs: "tanpa analitik keluar" (FAQ landing). Guard ini yang
+    // menegakkannya untuk eksperimen: tidak ada jalur kirim apa pun.
+    const app = readFileSync(join(repoRoot, "web", "app.js"), "utf8")
+    for (const api of ["fetch(", "XMLHttpRequest", "sendBeacon", "new Image(", "document.cookie"]) {
+      expect(app, api).not.toContain(api)
+    }
+    // Data disimpan lokal + opt-out eksplisit.
+    expect(app).toContain('"minicode-exp-v1"')
+    expect(app).toContain("doNotTrack")
+    expect(app).toContain("minicode-exp-off")
+    // Pengukuran hanya di landing dan tidak saat dipaksa/param laporan.
+    expect(app).toContain('document.body.classList.contains("home")')
+    expect(app).toContain("if (land && !off && !dnt && !cmd && !forced)")
+    // Pengukuran yang bisa diandalkan: flush idempoten per sesi (dulu hanya di
+    // pagehide → pembacaan panjang setelah ganti-tab hilang) + milestone 25%.
+    expect(app).toContain("nextMark += 25")
+    expect(app).toContain("db.sessions[at] = s")
+    // Laporan lokal + reset benar-benar menghapus data.
+    expect(app).toContain('cmd === "report"')
+    expect(app).toContain('cmd === "reset"')
+    expect(app).toContain('localStorage.removeItem("minicode-exp-order")')
+  })
+
+  test("guard: menu docs mobile mulai tertutup (konten dulu)", () => {
+    // Bug yang dijaga: <details open> di markup membuat ponsel membuka 27 link
+    // DI ATAS isi halaman — konten jadi tak pertama. JS menutupnya hanya di
+    // layar kecil; tanpa JS markup tetap terbuka (degradasi jujur).
+    const app = readFileSync(join(repoRoot, "web", "app.js"), "utf8")
+    expect(app).toContain("if (!desktopNav.matches) fold.open = false;")
+  })
+
+  test("guard: scrollbar disembunyikan tanpa mematikan fungsi gulir", () => {
+    // Permintaan desain 2026-09-17: trek+thumb native terlihat tidak flat —
+    // tampilannya dihapus, fungsinya tetap. Bug yang dijaga: (a) scrollbar
+    // hanya ditipiskan (`thin`) sehingga masih kelihatan, (b) aturan lama
+    // (thumb/scrollbar-color) ikut di-commit dan menang urutan, (c) container
+    // yang memang harus menggulir ikut dimatikan `overflow: hidden` sehingga
+    // isinya tak bisa dijangkau sama sekali.
+    const base = readFileSync(join(repoRoot, "web", "part-01-base.css"), "utf8")
+    expect(base).toMatch(/\*\s*\{[^}]*scrollbar-width:\s*none/)
+    expect(base).toMatch(/::-webkit-scrollbar\s*\{[^}]*display:\s*none/)
+    expect(base).toContain("-ms-overflow-style: none")
+    expect(base).not.toContain("scrollbar-width: thin")
+    expect(base).not.toContain("scrollbar-color")
+    expect(base).not.toMatch(/::-webkit-scrollbar-thumb/)
+
+    // Fungsi gulir tetap: kode, tabel docs, dan menu docs tak boleh dimatikan.
+    const docs = readFileSync(join(repoRoot, "web", "part-05-docs-blog.css"), "utf8")
+    expect(base).toMatch(/pre\s*\{[^}]*overflow-x:\s*auto/)
+    expect(docs).toMatch(/\.doc-body table,[^{]*\{[^}]*overflow-x:\s*auto/)
+    expect(docs).toMatch(/\.doc-side\s*\{[^}]*overflow-y:\s*auto/)
+    expect(docs).not.toMatch(/\.doc-side[^{]*\{[^}]*overflow-y:\s*hidden/)
   })
 
   test("desc meta tiap halaman: 50-160 char, tak terpotong di tengah kalimat", () => {

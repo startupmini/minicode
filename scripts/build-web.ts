@@ -87,6 +87,11 @@ const urls = [
 
 write("llms.txt", buildLlmsTxt(repoRoot, base, version))
 write("llms-full.txt", buildLlmsFullTxt(repoRoot, base, version))
+// IndexNow (Bing/Yandex/Seznam — ping sitemap sudah mati): protokol mensyaratkan
+// GET /<key>.txt mengembalikan isi key. Key BUKAN rahasia — publik by design;
+// yang dibuktikan adalah kontrol atas host. Satu sumber: web/indexnow-key.txt.
+const indexNowKey = readFileSync(join(webDir, "indexnow-key.txt"), "utf8").trim()
+write(`${indexNowKey}.txt`, indexNowKey)
 write(
   "robots.txt",
   // AI-crawler eksplisit (riset discoverability 2026-09-17): semua di-ALLOW.
@@ -119,6 +124,7 @@ write(
     `Sitemap: ${base}/sitemap.xml`,
     "",
     "# Peta markdown untuk AI/agent: llms.txt (indeks) & llms-full.txt (korpus penuh)",
+    `# IndexNow: kirim URL ke api.indexnow.org/indexnow dgn key ${indexNowKey}`,
   ].join("\n") + "\n",
 )
 write(

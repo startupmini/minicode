@@ -64,7 +64,10 @@ pre,
     transform: none;
   }
 }
-.js .hero > * {
+/* H1 dikecualikan dari entrance: elemen LCP harus ter-paint instan —
+   animasi di atasnya membuat kandidat LCP pertama jadi glif ikon,
+   bukan H1 (hasil lab CWV 2026-09-17). */
+.js .hero > :not(h1) {
   opacity: 0;
   animation: rise 0.6s ease forwards;
 }

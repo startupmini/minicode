@@ -3,10 +3,11 @@
 // di atas di mobile via CSS. Prev/Next tetap di bawah sebagai alur linear.
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import { changelogPageHtml, parsePlanStatus } from "./changelog.ts"
 import { escAttr, firstPara } from "./fm.ts"
 import { escHtml, extractHeadings, mdToHtml } from "./md.ts"
 import { type DocEntry, docMeta, readDocNav } from "./nav.ts"
-import { mdLinksToHtml, renderPage } from "./page.ts"
+import { breadcrumbJsonld, mdLinksToHtml, renderPage } from "./page.ts"
 
 /**
  * Render sidebar docs: kelompok SUMMARY + entri, halaman aktif di-highlight.
@@ -39,6 +40,50 @@ export function renderDocSidebar(entries: DocEntry[], activeSlug: string): strin
   )
 }
 
+/**
+ * Halaman changelog: digenerate dari PLAN.md (sumber hidup); docs/changelog.md
+ * hanya stub anchor SUMMARY. Dipanggil orkestrator (build-web), bukan dari
+ * loop buildDocs — builder ini sumbernya PLAN, bukan file md SUMMARY.
+ */
+export function buildChangelog(
+  repoRoot: string,
+  webDir: string,
+  base: string,
+  version: string,
+  write: (rel: string, html: string) => void,
+): string {
+  const plan = readFileSync(join(repoRoot, "PLAN.md"), "utf8")
+  const section = plan.split("## Status eksekusi")[1]
+  if (!section) throw new Error("[web-build] PLAN.md: section 'Status eksekusi' hilang")
+  const sectionBody = section.split(/^## /m)[0]!
+  const entriesHtml = changelogPageHtml(parsePlanStatus(sectionBody))
+  const canon = `${base}/docs/changelog.html`
+  const body =
+    `<div class="doc-layout">${renderDocSidebar(readDocNav(repoRoot), "changelog")}` +
+    `<div class="doc-main">` +
+    `<article class="doc-body"><h1>Changelog</h1>${entriesHtml}</article></div>` +
+    `</div>`
+  write(
+    "docs/changelog.html",
+    renderPage(webDir, {
+      title: "Changelog",
+      desc: "Status eksekusi rencana minicode — rilis, audit, dan perbaikan, digenerate dari PLAN.md.",
+      canon,
+      body,
+      bodyClass: "doc",
+      version,
+      jsonld: JSON.stringify({
+        "@context": "https://schema.org",
+        "@graph": [
+          breadcrumbJsonld(base, [{ name: "Docs", item: `${base}/docs/` }, { name: "Changelog" }]),
+          { "@type": "WebPage", name: "Changelog" },
+        ],
+      }).replaceAll("</", "<\\/"),
+    }),
+  )
+  return canon
+}
+
 export function buildDocs(
   repoRoot: string,
   webDir: string,
@@ -49,10 +94,15 @@ export function buildDocs(
   const entries = readDocNav(repoRoot)
   const urls: string[] = []
   entries.forEach((e, idx) => {
+    // Changelog dibangun buildChangelog (dipanggil build-web) — loop ini
+    // hanya halaman md dari SUMMARY.
+    if (e.slug === "changelog") return
     const raw = readFileSync(join(repoRoot, "docs", e.file), "utf8")
     const meta = docMeta(e.slug)
-    const desc = (firstPara(raw).slice(0, 160) || meta.desc).trim()
-    const safeDesc = desc.length >= 20 ? desc : meta.desc
+    // Desc: DOC_META (kurasi ~155 char) menang — potongan firstPara sering
+    // terpotong di tengah kalimat dan membawa meta-pembahasan, bukan deskripsi.
+    const safeDesc =
+      meta.desc.length >= 20 ? meta.desc : firstPara(raw).slice(0, 160).trim() || meta.desc
     // Hapus H1 pertama dari markdown — judul halaman pakai SUMMARY (satu saja).
     // Pola toleran atribut karena heading renderer kini membawa id+anchor.
     let content = mdLinksToHtml(mdToHtml(raw))
@@ -84,12 +134,17 @@ export function buildDocs(
       `<div class="doc-main">` +
       `<article class="doc-body"><h1>${escHtml(e.title)}</h1>${toc}${content}</article>${nav}</div>` +
       `</div>`
+    // BreadcrumbList: rich result hidup 2026 — Home → Docs → halaman.
+    const breadcrumb = breadcrumbJsonld(base, [
+      { name: "Docs", item: `${base}/docs/` },
+      { name: e.title },
+    ])
     const rel = e.slug === "readme" ? "docs/index.html" : `docs/${e.slug}.html`
     const canon = e.slug === "readme" ? `${base}/docs/` : `${base}/docs/${e.slug}.html`
     write(
       rel,
       renderPage(webDir, {
-        title: e.title,
+        title: e.title.replace(/^Minicode\s*—\s*/, ""),
         desc: safeDesc,
         canon,
         body,
@@ -97,8 +152,13 @@ export function buildDocs(
         version,
         jsonld: JSON.stringify({
           "@context": "https://schema.org",
-          "@type": "TechArticle",
-          headline: e.title,
+          "@graph": [
+            breadcrumb,
+            {
+              "@type": "TechArticle",
+              headline: e.title,
+            },
+          ],
           // `</` di-escape agar judul tak bisa menutup tag script (pola sama
           // seperti softwareJsonld di page.ts).
         }).replaceAll("</", "<\\/"),

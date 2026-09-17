@@ -1,4 +1,4 @@
-// JS web minicode: tema + copy button + reveal-on-scroll + scrollspy.
+// JS web minicode: tema + copy button + nav docs + scrollspy TOC.
 // Tanpa dependensi, tanpa framework. Semua enhancement progresif: tanpa JS
 // (atau reduced-motion) halaman tampil utuh — gate class .js di bawah.
 (function () {
@@ -43,18 +43,10 @@
       else done();
     });
   });
-  // Reveal-on-scroll per-kartu DIHAPUS (arah desain 2026-09-17): entrance
-  // bertaburan di tiap section adalah pola default yang membosankan — sisakan
-  // SATU momen gerak: entrance hero saat load. Scrollspy TOC tetap: ia
-  // menjawab aksi (posisi baca), bukan dekorasi.
-  // Desktop: menu docs harus SELALU terbuka (re-envision nav). <details>
-  // punya toggle bawaan — paksa kembali `open` tiap kali ditutup di layar
-  // lebar; mobile bebas buka-tutup (summary satu tap, sticky di bawah topbar).
-  // matchMedia change: menutup path RESIZE (adversarial review) — user tutup
-  // menu di mobile lalu lebarkan layar: CSS pindah branch desktop (summary
-  // disembunyikan) tanpa event toggle apapun → dulu nav hilang total.
-  // Tanpa JS: desktop tetap terbuka dari markup `open` (toggle manual satu
-  // klik akan menutup sampai navigasi berikutnya — diterima sebagai degradasi).
+  // Desktop: nav docs SELALU terbuka (re-envision nav). Lock dua jalur:
+  // matchMedia "change" menutup path resize (user tutup menu di mobile lalu
+  // lebarkan layar — CSS pindah branch tanpa event toggle; dulu nav hilang),
+  // "toggle" menutup path klik user. Tanpa JS: tetap terbuka dari markup.
   var fold = document.querySelector(".doc-side .ds-fold");
   var desktopNav = window.matchMedia("(min-width: 901px)");
   if (fold) {

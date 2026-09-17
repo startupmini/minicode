@@ -4,11 +4,10 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { escAttr, firstPara, parseFrontmatter } from "./fm.ts"
 import { escHtml, mdToHtml } from "./md.ts"
-import { mdLinksToHtml, renderPage, softwareJsonld } from "./page.ts"
+import { breadcrumbJsonld, mdLinksToHtml, renderPage, softwareJsonld } from "./page.ts"
 
-// Formatter tanggal tampil — diekspor untuk test (pola repo: pure/diekspor-
-// untuk-test). Guard adversarial (d): timeZone UTC wajib — dulu tanpa itu,
-// "2026-01-05" (UTC tengah malam) tampil "4 Jan" di mesin build ber-TZ negatif.
+// Diekspor untuk test (guard adversarial): timeZone UTC wajib — tanpa itu
+// tanggal UTC-tengah-malam tampil mundur sehari di mesin build ber-TZ negatif.
 export const blogDateFmt = new Intl.DateTimeFormat("id-ID", {
   day: "numeric",
   month: "short",
@@ -75,7 +74,7 @@ export function buildBlog(
     "blog/index.html",
     renderPage(webDir, {
       title: "Blog",
-      desc: "Catatan dunia AI dari tim Minicode — Indonesia.",
+      desc: "Blog coding agent CLI Minicode: catatan LLM, tooling terminal, dan praktik AI coding — dari tim pengembangnya.",
       canon: `${base}/blog/`,
       body: list,
       version,
@@ -107,11 +106,16 @@ export function buildBlog(
         version,
         jsonld: JSON.stringify({
           "@context": "https://schema.org",
-          "@type": "Article",
-          headline: p.fm.title,
-          datePublished: p.fm.date,
-          // Sama seperti softwareJsonld: `</` di-escape agar string tak bisa
-          // menutup tag script (`</script>` di judul = breakout).
+          "@graph": [
+            breadcrumbJsonld(base, [{ name: "Blog", item: `${base}/blog/` }, { name: p.fm.title }]),
+            {
+              "@type": "Article",
+              headline: p.fm.title,
+              datePublished: p.fm.date,
+            },
+            // Sama seperti softwareJsonld: `</` di-escape agar string tak bisa
+            // menutup tag script (`</script>` di judul = breakout).
+          ],
         }).replaceAll("</", "<\\/"),
       }),
     )
@@ -142,7 +146,7 @@ export function buildBlog(
     join(siteDir, "rss.xml"),
     `<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel>` +
       `<title>Minicode Blog</title><link>${escAttr(`${base}/blog/`)}</link>` +
-      `<description>Catatan dunia AI — Indonesia.</description><language>id-ID</language>` +
+      `<description>Blog coding agent CLI Minicode: catatan LLM, tooling terminal, dan praktik AI coding.</description><language>id-ID</language>` +
       `<lastBuildDate>${escAttr(new Date().toUTCString())}</lastBuildDate>${items}</channel></rss>`,
     "utf8",
   )

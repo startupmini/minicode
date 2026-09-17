@@ -211,6 +211,10 @@ section .sub { color: var(--mut); font-size: 15px; max-width: 60ch; margin-botto
 .toc li::before { content: "–"; position: absolute; left: 0; color: var(--faint); }
 .toc a { font-size: 13px; }
 .doc-body p { margin: 10px 0; color: var(--ink); }
+/* Changelog dari PLAN.md: entri pakai skala h2 .doc-body; tanggal = data
+   kecil mono tabular, redup — bukan hiasan. */
+.cl-item { margin: 26px 0 0; }
+.cl-item time { font: 500 13px var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .doc-body ul, .doc-body ol { padding-left: 19px; margin: 9px 0; }
 .doc-body li { margin: 3px 0; }
 .doc-body li::marker { color: var(--acc); }
@@ -239,13 +243,10 @@ section .sub { color: var(--mut); font-size: 15px; max-width: 60ch; margin-botto
 .ds-i:hover { color: var(--ink); background: var(--soft); }
 .ds-i.on { color: var(--acc-text); font-weight: 600; background: var(--soft); }
 @media (max-width: 900px) {
-  /* display:block (bukan grid): dulu aside = grid item satu baris sehingga
-     containing block sticky setinggi dirinya — sticky no-op, summary ikut
-     scroll. Block: containing block = .doc-layout setinggi halaman → summary
-     benar-benar menempel di bawah topbar sepanjang baca. */
+  /* display:block (bukan grid): grid item satu baris = containing block
+     sticky setinggi dirinya — sticky no-op. Block menempel sepanjang baca. */
   .doc-layout { display: block; }
-  /* Menu docs = <details> collapsible sticky: konten selalu pertama (dulu 27
-     link men-stack di atas isi), menu satu tap dari mana pun saat membaca. */
+  /* Menu docs = <details> collapsible sticky: konten dulu, menu satu tap. */
   .doc-side { position: sticky; top: 60px; max-height: none; overflow-y: visible; padding-right: 0; margin-bottom: 18px; z-index: 40; }
   .doc-side .ds-fold { background: var(--bg); }
   .doc-side summary {

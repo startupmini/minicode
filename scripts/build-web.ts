@@ -4,9 +4,10 @@
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { buildBlog } from "./web/blog.ts"
-import { buildDocs } from "./web/docs.ts"
+import { buildChangelog, buildDocs } from "./web/docs.ts"
 import { landingHero, landingHow, landingWhy } from "./web/landing1.ts"
 import { landingFaq, landingFeatures, landingFit, landingSafety } from "./web/landing2.ts"
+import { buildLlmsTxt } from "./web/llms.ts"
 import { renderPage, softwareJsonld } from "./web/page.ts"
 
 const repoRoot = join(import.meta.dir, "..")
@@ -52,7 +53,7 @@ write(
   "index.html",
   renderPage(webDir, {
     title: "Coding agent CLI yang menunjukkan semua kerjanya",
-    desc: "Minicode untuk developer terminal: tiap langkah terlihat di scrollback, tiap aksi sensitif lewat izin Anda. MIT, zero-dep, Bun.",
+    desc: "Minicode — coding agent CLI open source untuk terminal: tiap langkah terlihat di scrollback, tiap aksi sensitif lewat izin Anda. MIT, zero-dep, Bun.",
     canon: `${base}/`,
     body: landing,
     version,
@@ -61,6 +62,7 @@ write(
 )
 const urls = [
   `${base}/`,
+  buildChangelog(repoRoot, webDir, base, version, write),
   ...buildDocs(repoRoot, webDir, base, version, write),
   ...buildBlog(repoRoot, webDir, siteDir, base, version, write),
 ]
@@ -69,6 +71,9 @@ write(
   "robots.txt",
   `User-agent: *\nAllow: /\nDisallow: /admin.html\nSitemap: ${base}/sitemap.xml\n`,
 )
+// llms.txt (llmstxt.org): peta md untuk AI-crawler — digenerate dari SUMMARY
+// (sumber sama dengan sitemap) agar tak stale (riset SEO 2026-09-17).
+write("llms.txt", buildLlmsTxt(repoRoot, base, version))
 write(
   "sitemap.xml",
   `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">` +
@@ -82,7 +87,7 @@ write(
   "404.html",
   renderPage(webDir, {
     title: "Tidak ketemu",
-    desc: "Halaman tidak ditemukan.",
+    desc: "Halaman tidak ditemukan di minicode.fun — buka dokumentasi atau blog untuk melanjutkan.",
     canon: `${base}/404.html`,
     body: `<div class="wrap" style="padding:90px 24px;max-width:600px"><div class="kicker">404</div><h1 style="font-size:clamp(24px,3.5vw,34px)">Halaman tidak ketemu.</h1><p class="sub" style="margin-top:14px">Coba <a href="/docs/">dokumentasi</a> atau <a href="/blog/">blog</a>.</p></div>`,
     version,
@@ -100,8 +105,7 @@ cpSync(join(repoRoot, "content", "logo-user.svg"), join(siteDir, "assets", "logo
 cpSync(join(webDir, "og-image.svg"), join(siteDir, "og-image.svg"))
 const { rasterizeOg } = await import("./rasterize-og.ts")
 await rasterizeOg(webDir, siteDir)
-// Token {{GITHUB_*}} diisi saat copy: admin tanpa hardcode repo/branch —
-// ganti repo atau branch deploy cukup di satu tempat (package.json/konstanta).
+// admin: repo/branch target diinjeksi (gh*/ghBranch di atas).
 write(
   "admin.html",
   readFileSync(join(webDir, "admin.html"), "utf8")

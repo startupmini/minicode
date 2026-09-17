@@ -10,7 +10,8 @@ export function escHtml(s: string): string {
     .replaceAll('"', "&quot;")
 }
 
-function inlineMd(s: string): string {
+// Diekspor untuk reuse (judul changelog dari PLAN.md) — selain itu internal.
+export function inlineMd(s: string): string {
   // Inline code dulu agar isi `...` tidak diproses bold/link.
   // Penanda pakai string biasa (bukan NUL): biome melarang control char di regex.
   const codes: string[] = []

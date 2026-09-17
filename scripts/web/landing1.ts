@@ -57,5 +57,5 @@ export function landingWhy(): string {
     ],
   ]
   const cards = items.map(([h, p]) => `<div class="feat"><h3>${h}</h3><p>${p}</p></div>`).join("")
-  return `<section><h2>Kenapa berbeda.</h2><p class="sub">Tiga janji yang bisa diverifikasi di dokumentasi dan source. <a href="/docs/security-model.html">Model keamanan</a> menjelaskan batasnya dengan jujur.</p><div class="feat-list">${cards}</div></section>`
+  return `<section><h2>Kenapa berbeda.</h2><p class="sub">Tiga janji yang bisa diverifikasi langsung di source code open source-nya. <a href="/docs/security-model.html">Model keamanan</a> menjelaskan batasnya dengan jujur.</p><div class="feat-list">${cards}</div></section>`
 }

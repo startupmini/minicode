@@ -25,6 +25,48 @@ bun run web:check   # validasi link + anti-rahasia
 `web:build` tidak menjalankan `web:css` — jalankan `web:css` dulu bila
 mengubah `part-*.css`.
 
+## Checklist rilis web — verifikasi pasca-deploy
+
+Jalankan berurutan setiap kali deploy Pages selesai. Prinsip: **field p75
+(CrUX) adalah kriteria; lab hanya diagnostik** — jangan dicampur.
+
+### Fase 1 — Verifikasi deploy (hari yang sama, ±5 menit)
+
+- [ ] `https://minicode.fun` menyajikan versi baru — cek string versi di footer (`v…` sama dengan `package.json`)
+- [ ] `/docs/changelog.html` berisi entri PLAN terbaru (marker terbaru terlihat)
+- [ ] `/rss.xml` valid + `lastBuildDate` diperbarui
+- [ ] `/admin.html` Publish jalan (fetch `repos/…/contents` tak 404)
+- [ ] Spot-check: 1 halaman docs + 1 posting blog + `/og-image.png` (bukan 404)
+
+### Fase 2 — Lab CWV (hari yang sama, ±10 menit)
+
+Chrome DevTools → Performance → reload dengan **cache disabled + 4× CPU
+throttle**, atau Lighthouse mobile di PSI: https://pagespeed.web.dev/analysis?url=https%3A%2F%2Fminicode.fun
+
+- [ ] LCP < 2,5 s · TBT rendah (proksi INP di lab) · CLS < 0,1
+- [ ] LCP element = H1 hero (bukan font/aset yang terlambat)
+- [ ] Ketiga font `200` dari `fonts.gstatic.com` (Network, tanpa 404/redirect)
+- [ ] Tidak ada error konsol
+
+### Fase 3 — CrUX field p75 (terjadwal: +2, +6, +12 minggu pasca-deploy)
+
+```bash
+MINICODE_PSI_KEY=… bun run web:vitals   # tanpa key: kuota publik terbatas
+```
+
+CrUX = jendela bergulir **28 hari** + ambang volume: situs Pages kecil sering
+"no data" — itu bukan kegagalan, itu sinyal untuk menunggu trafik. Skrip
+otomatis menandai sumbernya (`[field]` vs `[lab]`) dan jatuh ke Lighthouse
+bila CrUX kosong. Kriteria rilis: LCP p75 < 2,5 s · INP p75 < 200 ms ·
+CLS p75 < 0,1 (seluruhnya GOOD).
+
+**Baseline** (isi tabel di bawah pada tiap pengukuran; simpan nilai, bukan
+tangkapan layar):
+
+| Tanggal | Sumber | LCP p75 | INP p75 / TBT | CLS p75 | Catatan |
+|---|---|---|---|---|---|
+| — | — | — | — | — | — |
+
 ## Tulis artikel
 
 Tambah `content/blog/2026-09-12-judul.md`, lalu `bun run web:build`.

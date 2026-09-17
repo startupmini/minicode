@@ -33,6 +33,22 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
 
 ## Status eksekusi terbaru (update 2026-09-17)
 
+- ✅ SEO Riset+Eval+Fix (2026-09-17): audit live minicode.fun (robots+sitemap
+  ok, www/http 301 ke apex-https, 404 code benar) + riset gallery rich-result
+  Google 2026 (SoftwareApp butuh rating — TIDAK difabrikasi; Article/
+  Breadcrumb masih hidup). Fix: llms.txt digenerate dari SUMMARY (404 →
+  peta AI-crawler), BreadcrumbList JSON-LD di docs/blog/changelog, dedup
+  judul "Minicode — X — Minicode". Search API mati saat riset — kompetitor
+  SERP belum diverifikasi; lainnya dari dokumen Google langsung.
+- ✅ CHECKLIST RILIS WEB (2026-09-17): checklist pasca-deploy 3 fase di
+  `web/README.md` (verifikasi deploy → lab CWV → CrUX field p75 pada +2/6/12
+  minggu) + skrip `web:vitals` (PSI API, nol dependensi; tandai [field] vs
+  [lab], jatuh ke Lighthouse bila CrUX "no data", pesan 429 actionable).
+  Baseline CWV dibiarkan kosong-jujur: butuh Chrome/trafik, diisi di tabel
+  README saat pengukuran pertama.
+- ✅ CHANGELOG WEB (2026-09-17): halaman /docs/changelog.html kini
+  digenerate otomatis dari section ini saat build (marker guard test:
+  GUARD-CHLOG-SATU); docs/changelog.md jadi stub anchor SUMMARY.
 - ✅ AUDIT WEB + FIX P0–P2 (uncommitted, 2026-09-17): hanya lapisan web
   (`web/`, `scripts/web*`, workflow, test web) — runtime minicode tak disentuh.
   P0: token GitHub admin tak lagi dipersist ke sessionStorage (+

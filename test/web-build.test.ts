@@ -15,10 +15,11 @@ import {
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { blogDateFmt, buildBlog, formatBlogDate } from "../scripts/web/blog.ts"
+import { parsePlanStatus } from "../scripts/web/changelog.ts"
 import { parseFrontmatter } from "../scripts/web/fm.ts"
 import { mdToHtml } from "../scripts/web/md.ts"
 import { readDocNav } from "../scripts/web/nav.ts"
-import { softwareJsonld } from "../scripts/web/page.ts"
+import { breadcrumbJsonld, softwareJsonld } from "../scripts/web/page.ts"
 import { isPathWithinSite } from "../scripts/web-serve.ts"
 
 const repoRoot = join(import.meta.dir, "..")
@@ -269,8 +270,11 @@ describe("web ssg", () => {
       const m = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(src)
       expect(m, p).toBeTruthy()
       expect(m![1]).not.toContain("&quot;")
-      const doc = JSON.parse(m![1]!) as Record<string, unknown>
-      expect(typeof doc["@type"]).toBe("string")
+      const doc = JSON.parse(m![1]!) as { "@type"?: string; "@graph"?: { "@type": string }[] }
+      // Bentuk sah: top-level @type ATAU @graph berisi node bertipe (docs/blog
+      // kini memakai @graph: BreadcrumbList + TechArticle/Article/WebPage).
+      const typeOk = typeof doc["@type"] === "string" || (doc["@graph"]?.length ?? 0) > 0
+      expect(typeOk, p).toBe(true)
     }
   })
 
@@ -554,9 +558,15 @@ describe("web audit 2026-09-16", () => {
       const ld = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(post)?.[1] ?? ""
       expect(ld.length).toBeGreaterThan(0)
       expect(ld).not.toContain("</script")
-      expect((JSON.parse(ld) as { headline?: string }).headline).toBe(
-        "a < b </script><script>alert(1)</script> c",
-      )
+      // headline kini di node Article dalam @graph (breadcrumb ditambahkan);
+      // niat test tetap: payload round-trip utuh tanpa breakout.
+      const doc = JSON.parse(ld) as {
+        headline?: string
+        "@graph"?: ({ headline?: string; "@type"?: string } | undefined)[]
+      }
+      const headline =
+        doc.headline ?? doc["@graph"]?.find((n) => n?.["@type"] === "Article")?.headline
+      expect(headline).toBe("a < b </script><script>alert(1)</script> c")
       const rss = readFileSync(join(root, "rss.xml"), "utf8")
       expect(rss).toContain("a &lt; b")
       expect(rss).not.toContain("<script>alert")
@@ -725,5 +735,103 @@ describe("web audit 2026-09-16", () => {
     expect(desktop![0]).toContain(".doc-side summary { display: none; }")
     expect(desktop![0]).not.toContain("position: sticky")
     expect(css).toMatch(/\.doc-layout\s*\{[^}]*grid-template-columns/)
+  })
+
+  test("changelog: digenerate dari PLAN.md — parser + build + anti-dobel-render", () => {
+    // Parser: head `- ✅ Judul (tanggal): teks` + baris lanjutan indentasi;
+    // item tanpa tanggal tetap sah (date kosong).
+    const entries = parsePlanStatus(
+      "- ✅ SATU (2026-01-05): teks satu.\n  lanjutan satu.\n- ⏳ DUA: teks dua.\n",
+    )
+    expect(entries.length).toBe(2)
+    expect(entries[0]!.title).toBe("SATU")
+    expect(entries[0]!.date).toBe("2026-01-05")
+    expect(entries[0]!.prose).toContain("lanjutan satu")
+    expect(entries[1]!.title).toBe("DUA")
+    expect(entries[1]!.date).toBe("")
+
+    // Build asli: PLAN.md menyisipkan marker guard, halaman dirender satu
+    // kali (file md stub TIDAK ikut), dan sidebar menandai halaman aktif.
+    const html = readFileSync(join(repoRoot, "site", "docs", "changelog.html"), "utf8")
+    expect(html).toContain("GUARD-CHLOG-SATU")
+    // Anti-dobel-render: kalimat khas stub docs/changelog.md TIDAK boleh ikut.
+    expect(html).not.toContain("saat build website")
+    expect(html).not.toMatch(/<h1>Changelog<\/h1>[\s\S]*<h1>Changelog<\/h1>/)
+    expect(html).toContain('href="/docs/changelog.html" aria-current="page"')
+  })
+
+  test("SEO: llms.txt digenerate + breadcrumb JSON-LD + judul tak dobel", () => {
+    // llms.txt (llmstxt.org) = kanal discovery AI-crawler; digenerate build
+    // dari SUMMARY agar tak stale (statis lama = 404 live sebelum fix).
+    const llms = readFileSync(join(repoRoot, "site", "llms.txt"), "utf8")
+    expect(llms).toContain("# Minicode")
+    expect(llms).toContain("## Docs")
+    expect(llms).toContain("/docs/tools.html")
+    // BreadcrumbList = rich result hidup 2026; judul dobel = label SUMMARY
+    // "Minicode — X" + suffix layout "— Minicode".
+    const tools = readFileSync(join(repoRoot, "site", "docs", "tools.html"), "utf8")
+    expect(tools).toContain("BreadcrumbList")
+    expect(tools).toContain("<title>Tools (37) — Minicode</title>")
+    expect(tools).not.toContain("— Minicode — Minicode")
+    expect(tools).not.toMatch(/<title>Minicode — /)
+  })
+
+  test("breadcrumbJsonld: satu pemilik konvensi (Beranda posisi 1, terakhir tanpa item)", () => {
+    // Konvensi (1): Beranda otomatis ditambahkan di posisi 1; trail dimulai
+    // dari posisi 2. Konvensi (2): elemen terakhir TANPA item — helper yang
+    // membuangnya meski pemanggil mengirim, jadi call site tak bisa lupa.
+    const bc = breadcrumbJsonld("https://x.example", [
+      { name: "Docs", item: "https://x.example/docs/" },
+      { name: "X", item: "https://x.example/x.html" },
+    ]) as { itemListElement: { position: number; name: string; item?: string }[] }
+    expect(bc.itemListElement.map((e) => e.position)).toEqual([1, 2, 3])
+    expect(bc.itemListElement[0]).toMatchObject({ name: "Beranda", item: "https://x.example/" })
+    expect(bc.itemListElement[2]!.item).toBeUndefined()
+    // End-to-end: artefak docs memakai helper dengan struktur yang benar.
+    const tools = readFileSync(join(repoRoot, "site", "docs", "tools.html"), "utf8")
+    const ld = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(tools)![1]!
+    const graph = (
+      JSON.parse(ld) as {
+        "@graph": {
+          "@type": string
+          itemListElement?: { position: number; name: string; item?: string }[]
+        }[]
+      }
+    )["@graph"]
+    const bcDoc = graph.find((n) => n["@type"] === "BreadcrumbList")!
+    expect(bcDoc.itemListElement!.map((e) => e.name)).toEqual(["Beranda", "Docs", "Tools (37)"])
+    expect(bcDoc.itemListElement![2]!.item).toBeUndefined()
+  })
+
+  test("desc meta tiap halaman: 50-160 char, tak terpotong di tengah kalimat", () => {
+    // Guard SEO on-page (riset 2026-09-17): desc < 50 char boros hasil SERP,
+    // > 160 terpotong Google, dan potongan otomatis yang terpotong di tengah
+    // kalimat terlihat rusak di hasil pencarian. admin.html noindex — desc
+    // memang kosong.
+    const site = join(repoRoot, "site")
+    if (!existsSync(site)) return // build belum jalan — checker CI yang jaga
+    const descCache: string[] = []
+    const walk = (d: string): void => {
+      for (const f of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, f.name)
+        if (f.isDirectory()) walk(p)
+        else if (f.name.endsWith(".html") && f.name !== "admin.html")
+          descCache.push(readFileSync(p, "utf8"))
+      }
+    }
+    walk(site)
+    const descOf = (html: string): string | null =>
+      /<meta name="description" content="([^"]*)"/.exec(html)?.[1] ?? null
+    const admin = descOf(readFileSync(join(site, "admin.html"), "utf8"))
+    expect(admin).toBeNull() // noindex: sengaja tanpa desc
+    for (const html of descCache) {
+      const desc = descOf(html)
+      expect(desc, "desc meta wajib ada").not.toBeNull()
+      expect(desc!.length, desc!).toBeGreaterThanOrEqual(50)
+      expect(desc!.length, desc!).toBeLessThanOrEqual(160)
+      // Tak terpotong di tengah kalimat: potongan yang sehat berakhir di
+      // tanda baca/penutup, bukan huruf/koma buka.
+      expect(desc!, desc!).toMatch(/[.!?»)"]$/u)
+    }
   })
 })

@@ -793,6 +793,11 @@ describe("web audit 2026-09-16", () => {
     expect(robots).toContain("llms-full.txt")
     const adminIdx = robots.indexOf("Disallow: /admin.html")
     expect(adminIdx).toBeGreaterThan(-1)
+    // IndexNow: key file terkemas di root + robots memuat petunjuknya
+    // (ping sitemap sudah mati — IndexNow satu-satunya jalur push tersisa).
+    const key = readFileSync(join(repoRoot, "web", "indexnow-key.txt"), "utf8").trim()
+    expect(readFileSync(join(repoRoot, "site", `${key}.txt`), "utf8").trim()).toBe(key)
+    expect(robots).toContain("IndexNow")
     // FAQPage JSON-LD di landing: pertanyaan sama dgn yang tampil di HTML.
     const index = readFileSync(join(repoRoot, "site", "index.html"), "utf8")
     expect(index).toContain('"FAQPage"')

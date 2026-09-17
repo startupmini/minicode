@@ -8,7 +8,15 @@ import { escHtml, extractHeadings, mdToHtml } from "./md.ts"
 import { type DocEntry, docMeta, readDocNav } from "./nav.ts"
 import { mdLinksToHtml, renderPage } from "./page.ts"
 
-/** Render sidebar docs: kelompok SUMMARY + entri, halaman aktif di-highlight. */
+/**
+ * Render sidebar docs: kelompok SUMMARY + entri, halaman aktif di-highlight.
+ * Re-envision 2026-09-17 (nav docs = subsistem terlemah): mobile dulu men-stack
+ * 27 link DI ATAS konten (dinding link sebelum isi) — bentuk yang salah untuk
+ * ponsel. Kini menu = <details> collapsible: konten selalu pertama, menu
+ * sticky satu tap di bawah topbar. Desktop: nav selalu terbuka (summary
+ * disembunyikan CSS, `open` dari markup + sinkron app.js). Tanpa JS, mobile
+ * terdegradasi ke perilaku lama (terbuka), desktop tetap utuh.
+ */
 export function renderDocSidebar(entries: DocEntry[], activeSlug: string): string {
   const hrefOf = (e2: { slug: string }): string =>
     e2.slug === "readme" ? "/docs/" : `/docs/${e2.slug}.html`
@@ -24,7 +32,11 @@ export function renderDocSidebar(entries: DocEntry[], activeSlug: string): strin
       `<a class="ds-i${active ? " on" : ""}" href="${hrefOf(e)}"${active ? ' aria-current="page"' : ""}>${escAttr(e.title)}</a>`,
     )
   }
-  return `<aside class="doc-side" aria-label="Menu dokumentasi">${out.join("")}</aside>`
+  return (
+    `<aside class="doc-side" aria-label="Menu dokumentasi">` +
+    `<details class="ds-fold" open><summary>Menu dokumentasi</summary>${out.join("")}</details>` +
+    `</aside>`
+  )
 }
 
 export function buildDocs(

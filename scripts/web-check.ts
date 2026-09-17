@@ -32,7 +32,16 @@ const files = allHtml(siteDir)
 check("ada halaman HTML", files.length >= 18, `${files.length} file`)
 const rel = new Set(files.map((f) => f.slice(siteDir.length).replaceAll("\\", "/")))
 // Aset statis yang juga di-copy ke site/ (bukan HTML) — link ke sini valid.
-for (const a of ["styles.css", "app.js", "rss.xml", "assets/logo-user.svg"]) {
+// og-image.png diharapkan dari rasterisasi build; bila build dijalankan di
+// env tanpa resvg, PNG absen = peringatan khusus di bawah (bukan link check).
+for (const a of [
+  "styles.css",
+  "app.js",
+  "rss.xml",
+  "assets/logo-user.svg",
+  "og-image.svg",
+  "og-image.png",
+]) {
   rel.add(`/${a}`)
 }
 const need = [

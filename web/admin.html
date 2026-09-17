@@ -9,8 +9,9 @@
 <meta name="theme-color" content="#121316" media="(prefers-color-scheme: dark)">
 <meta name="robots" content="noindex">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2316161a'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='monospace' font-weight='700' font-size='16' fill='white'%3Em%3C/text%3E%3C/svg%3E">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&icon_names=dark_mode,light_mode&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600;700&display=swap">
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body class="doc">
@@ -18,65 +19,91 @@
 <header class="topbar"><div class="topbar-in">
 <a class="brand" href="/"><img class="brand-logo" src="/assets/logo-user.svg" alt="Minicode" width="30" height="30"><span>minicode</span></a>
 <nav class="nav"><a class="nl keep" href="/docs/">Docs</a><a class="nl" href="/blog/">Blog</a>
-<button class="iconbtn" id="themebtn" aria-label="Ganti tema"><span class="material-symbols-outlined">dark_mode</span></button></nav>
+<button class="iconbtn" id="themebtn" aria-label="Ganti tema"><span class="material-symbols-outlined" aria-hidden="true">dark_mode</span></button></nav>
 </div></header>
 <main id="main"><div class="admin">
 <h1>Tulis artikel.</h1>
 <div class="field"><label for="token">Token GitHub</label>
-<input id="token" type="password" placeholder="ghp_…" autocomplete="off"></div>
-<div class="field"><label for="title">Judul</label><input id="title" type="text" placeholder="Judul artikel"></div>
-<div class="field"><label for="tags">Tags</label><input id="tags" type="text" placeholder="ai, llm"></div>
-<div class="field"><label for="desc">Deskripsi</label><input id="desc" type="text" placeholder="Satu kalimat"></div>
+<input id="token" name="gh-token" type="password" placeholder="ghp_…" autocomplete="new-password" spellcheck="false" autocapitalize="off"></div>
+<div class="field"><label for="title">Judul</label><input id="title" name="post-title" type="text" placeholder="Judul artikel…"></div>
+<div class="field"><label for="tags">Tags</label><input id="tags" name="post-tags" type="text" placeholder="ai, llm…"></div>
+<div class="field"><label for="desc">Deskripsi</label><input id="desc" name="post-desc" type="text" placeholder="Satu kalimat…"></div>
 <div class="field"><label for="body">Isi</label><textarea id="body" placeholder="# Heading&#10;&#10;Isi artikel…"></textarea></div>
 <div class="cta"><button class="btn btn-p" id="publish">Publish</button>
 <button class="btn btn-s" id="draft">Simpan draf</button></div>
 <div class="status" id="status" role="status"></div>
 </div></main>
-<script src="/app.js" defer></script>
+<script src="/app.js" type="module"></script>
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
+  // Target commit diinjeksi `bun run web:build` dari package.json + konstanta
+  // build — file ini bebas hardcode repo/branch (rename repo tidak merusak).
+  var REPO = "{{GITHUB_REPO}}";
+  var BRANCH = "{{GITHUB_BRANCH}}";
   var status = $("status");
   function say(msg, ok) {
     status.textContent = msg;
     status.className = "status show" + (ok ? " ok" : "");
   }
   try {
-    var t = sessionStorage.getItem("mc-token");
-    if (t) $("token").value = t;
+    // Token GitHub TIDAK dipersist (audit web P0-1): dulu disimpan ke
+    // sessionStorage lalu diinjeksi balik ke input — XSS/ekstensi jahat
+    // tinggal membacanya. Tempel ulang tiap sesi; draf artikel tetap di
+    // localStorage karena isinya bukan kredensial.
     var d = localStorage.getItem("mc-draft");
     if (d) { var p = JSON.parse(d); $("title").value = p.title || ""; $("tags").value = p.tags || ""; $("desc").value = p.desc || ""; $("body").value = p.body || ""; }
   } catch (_) {}
+  // Peringat navigasi saat draf belum disimpan (guideline forms).
+  var dirty = false;
+  ["title", "tags", "desc", "body"].forEach(function (id) {
+    $(id).addEventListener("input", function () { dirty = true; });
+  });
+  window.addEventListener("beforeunload", function (e) {
+    if (!dirty) return;
+    e.preventDefault();
+    e.returnValue = "";
+  });
   $("draft").addEventListener("click", function () {
     try {
       localStorage.setItem("mc-draft", JSON.stringify({ title: $("title").value, tags: $("tags").value, desc: $("desc").value, body: $("body").value }));
+      dirty = false;
       say("Draf tersimpan di browser ini.", true);
     } catch (_) { say("Gagal simpan draf."); }
   });
   function slug(s) {
     return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "artikel";
   }
-  $("publish").addEventListener("click", async function () {
+  var publishBtn = $("publish");
+  publishBtn.addEventListener("click", async function () {
     var token = $("token").value.trim();
     var title = $("title").value.trim();
     var body = $("body").value.trim();
     if (!token || !title || !body) { say("Lengkapi token, judul, dan isi dulu."); return; }
-    try { sessionStorage.setItem("mc-token", token); } catch (_) {}
-    var date = new Date().toISOString().slice(0, 10);
-    var path = "content/blog/" + date + "-" + slug(title) + ".md";
-    var content = "---\ntitle: \"" + title.replace(/"/g, "") + "\"\ndate: " + date + "\ntags: [" + $("tags").value.trim() + "]\ndesc: \"" + $("desc").value.trim().replace(/"/g, "") + "\"\n---\n\n" + body + "\n";
-    say("Mengirim commit ke GitHub…");
+    // Kunci tombol saat request (guideline forms): dobel-klik = dobel commit.
+    publishBtn.disabled = true;
+    publishBtn.textContent = "Mengirim…";
     try {
-      var b64 = btoa(unescape(encodeURIComponent(content)));
-      var res = await fetch("https://api.github.com/repos/startupmini/minicode/contents/" + path, {
-        method: "PUT",
-        headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
-        body: JSON.stringify({ message: "blog: " + title, content: b64, branch: "main" })
-      });
-      if (!res.ok) { var t = await res.text(); say("Gagal: " + res.status + " " + t.slice(0, 200)); return; }
-      try { localStorage.removeItem("mc-draft"); } catch (_) {}
-      say("Terbit. Tunggu 1–2 menit, artikel muncul di /blog/. File: " + path, true);
-    } catch (e) { say("Jaringan gagal: " + e); }
+      var date = new Date().toISOString().slice(0, 10);
+      var path = "content/blog/" + date + "-" + slug(title) + ".md";
+      var content = "---\ntitle: \"" + title.replace(/"/g, "") + "\"\ndate: " + date + "\ntags: [" + $("tags").value.trim() + "]\ndesc: \"" + $("desc").value.trim().replace(/"/g, "") + "\"\n---\n\n" + body + "\n";
+      say("Mengirim commit ke GitHub…");
+      try {
+        var b64 = btoa(unescape(encodeURIComponent(content)));
+        var res = await fetch("https://api.github.com/repos/" + REPO + "/contents/" + path, {
+          method: "PUT",
+          headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+          body: JSON.stringify({ message: "blog: " + title, content: b64, branch: BRANCH })
+        });
+        if (!res.ok) { var t = await res.text(); say("Gagal: " + res.status + " " + t.slice(0, 200)); return; }
+        try { localStorage.removeItem("mc-draft"); } catch (_) {}
+        dirty = false;
+        say("Terbit. Tunggu 1–2 menit, artikel muncul di /blog/. File: " + path, true);
+      } catch (e) { say("Jaringan gagal: " + e + ". Cek koneksi lalu coba lagi — draf tetap tersimpan di browser ini."); }
+    } finally {
+      publishBtn.disabled = false;
+      publishBtn.textContent = "Publish";
+    }
   });
 })();
 </script>

@@ -1,14 +1,28 @@
-/* Section landing: daftar teks bersih, bukan kartu-pill. */
+/* Section landing: daftar teks bersih, bukan kartu-pill. Heading section =
+   mono (bahasa display merek), konsisten dengan hero. */
 section { max-width: var(--w); margin: 0 auto; padding: 52px 24px; }
-section h2 { font-size: clamp(20px, 2.8vw, 28px); letter-spacing: -0.015em; margin-bottom: 8px; }
+section h2 { font: 700 clamp(19px, 2.6vw, 26px)/1.25 var(--mono); margin-bottom: 8px; }
 section .sub { color: var(--mut); font-size: 15px; max-width: 60ch; margin-bottom: 26px; }
 /* Section landing: flat content group — tanpa kartu (audit desain: grouping
    lewat whitespace + tipografi, bukan background/radius). */
 .feat-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 34px 40px; }
 .feat { padding: 0; }
-.feat h3 { font-size: 14px; font-weight: 650; display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
-.feat h3 .material-symbols-outlined { font-size: 16px; color: var(--acc); }
+.feat h3 { font: 600 13.5px var(--mono); margin-bottom: 6px; }
+/* "Cara kerja" adalah urutan nyata 5 langkah — diberi nomor ala ledger
+   (counter CSS, mono aksen). Section non-sekuensial tetap tanpa nomor. */
+.how-list { list-style: none; padding: 0; margin: 0; counter-reset: langkah; }
+.how-list > li { position: relative; padding-left: 30px; }
+.how-list > li::before {
+  content: counter(langkah) ".";
+  counter-increment: langkah;
+  position: absolute;
+  left: 0;
+  top: 1px;
+  font: 600 13px var(--mono);
+  color: var(--acc);
+}
 .feat p { font-size: 13px; color: var(--mut); margin-top: 0; }
+/* Link lanjutan polos: tanpa panah tempelan (pola default yang dibuang). */
 .feat a.more { display: inline-block; margin-top: 9px; font-size: 13px; font-weight: 600; }
 .feat ul { list-style: none; padding: 0; margin: 6px 0 0; }
 .feat ul li { font-size: 13px; color: var(--mut); padding: 5px 0 5px 14px; position: relative; }

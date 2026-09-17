@@ -15,7 +15,9 @@ function inlineMd(s: string): string {
   // Penanda pakai string biasa (bukan NUL): biome melarang control char di regex.
   const codes: string[] = []
   let out = s.replace(/`([^`]+)`/g, (_, c: string) => {
-    codes.push(`<code>${escHtml(c)}</code>`)
+    // translate="no": token kode/identitas tak boleh diubah auto-translate
+    // browser (guideline i18n — kode yang diterjemahkan jadi tak bisa di-copy).
+    codes.push(`<code translate="no">${escHtml(c)}</code>`)
     return `@@MC${codes.length - 1}@@`
   })
   out = escHtml(out)
@@ -26,6 +28,14 @@ function inlineMd(s: string): string {
     if (!/^(https?:\/\/|\/|#|[a-zA-Z0-9._-]+\/|[a-zA-Z0-9._-]+\.html)/.test(url)) return t
     return `<a href="${escHtml(url)}">${t}</a>`
   })
+  // Ellipsis tipografis di prose (guideline): `...` → `…`. Split per-tag:
+  // segmen berawalan `<` = tag (href/aria-label utuh), sisanya text node
+  // termasuk teks awal/akhir paragraf. Code span masih placeholder di sini;
+  // fence tak lewat jalur ini (escHtml saja).
+  out = out
+    .split(/(<[^>]+>)/)
+    .map((seg) => (seg.startsWith("<") ? seg : seg.replaceAll("...", "…")))
+    .join("")
   out = out.replace(/@@MC(\d+)@@/g, (_, i: string) => codes[Number(i)] ?? "")
   return out
 }
@@ -138,16 +148,22 @@ export function mdToHtml(src: string): string {
   let fenceLang = ""
   let fenceBuf: string[] = []
   let listOpen = false
+  let olOpen = false
   const closeList = (): void => {
     if (listOpen) {
-      html.push("</ul>")
+      // Daftar bernomor dirender <ol> sungguhan (audit web P1-3): dulu `1.`
+      // jatuh ke <p> sehingga semua langkah prosedural docs kehilangan
+      // semantik list — screen reader membacanya sebagai kalimat, dan
+      // penomoran tak ikut penataan list CSS.
+      html.push(olOpen ? "</ol>" : "</ul>")
       listOpen = false
+      olOpen = false
     }
   }
   const flushFence = (): void => {
     const code = escHtml(fenceBuf.join("\n"))
     const lang = fenceLang ? ` data-lang="${escHtml(fenceLang)}"` : ""
-    html.push(`<pre${lang}><code>${code}</code></pre>`)
+    html.push(`<pre${lang}><code translate="no">${code}</code></pre>`)
     fenceBuf = []
   }
   while (i < lines.length) {
@@ -173,6 +189,22 @@ export function mdToHtml(src: string): string {
     }
     if (/^\s*$/.test(line)) {
       closeList()
+      i++
+      continue
+    }
+    // Baris indentasi tepat setelah item list = LANJUTAN item (adversarial:
+    // dulu jatuh ke branch paragraf → <ol> PECAH dan penomoran restart dari 1;
+    // docs sungguhan security.md memakai pola ini). Blank tetap memutus list
+    // (kontrak lama, dijaga test "docs tanpa nested list"). Diposisikan
+    // SETELAH cek fence: fence indentasi tetap berperilaku seperti semula.
+    if (
+      listOpen &&
+      /^\s+\S/.test(line) &&
+      html.length > 0 &&
+      html[html.length - 1]!.endsWith("</li>")
+    ) {
+      const last = html.length - 1
+      html[last] = html[last]!.replace(/<\/li>$/, ` ${inlineMd(line.trim())}</li>`)
       i++
       continue
     }
@@ -202,9 +234,11 @@ export function mdToHtml(src: string): string {
     }
     const li = /^[-*]\s+(.*)$/.exec(line)
     if (li) {
-      if (!listOpen) {
+      if (!listOpen || olOpen) {
+        closeList()
         html.push("<ul>")
         listOpen = true
+        olOpen = false
       }
       html.push(`<li>${inlineMd(li[1]!.trim())}</li>`)
       i++
@@ -212,8 +246,13 @@ export function mdToHtml(src: string): string {
     }
     const ol = /^\d+\.\s+(.*)$/.exec(line)
     if (ol) {
-      closeList()
-      html.push(`<p>${inlineMd(line.trim())}</p>`)
+      if (!listOpen || !olOpen) {
+        closeList()
+        html.push("<ol>")
+        listOpen = true
+        olOpen = true
+      }
+      html.push(`<li>${inlineMd(ol[1]!.trim())}</li>`)
       i++
       continue
     }

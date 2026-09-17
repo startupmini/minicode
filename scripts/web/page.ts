@@ -17,9 +17,15 @@ export interface PageOpts {
 }
 
 let layoutCache = ""
+let layoutCachePath = ""
 
 export function renderPage(webDir: string, opts: PageOpts): string {
-  if (!layoutCache) layoutCache = readFileSync(join(webDir, "layout.html"), "utf8")
+  // Cache per-path (audit web: cache lama global per-proses — test yang
+  // memakai webDir berbeda dalam satu proses bisa membaca layout stale).
+  if (!layoutCache || layoutCachePath !== webDir) {
+    layoutCache = readFileSync(join(webDir, "layout.html"), "utf8")
+    layoutCachePath = webDir
+  }
   return layoutCache
     .replaceAll("{{TITLE}}", escAttr(opts.title))
     .replaceAll("{{DESC}}", escAttr(opts.desc))

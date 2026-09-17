@@ -17,10 +17,13 @@ tanpa dependensi runtime baru.
 
 ```bash
 bun run web:css     # gabung part-*.css -> styles.css
-bun run web:build   # bangun site/
+bun run web:build   # bangun site/ (rasterisasi og-image.png via @resvg/resvg-js)
 bun run web:serve   # preview http://localhost:3000
 bun run web:check   # validasi link + anti-rahasia
 ```
+
+`web:build` tidak menjalankan `web:css` — jalankan `web:css` dulu bila
+mengubah `part-*.css`.
 
 ## Tulis artikel
 
@@ -31,7 +34,16 @@ Atau buka `/admin.html` setelah deploy, login GitHub, tulis, Publish.
 
 Konsep "Flat Paper": tanpa border, garis, shadow. Hierarki dari tipografi +
 spasi + blok background. Font docs satu tingkat lebih kecil (12.5px).
-Ikon Material Symbols Outlined via Google Fonts dengan fallback sembunyi.
+Ikon Material Symbols Outlined via Google Fonts (subset `icon_names`, hanya
+yang benar-benar dirender) dengan fallback sembunyi.
+
+Arah 2026-09-17 (audit frontend-design): **JetBrains Mono = suara merek** —
+display, judul docs/blog, label data, dan wordmark memakai mono (produk ini
+hidup di terminal); body prosa tetap Inter. Nomor hanya untuk urutan nyata
+("Cara kerja" 1–5 ala ledger). Tanpa eyebrow tracked-caps di tiap heading,
+tanpa panah tempelan di link, tanpa ikon dekoratif di kartu, tanpa pola `·`
+antar-meta. Satu momen gerak: entrance hero (reveal-on-scroll per kartu
+dihapus sadar).
 
 ## Motion
 

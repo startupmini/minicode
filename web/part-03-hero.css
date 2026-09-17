@@ -1,7 +1,11 @@
-/* Hero + blok terminal + CTA. Landing single-column, ritme longgar. */
+/* Hero + blok terminal + CTA. Landing single-column, ritme longgar.
+   Display = mono (suara merek, output terminal): h1/h2 tanpa uppercase dan
+   tanpa letter-spacing negatif ala sans — mono punya ritem sendiri. */
 .hero { padding: 84px 24px 44px; max-width: var(--w); margin: 0 auto; }
-.kicker { font: 600 11.5px var(--mono); color: var(--acc-text); text-transform: uppercase; letter-spacing: 0.12em; }
-.hero h1 { font-size: clamp(28px, 4.5vw, 46px); line-height: 1.12; letter-spacing: -0.025em; margin: 16px 0 14px; max-width: 20ch; }
+/* Kicker mono sentence-case tanpa tracked-caps: meta sederhana di atas
+   hero, bukan eyebrow dekoratif di atas TIAP heading. */
+.kicker { font: 500 12.5px var(--mono); color: var(--acc-text); }
+.hero h1 { font: 700 clamp(26px, 4vw, 42px)/1.18 var(--mono); margin: 16px 0 14px; max-width: 26ch; }
 .lead { font-size: 16px; color: var(--mut); max-width: 60ch; }
 .cta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
 .btn { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 13.5px; padding: 10px 18px; border-radius: 6px; }

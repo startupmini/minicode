@@ -75,13 +75,14 @@
     "audit:harness": "bun bench/harness-audit.ts",
     "bench:runs": "bun bench/runner.ts --runs 2",
     "web:css": "bun scripts/build-web-css.ts",
-    "web:build": "bun scripts/build-web-css.ts && bun scripts/build-web.ts",
+    "web:build": "bun scripts/build-web.ts",
     "web:serve": "bun --hot scripts/web-serve.ts",
     "web:check": "bun scripts/web-check.ts"
   },
   "dependencies": {},
   "devDependencies": {
     "@biomejs/biome": "2.5.10",
+    "@resvg/resvg-js": "^2.6.2",
     "@types/bun": "^1.3.14",
     "@types/node": "^26.2.0",
     "typescript": "^7.0.2"

@@ -17,8 +17,18 @@ const siteDir = join(repoRoot, "site")
 const base = "https://minicode.fun"
 const customDomain = "minicode.fun"
 
-const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as { version: string }
+const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
+  version: string
+  repository: { url: string }
+}
 const version = pkg.version
+// Identitas target commit admin ({{GITHUB_*}}): dari repository.url package.json
+// — satu sumber identitas (dijaga test FIX#4), jadi rename repo tidak merusak
+// Publish diam-diam. Branch = trigger deploy web.yml (hanya push main).
+const gh = /github\.com[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?$/.exec(pkg.repository.url)
+if (!gh) throw new Error(`[web-build] repository.url tak bisa diparse: ${pkg.repository.url}`)
+const ghRepo = `${gh[1]}/${gh[2]}`
+const ghBranch = "main"
 
 // Bersihkan site/ dulu: aset lama (favorit lama, logo lama) tidak boleh
 // tertinggal dan membuat tautan mati di halaman baru.
@@ -85,9 +95,19 @@ for (const f of ["styles.css", "app.js"]) {
 // Logo milik pengguna: satu sumber di content/logo-user.svg (mudah diganti),
 // di-copy saat build agar layout <img> selalu merujuk file yang ada.
 cpSync(join(repoRoot, "content", "logo-user.svg"), join(siteDir, "assets", "logo-user.svg"))
-// Kartu sosial untuk og:image (SVG flat, zero-dep — lihat web/og-image.svg).
+// Kartu sosial untuk og:image: PNG hasil rasterisasi (crawler sosial umumnya
+// tak merender SVG — audit web P2-10), SVG tetap di-copy sebagai fallback.
 cpSync(join(webDir, "og-image.svg"), join(siteDir, "og-image.svg"))
-write("admin.html", readFileSync(join(webDir, "admin.html"), "utf8"))
+const { rasterizeOg } = await import("./rasterize-og.ts")
+await rasterizeOg(webDir, siteDir)
+// Token {{GITHUB_*}} diisi saat copy: admin tanpa hardcode repo/branch —
+// ganti repo atau branch deploy cukup di satu tempat (package.json/konstanta).
+write(
+  "admin.html",
+  readFileSync(join(webDir, "admin.html"), "utf8")
+    .replaceAll("{{GITHUB_REPO}}", ghRepo)
+    .replaceAll("{{GITHUB_BRANCH}}", ghBranch),
+)
 // File CNAME membuat binding custom domain persisten — deploy artifact
 // tanpa file ini bisa melepas domain di Settings → Pages.
 write("CNAME", `${customDomain}\n`)

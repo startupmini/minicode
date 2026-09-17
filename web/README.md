@@ -43,10 +43,10 @@ Jalankan berurutan setiap kali deploy Pages selesai. Prinsip: **field p75
 Chrome DevTools → Performance → reload dengan **cache disabled + 4× CPU
 throttle**, atau Lighthouse mobile di PSI: https://pagespeed.web.dev/analysis?url=https%3A%2F%2Fminicode.fun
 
-- [ ] LCP < 2,5 s · TBT rendah (proksi INP di lab) · CLS < 0,1
-- [ ] LCP element = H1 hero (bukan font/aset yang terlambat)
-- [ ] Ketiga font `200` dari `fonts.gstatic.com` (Network, tanpa 404/redirect)
-- [ ] Tidak ada error konsol
+- [x] LCP < 2,5 s · TBT rendah (proksi INP di lab) · CLS < 0,1
+- [x] LCP element = H1 hero (bukan font/aset yang terlambat) — 2026-09-17: awalnya ikon (entrance hero menyembunyikan H1), fixed dengan pengecualian H1
+- [x] Ketiga font `200` dari `fonts.gstatic.com` (Network, tanpa 404/redirect) — ≈80 KB total
+- [x] Tidak ada error konsol
 
 ### Fase 3 — CrUX field p75 (terjadwal: +2, +6, +12 minggu pasca-deploy)
 
@@ -65,6 +65,7 @@ tangkapan layar):
 
 | Tanggal | Sumber | LCP p75 | INP p75 / TBT | CLS p75 | Catatan |
 |---|---|---|---|---|---|
+| 2026-09-17 | Lab Lighthouse 13.4.1 mobile, minicode.fun, headless Chrome lokal (bukan field) | 1,9 s | TBT 0 ms | 0,002 | Score 98 · LCP element: ikon (entrance hero menyembunyikan H1) → **fixed**: H1 dikecualikan dari `rise`, terverifikasi LCP = H1 di lab lokal |
 | — | — | — | — | — | — |
 
 ## Tulis artikel

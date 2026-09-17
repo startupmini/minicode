@@ -49,6 +49,12 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
 - ✅ CHANGELOG WEB (2026-09-17): halaman /docs/changelog.html kini
   digenerate otomatis dari section ini saat build (marker guard test:
   GUARD-CHLOG-SATU); docs/changelog.md jadi stub anchor SUMMARY.
+- ✅ AUDIT LAB CWV FASE 2 (2026-09-17): Lighthouse 13.4.1 mobile vs
+  minicode.fun — score 98, LCP 1,9 s, TBT 0 ms, CLS 0,002, 0 error konsol.
+  Satu kriteria gagal lalu diperbaiki: entrance hero menyembunyikan H1 sehingga
+  LCP element = glif ikon, bukan H1 — H1 kini dikecualikan dari `rise`
+  (part-06-motion.css), terverifikasi LCP = H1 di lab ulang. Baseline tercatat
+  di web/README.md. Field CrUX tetap menunggu fase 3 (+2/6/12 minggu).
 - ✅ AUDIT WEB + FIX P0–P2 (uncommitted, 2026-09-17): hanya lapisan web
   (`web/`, `scripts/web*`, workflow, test web) — runtime minicode tak disentuh.
   P0: token GitHub admin tak lagi dipersist ke sessionStorage (+

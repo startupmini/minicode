@@ -13,6 +13,7 @@
   --acc-text: #2e4fb0;
   --code-bg: #161618;
   --code-fg: #e6e8ee;
+  --term-dim: #9ba3b2;
   --ok: #e7f3ec;
   /* Teks di atas aksen (tombol primer/skip): putih di terang, nyaris-hitam
      di gelap — kontras dua arah, bukan satu warna hardcoded. */
@@ -134,17 +135,20 @@ body.no-mi .material-symbols-outlined { display: none; }
 .nav { display: flex; gap: 2px; margin-left: auto; align-items: center; }
 .nav a { color: var(--mut); font-size: 13.5px; font-weight: 500; padding: 10px 12px; border-radius: 6px; }
 .nav a:hover { color: var(--ink); background: var(--soft); text-decoration: none; }
+/* Halaman aktif (audit UI/UX F-4): status lokasi persisten, gaya hover dipinjam. */
+.nav a[aria-current="page"] { color: var(--ink); background: var(--soft); }
 /* Tombol tema: benar-flat — hanya ikon, tanpa background/radius. */
 .iconbtn { background: none; color: var(--faint); padding: 8px; cursor: pointer; display: inline-flex; line-height: 1; }
 .iconbtn:hover { color: var(--ink); }
 .wrap { max-width: var(--w); margin: 0 auto; padding: 0 24px; }
-/* Mobile ≤520px: JANGAN sembunyikan seluruh nav (audit website: header ponsel
-   jadi buntu — hanya logo + tema). Link bertanda .keep (Docs/Install/GitHub)
-   tetap tampil; sisanya disembunyikan agar muat 360px. Tanpa JS/framework. */
+/* Mobile ≤520px (revisi audit UI/UX F-3): SEMUA link nav tampil dan nav boleh
+   wrap ke baris kedua — dulu Blog/Changelog di-display:none (tujuan penting
+   hilang di ponsel), dan menambah .keep saja terbukti overflow di 360px
+   (terukur ±374px > 360). Tanpa JS/framework, tanpa menu sheet. */
 @media (max-width: 520px) {
   .topbar-in { gap: 10px; padding: 12px 16px; }
-  .nav a.nl { display: none; }
-  .nav a.nl.keep { display: inline-flex; }
+  .nav { flex-wrap: wrap; justify-content: flex-end; row-gap: 2px; }
+  .nav a.nl { padding: 6px 8px; }
 }
 /* Hero + install-bar + proof. Rombak 2026-09-17 — konsep "Bukti, bukan janji":
    klaim dulu, lalu install sebagai CTA primer halaman (aksi pertama yang
@@ -180,7 +184,7 @@ body.no-mi .material-symbols-outlined { display: none; }
 }
 .install .copybtn { color: inherit; flex: none; }
 .hero-links { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 14px; font: 500 13px var(--mono); color: var(--faint); }
-.hero-links a { font-weight: 600; }
+.hero-links a { font-weight: 600; padding: 6px 0; }
 
 .cta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
 .btn { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 13.5px; padding: 10px 18px; border-radius: 6px; }
@@ -193,13 +197,15 @@ body.no-mi .material-symbols-outlined { display: none; }
    Figure menggabungkan .term (jendela) + .shot (caption) — objek hero. */
 .term { background: var(--code-bg); color: var(--code-fg); border-radius: var(--r); overflow: hidden; max-width: 700px; }
 .hero .term { margin-top: 34px; }
-.term-cap { display: flex; align-items: center; gap: 8px; padding: 9px 14px; font: 11.5px var(--mono); color: var(--faint); }
+.term-cap { display: flex; align-items: center; gap: 8px; padding: 9px 14px; font: 11.5px var(--mono); color: var(--term-dim); }
 .term-cap .sp { margin-left: auto; }
 .term pre { border-radius: 0; background: none; padding: 14px 16px; }
 .copybtn { background: none; color: inherit; cursor: pointer; display: inline-flex; padding: 8px; margin: -5px; border-radius: 6px; opacity: 0.7; }
 .copybtn:hover { opacity: 1; }
 .shot svg { display: block; width: 100%; height: auto; }
-.shot figcaption { color: var(--mut); font-size: 12.5px; margin-top: 8px; }
+/* Caption di atas panel gelap permanen: warna TIDAK ikut tema halaman
+   (audit F-1 — --mut tema terang di panel gelap = 3,12:1). */
+.shot figcaption { color: var(--term-dim); font-size: 12.5px; margin-top: 8px; }
 /* ── Eksperimen urutan landing (A/B lokal, 2026-09-17) ──
    Varian B menaruh "Serahkan tugas" SEBELUM "Cara kerja". Keduanya memang
    bersebelahan di DOM, jadi pembungkus `.pair` (kolom flex kecil) cukup
@@ -250,7 +256,7 @@ section .sub { color: var(--mut); font-size: 15px; max-width: 60ch; margin-botto
 @media (max-width: 900px) { .how-list { grid-template-columns: 1fr; } }
 .feat p { font-size: 13px; color: var(--mut); margin-top: 0; }
 /* Link lanjutan polos: tanpa panah tempelan (pola default yang dibuang). */
-.feat a.more { display: inline-block; margin-top: 9px; font-size: 13px; font-weight: 600; }
+.feat a.more { display: inline-block; margin-top: 9px; padding: 4px 0; font-size: 13px; font-weight: 600; }
 /* Serahkan tugas: baris perintah nyata + salin. Flat — label prose, perintah
    di strip gelap ala prompt (satu bahasa dgn install-bar hero). */
 .task { margin-top: 14px; }
@@ -276,6 +282,7 @@ section .sub { color: var(--mut); font-size: 15px; max-width: 60ch; margin-botto
 }
 .task-cmd .copybtn { color: inherit; flex: none; opacity: 0.85; }
 .task-more { margin-top: 18px; font-size: 13px; }
+.task-more a { display: inline-block; padding: 4px 0; }
 .feat ul { list-style: none; padding: 0; margin: 6px 0 0; }
 .feat ul li { font-size: 13px; color: var(--mut); padding: 5px 0 5px 14px; position: relative; }
 .feat ul li::before { content: "–"; position: absolute; left: 0; color: var(--faint); }

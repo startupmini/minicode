@@ -81,7 +81,7 @@
     "audit:harness": "bun bench/harness-audit.ts",
     "bench:runs": "bun bench/runner.ts --runs 2",
     "web:css": "bun scripts/build-web-css.ts",
-    "web:build": "bun scripts/build-web.ts",
+    "web:build": "bun scripts/build-web-css.ts && bun scripts/build-web.ts",
     "web:serve": "bun --hot scripts/web-serve.ts",
     "web:check": "bun scripts/web-check.ts",
     "web:indexnow": "bun scripts/web-indexnow.ts",

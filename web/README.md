@@ -175,8 +175,10 @@ membuktikan kontrol host), robots memuat petunjuknya.
 
 Otomatis: tiap deploy `web.yml` kini **selalu** submit sitemap ke IndexNow
 — job `indexnow` berjalan setelah job `deploy` sukses (syarat protokol:
-key file harus sudah live; script mem-preflight sendiri). Jalur manual
-tetap ada untuk dorongan ad-hoc tanpa deploy:
+key file harus sudah live; script mem-preflight sendiri). Plus jadwal
+mingguan (Senin 03:17 UTC): tanpa deploy pun, sitemap tetap dikirim —
+job build/deploy di-skip saat jadwal, hanya IndexNow yang jalan. Jalur
+manual tetap ada untuk dorongan ad-hoc tanpa deploy:
 
 ```bash
 bun run web:build && bun run web:indexnow            # submit semua URL

@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.9.29] - 2026-09-18 — Identitas publik: homepage npm → minicode.fun
+
+### Changed
+- **Field `homepage` paket npm `minicode-ai` kini `https://minicode.fun`**
+  (dulu repo GitHub). Registry adalah halaman discoverability pertama
+  (`npm page` / `npm home`) — situs resmi harus jadi tujuannya. Situs sudah
+  live sejak 0.9.28, sitemap 40 halaman ter-deploy + IndexNow otomatis;
+  field `repository`/`bugs` tetap ke repo GitHub sesuai fungsinya.
+- `CHANGELOG.md` ikut ke tarball (`files`), jadi catatan ini tampil di npm.
+- Tanpa perubahan kode CLI/kernel; metadata + docs saja.
+
 ## [0.9.28] - 2026-09-18 — Terminal rendering hardening: stream-aware ANSI + resize-safe footer
 
 ### Fixed

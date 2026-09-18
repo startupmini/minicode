@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Wizard setup pertama tak lagi tampak macet di `⠴ Menyiapkan sesi…`**: spinner setup sesi (`cli/index.ts`) menulis frame `\r\x1b[2K` mentah ke stderr tiap 120ms — termasuk saat wizard memilih gateway dan meminta API key, sehingga prompt picker/`askLine` dihapus setiap tick (laporan: `minicode` dari home selalu berhenti di "Menyiapkan sesi…"). Layar raw-mode kini menahan SEMUA painter transient (`beginInteractiveScreen` di `statusline.ts`; nol byte + baris painter dibersihkan sekali saat layar mengambil alih), dan kedua spinner CLI memakai `createSpinner` (ownership tunggal — tulis `[warn]` saat setup tidak lagi hilang tertimpa tick). Test regresi di `test/transient-arbitration.test.ts` (I15: painter diam selama layar, nesting/idempoten, `delayMs`) + `test/wizard.test.ts` (prompt `Base URL` terlihat selama spinner hidup).
+
 ## [0.9.26] - 2026-09-17 — Rename paket npm: `minicode-ai`
 
 ### Changed

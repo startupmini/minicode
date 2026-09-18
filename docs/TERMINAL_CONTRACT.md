@@ -42,6 +42,14 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 animasi spinner,
 - Painter aktif: garis status turn (`kind: "turn"`) dan spinner wizard
   (`kind: "spinner"`) — secara desain mutually exclusive (fase disjoint).
   Overlap = runtime signal `[transient-paint] …`, bukan crash.
+- **Layar interaktif mengalahkan painter** (`beginInteractiveScreen()` di
+  `statusline.ts`, dipanggil picker + `askLine`/`askSecret`): selama layar
+  raw-mode hidup, `paintWrite` menulis **nol byte** dan baris painter terakhir
+  dibersihkan sekali saat layar mengambil alih. Alasannya bukan estetika:
+  frame `\r\x1b[2K` dari stderr menghapus baris tempat layar baru menulis
+  prompt, sehingga wizard setup pertama tampak macet di `Menyiapkan sesi…`
+  tanpa cara menyelesaikannya. Painter tidak perlu tahu soal layar; aturan
+  ditegakkan satu tempat agar painter baru otomatis patuh.
 - **Foreign stderr writer (cat-3, non-UI) dibiarkan menulis mentah** — saat
   painter aktif, arbitrator mengkomit tulisannya sebagai baris permanen yang
   bersih (hapus garis transient → tulis → repaint). Tidak ada pesan yang hilang.
@@ -61,7 +69,7 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 animasi spinner,
      turn = abort (lone-ESC 50ms) tanpa teks, `Ctrl+C 1x` saat idle = copy
      (OSC 52) dan `2x` = keluar; mode pad lebar tetap, spark pulse saat
      busy/redup saat idle, konteks rata kanan, garis `faint`.
- 14. Idle binding: `Esc` / `Ctrl+C` / `Ctrl+D` resolve `null` (cancel);
+14. Idle binding: `Esc` / `Ctrl+C` / `Ctrl+D` resolve `null` (cancel);
      `Ctrl+C` pertama = copy teks turn terakhir, kedua beruntun = keluar;
      abort turn via lone `Esc` maupun `Ctrl+C` menghentikan spark footer.
 2. stdout/stderr contract seperti tabel di atas (TTY & non-TTY deterministic).
@@ -82,6 +90,10 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 animasi spinner,
 11. Resize memakai lebar SAAT PAINT (bukan lebar saat event).
 12. Long session tetap readable (ledger per tool = satu baris, konten tidak
     mengalir ke scrollback kecuali expanded/verbose).
+15. Layar interaktif (picker, `askLine`, `askSecret`) menahan SEMUA painter
+    transient stderr: nol byte selama layar memegang terminal, painter hidup
+    lagi setelah release terakhir (depth); release idempoten di semua jalur
+    (sukses/batal/error/idle-timeout).
 
 ## Grammar (ringkas)
 
@@ -141,8 +153,13 @@ error: `✗ pesan actionable` sekali per kegagalan (`takePendingError`).
   footer: non-TTY nol byte, mode off/print/sticky/auto, region DECSTBM,
   reset-on-detach, repaint, reserve dropdown).
 - `test/terminal-contract.test.ts` — I2/I3/I5/I7/I8/I9/I10/I12 (konsolidasi).
-- `test/transient-arbitration.test.ts` — I3/I9 (foreign-write dikomit,
-  repaint, overlap signal, non-TTY bebas kontrol).
+- `test/transient-arbitration.test.ts` — I3/I9/I15 (foreign-write dikomit,
+  repaint, overlap signal, non-TTY bebas kontrol; spinner/garis status diam
+  selama layar interaktif aktif + hidup lagi setelah release, nesting + release
+  idempoten, opsi `delayMs`).
+- `test/wizard.test.ts` — I15 jalur user nyata (spinner setup hidup + wizard:
+  prompt `Base URL` terlihat, nol frame spinner selama layar, lanjut setelah
+  batal).
 - `test/statusline-bun-guard.test.ts` — I4/I5 (method-call only,
   self-disable + restore, transient tak pernah gagalkan turn).
 - `test/turn-status.test.ts` — I5/I10 (lifecycle, endTurn tanpa

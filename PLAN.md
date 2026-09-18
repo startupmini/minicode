@@ -31,8 +31,19 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
 
 ---
 
-## Status eksekusi terbaru (update 2026-09-17)
+## Status eksekusi terbaru (update 2026-09-18)
 
+- ✅ FIX SETUP PERTAMA (2026-09-18): `minicode` dari home selalu tampak
+  berhenti di `⠴ Menyiapkan sesi…` — spinner sesi di composition root menulis
+  frame `\r\x1b[2K` mentah ke stderr selama wizard setup (picker gateway +
+  prompt API key) hidup, sehingga tiap prompt terhapus 120ms setelah digambar
+  dan user tak punya cara menyelesaikan setup. Kini layar raw-mode menahan
+  SEMUA painter transient (`beginInteractiveScreen` di `statusline.ts`: nol
+  byte + baris painter dibersihkan sekali saat takeover; dipanggil picker +
+  `askLine`/`askSecret`) dan kedua spinner CLI pakai `createSpinner` (ownership
+  tunggal, opsi `delayMs`), jadi tulis `[warn]` saat setup tak lagi hilang
+  tertimpa tick. Regresi dijaga `test/transient-arbitration.test.ts` (I15) +
+  `test/wizard.test.ts`; kontrak diperbarui (invariant 15).
 - ✅ SCRIPT `web:indexnow` + CHECKLIST GSC (2026-09-17): submit indeks tidak
   lagi curl manual di sesi — `bun run web:indexnow` baca site/sitemap.xml,
   validasi host (CNAME), tolak URL asing, cek key file LIVE di produksi
@@ -114,15 +125,8 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   untuk repo). Paragraf prosa dijustify site-wide (hanya paragraf — heading,
   daftar, tabel, kode tetap rata kiri) + `hyphens: auto` + baris terakhir rata
   kiri; `--w-doc` 720→640px dan `--fs-doc` 12.5→14px karena baris ±115 karakter
-  bikin celah antarkata menganga; `text-wrap: pretty` dibuang (diabaikan saat
-  justify). Bug nyata yang ketemu saat verifikasi preview: menu docs ponsel
-  terbuka di ATAS konten (kini ditutup app.js hanya di layar kecil), scrollbar
-  horizontal di dalam menu, dan prev/next bertajuk yang tidak muat berdampingan
-  di kolom ±342px (kini ditumpuk di ≤900px). Guard baru: header docs, TOC tanpa
-  nomor dobel, hub (grid ⊇ SUMMARY, tanpa sidebar, tabel Navigasi absen),
-  justifier base CSS, menu ponsel tertutup. Gate `2039 pass 0 fail / tsc / lint
+  2039 pass 0 fail / tsc / lint
   0 warn / web:check 12/12`.
-
 - ✅ SEO Riset+Eval+Fix (2026-09-17): audit live minicode.fun (robots+sitemap
   ok, www/http 301 ke apex-https, 404 code benar) + riset gallery rich-result
   Google 2026 (SoftwareApp butuh rating — TIDAK difabrikasi; Article/

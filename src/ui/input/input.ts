@@ -5,6 +5,7 @@ import { createInterface } from "node:readline"
 import { stripAnsi } from "../render/theme.ts"
 import { displayWidth, escapeLength, truncateToWidth } from "../render/width.ts"
 import { footerReserveRows } from "../runtime/chrome.ts"
+import { beginInteractiveScreen } from "../runtime/statusline.ts"
 import {
   applyKey,
   buildRenderSpec,
@@ -178,6 +179,11 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
   }
 
   return new Promise((resolve, reject) => {
+    // Raw mode + overlay prompt (stdout) = layar mengambil alih terminal:
+    // painter transient stderr (spinner setup, garis status turn) berhenti
+    // selama prompt hidup. Tanpa ini tick `\r\x1b[2K` dari spinner menghapus
+    // baris prompt — user tak melihat apa yang diketiknya.
+    const endScreen = beginInteractiveScreen()
     // Raw mode harus dikembalikan BAGI BAGIAN body yang error: bila renderAnsi
     // melempar (mis. lebar terminal abnormal), terminal tidak boleh tertinggal
     // dalam raw + listener lama menumpuk (dulu REPL catch{continue} lalu
@@ -203,6 +209,9 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
       // Kepemilikan = siapa yang memegang listener; melepas listener cukup.
       // Pause hanya di teardown sesi (close()) agar one-shot bisa exit.
       if (onData) process.stdin.removeListener("data", onData)
+      // Lepas kepemilikan layar di cleanup (semua jalur): drag raw-mode yang
+      // dilepas tanpa ini membuat painter diam selamanya.
+      endScreen()
     }
     const finish = (v: string | null) => {
       cleanup()
@@ -687,6 +696,9 @@ export async function askSecret(
   if (!process.stdin.isTTY) return null
 
   return new Promise((resolve, reject) => {
+    // Layar raw-mode (sama seperti askLine): prompt API key juga menghalangi
+    // painter transient stderr melukis di baris yang sama.
+    const endScreen = beginInteractiveScreen()
     const decoder: DecoderState = createDecoderState()
     let done = false
     let onData!: (chunk: Buffer) => void
@@ -704,6 +716,7 @@ export async function askSecret(
       } catch {}
       // Tanpa pause — lihat cleanup askLine (stdin mengalir seumur proses).
       if (onData) process.stdin.removeListener("data", onData)
+      endScreen()
     }
     const finish = (value: string | null) => {
       cleanup()

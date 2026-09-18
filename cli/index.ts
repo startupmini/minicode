@@ -276,49 +276,27 @@ const enterRepl = interactive || (!prompt && process.stdin.isTTY)
 // REPL interaktif: cek update FRESH tiap dibuka → install + restart bila ada
 // versi baru (tak pernah kembali bila restart). Tampilkan spinner 1.8 dtk
 // agar tidak terlihat hang — budget tetap, hanya UX.
+// Spinner transient HANYA lewat ownership tunggal (src/ui/runtime/spinner) —
+// tulis mentah ke stderr dulu melewati arbitrase statusline.ts: pesan [warn]
+// dihapus oleh tick berikutnya, dan frame-nya bisa menghapus baris layar
+// interaktif yang sedang menunggu input.
+const { createSpinner } = await import("../src/ui/runtime/spinner.ts")
 if (enterRepl) {
   const ctrl = new AbortController()
   const to = setTimeout(() => ctrl.abort(), 1800)
-  let spin: ReturnType<typeof setInterval> | undefined
-  let showTimer: ReturnType<typeof setTimeout> | undefined
-  let fi = 0
-  // Dipanggil auto-update SEBELUM fase panjang (install npm + respawn anak):
-  // matikan spinner agar tak menulis ke stderr yang sama dengan anak selama
-  // berjam-jam (stdio inherit) — itu yang terlihat sebagai hang/flicker.
-  // Idempoten: aman dipanggil dua kali (sebelum install, sebelum restart).
-  let longOpCleaned = false
-  const stopUpdateSpin = () => {
-    if (longOpCleaned) return
-    longOpCleaned = true
-    if (showTimer) clearTimeout(showTimer)
-    showTimer = undefined
-    if (spin) {
-      clearInterval(spin)
-      spin = undefined
-      try {
-        process.stderr.write("\r\x1b[2K")
-      } catch {}
-    }
-  }
-  if (process.stderr.isTTY) {
-    const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-    showTimer = setTimeout(() => {
-      spin = setInterval(() => {
-        const f = frames[fi++ % frames.length]!
-        process.stderr.write(`\r\x1b[2K${c.dim(`${f} Checking for updates…`)}`)
-      }, 80)
-    }, 120)
-  }
+  // Delay 120ms: cek update sering selesai <200ms — tanpa delay, spinner
+  // berkedip lalu hilang. Pola frame 80ms sesuai kontrak startup.
+  const spin = createSpinner("Checking for updates…", { delayMs: 120, intervalMs: 80 })
   try {
     const { maybeAutoUpdate } = await import("./auto-update.ts")
-    await maybeAutoUpdate(readVersion(), ctrl.signal, { onLongOp: stopUpdateSpin })
+    // Dipanggil auto-update SEBELUM fase panjang (install npm + respawn anak):
+    // matikan spinner agar tak menulis ke stderr yang sama dengan anak selama
+    // berjam-jam (stdio inherit) — itu yang terlihat sebagai hang/flicker.
+    // Idempoten: aman dipanggil dua kali (sebelum install, sebelum restart).
+    await maybeAutoUpdate(readVersion(), ctrl.signal, { onLongOp: () => spin.stop() })
   } catch {}
   clearTimeout(to)
-  if (showTimer) clearTimeout(showTimer)
-  if (spin) {
-    clearInterval(spin)
-    process.stderr.write("\r\x1b[2K")
-  }
+  spin.stop()
 }
 if (!prompt && !enterRepl) {
   process.stderr.write('usage: minicode "prompt"  |  minicode (interactive mode)\n')
@@ -344,24 +322,13 @@ try {
 // Session setup (provider/RAG/MCP/session) bisa makan detik (network + spawn)
 // TANPA output — user melihat kursor mati. Spinner transient TTY-only selama
 // setup, dibersihkan sebelum banner REPL agar tak ada jejak.
-let setupSpin: ReturnType<typeof setInterval> | undefined
-if (enterRepl && process.stderr.isTTY) {
-  const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-  let fi = 0
-  setupSpin = setInterval(() => {
-    const f = frames[fi++ % frames.length]!
-    process.stderr.write(`\r\x1b[2K${c.dim(`${f} Menyiapkan sesi…`)}`)
-  }, 120)
-}
-const stopSetupSpin = () => {
-  if (setupSpin) {
-    clearInterval(setupSpin)
-    setupSpin = undefined
-    try {
-      process.stderr.write("\r\x1b[2K")
-    } catch {}
-  }
-}
+// Spinner ini berjalan di atas createCliSession — termasuk saat wizard setup
+// pertama (picker gateway + prompt API key) memegang terminal. Lewat
+// createSpinner, tick-nya otomatis BERHENTI selama layar interaktif aktif
+// (statusline.beginInteractiveScreen): dulu tulis mentah `\r\x1b[2K` menghapus
+// baris prompt wizard, sehingga user baru hanya melihat "Menyiapkan sesi…"
+// tanpa cara menyelesaikan setup (laporan: minicode dari home selalu macet).
+const setupSpin = enterRepl ? createSpinner("Menyiapkan sesi…") : undefined
 // finally: createCliSession yang melempar (provider/MCP gagal) tak boleh
 // membocorkan interval — tanpa ini spinner menulis ke stderr selamanya dan
 // proses tak pernah exit (terlihat hang).
@@ -392,7 +359,7 @@ try {
     sandboxNotice: requestedSandbox ? sandbox.notice : undefined,
   })
 } finally {
-  stopSetupSpin()
+  setupSpin?.stop()
 }
 
 if (enterRepl) {

@@ -9,7 +9,10 @@ import { runSetupWizard } from "../cli/wizard.ts"
 import { GATEWAY_PRESETS } from "../src/providers/presets.ts"
 import { stripAnsi } from "../src/ui/render/theme.ts"
 import { displayWidth } from "../src/ui/render/width.ts"
+import { createSpinner } from "../src/ui/runtime/spinner.ts"
 import { type FakeTty, installFakeTty, KEY } from "./helpers/tui-harness.ts"
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 let tty: FakeTty | undefined
 let home: string | undefined
@@ -124,6 +127,36 @@ describe("wizard: pemilihan gateway", () => {
     await tty.send(KEY.esc, 60)
     await p
   })
+})
+
+// Keluhan asli (Windows, dijalankan dari home): `minicode` selalu tampak
+// berhenti di "⠴ Menyiapkan sesi…" — prompt wizard tak pernah terlihat karena
+// spinner setup menulis frame `\r\x1b[2K` ke stderr di baris yang sama.
+describe("wizard: spinner setup tidak menutupi prompt", () => {
+  test("prompt Base URL terlihat selama spinner setup hidup", async () => {
+    tty = installFakeTty({ columns: 80, rows: 24 })
+    isolateHome()
+    // Meniru cli/index.ts: spinner hidup selama createCliSession, termasuk saat
+    // wizard (di dalamnya) meminta input.
+    const spin = createSpinner("Menyiapkan sesi…")
+    await sleep(60)
+    expect(tty.allErr()).toContain("Menyiapkan sesi")
+    tty.clear()
+    const p = runSetupWizard()
+    await tty.ready(3000)
+    await tty.send(KEY.enter, 60) // pilih preset pertama
+    await tty.waitForOutput((o) => o.includes("Base URL"), 3000)
+    expect(visible(tty)).toContain("Base URL")
+    // >1 interval spinner: selama layar memegang terminal, stderr tetap bersih.
+    await sleep(300)
+    expect(tty.allErr()).not.toContain("Menyiapkan sesi")
+    await tty.send(KEY.esc, 60) // batal
+    expect(await p).toBe(false)
+    // Layar lepas → spinner setup hidup lagi (setup sesi belum selesai).
+    await sleep(250)
+    expect(tty.allErr()).toContain("Menyiapkan sesi")
+    spin.stop()
+  }, 8000)
 })
 
 describe("wizard: bahasa", () => {

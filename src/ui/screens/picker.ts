@@ -9,6 +9,7 @@ import {
 import { sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c } from "../render/theme.ts"
 import { truncateToWidth } from "../render/width.ts"
+import { beginInteractiveScreen } from "../runtime/statusline.ts"
 import { clearTransientOverlay, renderTransientOverlay } from "./overlay.ts"
 
 export interface PickerItem {
@@ -59,6 +60,10 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
   }
 
   return new Promise<void>((resolve) => {
+    // Raw mode + overlay stdout = layar mengambil alih terminal. Painter
+    // transient stderr (spinner setup/garis status) berhenti selama ini —
+    // tanpa itu tick-nya menghapus baris picker yang baru digambar.
+    const endScreen = beginInteractiveScreen()
     let sel = 0
     let scroll = 0
     let filter = ""
@@ -180,6 +185,9 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       if (idleTimer) clearTimeout(idleTimer)
       prevRows = clearTransientOverlay(prevRows)
       process.stdout.write("\x1b[0m\x1b[?25h")
+      // Lepas kepemilikan layar: painter boleh melukis lagi setelah ini
+      // (kursor sudah kembali ke anchor, overlay sudah dibersihkan).
+      endScreen()
       // TIDAK menulis \r\n di sini: clearTransientOverlay sudah menaruh kursor
       // kembali ke anchor. \r\n membuat baris kosong permanen di scrollback
       // (append-only) tiap picker dipakai — terlihat sebagai gap saat picker

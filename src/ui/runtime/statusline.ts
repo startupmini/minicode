@@ -71,6 +71,8 @@ export function __resetTransientForTest(): void {
   ourWrite = null
   origWrite = null
   transientBroken = false
+  warnedOverlap.clear()
+  screenDepth = 0
 }
 
 // Pasang wrapper stderr HANYA bila owner transient pertama muncul. Wrapper
@@ -129,9 +131,50 @@ function ensureWrap(): void {
   process.stderr.write = ourWrite
 }
 
+// ── Kepemilikan layar interaktif (raw-mode) ──
+// Picker/askLine/askSecret memegang raw mode DAN melukis overlay-nya di stdout
+// dengan cursor addressing. Selama itu painter transient stderr (garis status
+// turn, spinner setup) TIDAK boleh menulis satu byte pun: satu tick
+// `\r\x1b[2K` dari stderr menghapus baris tempat layar baru menulis prompt —
+// di Windows bahkan menghapus sebagian overlay. Tanpa aturan ini wizard setup
+// pertama (picker gateway + prompt API key) tak terlihat, dan CLI tampak macet
+// di `Menyiapkan sesi…` padahal sedang menunggu input user.
+//
+// Ditegakkan di SATU tempat (paintWrite) supaya SETIAP painter patuh tanpa
+// harus tahu soal layar — termasuk painter baru di masa depan.
+let screenDepth = 0
+
+/**
+ * Tandai layar raw-mode mengambil alih terminal. Kembalikan fungsi release
+ * IDEMPOTEN — panggil di cleanup SEMUA jalur (sukses, batal, error, timeout).
+ *
+ * Nesting aman (depth dihitung): picker yang dibuka dari dalam manager hanya
+ * melepas kepemilikannya sendiri saat selesai.
+ */
+export function beginInteractiveScreen(): () => void {
+  // Baris painter terakhir dibersihkan SEKARANG (kursor masih persis di sana),
+  // sebelum layar menulis byte pertamanya — dan SEBELUM depth naik, karena
+  // paintWrite menolak menulis saat layar sudah aktif. Tanpa ini teks spinner
+  // basi tertinggal tepat di atas overlay layar. Kursor juga dikembalikan:
+  // painter menyembunyikannya selama melukis, sedangkan prompt butuh kursor
+  // terlihat saat user mengetik.
+  if (screenDepth === 0 && owner) {
+    try {
+      paintWrite("\r\x1b[2K\x1b[?25h")
+    } catch {}
+  }
+  screenDepth++
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    screenDepth = Math.max(0, screenDepth - 1)
+  }
+}
+
 /** Tulis internal milik painter aktif (tanpa aturan "asing" di atas). */
 export function paintWrite(s: string): void {
-  if (transientBroken) return
+  if (transientBroken || screenDepth > 0) return
   ownerWriting = true
   try {
     // Pakai sink yang MASIH terpasang: bila wrapper sudah diganti/di-restore

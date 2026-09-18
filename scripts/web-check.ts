@@ -137,6 +137,16 @@ for (const f of files) {
 }
 check("SEO tags lengkap", noSeo.length === 0, noSeo.slice(0, 5).join(", "))
 
+// Title > ~65 char terpotong di SERP (audit SEO 2026-09-18: 3 judul post
+// 72–77 char). Sufiks " — Minicode" (9) dihitung karena selalu ada di <title>.
+const longTitle: string[] = []
+for (const f of files) {
+  if (f.endsWith("admin.html") || f.endsWith("404.html")) continue
+  const m = /<title>([^<]*)<\/title>/.exec(readFileSync(f, "utf8"))
+  if (m && m[1]!.length > 65) longTitle.push(`${f.slice(siteDir.length)} (${m[1]!.length})`)
+}
+check("title <= 65 char", longTitle.length === 0, longTitle.slice(0, 5).join(", "))
+
 // Sitemap mencakup semua halaman konten (kecuali admin/404).
 const sm = readFileSync(join(siteDir, "sitemap.xml"), "utf8")
 const smMiss = files

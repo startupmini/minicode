@@ -1,7 +1,7 @@
 // SSG web minicode (orkestrator tipis).
 // Alur: landing + docs + blog -> site/ + sitemap + robots + 404 + aset.
 // Tanpa dependensi: hanya node:fs/path. Output site/ di-gitignore.
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { blogLastmod, buildBlog } from "./web/blog.ts"
 import { buildChangelog, buildDocs } from "./web/docs.ts"
@@ -95,13 +95,20 @@ write("llms-full.txt", buildLlmsFullTxt(repoRoot, base, version))
 // yang dibuktikan adalah kontrol atas host. Satu sumber: web/indexnow-key.txt.
 const indexNowKey = readFileSync(join(webDir, "indexnow-key.txt"), "utf8").trim()
 write(`${indexNowKey}.txt`, indexNowKey)
+// Verifikasi Bing Webmaster (audit SEO 2026-09-18: IndexNow dua siklus
+// sukses, tapi status indeks Bing tak teramati tanpa BWT). Pola sama dengan
+// key IndexNow: file hasil download bing.com/webmasters diletakkan di
+// web/BingSiteAuth.xml, build menyalinnya apa adanya. Tanpa file, build
+// tetap sehat — verifikasi manual BWP tetap jalur browser pemilik.
+const bingAuth = join(webDir, "BingSiteAuth.xml")
+if (existsSync(bingAuth)) write("BingSiteAuth.xml", readFileSync(bingAuth, "utf8"))
 write(
   "robots.txt",
   // AI-crawler eksplisit (riset discoverability 2026-09-17): semua di-ALLOW.
   // `User-agent: *` saja cukup secara mekanis, tapi sektor eksplisit membuat
   // kebijakan situs terbaca sendiri oleh tiap bot — dan jadi tempat
   // dokumentasi bila suatu hari ada crawler yang mau diblokir.
-  [
+  `${[
     "User-agent: *",
     "Allow: /",
     "Disallow: /admin.html",
@@ -128,7 +135,7 @@ write(
     "",
     "# Peta markdown untuk AI/agent: llms.txt (indeks) & llms-full.txt (korpus penuh)",
     `# IndexNow: kirim URL ke api.indexnow.org/indexnow dgn key ${indexNowKey}`,
-  ].join("\n") + "\n",
+  ].join("\n")}\n`,
 )
 write(
   "sitemap.xml",

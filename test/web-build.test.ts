@@ -14,7 +14,7 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { blogDateFmt, buildBlog, formatBlogDate } from "../scripts/web/blog.ts"
+import { blogDateFmt, buildBlog, formatBlogDate, relatedPosts } from "../scripts/web/blog.ts"
 import { parsePlanStatus } from "../scripts/web/changelog.ts"
 import { renderDocGrid, renderDocHead, renderDocNav, stripMdSection } from "../scripts/web/docs.ts"
 import { parseFrontmatter } from "../scripts/web/fm.ts"
@@ -254,7 +254,9 @@ describe("web ssg", () => {
       "utf8",
     )
     const fm = parseFrontmatter(raw, "x")
-    expect(fm.title).toBe("Kenapa Minicode bekerja di terminal biasa, bukan layar khusus")
+    // Judul dipangkas 2026-09-18 (audit SEO: <=65 char termasuk sufiks
+    // " — Minicode" di layout, supaya tak terpotong di SERP).
+    expect(fm.title).toBe("Kenapa Minicode bekerja di terminal biasa")
   })
 
   test("JSON-LD valid JSON di semua halaman (P1 web)", () => {
@@ -276,6 +278,45 @@ describe("web ssg", () => {
       const typeOk = typeof doc["@type"] === "string" || (doc["@graph"]?.length ?? 0) > 0
       expect(typeOk, p).toBe(true)
     }
+  })
+
+  test("title SERP <=65 char termasuk sufiks layout (audit SEO 2026-09-18)", () => {
+    // Regresi: 3 judul post 72–77 char terpotong di SERP. Sufiks
+    // " — Minicode" (layout) selalu menempel di <title>, jadi dihitung.
+    const SUFFIX = " — Minicode"
+    const dir = join(repoRoot, "content", "blog")
+    for (const f of readdirSync(dir).filter((x) => x.endsWith(".md") && !x.startsWith("_"))) {
+      const fm = parseFrontmatter(readFileSync(join(dir, f), "utf8"), f)
+      expect(fm.title.length + SUFFIX.length, `${f}: "${fm.title}"`).toBeLessThanOrEqual(65)
+    }
+  })
+
+  test("relatedPosts: tag-share dulu, fallback terbaru, blok tak pernah kosong", () => {
+    // Regresi blok "Postingan terkait" (audit SEO): post ber-tag unik dulu
+    // menghasilkan blok kosong; fallback menjaga blok tetap terisi.
+    const mk = (slug: string, tags: string[]) =>
+      ({ slug, fm: { tags } }) as unknown as Parameters<typeof relatedPosts>[0][number]
+    const posts = [mk("a", ["ai"]), mk("b", ["ai"]), mk("c", ["unik"]), mk("d", ["x"])]
+    // Post ber-tag umum: relasi tag didahulukan.
+    const rA = relatedPosts(posts, "a")
+    expect(rA[0]!.slug).toBe("b")
+    expect(rA).toHaveLength(3)
+    // Post ber-tag unik: tetap terisi (fallback post terbaru lain).
+    const rC = relatedPosts(posts, "c")
+    expect(rC).toHaveLength(3)
+    expect(rC.some((r) => r.slug === "c")).toBe(false)
+    // Post tunggal di blog: blok kosong itu jujur (tak ada yang terkait).
+    expect(relatedPosts([mk("solo", ["ai"])], "solo")).toHaveLength(0)
+  })
+
+  test("BingSiteAuth.xml: bila ada di web/, ikut utuh ke site/ (verifikasi BWT)", () => {
+    // File hasil download bing.com/webmasters diletakkan maintainer di web/;
+    // build menyalinnya apa adanya (pola key IndexNow). Tanpa file, build
+    // tetap sah — verifikasi BWT tetap tanggung jawab browser pemilik.
+    const src = join(repoRoot, "web", "BingSiteAuth.xml")
+    const site = join(repoRoot, "site")
+    if (!existsSync(src) || !existsSync(site)) return
+    expect(readFileSync(join(site, "BingSiteAuth.xml"), "utf8")).toBe(readFileSync(src, "utf8"))
   })
 
   test("identitas repo konsisten ke startupmini (FIX#4 web)", () => {
@@ -321,7 +362,9 @@ describe("web ssg", () => {
     const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
       homepage: string
     }
-    expect(pkg.homepage).toContain("startupmini/minicode")
+    // Homepage npm = situs (audit SEO 2026-09-18: kanal authority ke domain);
+    // identitas repo dibawa field `repository` yang tetap ke startupmini.
+    expect(pkg.homepage).toBe("https://minicode.fun")
   })
 
   test("agents.md plan-child jujur: tanpa todo_write (FIX#6 web)", () => {

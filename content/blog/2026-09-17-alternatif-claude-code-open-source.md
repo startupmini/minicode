@@ -1,5 +1,5 @@
 ---
-title: "Alternatif Claude Code yang open source: Minicode di terminal"
+title: "Alternatif Claude Code open source di terminal"
 date: 2026-09-17
 tags: [ai, llm, coding-agent]
 desc: "Cari alternatif Claude Code yang open source dan jalan di terminal? Minicode: MIT, zero-dep, tiap langkah terlihat di scrollback. Perbandingan jujur."

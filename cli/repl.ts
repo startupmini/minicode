@@ -400,6 +400,12 @@ export async function runRepl(ctx: CliSession): Promise<void> {
           if (chunk.includes(0x03)) ctrl.abort()
         }
     process.stdin.resume()
+    // O1 (audit UI 2026-09): approval `askLine` di tengah turn menempelkan
+    // listener "data" KEDUA di atas onBusyKey ini — byte yang sama (mis.
+    // Ctrl+C) diterima keduanya. SENGAJA tidak di-refactor: onBusyKey abort
+    // turn, askLine membatalkan approval menjadi deny via raceAbort
+    // (permission.ts) — gabungannya fail-closed ke arah aman. Jangan
+    // "merapikan" dengan melepas salah satunya tanpa memikirkan ulang.
     process.stdin.on("data", onBusyKey)
     const turnStart = Date.now()
     try {

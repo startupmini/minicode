@@ -150,6 +150,15 @@ error: `✗ pesan actionable` sekali per kegagalan (`takePendingError`).
 - `test/tui-format.test.ts` (describe kontrak output) — I2/I7/I8 (ledger
   newline, tanpa bocor isi, stdout/stderr terpisah, 20 tool tanpa overlap).
 - `test/theme.test.ts` — I6 (warna mati saat stdout non-TTY walau COLORTERM).
+- `test/ansi-fragmentation.test.ts` — I6/I8 (escape terbelah antar-chunk
+  disambung sebelum sanitasi: CSI/SGR/OSC/malformed/unterminated; ekor
+  dibuang deterministik saat completed/abort/error).
+- `test/non-tty-output.test.ts` — I6 (non-TTY nol ANSI tak-diinginkan di
+  stdout, termasuk pipe proses nyata; cabang TTY tak over-strip).
+- `test/thinking-truncation.test.ts` — I12 (buffer thinking yang memotong
+  head membawa marker, bukan diam-diam).
+- `test/ui-combined.test.ts` — I2/I6/I7 (satu sistem: teks model
+  terfragmentasi + tool + resize + footer sticky dalam satu stdout mock).
 - `test/repl-linear.test.ts` / `tui-classic` — I5 interaksi user
   (Ctrl+C/Esc/idle).
 - `test/ui-boundary.test.ts` — I1/I3 batas lapisan (ui tak impor keluar).

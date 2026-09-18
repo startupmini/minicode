@@ -17,7 +17,13 @@ import { formatArgsPreview, formatProviderError, formatUsage } from "../render/f
 import { highlightCode } from "../render/highlight.ts"
 import { decorateMarkdown, type FenceMatch, parseFence } from "../render/markdown.ts"
 import { reasoning } from "../render/reasoning.ts"
-import { sanitizeAnsi, sanitizeAnsiLine } from "../render/sanitize.ts"
+import {
+  cleanUntrusted,
+  createStreamSanitizer,
+  sanitizeAnsi,
+  sanitizeAnsiLine,
+  stripSgr,
+} from "../render/sanitize.ts"
 import { c, glyphs, stripAnsi } from "../render/theme.ts"
 import { displayWidth, truncateToWidth } from "../render/width.ts"
 import { formatWrapped } from "../render/wrap.ts"
@@ -39,7 +45,8 @@ export function getLastTurnText(): string {
 }
 const rememberTurn = (s: string) => {
   if (!s) return
-  lastTurnText += s
+  // Samakan dengan yang terlihat: kebijakan pipa (F2) berlaku juga untuk /copy.
+  lastTurnText += process.stdout.isTTY ? s : stripSgr(s)
   if (lastTurnText.length > LAST_TURN_MAX_CHARS)
     lastTurnText = lastTurnText.slice(-LAST_TURN_MAX_CHARS)
 }
@@ -60,8 +67,10 @@ export function writeClipboardOsc52(text: string): boolean {
   return true
 }
 
-const wOut = (s: string) => runWithoutStatus(() => process.stdout.write(s))
-const wErr = (s: string) => runWithoutStatus(() => process.stderr.write(s))
+const wOut = (s: string) =>
+  runWithoutStatus(() => process.stdout.write(process.stdout.isTTY ? s : stripSgr(s)))
+const wErr = (s: string) =>
+  runWithoutStatus(() => process.stderr.write(process.stdout.isTTY ? s : stripSgr(s)))
 
 // Error provider terakhir turn ini — diingat, BUKAN dicetak langsung.
 // Alasan: error tengah-turn sering pulih via fallback router; mencetak tiap
@@ -103,6 +112,15 @@ function patchBlocks(patches: unknown): [string, string] {
 
 export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => void {
   let streamBuffer = ""
+  // Sanitizer sadar-stream per aliran teks (temuan F1): ekor escape yang
+  // terpotong di batas chunk ditahan dan disambung ke chunk berikut SEBELUM
+  // sanitasi — tanpa ini "ESC[" + "32m" tampil literal. Satu instans per
+  // aliran (model/reasoning/bash) agar state ekor tak tercampur. Ekor yang
+  // tersisa saat turn selesai/detach DIBUANG (flush di bawah): escape tanpa
+  // teks lanjutan tak punya efek tampak kecuali mutasi state terminal.
+  const textSan = createStreamSanitizer()
+  const reasoningSan = createStreamSanitizer()
+  const bashSan = createStreamSanitizer()
   // State fence dipegang DI SINI, bukan di decorateMarkdown: baris datang per
   // event streaming, sedangkan decorateMarkdown memproses satu teks utuh.
   // Sebelumnya `line.includes("```")` toggle naif → fence ~~~ tidak dikenal,
@@ -115,6 +133,12 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   // menambah baris header baru sebagai ganti menimpa yang lama.
   let thinkState: "off" | "min" | "exp" = "off"
   let thinkingBuf = ""
+  // Batas buffer thinking + marker head-drop (F3): bila kepala dibuang,
+  // operator wajib tahu dari /expand bahwa isi tak lengkap — jangan biarkan
+  // ia percaya seluruh thinking tersedia. Terminologi mengikuti marker
+  // truncasi lain ("… (N more…)", ", capped 1MB").
+  const THINKING_BUF_MAX = 200_000
+  const THINKING_TRUNCATED_MARKER = "… (earlier thinking truncated)\n"
   // Sisa baris reasoning yang belum ber-newline (mode expanded): di-flush
   // per baris utuh agar tampilan rapi, bukan salad fragmen per chunk.
   let reasoningLine = ""
@@ -264,6 +288,11 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         flushLine(streamBuffer)
         streamBuffer = ""
       }
+      // Ekor escape yang tertahan (F1) dibuang di sini — deterministik, tak
+      // pernah bocor mentah; begitu pula saat detach/abort di bawah.
+      textSan.flush()
+      reasoningSan.flush()
+      bashSan.flush()
       flushThinking()
       finalizeAnswer()
       if (opts.verbose) wErr(c.muted(`\n  done\n`))
@@ -284,7 +313,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         answerBuf = ""
         answerTruncated = false
       }
-      const clean = sanitizeAnsi(e.text)
+      const clean = cleanUntrusted(textSan.push(e.text), !!process.stdout.isTTY)
       streamBuffer += clean
       rememberTurn(clean)
       flushBuf()
@@ -316,7 +345,8 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
           if (text) {
             // Teks reasoning TAK TERPERCAYA seperti provider:text — sanitasi
             // saat masuk (bukan saat flush) agar tak ada jalur cetak yang lupa.
-            reasoningLine += sanitizeAnsi(text)
+            // Sadar-stream (F1) + kebijakan pipa (F2) seperti teks model.
+            reasoningLine += cleanUntrusted(reasoningSan.push(text), !!process.stdout.isTTY)
             const parts = reasoningLine.split("\n")
             for (let i = 0; i < parts.length - 1; i++) wErr(c.muted(`${parts[i]}\n`))
             reasoningLine = parts[parts.length - 1] ?? ""
@@ -331,9 +361,19 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
           }
           if (text) {
             // Sama: buffer thinking ikut tercemar bila mentah (flush expanded
-            // mencetaknya verbatim + /expand menampilkannya lagi).
-            thinkingBuf += sanitizeAnsi(text)
-            if (thinkingBuf.length > 200_000) thinkingBuf = thinkingBuf.slice(-200_000)
+            // mencetaknya verbatim + /expand menampilkannya lagi). Sadar-stream
+            // (F1) + kebijakan pipa (F2); marker truncasi di bawah (F3).
+            thinkingBuf += cleanUntrusted(reasoningSan.push(text), !!process.stdout.isTTY)
+            if (thinkingBuf.length > THINKING_BUF_MAX) {
+              // Total ber-marker dibatasi THINKING_BUF_MAX (= cap per-entry
+              // bufferSection) agar tak ada pemotongan diam-diam kedua di hilir.
+              const body = thinkingBuf.startsWith(THINKING_TRUNCATED_MARKER)
+                ? thinkingBuf.slice(THINKING_TRUNCATED_MARKER.length)
+                : thinkingBuf
+              thinkingBuf =
+                THINKING_TRUNCATED_MARKER +
+                body.slice(-(THINKING_BUF_MAX - THINKING_TRUNCATED_MARKER.length))
+            }
           }
         }
       } else if (e.kind === "usage") {
@@ -343,9 +383,10 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       } else if (e.kind === "bash-output") {
         // Progres bash inkremental — hanya di --verbose supaya output default
         // tidak dibanjiri log build. Ringkasan tetap muncul di execution:completed.
+        // Sadar-stream (F1): progres datang per event seperti teks model.
         if (opts.verbose) {
           const d = e.data as { text?: string }
-          if (d.text) wErr(c.muted(sanitizeAnsi(d.text)))
+          if (d.text) wErr(c.muted(cleanUntrusted(bashSan.push(d.text), !!process.stdout.isTTY)))
         }
       } else if (e.kind === "error") {
         const d = e.data as { message?: string; category?: string }
@@ -540,6 +581,11 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       flushLine(streamBuffer)
       streamBuffer = ""
     }
+    // Ekor escape tertahan (F1) dibuang di sini juga: abort/error/budget
+    // tanpa turn:completed tak boleh meninggalkan ANSI tail.
+    textSan.flush()
+    reasoningSan.flush()
+    bashSan.flush()
     flushReasoningTail()
     flushThinking()
     finalizeAnswer()

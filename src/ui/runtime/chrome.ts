@@ -121,6 +121,13 @@ export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
   let regionOn = false
   let detached = false
   let resizeBound: (() => void) | null = null
+  // Geometri frame footer yang TERAKHIR dilukis (jumlah baris saat itu).
+  // Invarian: repaint SELALU menghapus frame lama dulu bila geometri berubah
+  // dan baris lama masih teralamatkan — tanpa ini setiap resize meninggalkan
+  // satu kopi footer yatim di scrollback (duplikat menumpuk tiap siklus
+  // besar-kecil, terbukti oleh model VT: 5 resize → 4 kopi). null = tidak ada
+  // frame hidup (belum pernah / sudah dilepas / geometri tak teralamatkan).
+  let paintedRows: number | null = null
   // Pulse spark: frame naik saat busy. Timer HANYA hidup selama turn; idle =
   // frame 0 (spark redup). Fail-safe: callback timer dibungkus try/catch dan
   // tak pernah menyentuh jalur turn — animasi mati, turn tetap jalan.
@@ -157,22 +164,76 @@ export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
     regionOn = true
   }
 
+  // Hapus frame footer yang sedang hidup (bila teralamatkan). Dipakai saat
+  // geometri berubah (eraseOldFrame) dan saat detach (frame lengket tak boleh
+  // tertinggal sebagai duplikat salinan scrollback).
+  const erasePaintedFrame = (): void => {
+    if (paintedRows === null) return
+    const r = rows()
+    if (paintedRows - 1 >= 1 && paintedRows <= r) {
+      process.stdout.write(SAVE_CURSOR)
+      process.stdout.write(`\x1b[${paintedRows - 1};1H${CLEAR}`)
+      process.stdout.write(`\x1b[${paintedRows};1H${CLEAR}`)
+      process.stdout.write(RESTORE_CURSOR)
+    }
+    paintedRows = null
+  }
+
+  // Hapus frame footer LAMA bila geometri berubah dan barisnya masih
+  // teralamatkan di layar saat ini. Bila layar menyusut di bawah frame lama
+  // (paintedRows > r), frame lama sudah menjadi scrollback dan tak bisa
+  // dihapus via pengalamatan — catat null (jujur: yatim, bukan hidup) agar
+  // repaint berikut tidak salah mengira ada frame yang dijaga.
+  const eraseOldFrame = (r: number): void => {
+    if (paintedRows === null || paintedRows === r) return
+    erasePaintedFrame()
+  }
+
+  // Satu-satunya jalur yang menyentuh region/frame (present, refresh,
+  // setBusy, onResize SEMUA lewat sini): reset dulu (rekonsiliasi — region
+  // bisa hilang diam-diam saat resize ConPTY atau program anak me-reset;
+  // keyakinan lokal `regionOn` tak pernah dipercaya), lalu tegakkan region
+  // baru + hapus frame lama + lukis frame baru (kecuali pemanggil melukis
+  // sendiri dalam bingkai SYNC-nya, mis. present). Tiap pemanggilan sinkron
+  // penuh — tak ada interleaving antar-repaint (JS single thread), jadi
+  // state selalu konsisten antar-repaint tanpa lock.
+  const reconcile = (r: number, paint = true): void => {
+    if (detached) return
+    process.stdout.write(SAVE_CURSOR)
+    process.stdout.write(RESET_REGION)
+    process.stdout.write(RESTORE_CURSOR)
+    regionOn = false
+    if (r < 10) {
+      // Terlalu pendek: jangan tegakkan apa pun. Frame hidup (bila ada)
+      // kemungkinan besar terdorong reflow ke 2 baris dasar layar kecil —
+      // bersihkan keduanya agar tak menjadi duplikat permanen saat tumbuh
+      // kembali (bukti model VT: susut-ke-8 lalu tumbuh → 2 footer hidup).
+      // Bila reflow justru memotong bawah, ini hanya mengosongkan 2 baris
+      // viewport (scrollback utuh, pulih oleh output berikut) — tak pernah
+      // menyentuh baris di luar 2 dasar. Tanpa frame hidup: diam total.
+      if (paintedRows !== null && r >= 2) {
+        process.stdout.write(SAVE_CURSOR)
+        process.stdout.write(`\x1b[${r - 1};1H${CLEAR}`)
+        process.stdout.write(`\x1b[${r};1H${CLEAR}`)
+        process.stdout.write(RESTORE_CURSOR)
+      }
+      paintedRows = null
+      return
+    }
+    enableRegion(r)
+    eraseOldFrame(r)
+    if (paint) {
+      paintFooter(r)
+      paintedRows = r
+    }
+  }
+
   const onResize = (): void => {
     try {
-      if (!regionOn || detached) return
-      const r = rows()
-      if (r < 10) {
-        // Terlalu pendek: lepas region agar tidak aneh; present berikutnya
-        // akan me-reset ulang bila sudah muat. DECSTBM reset juga bisa
-        // memindahkan kursor → save/restore seperti enableRegion.
-        process.stdout.write(SAVE_CURSOR)
-        process.stdout.write(RESET_REGION)
-        process.stdout.write(RESTORE_CURSOR)
-        regionOn = false
-        return
-      }
-      enableRegion(r)
-      paintFooter(r)
+      if (detached) return
+      // Resize = invalidasi total: geometri lama mati, rekonsiliasi penuh.
+      // Sengaja TANPA early-return regionOn — keyakinan lokal bisa basi.
+      reconcile(rows())
     } catch {}
   }
 
@@ -185,9 +246,8 @@ export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
     refresh() {
       if (detached) return
       try {
-        const r = rows()
-        if (r < 10 || !regionOn) return
-        paintFooter(r)
+        // Sama seperti present tapi tanpa memindahkan kursor (prompt aktif).
+        reconcile(rows())
       } catch {}
     },
     setBusy(busy: boolean) {
@@ -199,8 +259,10 @@ export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
           pulseTimer = setInterval(() => {
             try {
               frame += 1
-              const r = rows()
-              if (regionOn && r >= 10) paintFooter(r)
+              // Lewat reconcile (bukan paint langsung): resize di tengah turn
+              // ikut menyembuhkan region + menghapus frame lama, bukan
+              // menumpuk frame baru di atasnya.
+              reconcile(rows())
             } catch {
               // Runtime rewel: matikan animasi, jangan pernah gagalkan turn.
               stopPulse()
@@ -209,8 +271,7 @@ export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
         } else {
           stopPulse()
           frame = 0
-          const r = rows()
-          if (regionOn && r >= 10) paintFooter(r) // kembali redup seketika
+          reconcile(rows()) // kembali redup seketika
         }
       } catch {}
     },
@@ -220,7 +281,6 @@ export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
         const r = rows()
         if (r < 10) return // terminal terlalu pendek — jangan sentuh apa pun
         if (!regionOn) {
-          enableRegion(r)
           if (!resizeBound) {
             resizeBound = onResize
             try {
@@ -228,9 +288,13 @@ export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
             } catch {}
           }
         }
+        // Rekonsiliasi TANPA lukis (paint=false): lukisan dilakukan sekali di
+        // bawah dalam bingkai SYNC agar tak ada frame ganda per present.
+        reconcile(r, false)
         // Satu frame sinkron agar repaint footer tidak robek.
         process.stdout.write(SYNC_START)
         paintFooter(r)
+        paintedRows = r
         // Kursor ke baris input (tepat di atas blank footer — kini 2 baris total).
         process.stdout.write(`\x1b[${r - 2};1H`)
         process.stdout.write(SYNC_END)
@@ -247,6 +311,10 @@ export function createFooterChrome(opts: FooterChromeOptions): FooterChrome {
           } catch {}
           resizeBound = null
         }
+        // Hapus frame lengket dulu agar salinan scrollback di bawah bukan
+        // duplikatnya (sebelumnya: reset lalu cetak → dua baris status
+        // terlihat bersamaan sesaat).
+        erasePaintedFrame()
         if (regionOn) {
           process.stdout.write(RESET_REGION)
           regionOn = false

@@ -78,3 +78,106 @@ export function sanitizeAnsi(s: string): string {
 export function sanitizeAnsiLine(s: string): string {
   return sanitizeAnsi(s).replace(/\n/g, " ")
 }
+
+// ── Sanitasi sadar-stream (temuan F1) ──
+//
+// sanitizeAnsi() bekerja pada string utuh, sedangkan teks model datang
+// per-chunk: escape yang terpotong tepat di batas ("ESC[" + "32mHello")
+// tampil literal "32mHello". Strateginya: tahan ekor yang MUNGKIN sekuens
+// tak-lengkap, sambung ke chunk berikut SEBELUM sanitasi. Hanya ekor
+// tak-lengkap yang ditahan — sekuens lengkap langsung disanitasi seperti
+// dulu (perilaku lama utuh, tanpa duplikasi logika grammar: aturan
+// "lengkap vs terpotong" mencerminkan escapeLength di width.ts).
+
+/** Batas ekor tahan: OSC tanpa terminator tak boleh tumbuh tanpa batas. */
+const MAX_ESC_TAIL = 4096
+
+function isCsiParamOrInter(code: number): boolean {
+  // Sama seperti csiByteKind di width.ts: parameter 0x30–0x3F, intermediate
+  // 0x21–0x2F. SPASI bukan intermediate (komentar di width.ts).
+  return (code >= 0x30 && code <= 0x3f) || (code >= 0x21 && code <= 0x2f)
+}
+
+/**
+ * Pisahkan kemungkinan ekor escape tak-lengkap di ujung string.
+ * Kembalikan {head, tail}: head aman disanitasi SEKARANG, tail wajib
+ * disambung ke chunk berikut (atau dibuang saat stream selesai — tak pernah
+ * render mentah). Sekuens lengkap tidak pernah ditahan.
+ */
+export function splitTrailingEscape(s: string): { head: string; tail: string } {
+  const idx = s.lastIndexOf("\x1b")
+  if (idx === -1) return { head: s, tail: "" }
+  const next = s[idx + 1]
+  // ESC tunggal di ujung: bisa menjadi awal apa pun → tahan.
+  if (next === undefined) return { head: s.slice(0, idx), tail: s.slice(idx) }
+  if (next === "[") {
+    // CSI: lengkap bila ada byte final sebelum string habis.
+    let j = idx + 2
+    while (j < s.length && isCsiParamOrInter(s.charCodeAt(j)!)) j++
+    if (j >= s.length) return { head: s.slice(0, idx), tail: s.slice(idx) }
+    return { head: s, tail: "" }
+  }
+  if (next === "]" || next === "P" || next === "_" || next === "^" || next === "X") {
+    // OSC/DCS/APC/PM/SOS: lengkap bila ada terminator BEL atau ESC \.
+    const rest = s.slice(idx + 2)
+    if (!rest.includes("\u0007") && !rest.includes("\x1b\\")) {
+      return { head: s.slice(0, idx), tail: s.slice(idx) }
+    }
+    return { head: s, tail: "" }
+  }
+  if (next === "(" || next === ")" || next === "#") {
+    // Charset 3-byte: tahan bila terpotong.
+    if (s.length - idx < 3) return { head: s.slice(0, idx), tail: s.slice(idx) }
+    return { head: s, tail: "" }
+  }
+  // Fe 2-byte (ESC 7, ESC M, …): lengkap.
+  return { head: s, tail: "" }
+}
+
+/**
+ * Sanitizer stateful untuk satu stream teks: push() per chunk, flush() saat
+ * stream selesai. Ekor tak-lengkap yang tersisa di flush() DIBUANG (bukan
+ * dirender) — escape tanpa teks lanjutan tak punya efek tampak kecuali
+ * mutasi state terminal, yang tak pernah diinginkan dari teks tak-terpercaya.
+ */
+export interface StreamSanitizer {
+  push(chunk: string): string
+  flush(): string
+}
+
+export function createStreamSanitizer(): StreamSanitizer {
+  let tail = ""
+  return {
+    push(chunk: string): string {
+      const combined = tail + chunk
+      const part = splitTrailingEscape(combined)
+      tail = part.tail.length > MAX_ESC_TAIL ? "" : part.tail
+      return sanitizeAnsi(part.head)
+    },
+    flush(): string {
+      tail = ""
+      return ""
+    },
+  }
+}
+
+// ── Kebijakan ANSI non-TTY (temuan F2) ──
+
+const ESC_CH = String.fromCharCode(27)
+
+/** Buang SGR (sesudah sanitizeAnsi, hanya ini yang tersisa) untuk pipa. */
+export function stripSgr(s: string): string {
+  // Pola dibangun tanpa literal kontrol (aturan lint noControlCharactersInRegex).
+  return s.replace(new RegExp(`${ESC_CH}\\[[0-9;:]*m`, "g"), "")
+}
+
+/**
+ * Satu pintu kebijakan ANSI teks tak-terpercaya: TTY → SGR dipertahankan
+ * (renderer mewarnai); non-TTY → semua ANSI dibuang agar pipe/CI
+ * deterministik. Cerminan colorLevel() di theme.ts yang mengacu
+ * stdout.isTTY — satu aturan untuk semua stream.
+ */
+export function cleanUntrusted(s: string, stdoutTty: boolean): string {
+  const clean = sanitizeAnsi(s)
+  return stdoutTty ? clean : stripSgr(clean)
+}

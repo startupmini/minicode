@@ -42,6 +42,22 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   Otomatis (2026-09-18): workflow web.yml menambah job `indexnow` (needs:
   deploy) — tiap deploy sukses langsung submit sitemap ke IndexNow tanpa
   langkah manual; jalur manual jadi fallback ad-hoc.
+  Guard integritas URL (2026-09-18): web:check + test web-build kini
+  memvalidasi SEMUA URL absolut minicode.fun di llms.txt/llms-full.txt/
+  rss.xml menunjuk file site/ yang ada (±160 kemunculan) — lahir dari
+  audit yang menemukan ](../PLAN.md) lolos mapper (404 konteks root).
+  Jadwal mingguan (2026-09-18): web.yml cron Senin 03:17 UTC — tanpa
+  deploy pun sitemap tetap dikirim (build/deploy di-skip saat schedule,
+  indexnow jalan utk deploy sukses ATAU skipped); concurrency grup pages
+  dipindah ke job deploy agar run terjadwal tak bisa membatalkan deploy
+  push yang sedang berjalan.
+  Sitemap lastmod (2026-09-18): tiap URL kini bawa <lastmod> — post blog
+  dari frontmatter (sumber sama via blogLastmod, tak maju tiap deploy),
+  halaman lain stempel waktu build; guard test mengunci 34 entri +
+  silang-cek tanggal post vs sumber. Atribut lain DITINJAU & DITOLAK
+  (2026-09-18): priority/changefreq diabaikan Google (docs Search Central
+  dicek langsung), hreflang tak relevan utk situs satu bahasa — keputusan
+  dicatat web/README.md.
 - ✅ DISCOVERABILITY AI/AGENT (2026-09-17): situs mudah ditemukan & dipelajari
   AI-assistant/agent yang browsing: (1) `llms-full.txt` — korpus seluruh docs
   dalam satu markdown (±140 KB) digenerate dari SUMBER sama dgn sitemap

@@ -815,6 +815,61 @@ describe("web audit 2026-09-16", () => {
     expect(graph["@graph"].map((o) => o["@type"])).toContain("SoftwareApplication")
   })
 
+  test("integritas URL: link absolut di llms.txt/llms-full.txt/RSS menunjuk file site/ yang ada", () => {
+    // Audit 2026-09-18 menemukan ](../PLAN.md) lolos mapper (404 di konteks
+    // root situs). Guard ini menangkap kelas yang sama saat build: SEMUA URL
+    // absolut minicode.fun di tiga artefak non-HTML wajib menunjuk file yang
+    // benar-benar ada — link mati di sini = janji bohong ke crawler & agent.
+    if (!existsSync(join(repoRoot, "site"))) return
+    const urls = new Set<string>()
+    for (const t of ["llms.txt", "llms-full.txt", "rss.xml"]) {
+      const raw = readFileSync(join(repoRoot, "site", t), "utf8")
+      // Terminator: ) < > " ' + whitespace; tanda baca akhir kalimat dibuang
+      // (prosa boleh menutup URL dengan titik — bukan bagian URL).
+      for (const m of raw.matchAll(/https:\/\/minicode\.fun[^)"<>\s]*/g)) {
+        urls.add(m[0]!.replace(/[.,;:!?]+$/, ""))
+      }
+    }
+    expect(urls.size).toBeGreaterThan(0)
+    const ada = (u: URL): boolean => {
+      if (u.pathname === "/" || u.pathname === "") {
+        return existsSync(join(repoRoot, "site", "index.html"))
+      }
+      const p = u.pathname.endsWith("/") ? join(u.pathname, "index.html") : u.pathname
+      return existsSync(join(repoRoot, "site", p))
+    }
+    const mati: string[] = []
+    for (const raw of urls) {
+      const u = new URL(raw)
+      if (u.host !== "minicode.fun") mati.push(`${raw} (host asing)`)
+      else if (!ada(u)) mati.push(raw)
+    }
+    expect(mati, `URL mati: ${mati.join(", ")}`).toEqual([])
+  })
+
+  test("sitemap: tiap URL punya lastmod; tanggal post = frontmatter", () => {
+    // Lastmod = sinyal kesegaran utk crawler. Post blog harus dari
+    // frontmatter (bukan waktu build) agar tanggal tidak maju setiap deploy;
+    // guard ini mencegah regresi ke sitemap tanpa lastmod.
+    if (!existsSync(join(repoRoot, "site"))) return
+    const sm = readFileSync(join(repoRoot, "site", "sitemap.xml"), "utf8")
+    const entries = [...sm.matchAll(/<url><loc>([^<]+)<\/loc><lastmod>([^<]+)<\/lastmod><\/url>/g)]
+    expect(entries.length).toBe(34)
+    for (const [, , lastmod] of entries) {
+      expect(lastmod).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    }
+    // Satu post blog dicek silang dgn sumbernya (content/blog).
+    const rename = entries.find(([, loc]) => loc!.includes("rename-paket-npm"))!
+    expect(rename).toBeDefined()
+    const fmDate = readFileSync(
+      join(repoRoot, "content", "blog", "2026-09-17-rename-paket-npm-minicode-ai.md"),
+      "utf8",
+    )
+      .match(/^date: (.+)$/m)![1]!
+      .trim()
+    expect(rename[2]).toBe(fmDate)
+  })
+
   test("SEO: llms.txt digenerate + breadcrumb JSON-LD + judul tak dobel", () => {
     // Semua asersi membaca artefak build — CI checkout segar melewatkannya
     // (web:build jalan di job web-check); lokal selalu ada setelah web:build.

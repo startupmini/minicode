@@ -173,7 +173,10 @@ Situs dibuat mudah ditemukan & dipelajari AI-assistant/agent yang browsing:
 root site di-build dari `web/indexnow-key.txt` (bukan rahasia; protokol
 membuktikan kontrol host), robots memuat petunjuknya.
 
-Setelah tiap deploy (atau saat ada halaman baru):
+Otomatis: tiap deploy `web.yml` kini **selalu** submit sitemap ke IndexNow
+— job `indexnow` berjalan setelah job `deploy` sukses (syarat protokol:
+key file harus sudah live; script mem-preflight sendiri). Jalur manual
+tetap ada untuk dorongan ad-hoc tanpa deploy:
 
 ```bash
 bun run web:build && bun run web:indexnow            # submit semua URL

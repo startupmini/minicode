@@ -49,3 +49,21 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+  # Submit sitemap ke IndexNow (Bing/Yandex/Seznam) tiap selesai deploy —
+  # pengganti ping sitemap Google/Bing yang sudah mati (2025). `needs: deploy`
+  # bukan sekadar urutan: protokol IndexNow memvalidasi GET /<key>.txt di
+  # host, jadi submit hanya valid setelah artifact benar-benar live (script
+  # mem-preflight itu sendiri). URL sama dikirim ulang aman — IndexNow
+  # mendebounce. web:build butuh nol dependensi npm, jadi tanpa `bun install`.
+  indexnow:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Build web
+        run: bun run web:build
+      - name: Submit sitemap ke IndexNow
+        run: bun run web:indexnow

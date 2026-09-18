@@ -39,6 +39,9 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   (syarat protokol), POST urlList; `--dry-run` utk QA. Checklist Search
   Console manual (submit sitemap, request indexing, pantau Pages/Performance)
   terdokumentasi di web/README.md — langkah browser-only pemilik.
+  Otomatis (2026-09-18): workflow web.yml menambah job `indexnow` (needs:
+  deploy) — tiap deploy sukses langsung submit sitemap ke IndexNow tanpa
+  langkah manual; jalur manual jadi fallback ad-hoc.
 - ✅ DISCOVERABILITY AI/AGENT (2026-09-17): situs mudah ditemukan & dipelajari
   AI-assistant/agent yang browsing: (1) `llms-full.txt` — korpus seluruh docs
   dalam satu markdown (±140 KB) digenerate dari SUMBER sama dgn sitemap

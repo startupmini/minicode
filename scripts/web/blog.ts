@@ -45,6 +45,10 @@ export function blogLastmod(repoRoot: string, base: string): Map<string, string>
 // (post ber-tag unik seperti rename-paket dulu tanpa blok). Max 3 supaya
 // daftar tak membengkak — bukan pengganti curation: saat post >12, ganti
 // ke sambungan manual/semantik. Murni & diekspor agar bisa diuji.
+// Urutan ambil: dari DEPAN gabungan [shared, fill] — slice(-max) lama mengambil
+// kandidat paling tua dan membuang post tag-share paling relevan begitu
+// kandidat >3 (terbukti di produksi 2026-09-18: post baru tak muncul di blok
+// post serumpun).
 export function relatedPosts<T extends { slug: string; fm: { tags: string[] } }>(
   posts: T[],
   slug: string,
@@ -54,7 +58,7 @@ export function relatedPosts<T extends { slug: string; fm: { tags: string[] } }>
   const others = posts.filter((r) => r.slug !== slug)
   const shared = others.filter((r) => self && r.fm.tags.some((t) => self.fm.tags.includes(t)))
   const fill = others.filter((r) => !shared.includes(r))
-  return [...shared, ...fill].slice(-max)
+  return [...shared, ...fill].slice(0, max)
 }
 
 export function buildBlog(

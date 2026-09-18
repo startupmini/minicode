@@ -122,6 +122,12 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   cross-link dua arah dgn artikel #1. Title 57 char (guard 65), desc 156.
   Post ke-6 → build 40 halaman; RSS/sitemap/Article LD+inLanguage otomatis
   dari builder. Gate: web:check lolos, tsc OK, web test 52/52.
+- ✅ FIX relatedPosts slice (2026-09-18): verifikasi produksi menemukan bug
+  desain — slice(-max) mengambil kandidat PALING TUA; post tag-share paling
+  relevan terbuang begitu kandidat >3 (terbukti: post baru tak muncul di blok
+  artikel #1). Kini slice(0, max) — relevan didahulukan, fallback mengisi
+  sisa. Guard unit test relatedPosts tetap hijau (premisnya tidak menyentuh
+  urutan).
 - ✅ DISCOVERABILITY AI/AGENT (2026-09-17): situs mudah ditemukan & dipelajari
   AI-assistant/agent yang browsing: (1) `llms-full.txt` — korpus seluruh docs
   dalam satu markdown (±140 KB) digenerate dari SUMBER sama dgn sitemap

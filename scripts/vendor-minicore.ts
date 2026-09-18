@@ -63,6 +63,18 @@ function hashOf(root: string, files: string[]): string {
   return h.digest("hex").slice(0, 16)
 }
 
+// Fingerprint kedua: file vendor yang BENAR-BENAR ikut paket npm (field
+// `files` di package.json minicode). vendor/minicore/test/fakes.ts SENGAJA
+// tidak ikut (fixture test — dijaga test/pack-integrity.test.ts), jadi hash
+// 19-file di atas TIDAK BISA direproduksi dari tarball terbit. Hash ini
+// menjembatani: siapa pun bisa menghitungnya dari vendor/minicore di dalam
+// paket yang diunduh dan mencocokkannya dengan angka di VENDOR.md.
+const SHIPPED_EXCLUDE = new Set(["test/fakes.ts"])
+function hashShipped(root: string, files: string[]): string {
+  const shipped = files.filter((f) => !SHIPPED_EXCLUDE.has(f))
+  return hashOf(root, shipped)
+}
+
 const vendorFiles = collect(target)
 
 // Verdict terhadap hash yang tercatat di VENDOR.md untuk jalur tanpa-sibling:
@@ -167,6 +179,9 @@ writeFileSync(
     `- source commit: \`${head}\``,
     `- files: ${sourceFiles.length}`,
     `- hash: \`${hashOf(source, sourceFiles)}\``,
+    `- shipped hash: \`${hashShipped(source, sourceFiles)}\` (${sourceFiles.length - SHIPPED_EXCLUDE.size} file) — fingerprint file vendor yang ikut paket npm`,
+    "  (hash di atas mencakup test/fakes.ts yang sengaja tidak ikut paket;",
+    "   verifikasi dari paket terbit: hitung hash vendor/minicore di dalam tarball)",
     "",
     "Perbarui dengan `bun run vendor:minicore` (butuh `../minicore`).",
     "CI memverifikasi kesinkronan lewat `bun run vendor:check`.",

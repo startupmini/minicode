@@ -6,6 +6,10 @@ Salinan kernel MiniCore agar `bun install` tidak membutuhkan clone sibling
 - source commit: `05fc595ad07ccbf3c85d9645948a0621bdce0353`
 - files: 19
 - hash: `0e7bf8d16a31d34d`
+- shipped hash: `5c7433f1258246a3` (18 file) — fingerprint file vendor yang ikut
+  paket npm
+  (hash di atas mencakup test/fakes.ts yang sengaja tidak ikut paket;
+   verifikasi dari paket terbit: hitung hash vendor/minicore di dalam tarball)
 - seam aditif lokal (belum ada di upstream — JANGAN sync membabi buta,
   `bun run vendor:minicore` akan MENGHAPUSnya): `cwd` + `permissionMode`
   (session→loop→executor→ToolContext), `turnCount`/`stepCount` seed,

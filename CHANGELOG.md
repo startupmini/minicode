@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.9.28] - 2026-09-18 — Terminal rendering hardening: stream-aware ANSI + resize-safe footer
+
+### Fixed
+- **Fragmentasi ANSI antar-chunk (F1, HIGH)**: `sanitizeAnsi()` berjalan per-chunk sehingga escape terpotong (`"ESC["` + `"32mHello"`) tampil literal. Kini `splitTrailingEscape()` menahan ekor tak-lengkap (CSI/SGR/OSC/malformed/unterminated) dan `createStreamSanitizer()` menyambungnya ke chunk berikut sebelum sanitasi — satu instans per aliran (model/reasoning/bash), ekor sisa dibuang deterministik saat completed/detach/abort. Terbukti setara whole-string di semua titik belah (properti test).
+- **Kebocoran ANSI ke non-TTY (F2, MEDIUM)**: SGR model lolos mentah ke stdout pipe. Kini kebijakan eksplisit — TTY dipertahankan, non-TTY dibuang (`stripSgr` di `wOut`/`wErr` + `rememberTurn`, cerminan `colorLevel` → `stdout.isTTY`); cabang TTY terbukti tak over-strip, pipe anak nyata nol `ESC[`.
+- **Korupsi layout saat resize (HIGH)**: repaint footer hanya melukis baris dasar baru tanpa menghapus frame lama (5 resize → 4 kopi di model VT) dan tanpa me-reset region yang bisa hilang diam-diam di ConPTY. Kini satu jalur `reconcile()`: reset-dulu → tegakkan region → hapus frame lama (bila teralamatkan) → lukis; dipakai present/refresh/setBusy/onResize. Badai 500 resize + stream: maks 1 footer hidup/iterasi.
+- **Buffer thinking tanpa marker (F3, LOW)**: head-drop kini membawa `… (early thinking truncated)`; overlap listener approval/busy-key (O1) didokumentasikan tanpa refactor (fail-closed).
+
+### Changed
+- Peta proteksi `docs/TERMINAL_CONTRACT.md` + `docs/ARCHITECTURE.html` (pill `v0.9.28`) diselaraskan; tanpa redesign renderer/EventBus/REPL.
+
 ## [0.9.27] - 2026-09-18 — Upstream sync: 10 seam kernel dihilirkan, vendor nol-divergensi
 
 ### Fixed

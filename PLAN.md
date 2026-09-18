@@ -51,6 +51,10 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   indexnow jalan utk deploy sukses ATAU skipped); concurrency grup pages
   dipindah ke job deploy agar run terjadwal tak bisa membatalkan deploy
   push yang sedang berjalan.
+  Sitemap lastmod (2026-09-18): tiap URL kini bawa <lastmod> — post blog
+  dari frontmatter (sumber sama via blogLastmod, tak maju tiap deploy),
+  halaman lain stempel waktu build; guard test mengunci 34 entri +
+  silang-cek tanggal post vs sumber.
 - ✅ DISCOVERABILITY AI/AGENT (2026-09-17): situs mudah ditemukan & dipelajari
   AI-assistant/agent yang browsing: (1) `llms-full.txt` — korpus seluruh docs
   dalam satu markdown (±140 KB) digenerate dari SUMBER sama dgn sitemap

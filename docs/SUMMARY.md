@@ -42,3 +42,11 @@
 * [Kontrak Terminal](terminal.md)
 * [Contributing](contributing.md)
 * [Changelog](changelog.md)
+
+## Internal & Arsitektur (untuk kontributor)
+
+* [Terminal Contract (FROZEN) — 14 invariant](TERMINAL_CONTRACT.md)
+* [Control Plane — kontrak context/budget/compaction](CONTROL-PLANE-MAP.md)
+* [UI Render Pipeline — jalur stream ke terminal](UI_RENDER_PIPELINE.md)
+* [Harness Agent — riset fondasi](HARNESS.md)
+* [Plan UI/UX V6 — arsip hasil](PLAN_UIUX_V6.md)

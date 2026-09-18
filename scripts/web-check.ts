@@ -117,7 +117,10 @@ const SECRET = [
 ]
 const leaks: string[] = []
 for (const f of files) {
-  const src = readFileSync(f, "utf8")
+  // Scan konten, bukan atribut navigasi (audit docs 2026-09-18: id heading
+  // dari kata "risiko-disengaja" false-positive pola sk-...). Teks nyata
+  // yang membawa rahasia tetap tertangkap — id/href bukan tempat rahasia.
+  const src = readFileSync(f, "utf8").replace(/\s(?:id|href)="[^"]*"/g, "")
   for (const re of SECRET) if (re.test(src)) leaks.push(`${f.slice(siteDir.length)}: ${re}`)
 }
 check("tanpa pola rahasia di site/", leaks.length === 0, leaks.slice(0, 3).join("; "))

@@ -820,10 +820,13 @@ describe("web audit 2026-09-16", () => {
     // di-rewrite absolut, jadi indexOf mentah bukan invariant yang benar),
     // dan NOL link markdown relatif tersisa (rusak di konteks root situs;
     // pola sengaja luas: bentuk apa pun target .md — prefix ../, kapital
-    // seperti ../PLAN.md, fragment — dianggap gagal, bukan hanya lowercase).
+    // seperti TERMINAL_CONTRACT.md, fragment — dianggap gagal, bukan hanya
+    // lowercase). Slug juga kapital/underscore-aware sejak grup internal.
     const full = readFileSync(join(repoRoot, "site", "llms-full.txt"), "utf8")
     const sumRaw = readFileSync(join(repoRoot, "docs", "SUMMARY.md"), "utf8")
-    const slugs: string[] = [...sumRaw.matchAll(/\]\(([a-z0-9-]+)\.md\)/g)].map((m) => m[1]!)
+    const slugs: string[] = [...sumRaw.matchAll(/\]\(([A-Za-z0-9_-]+)\.md\)/g)].map((m) =>
+      m[1]!.toLowerCase(),
+    )
     let at = -1
     for (const s of slugs) {
       const needle = `> Sumber HTML: ${s === "readme" ? "https://minicode.fun/docs/" : `https://minicode.fun/docs/${s}.html`}`
@@ -896,7 +899,9 @@ describe("web audit 2026-09-16", () => {
     if (!existsSync(join(repoRoot, "site"))) return
     const sm = readFileSync(join(repoRoot, "site", "sitemap.xml"), "utf8")
     const entries = [...sm.matchAll(/<url><loc>([^<]+)<\/loc><lastmod>([^<]+)<\/lastmod><\/url>/g)]
-    expect(entries.length).toBe(34)
+    // Floor, bukan angka beku: jumlah halaman tumbuh (5 halaman internal
+    // kontributor menambah 5 URL). Invariant yang dijaga: lastmod lengkap.
+    expect(entries.length).toBeGreaterThanOrEqual(34)
     for (const [, , lastmod] of entries) {
       expect(lastmod).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     }

@@ -119,6 +119,28 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
     desc: "Changelog Minicode: perubahan per versi, dari rencana eksekusi.",
     src: "CHANGELOG.md",
   },
+  // Dokumen internal kontributor (SUMMARY grup "Internal & Arsitektur",
+  // audit docs 2026-09-18: sebelumnya orphan dari nav web/llms).
+  terminal_contract: {
+    desc: "Kontrak terminal FROZEN: 14 invariant dan test proteksinya.",
+    src: "docs/TERMINAL_CONTRACT.md",
+  },
+  "control-plane-map": {
+    desc: "Kontrak FROZEN context/usage/cost/budget/compaction/termination.",
+    src: "docs/CONTROL-PLANE-MAP.md",
+  },
+  ui_render_pipeline: {
+    desc: "Peta implementasi jalur provider stream ke terminal, per tahap.",
+    src: "docs/UI_RENDER_PIPELINE.md",
+  },
+  harness: {
+    desc: "Riset fondasi harness: studi 11 codebase, keputusan desain Minicode.",
+    src: "docs/HARNESS.md",
+  },
+  plan_uiux_v6: {
+    desc: "Arsip plan UI/UX V6 (0.7 ke 0.8): target vs hasil terukur.",
+    src: "docs/PLAN_UIUX_V6.md",
+  },
 }
 
 export function readDocNav(repoRoot: string): DocEntry[] {

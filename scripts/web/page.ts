@@ -57,15 +57,20 @@ export function resolveDocLink(file: string, base: string): string {
 
 /** Tautan antar-docs di pipeline HTML (hasil `mdToHtml`): href="x.md". */
 export function mdLinksToHtml(html: string, base = ""): string {
-  return html.replace(/href="([a-z0-9-]+|\.\.\/PLAN)\.md(#[^"]*)?"/g, (_, f: string, h: string) => {
-    return `href="${resolveDocLink(f, base)}${h ?? ""}"`
-  })
+  // Nama file kapital/underscore sah sejak grup "Internal & Arsitektur"
+  // (TERMINAL_CONTRACT.md dll.) masuk SUMMARY — resolveDocLink men-lowercase.
+  return html.replace(
+    /href="([A-Za-z0-9_-]+|\.\.\/(?:PLAN|CHANGELOG))\.md(#[^"]*)?"/g,
+    (_, f: string, h: string) => {
+      return `href="${resolveDocLink(f, base)}${h ?? ""}"`
+    },
+  )
 }
 
 /** Sama untuk markdown mentah (llms-full.txt): ](x.md) → ](URL absolut). */
 export function mdLinksAbsolute(body: string, base: string): string {
   return body.replace(
-    /\]\(([a-z0-9-]+|\.\.\/PLAN)\.md(#[^)\s]*)?\)/g,
+    /\]\(([A-Za-z0-9_-]+|\.\.\/(?:PLAN|CHANGELOG))\.md(#[^)\s]*)?\)/g,
     (_, f: string, h: string) => {
       return `](${resolveDocLink(f, base)}${h ?? ""})`
     },

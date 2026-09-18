@@ -3,7 +3,7 @@
 // Tanpa dependensi: hanya node:fs/path. Output site/ di-gitignore.
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { buildBlog } from "./web/blog.ts"
+import { blogLastmod, buildBlog } from "./web/blog.ts"
 import { buildChangelog, buildDocs } from "./web/docs.ts"
 import { landingHero, landingHow, landingTasks } from "./web/landing1.ts"
 import {
@@ -84,6 +84,9 @@ const urls = [
   ...buildDocs(repoRoot, webDir, base, version, write),
   ...buildBlog(repoRoot, webDir, siteDir, base, version, write),
 ]
+// Tanggal lastmod sitemap: post blog dari frontmatter, lainnya stempel build.
+const blogLastmods = blogLastmod(repoRoot, base)
+const buildStamp = new Date().toISOString().slice(0, 10)
 
 write("llms.txt", buildLlmsTxt(repoRoot, base, version))
 write("llms-full.txt", buildLlmsFullTxt(repoRoot, base, version))
@@ -129,10 +132,17 @@ write(
 )
 write(
   "sitemap.xml",
+  // <lastmod> (format W3CDate YYYY-MM-DD, protokol sitemap 0.9): sinyal
+  // kesegaran utk crawler. Post blog = tanggal frontmatter (sumber sama dgn
+  // buildBlog via blogLastmod); halaman lain = waktu build — kontennya
+  // statis antar-build, jadi berubah hanya saat build baru mendeploy.
   `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">` +
     [...new Set(urls)]
       .sort()
-      .map((u) => `<url><loc>${u}</loc></url>`)
+      .map((u) => {
+        const lastmod = blogLastmods.get(u) ?? buildStamp
+        return `<url><loc>${u}</loc><lastmod>${lastmod}</lastmod></url>`
+      })
       .join("") +
     `</urlset>`,
 )

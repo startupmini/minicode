@@ -19,6 +19,26 @@ export function formatBlogDate(iso: string): string {
   return Number.isFinite(ms) ? blogDateFmt.format(new Date(ms)) : iso
 }
 
+// Satu sumber slug (buildBlog & blogLastmod): "2026-09-17-judul.md" -> "judul".
+const slugOf = (file: string): string =>
+  file.replace(/^\d{4}-\d{2}-\d{2}-/, "").replace(/\.md$/, "")
+
+// Peta URL post -> tanggal frontmatter, untuk <lastmod> sitemap. Sumber sama
+// dgn buildBlog (parseFrontmatter) supaya tanggal di halaman & sitemap tak
+// bisa divergen; post tanpa tanggal valid tidak ikut (sitemap builder pakai
+// fallback waktu build utk URL tanpa tanggal).
+export function blogLastmod(repoRoot: string, base: string): Map<string, string> {
+  const dir = join(repoRoot, "content", "blog")
+  const out = new Map<string, string>()
+  if (!existsSync(dir)) return out
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith(".md") || f.startsWith("_")) continue
+    const fm = parseFrontmatter(readFileSync(join(dir, f), "utf8"), f.replace(/\.md$/, ""))
+    if (Number.isFinite(Date.parse(fm.date))) out.set(`${base}/blog/${slugOf(f)}.html`, fm.date)
+  }
+  return out
+}
+
 export function buildBlog(
   repoRoot: string,
   webDir: string,
@@ -37,7 +57,7 @@ export function buildBlog(
   const posts = files.map((f) => {
     const raw = readFileSync(join(dir, f), "utf8")
     const fm = parseFrontmatter(raw, f.replace(/\.md$/, ""))
-    const slug = f.replace(/^\d{4}-\d{2}-\d{2}-/, "").replace(/\.md$/, "")
+    const slug = slugOf(f)
     return { slug, fm, desc: fm.desc || firstPara(fm.body).slice(0, 160) }
   }) // Tanggal tampil: formatBlogDate (module scope, UTC — lihat komentar di
   // atas). Tanggal rusak → tampil mentah tanpa <time> (sama seperti pubDate).

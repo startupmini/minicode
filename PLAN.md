@@ -113,6 +113,15 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   atribut id/href (teks nyata tetap penuh); (c) test count sitemap 34 →
   floor >=34 (halaman tumbuh; invariant lastmod tetap dijaga).
   Gate: tsc OK, biome bersih, 2166 test 0 fail, web:check lolos (39 halaman).
+- ✅ ARTIKEL #2 QUERY GRATIS (2026-09-18): "Apakah ada alternatif Claude Code
+  yang gratis?" — target kueri ID dari celah SERP audit SEO (10/10 hasil
+  berbahasa Inggris). Angle beda dr artikel #1 (open source): bedah 3 lapis
+  "gratis" (tool MIT / bayar-per-pakai API / nol rupiah via Ollama lokal) +
+  trade-off model lokal ditulis terbuka; pengalaman first-hand (/undo,
+  --budget fail-closed, biaya tampil per langkah, doctor); anti-kanibal via
+  cross-link dua arah dgn artikel #1. Title 57 char (guard 65), desc 156.
+  Post ke-6 → build 40 halaman; RSS/sitemap/Article LD+inLanguage otomatis
+  dari builder. Gate: web:check lolos, tsc OK, web test 52/52.
 - ✅ DISCOVERABILITY AI/AGENT (2026-09-17): situs mudah ditemukan & dipelajari
   AI-assistant/agent yang browsing: (1) `llms-full.txt` — korpus seluruh docs
   dalam satu markdown (±140 KB) digenerate dari SUMBER sama dgn sitemap

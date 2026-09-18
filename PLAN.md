@@ -58,6 +58,15 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   (2026-09-18): priority/changefreq diabaikan Google (docs Search Central
   dicek langsung), hreflang tak relevan utk situs satu bahasa — keputusan
   dicatat web/README.md.
+  Audit UI/UX (2026-09-18): 6 temuan terukur diperbaiki — (1) caption
+  panel gelap memakai token tetap --term-dim (7,1:1/7,9:1; dulu --mut
+  ikut tema = 3,12:1 di light); (2) tap target hero-links & link kartu
+  29–30px (dulu 16–22px); (3) nav ≤520px wrap, NOL display:none — sistem
+  .keep lama menyembunyikan Blog/Changelog dan menambah keep terbukti
+  overflow 360px (terukur ±374px); (4) aria-current nav utama via skrip
+  layout (exact > prefix, satu mark); (5) intro paragraf di bawah h2
+  'Kapan cocok'; (6) badge hero: MIT→LICENSE, Bun→bun.sh. Guard test
+  navigasi mobile direvisi ke strategi wrap.
 - ✅ DISCOVERABILITY AI/AGENT (2026-09-17): situs mudah ditemukan & dipelajari
   AI-assistant/agent yang browsing: (1) `llms-full.txt` — korpus seluruh docs
   dalam satu markdown (±140 KB) digenerate dari SUMBER sama dgn sitemap

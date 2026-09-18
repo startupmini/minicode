@@ -13,6 +13,7 @@
   --acc-text: #2e4fb0;
   --code-bg: #161618;
   --code-fg: #e6e8ee;
+  --term-dim: #9ba3b2;
   --ok: #e7f3ec;
   /* Teks di atas aksen (tombol primer/skip): putih di terang, nyaris-hitam
      di gelap — kontras dua arah, bukan satu warna hardcoded. */

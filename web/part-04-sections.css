@@ -48,7 +48,7 @@ section .sub { color: var(--mut); font-size: 15px; max-width: 60ch; margin-botto
 @media (max-width: 900px) { .how-list { grid-template-columns: 1fr; } }
 .feat p { font-size: 13px; color: var(--mut); margin-top: 0; }
 /* Link lanjutan polos: tanpa panah tempelan (pola default yang dibuang). */
-.feat a.more { display: inline-block; margin-top: 9px; font-size: 13px; font-weight: 600; }
+.feat a.more { display: inline-block; margin-top: 9px; padding: 4px 0; font-size: 13px; font-weight: 600; }
 /* Serahkan tugas: baris perintah nyata + salin. Flat — label prose, perintah
    di strip gelap ala prompt (satu bahasa dgn install-bar hero). */
 .task { margin-top: 14px; }
@@ -74,6 +74,7 @@ section .sub { color: var(--mut); font-size: 15px; max-width: 60ch; margin-botto
 }
 .task-cmd .copybtn { color: inherit; flex: none; opacity: 0.85; }
 .task-more { margin-top: 18px; font-size: 13px; }
+.task-more a { display: inline-block; padding: 4px 0; }
 .feat ul { list-style: none; padding: 0; margin: 6px 0 0; }
 .feat ul li { font-size: 13px; color: var(--mut); padding: 5px 0 5px 14px; position: relative; }
 .feat ul li::before { content: "–"; position: absolute; left: 0; color: var(--faint); }

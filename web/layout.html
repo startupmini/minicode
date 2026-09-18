@@ -52,6 +52,12 @@
 <a class="nl keep" href="/#install">Install</a>
 <button class="iconbtn" id="themebtn" aria-label="Ganti tema" aria-pressed="false"><span class="material-symbols-outlined" aria-hidden="true">dark_mode</span></button>
 </nav>
+<script>
+// aria-current nav utama (audit UI/UX F-4): satu skrip untuk semua halaman.
+// Exact match pathname menang; tanpa exact, prefix section (/docs/, /blog/)
+// menandai satu link — jangan dua aria-current dalam satu nav sekaligus.
+(function(){var p=location.pathname;if(p==='/index.html')p='/';var links=document.querySelectorAll('.nav a.nl'),exact=-1,pref=-1;for(var i=0;i<links.length;i++){var h=links[i].getAttribute('href').split('#')[0];if(h===p){exact=i;break}if(pref<0&&((h==='/docs/'&&p.indexOf('/docs/')===0)||(h==='/blog/'&&p.indexOf('/blog/')===0)))pref=i}var hit=exact>=0?exact:pref;if(hit>=0)links[hit].setAttribute('aria-current','page')})();
+</script>
 </div></header>
 <main id="main">{{CONTENT}}</main>
 <footer class="footer"><div class="footer-in">

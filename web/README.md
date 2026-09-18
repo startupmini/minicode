@@ -22,8 +22,8 @@ bun run web:serve   # preview http://localhost:3000
 bun run web:check   # validasi link + anti-rahasia
 ```
 
-`web:build` tidak menjalankan `web:css` — jalankan `web:css` dulu bila
-mengubah `part-*.css`.
+`web:build` kini **selalu menjalankan `web:css` dulu** (dulu jebakan: build
+saja = CSS lama ter-deploy; terbukti saat pass audit UI/UX 2026-09-18).
 
 ## Checklist rilis web — verifikasi pasca-deploy
 

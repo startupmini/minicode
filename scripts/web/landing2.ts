@@ -64,7 +64,7 @@ export function landingFit(): string {
   const list = (items: string[]) => `<ul>${items.map((x) => `<li>${x}</li>`).join("")}</ul>`
   // id dipakai dua hal: deep-link (/#cocok) dan pengukuran jangkauan section
   // eksperimen urutan — section tanpa id tak bisa dibedakan saat dilaporkan.
-  return `<section id="cocok"><h2>Kapan Minicode cocok?</h2><div class="feat-list"><div class="feat"><h3>Cocok bila Anda…</h3>${list(yes)}</div><div class="feat"><h3>Bukan pilihan tepat bila…</h3>${list(no)}</div></div></section>`
+  return `<section id="cocok"><h2>Kapan Minicode cocok?</h2><p class="sub">Dua daftar pendek: kapan Minicode pas, dan kapan sebaiknya pakai alat lain.</p><div class="feat-list"><div class="feat"><h3>Cocok bila Anda…</h3>${list(yes)}</div><div class="feat"><h3>Bukan pilihan tepat bila…</h3>${list(no)}</div></div></section>`
 }
 
 export function landingSafety(): string {

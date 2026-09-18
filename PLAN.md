@@ -67,6 +67,17 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   layout (exact > prefix, satu mark); (5) intro paragraf di bawah h2
   'Kapan cocok'; (6) badge hero: MIT→LICENSE, Bun→bun.sh. Guard test
   navigasi mobile direvisi ke strategi wrap.
+  Solution Explorer pasca-audit (2026-09-18): mekanisme perbaikan
+  dipertahankan setelah eksplorasi alternatif-material dgn gate
+  terukur — (F-1) token tetap dipilih atas override spesifisitas,
+  !important, dan duplikasi selector (gate: kegagalan baru harus lebih
+  spesifik & eksplisit); (F-2) padding dipilih atas min-height, wrapper,
+  dan pseudo-element besar (gate: tanpa box baru, layout konten tak
+  geser); (F-3) wrap dipilih atas keep-plus (overflow 360px terukur),
+  menu sheet (butuh JS+state utk 5 link), dan sticky-secondary (nol
+  bukti scroll depth); (F-4) skrip exact>prefix dipilih atas build-time
+  attr (butuh plumb baru) dan CSS-only (tak bisa exact-match). Upgrade
+  path tercatat: media pointer:coarse & validasi user nyata.
 - ✅ DISCOVERABILITY AI/AGENT (2026-09-17): situs mudah ditemukan & dipelajari
   AI-assistant/agent yang browsing: (1) `llms-full.txt` — korpus seluruh docs
   dalam satu markdown (±140 KB) digenerate dari SUMBER sama dgn sitemap

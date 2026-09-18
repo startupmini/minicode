@@ -42,6 +42,10 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   Otomatis (2026-09-18): workflow web.yml menambah job `indexnow` (needs:
   deploy) — tiap deploy sukses langsung submit sitemap ke IndexNow tanpa
   langkah manual; jalur manual jadi fallback ad-hoc.
+  Guard integritas URL (2026-09-18): web:check + test web-build kini
+  memvalidasi SEMUA URL absolut minicode.fun di llms.txt/llms-full.txt/
+  rss.xml menunjuk file site/ yang ada (±160 kemunculan) — lahir dari
+  audit yang menemukan ](../PLAN.md) lolos mapper (404 konteks root).
 - ✅ DISCOVERABILITY AI/AGENT (2026-09-17): situs mudah ditemukan & dipelajari
   AI-assistant/agent yang browsing: (1) `llms-full.txt` — korpus seluruh docs
   dalam satu markdown (±140 KB) digenerate dari SUMBER sama dgn sitemap

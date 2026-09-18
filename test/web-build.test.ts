@@ -815,6 +815,38 @@ describe("web audit 2026-09-16", () => {
     expect(graph["@graph"].map((o) => o["@type"])).toContain("SoftwareApplication")
   })
 
+  test("integritas URL: link absolut di llms.txt/llms-full.txt/RSS menunjuk file site/ yang ada", () => {
+    // Audit 2026-09-18 menemukan ](../PLAN.md) lolos mapper (404 di konteks
+    // root situs). Guard ini menangkap kelas yang sama saat build: SEMUA URL
+    // absolut minicode.fun di tiga artefak non-HTML wajib menunjuk file yang
+    // benar-benar ada — link mati di sini = janji bohong ke crawler & agent.
+    if (!existsSync(join(repoRoot, "site"))) return
+    const urls = new Set<string>()
+    for (const t of ["llms.txt", "llms-full.txt", "rss.xml"]) {
+      const raw = readFileSync(join(repoRoot, "site", t), "utf8")
+      // Terminator: ) < > " ' + whitespace; tanda baca akhir kalimat dibuang
+      // (prosa boleh menutup URL dengan titik — bukan bagian URL).
+      for (const m of raw.matchAll(/https:\/\/minicode\.fun[^)"<>\s]*/g)) {
+        urls.add(m[0]!.replace(/[.,;:!?]+$/, ""))
+      }
+    }
+    expect(urls.size).toBeGreaterThan(0)
+    const ada = (u: URL): boolean => {
+      if (u.pathname === "/" || u.pathname === "") {
+        return existsSync(join(repoRoot, "site", "index.html"))
+      }
+      const p = u.pathname.endsWith("/") ? join(u.pathname, "index.html") : u.pathname
+      return existsSync(join(repoRoot, "site", p))
+    }
+    const mati: string[] = []
+    for (const raw of urls) {
+      const u = new URL(raw)
+      if (u.host !== "minicode.fun") mati.push(`${raw} (host asing)`)
+      else if (!ada(u)) mati.push(raw)
+    }
+    expect(mati, `URL mati: ${mati.join(", ")}`).toEqual([])
+  })
+
   test("SEO: llms.txt digenerate + breadcrumb JSON-LD + judul tak dobel", () => {
     // Semua asersi membaca artefak build — CI checkout segar melewatkannya
     // (web:build jalan di job web-check); lokal selalu ada setelah web:build.

@@ -151,5 +151,36 @@ const smMiss = files
   .filter((p) => !sm.includes(p))
 check("sitemap lengkap", smMiss.length === 0, smMiss.slice(0, 5).join(", "))
 
+// Integritas URL di artefak non-HTML (audit 2026-09-18: ](../PLAN.md) lolos
+// mapper → 404 di konteks /llms-full.txt). Semua URL absolut minicode.fun di
+// llms.txt / llms-full.txt / rss.xml wajib menunjuk file site/ yang ada —
+// link mati di artefak ini = janji bohong ke crawler & agent AI.
+const nonHtml: string[] = []
+for (const t of ["llms.txt", "llms-full.txt", "rss.xml"]) {
+  const raw = readFileSync(join(siteDir, t), "utf8")
+  for (const m of raw.matchAll(/https:\/\/minicode\.fun[^)"<>\s]*/g)) {
+    nonHtml.push(m[0]!.replace(/[.,;:!?]+$/, ""))
+  }
+}
+const badUrl: string[] = []
+for (const raw of new Set(nonHtml)) {
+  let path: string
+  try {
+    const u = new URL(raw)
+    if (u.host !== "minicode.fun") throw new Error("host asing")
+    path = u.pathname
+  } catch {
+    badUrl.push(raw)
+    continue
+  }
+  const target = path === "/" ? "/index.html" : path.endsWith("/") ? `${path}index.html` : path
+  if (!rel.has(target) && !rel.has(`${target}.html`)) badUrl.push(raw)
+}
+check(
+  `URL artefak non-HTML valid (${nonHtml.length} kemunculan)`,
+  badUrl.length === 0,
+  badUrl.slice(0, 5).join("; "),
+)
+
 console.log(fail === 0 ? "[web-check] lolos" : `[web-check] ${fail} gagal`)
 process.exit(fail === 0 ? 0 : 1)

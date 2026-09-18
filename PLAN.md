@@ -95,6 +95,24 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   Temuan terkoreksi saat eksekusi: post ternyata SUDAH ber-JSON-LD Article
   + FAQPage SUDAH ada — crawl extractor awal melewati @graph. Peluang  tercatat (belum dieksekusi): SERP query kategori berbahasa Indonesia
   100% berbahasa Inggris = celah konten ID (Wave 2–3).
+- ✅ AUDIT DOKUMENTASI (2026-09-18, skill docs-cleanup — audit dulu, bukti sebelum mutasi):
+  inventaris 38 file md + cek link relatif (semua resolve) + ref lama (bersih;
+  sisa nama lama hanya di dokumen historis — tempat yang benar) + deteksi
+  orphan. TEMUAN utama: 5 dokumen internal kontributor (TERMINAL_CONTRACT,
+  CONTROL-PLANE-MAP, UI_RENDER_PIPELINE, HARNESS, PLAN_UIUX_V6) TAK TERJANGKAU
+  dari navigasi mana pun (SUMMARY/docs index/sidebar web/llms) — semuanya
+  aktif dirawat (2 di-update hari ini), jadi KEEP + integrasi nav, BUKAN hapus.
+  Eksekusi: grup baru "Internal & Arsitektur (untuk kontributor)" di SUMMARY
+  (sidebar web + llms-full ikut otomatis — satu sumber), DOC_META desc web per
+  dokumen (dari isi sebenarnya), baris nav di docs/README.md. KASKADE yang
+  ditangkap guard: (a) mapper link md diperluas menerima nama kapital/
+  underscore + bentuk ../CHANGELOG (baris 1 PLAN_UIUX_V6 memuat
+  ](../CHANGELOG.md) yang dulu lolos TANPA rewrite — kelas bug ../PLAN.md);
+  (b) guard rahasia web:check false-positive pada id heading "risiko-
+  disengaja" (kata Indonesia kebetulan pola sk-...) → scan kini konten tanpa
+  atribut id/href (teks nyata tetap penuh); (c) test count sitemap 34 →
+  floor >=34 (halaman tumbuh; invariant lastmod tetap dijaga).
+  Gate: tsc OK, biome bersih, 2166 test 0 fail, web:check lolos (39 halaman).
 - ✅ DISCOVERABILITY AI/AGENT (2026-09-17): situs mudah ditemukan & dipelajari
   AI-assistant/agent yang browsing: (1) `llms-full.txt` — korpus seluruh docs
   dalam satu markdown (±140 KB) digenerate dari SUMBER sama dgn sitemap

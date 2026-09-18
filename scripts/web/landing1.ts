@@ -6,7 +6,7 @@
 export function landingHero(version: string): string {
   const install = "npm install -g minicode-ai"
   return `<section class="hero">
-<p class="kicker">v${version}, MIT, zero-dep, Bun</p>
+<p class="kicker">v${version}, <a href="https://github.com/startupmini/minicode/blob/main/LICENSE">MIT</a>, zero-dep, <a href="https://bun.sh">Bun</a></p>
 <h1>Coding agent CLI yang menunjukkan semua kerjanya.</h1>
 <p class="lead">Untuk developer yang hidup di terminal: Minicode membaca kode, menjalankan tool, dan melaporkan tiap langkah di scrollback — meminta izin sebelum bertindak, tanpa layar khusus.</p>
 <div class="install" id="install">

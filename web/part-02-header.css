@@ -10,15 +10,18 @@
 .nav { display: flex; gap: 2px; margin-left: auto; align-items: center; }
 .nav a { color: var(--mut); font-size: 13.5px; font-weight: 500; padding: 10px 12px; border-radius: 6px; }
 .nav a:hover { color: var(--ink); background: var(--soft); text-decoration: none; }
+/* Halaman aktif (audit UI/UX F-4): status lokasi persisten, gaya hover dipinjam. */
+.nav a[aria-current="page"] { color: var(--ink); background: var(--soft); }
 /* Tombol tema: benar-flat — hanya ikon, tanpa background/radius. */
 .iconbtn { background: none; color: var(--faint); padding: 8px; cursor: pointer; display: inline-flex; line-height: 1; }
 .iconbtn:hover { color: var(--ink); }
 .wrap { max-width: var(--w); margin: 0 auto; padding: 0 24px; }
-/* Mobile ≤520px: JANGAN sembunyikan seluruh nav (audit website: header ponsel
-   jadi buntu — hanya logo + tema). Link bertanda .keep (Docs/Install/GitHub)
-   tetap tampil; sisanya disembunyikan agar muat 360px. Tanpa JS/framework. */
+/* Mobile ≤520px (revisi audit UI/UX F-3): SEMUA link nav tampil dan nav boleh
+   wrap ke baris kedua — dulu Blog/Changelog di-display:none (tujuan penting
+   hilang di ponsel), dan menambah .keep saja terbukti overflow di 360px
+   (terukur ±374px > 360). Tanpa JS/framework, tanpa menu sheet. */
 @media (max-width: 520px) {
   .topbar-in { gap: 10px; padding: 12px 16px; }
-  .nav a.nl { display: none; }
-  .nav a.nl.keep { display: inline-flex; }
+  .nav { flex-wrap: wrap; justify-content: flex-end; row-gap: 2px; }
+  .nav a.nl { padding: 6px 8px; }
 }

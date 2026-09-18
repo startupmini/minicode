@@ -181,21 +181,20 @@ describe("web ssg", () => {
     expect(index).toContain('property="og:image:width"')
   })
 
-  test("navigasi mobile: link primer tetap reachable di <=520px (P0 web)", () => {
-    // Regresi: media query menyembunyikan SELURUH .nav a.nl (termasuk .keep)
-    // sehingga header ponsel buntu. Aturan harus mengecualikan .keep, dan
-    // Docs/Install/GitHub wajib bertanda keep di layout + admin.
+  test("navigasi mobile: SEMUA link reachable di <=520px (revisi F-3)", () => {
+    // Regresi riil berlapis: (1) dulu seluruh nav disembunyikan di ponsel;
+    // (2) sistem .keep menyembunyikan Blog/Changelog; (3) menambah keep di
+    // Blog terbukti overflow 360px (terukur ±374px > 360). Strategi final:
+    // nav boleh wrap — NOL display:none pada .nl, semua 5 link selalu ada.
     const css = readFileSync(join(repoRoot, "web", "part-02-header.css"), "utf8")
-    expect(css).toContain(".nl.keep")
-    expect(/@media[^{]*max-width:\s*520px[\s\S]*\.nl\.keep/.test(css)).toBe(true)
-    const layout = readFileSync(join(repoRoot, "web", "layout.html"), "utf8")
-    for (const href of ['href="/docs/"', 'href="/#install"', 'href="https://github.com/']) {
-      const tag = layout.split("\n").find((l) => l.includes(href)) ?? ""
-      expect(tag).toContain("keep")
-    }
+    expect(css).not.toContain(".nl { display: none")
+    expect(/@media[^{]*max-width:\s*520px[\s\S]*\.nav {\s*flex-wrap: wrap/.test(css)).toBe(true)
     // Desktop tak tersentuh: tak ada display:none di luar media query.
     const beforeMedia = css.split("@media")[0]!
     expect(beforeMedia).not.toContain("display: none")
+    // aria-current (F-4) dipasang oleh skrip layout di semua halaman.
+    const layout = readFileSync(join(repoRoot, "web", "layout.html"), "utf8")
+    expect(layout).toContain("aria-current','page'")
   })
 
   test("tabel: pipe di code span + escaped pipe tak memecah sel (P0 web)", () => {

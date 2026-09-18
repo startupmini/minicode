@@ -38,10 +38,10 @@ export interface SessionConfig {
   model?: string;
   cwd?: string;
   /**
-   * Mode permission sesi, diteruskan ke ToolContext tiap turn agar tool
-   * (mis. delegate_task) bisa menyesuaikan perilaku. String atau getter
-   * live — getter disarankan bila mode bisa berubah saat runtime.
-   * Opsional; absen = perilaku lama (ctx.permissionMode undefined).
+   * Session permission mode, forwarded to each turn's ToolContext so tools
+   * can adapt their behavior. Plain string or live getter — prefer the
+   * getter when the mode can change at runtime. Optional; absent preserves
+   * the legacy behavior (ctx.permissionMode undefined).
    */
   permissionMode?: string | (() => string);
   /**
@@ -120,11 +120,11 @@ export interface Session {
   readonly state: Readonly<SessionState>;
   readonly events: EventBus;
   /**
-   * Kontrak control-plane (Phase 6): angka konteks SAAT INI dari sumber
-   * kebenaran yang sama dengan pressure kernel (messages + system + tools,
-   * estimator sesi). Satu angka untuk driver/UI/budget — tanpa estimator
-   * duplikat. O(history) per akses (pola state snapshot); setiap akses
-   * menghitung ulang atas committed store.
+   * Current context size from the same source of truth as the loop's
+   * pressure evaluation (messages + system + tools under the session
+   * estimator). One number for drivers and UI — no duplicate estimator.
+   * O(history) per access (snapshot pattern); recomputed over the
+   * committed store on every access.
    */
   readonly contextTokens: number;
   run(input: string, opts?: { signal?: AbortSignal; model?: string }): Promise<TurnResult>;
@@ -207,8 +207,8 @@ export function createSession(config: SessionConfig): Session {
     get events() {
       return events;
     },
-    // Kontrak (Phase 6): angka dari sumber kebenaran yang sama dengan loop —
-    // estimateSessionContext (tokens.ts), bukan estimator duplikat.
+    // Same source of truth as the loop — estimateSessionContext in
+    // tokens.ts — never a duplicate estimator.
     get contextTokens() {
       return estimateSessionContext(store, config.system, impl.registry.list(), impl.estimator);
     },

@@ -10,8 +10,8 @@ import type { ToolSchema } from "./tool.ts";
 import type { ToolCall, ToolResult } from "./types.ts";
 import type { SessionInternal, Step, TurnResult } from "./session.ts";
 
-/** Resolve mode permission sesi untuk deps turn ini (string langsung atau
- * getter live). Tak pernah melempar — gagal = undefined. */
+/** Resolve the session permission mode for this turn's deps (a plain
+ * string or a live getter). Never throws — failure resolves to undefined. */
 function resolvePermissionMode(mode: SessionInternal["permissionMode"]): string | undefined {
   try {
     if (typeof mode === "function") {
@@ -40,13 +40,13 @@ export async function executeTurn(
   const steps: Step[] = [];
   let stepIndex = 0;
   let finalText: string | undefined;
-  // Kontrak kompaksi (Phase 6): DUA flag terpisah — budget compaction dan
-  // recovery compaction punya semantics berbeda. Flag tunggal dulu mengaburkan
-  // keduanya: kompaksi budget membakar satu-satunya retry recovery (padahal
-  // recovery belum pernah dicoba), dan sebaliknya. Recovery flag SELALU diset
-  // (anti loop abadi: force_compact_and_retry tidak dihitung maxProviderRetries);
-  // budget flag diset saat kompaksi budget dicoba (kompaksi per-turn, anti
-  // berulang tiap step O(n)).
+  // Two separate flags — policy-path and recovery-path compaction have
+  // different semantics. A single flag used to conflate them: a policy
+  // compaction burned the one recovery retry (though recovery was never
+  // tried), and vice versa. The recovery flag is ALWAYS set (a guard
+  // against an infinite loop: force_compact_and_retry is exempt from
+  // maxProviderRetries); the policy flag is set when a policy compaction
+  // is attempted (once per turn, guarding against per-step O(n) repeats).
   let compactedForBudget = false;
   let compactedForRecovery = false;
 
@@ -65,13 +65,14 @@ export async function executeTurn(
       const before = s.store.messages.length;
       await compactStore(s, signal);
       compactedForBudget = true;
-      // reason membedakan pemicu + apakah kompaksi benar-benar mengurangi
-      // (no-op = tidak ada yang bisa dibuang dari messages — operator harus
-      // tahu bedanya dari fixed overhead, bukan dari kompaksi sia-sia).
+      // The reason distinguishes the trigger and whether compaction
+      // actually shrank the store (no-op = nothing evictable in messages;
+      // reporters must tell that apart from fixed system+schema overhead,
+      // which compaction never touches).
       const reduced = s.store.messages.length < before;
       s.events.emit({
         type: "context:compacted",
-        reason: reduced ? `budget:${pressure}` : `budget:${pressure}:no-op`,
+        reason: reduced ? `pressure:${pressure}` : `pressure:${pressure}:no-op`,
       });
       pressure = s.budget.evaluate({
         usedTokens: contextTokens(s),
@@ -138,9 +139,8 @@ export async function executeTurn(
         }
         if (completed === "length") {
           errorMessage = "provider output reached length limit";
-          // Kontrak (Phase 6): onLength membaca flag RECOVERY — bukan flag
-          // budget. Dulu flag tunggal membuat kompaksi budget membakar
-          // retry recovery ini.
+          // onLength reads the RECOVERY flag — not the policy flag. A single
+          // flag used to let a policy compaction burn this recovery retry.
           action = s.recovery.onLength(compactedForRecovery);
         } else if (completed === "error") {
           action = { type: "throw" };
@@ -168,8 +168,9 @@ export async function executeTurn(
           if (compactedForRecovery)
             throw new AgentError("budget_exceeded", errorMessage ?? "context too large", { cause: action });
           await compactStore(s, signal);
-          // Recovery flag SELALU diset (no-op pun): force_compact_and_retry
-          // tidak dihitung maxProviderRetries — no-op berulang = loop abadi.
+          // The recovery flag is ALWAYS set (even on no-op):
+          // force_compact_and_retry is exempt from maxProviderRetries, so a
+          // repeated no-op would otherwise loop forever.
           compactedForRecovery = true;
           s.events.emit({ type: "context:compacted", reason: "recovery" });
           break;
@@ -204,8 +205,8 @@ export async function executeTurn(
       state: snapshotState(s.state),
       maxResultTokens: s.toolResultMaxTokens,
       cwd: s.cwd,
-      // Resolve per turn agar getter live (mis. ganti mode via Shift+Tab)
-      // tercermin di ctx tool berikutnya. Gagal resolve = undefined (aman).
+      // Resolved per turn so a live getter reflects runtime mode changes
+      // in the next tool context. Failed resolution is undefined (safe).
       permissionMode: resolvePermissionMode(s.permissionMode),
     };
     let rawResults: readonly ToolResult[];
@@ -320,8 +321,8 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 function contextTokens(s: SessionInternal): number {
-  // Kontrak (Phase 6): single source di tokens.ts `estimateSessionContext` —
-  // dipakai loop DAN Session getter sehingga tidak ada estimator duplikat.
+  // Single source in tokens.ts `estimateSessionContext` — shared by the
+  // loop and the Session getter so no duplicate estimator can drift.
   return estimateSessionContext(s.store, s.system, s.registry.list(), s.estimator);
 }
 

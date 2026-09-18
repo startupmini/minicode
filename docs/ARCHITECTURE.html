@@ -464,7 +464,7 @@ footer.site .spacer { flex: 1; }
     <span class="mi">search</span><span>Cari modul, simbol, env…</span><kbd>Ctrl K</kbd>
   </div>
   <div class="top-actions">
-    <span class="vpill hide-m">v0.9.24 · Bun-only · 0 deps</span>
+    <span class="vpill hide-m">v0.9.27 · Bun-only · 0 deps</span>
     <button class="iconbtn" id="themeBtn" aria-label="Ganti tema terang/gelap" title="Ganti tema"><span class="mi">dark_mode</span></button>
   </div>
 </header>
@@ -543,7 +543,7 @@ footer.site .spacer { flex: 1; }
   <div class="meta">
     <span class="pill blue"><span class="dot"></span>entry: cli/index.ts</span>
     <span class="pill green"><span class="dot"></span>37 tool bawaan</span>
-    <span class="pill">kernel 05fc595a · lihat vendor/minicore/VENDOR.md</span>
+    <span class="pill">kernel ae9d1be · lihat vendor/minicore/VENDOR.md</span>
   </div>
 
   <div class="card-grid">
@@ -578,7 +578,7 @@ footer.site .spacer { flex: 1; }
     <div class="layer">
       <div class="lnum">3</div>
       <div><div class="ltitle">Kernel MiniCore <span class="chip c3">L3</span></div>
-      <div class="lpath">vendor/minicore/ · pin 05fc595a</div></div>
+      <div class="lpath">vendor/minicore/ · pin ae9d1be</div></div>
       <div class="ldesc">Loop agen inti. Beku: hanya seam aditif yang boleh diubah (<code>compactAsync</code>, <code>initialMessages</code>, <code>cwd</code>); sinkron via <code>bun run vendor:minicore</code>, cek via <code>bun run vendor:check</code>.</div>
     </div>
   </div>
@@ -869,7 +869,7 @@ export const kalkulatorTool: Tool = {
       <ol>
         <li><code>bun run vendor:minicore</code> — tarik upstream ke vendor/.</li>
         <li><code>bun run vendor:check</code> — pastikan vendor == pin di dokumentasi.</li>
-        <li>Hanya seam aditif yang boleh ditambal (<code>compactAsync</code>, <code>initialMessages</code>, <code>cwd</code>); sisanya upstream.</li>
+        <li>Seam lokal: tidak ada yang tersisa (0.9.27 menghilirkan semuanya: <code>cwd</code>, <code>permissionMode</code>, <code>provider_meta</code>, <code>reasoningEffort</code>, <code>describeDenial</code>, estimasi sadar-gambar, <code>estimateSessionContext</code>/<code>contextTokens</code>, flag kompaksi ganda) — perubahan kernel = PR ke upstream lalu sync ulang, bukan tambal vendor.</li>
       </ol>
       <div class="guard">guard: perubahan kernel wajib lolos seluruh gate (§6) + bench smoke supaya loop tidak regresi.</div>
     </div>
@@ -1039,7 +1039,7 @@ bun run bench            # benchmark loop agen</pre></div>
 <footer class="site">
   <span>Minicode · Peta struktur hidup — terminal contract FROZEN (<a href="TERMINAL_CONTRACT.md">docs/TERMINAL_CONTRACT.md</a>)</span>
   <span class="spacer"></span>
-  <span>v0.9.24 · diperbarui 2026-09-17</span>
+  <span>v0.9.27 · diperbarui 2026-09-18</span>
 </footer>
 
 </div>

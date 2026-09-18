@@ -7,16 +7,16 @@ import type { ModelProvider, ProviderEvent, StreamRequest } from "../core/provid
 import type { ToolSchema } from "../core/tool.ts";
 import type { Content, Message } from "../core/types.ts";
 
-// P13 M0.1 (revisi S1) — side-map toolCallId → extra_content (mis. Gemini
-// thought_signature). Versi sebelumnya menaruhnya di `args` sebagai
-// `__extra_content`, tapi executor menolaknya ("unknown property", semua schema
-// additionalProperties:false) sehingga tool call Gemini thinking justru gagal
-// validasi. Side-map menjaga args bersih; consume-once + cap agar tak bocor.
+// Provider-metadata side-map: toolCallId -> extra provider payload (e.g.
+// Gemini thought_signature / extra_content). It must NOT travel inside
+// `args` — the executor rejects unknown properties (all schemas are
+// additionalProperties:false), so smuggling it there fails validation.
+// Side-map keeps args clean; consume-once + cap so long sessions can't leak.
 const providerMetaByCallId = new Map<string, unknown>()
 function stashProviderMeta(id: string, meta: unknown): void {
   if (!id || meta == null) return
   providerMetaByCallId.set(id, meta)
-  // cap: buang yang terlama bila menumpuk (sesi sangat panjang)
+  // Cap: drop the oldest entry when a very long session piles up.
   if (providerMetaByCallId.size > 500) {
     const first = providerMetaByCallId.keys().next()
     if (!first.done) providerMetaByCallId.delete(first.value)
@@ -163,9 +163,9 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): ModelPro
             calls.set(index, acc);
             if (order.indexOf(index) < 0) order.push(index);
             if (typeof td.id === "string" && td.id) acc.id = td.id;
-            // P13 M0.1 (S1) — preserve Gemini thought_signature (extra_content)
-            // verbatim di side-map (BUKAN di args — executor menolak properti
-            // tak dikenal). Di-echo saat replay history di toMessages.
+            // Preserve provider metadata (thought_signature / extra_content)
+            // verbatim in the side-map — never in args — for echo on
+            // history replay in toMessages.
             const extra =
               (td as Record<string, unknown>).extra_content ??
               (td as Record<string, unknown>).thought_signature ??
@@ -199,8 +199,8 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): ModelPro
                 args = { raw: acc.args };
               }
             }
-            // P13 M0.1 (S1) — args TETAP bersih (executor validateArgs menolak
-            // properti tak dikenal); signature disimpan di side-map by call id.
+            // Args stay clean (the executor rejects unknown properties);
+            // provider metadata is filed in the side-map by call id.
             const callId = acc.id || `call_${index}`
             if (acc._extra != null) stashProviderMeta(callId, acc._extra);
             yield { type: "tool_call", id: callId, name: acc.name, args };
@@ -236,9 +236,9 @@ function toMessages(messages: readonly Message[]): unknown[] {
           // saat thinking mode aktif, agar multi-turn tidak 400.
           ...((message as { reasoning?: string }).reasoning ? { reasoning_content: (message as { reasoning?: string }).reasoning } : {}),
           tool_calls: message.toolCalls?.length
-            ? message.toolCalls.map((call) => {
-                // P13 M0.1 (S1) — echo signature dari side-map (consume-once),
-                // args dikirim apa adanya tanpa kunci siluman.
+              ? message.toolCalls.map((call) => {
+                // Echo provider metadata from the side-map (consume-once);
+                // args are sent exactly as received, with no hidden keys.
                 const extra = takeProviderMeta(call.id)
                 return {
                   id: call.id,

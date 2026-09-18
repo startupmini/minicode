@@ -24,12 +24,10 @@ export interface ToolContext {
   readonly state: Readonly<SessionState>;
   readonly cwd?: string;
   /**
-   * Mode permission sesi saat tool dipanggil (mis. "auto" | "plan").
-   * Opsional agar backward-compat; tool yang peduli (mis. delegate_task
-   * yang harus mengunci sub-agen saat parent read-only) membaca ini
-   * alih-alih menebak dari teks prompt. Di-resolve per turn dari
-   * SessionConfig (boleh string atau getter live agar Shift+Tab runtime
-   * ikut tercermin).
+   * Session permission mode at dispatch time (e.g. "auto" | "plan").
+   * Optional for backward compatibility; tools that adapt to read-only
+   * sessions read this instead of guessing from prompt text. Resolved per
+   * turn from SessionConfig (plain string or live getter).
    */
   readonly permissionMode?: string;
   emit(event: AgentEvent): void;

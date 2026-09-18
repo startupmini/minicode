@@ -18,12 +18,10 @@ export function contentToText(content: Content): string {
 }
 
 /**
- * Additive seam (minicode): estimasi token sadar-gambar. Gambar inline
- * membawa byte base64 (~bytes/3 token) — placeholder `[image:mime]` lama
- * membuat gambar 100k hanya ~15 token (tak terlihat budget → kompaksi tak
- * jalan sampai konteks benar-benar jebol). Rumus sama dengan
- * src/policy/context.ts estimateImageTokens agar laporan read_image dan
- * budget konsisten.
+ * Token estimate for inline image bytes. The text placeholder above would
+ * price a 100KB image at ~15 tokens, hiding it from budget pressure until
+ * the context genuinely overflows — so image parts are priced from their
+ * base64 wire size instead.
  */
 export function estimateImageTokens(byteLength: number): number {
   return Math.ceil(Math.ceil((byteLength * 4) / 3) / DEFAULT_CHARS_PER_TOKEN);
@@ -60,9 +58,9 @@ export function estimateMessage(message: Message, est: TokenEstimator): number {
       return estimateContent(message.content, est) + est(safeStringify(message.toolCalls ?? [])) + est(message.reasoning ?? "");
     case "tool": {
       const c = message.content;
-      // Hasil tool biner (mis. gambar): JSON.stringify Uint8Array meledak
-      // jadi {"0":..} raksasa → tekanan palsu → kompaksi prematur. Estimasi
-      // sebagai gambar, bukan string JSON.
+      // Binary tool results (e.g. images): JSON.stringify of a Uint8Array
+      // explodes into a {"0":..} map, faking pressure and triggering
+      // premature compaction. Price it as image bytes instead.
       if (c instanceof Uint8Array) return estimateImageTokens(c.byteLength);
       return est(typeof c === "string" ? c : safeStringify(c ?? null));
     }
@@ -90,12 +88,11 @@ export function estimateSystem(system: string | undefined, est: TokenEstimator):
 }
 
 /**
- * Seam kontrak control-plane (Phase 6): SATU sumber angka konteks —
- * messages + system + tools, semuanya yang dikirim per request. Dipakai
- * loop (pressure) DAN Session getter (ekspos ke driver/UI/budget) sehingga
- * tidak ada estimator duplikat untuk kebutuhan tampilan. Fungsi murni atas
- * argumen — tidak ada ketergantungan SessionInternal (menghindari circular
- * import session↔loop).
+ * Single source for the current context size: messages + system + tools —
+ * everything sent per request. Shared by the loop (pressure evaluation)
+ * and the Session getter (observability) so no duplicate estimator can
+ * drift. Pure over its arguments; takes the store shape instead of
+ * SessionInternal to avoid a session<->loop circular import.
  */
 export function estimateSessionContext(
   store: { messages: readonly Message[] },

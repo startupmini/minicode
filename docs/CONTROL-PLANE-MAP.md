@@ -44,9 +44,10 @@ Relationship eksplisit:
   `onLength`). Set SETELAH compact (anti loop abadi: jalur ini tidak dihitung
   `maxProviderRetries`). Kedua kalinya → `budget_exceeded`.
 
-**Reason event** (`context:compacted`, `reason`):
-- `budget:<pressure>` — kompaksi budget yang benar-benar mengurangi messages.
-- `budget:<pressure>:no-op` — kompaksi budget yang TIDAK mengurangi (tidak ada
+**Reason event** (`context:compacted`, `reason` — nama generik kernel,
+diselaraskan 0.9.27 saat seam dihilirkan; sebelumnya `budget:<…>`):
+- `pressure:<pressure>` — kompaksi policy-path yang benar-benar mengurangi messages.
+- `pressure:<pressure>:no-op` — kompaksi policy-path yang TIDAK mengurangi (tidak ada
   yang bisa dibuang dari messages — operator harus tahu bedanya dari fixed
   overhead: system+tool schema, yang tidak pernah terkompaksi).
 - `recovery` — kompaksi dari recovery (`context_length_exceeded` / `length`).
@@ -126,7 +127,7 @@ Operator harus bisa membedakan (tanpa ambigu):
 - `/status`: `Context` (window estimate, kernel) vs `Input/Output/Total`
   (provider usage) vs `Cost` (estimated) vs `Budget` (status keputusan).
 - Footer: angka = ukuran jendela saat ini (kernel) — bukan spend kumulatif.
-- `context:compacted` event: reason membedakan budget/recovery/no-op.
+- `context:compacted` event: reason membedakan policy-pressure/recovery/no-op.
 
 ## Proteksi (test → kontrak)
 

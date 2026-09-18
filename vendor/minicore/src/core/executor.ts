@@ -56,9 +56,9 @@ export async function runCall(call: ToolCall, deps: ExecutorDeps): Promise<ToolR
   }
   throwIfAborted(deps.signal);
   if (decision === "deny") {
-    // Additive seam (minicode): alasan deny opsional dari handler agar
-    // observasi model actionable ("permission denied: bash-guard: ...").
-    // describeDenial tak boleh menggagalkan denial itu sendiri — bungkus.
+    // Optional handler diagnostic, surfaced so the model observes an
+    // actionable reason ("permission denied: <reason>"). Diagnostic-only:
+    // describeDenial must never fail the denial itself — hence the guard.
     let suffix = "";
     try {
       const r = await deps.permissions.describeDenial?.(snapshotToolCall(safeCall));

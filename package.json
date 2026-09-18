@@ -1,6 +1,6 @@
 {
   "name": "minicode-ai",
-  "version": "0.9.26",
+  "version": "0.9.27",
   "description": "Coding agent CLI built on the frozen MiniCore runtime — tools, MCP, LSP, sandbox, shadow-git checkpoints",
   "type": "module",
   "private": false,

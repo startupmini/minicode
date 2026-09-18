@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.9.27] - 2026-09-18 — Upstream sync: 10 seam kernel dihilirkan, vendor nol-divergensi
+
+### Fixed
+- **Seluruh seam vendor dihilirkan ke MiniCore (nol divergensi tersisa)**: 10 seam yang dulu hanya ada di `vendor/minicore` kini menjadi kemampuan kernel generik di upstream (`7b546d1` + `ae9d1be`, sudah push): plumbing `cwd` + `permissionMode` (string/getter live, resolve per turn), seed `turnCount`/`stepCount`, side-map `provider_meta`/`thought_signature` + knob `reasoningEffort`, `describeDenial` opsional, estimasi sadar-gambar + `estimateSessionContext` + getter `Session.contextTokens`, dan flag kompaksi terpisah `compactedForBudget`/`compactedForRecovery`. `bun run vendor:minicore` + `bun run vendor:check` kini hijau (`sinkron, 19 file`) dengan kedua worktree bersih — tanpa menghapus perubahan, tanpa force-push.
+- **Cap `retryAfter` upstream terserap**: `minicore@1eceea9` (cap 30 dtk di `recovery.ts`) di-fast-forward sebelum hilirkan — penutup lapis-app (`cappedRecovery` + router) kini redundan dengan kernel, bukan divergen.
+- **Label reason kompaksi digenerikkan (catatan migrasi)**: `context:compacted` reason jalur policy kini `pressure:<p>` / `pressure:<p>:no-op` (dulu `budget:<…>`); `recovery` tetap. Semantik utuh (flag terpisah + `:no-op` tetap ada), prefix `pressure:` sama dengan yang dipakai `BudgetPolicy` kernel — listener yang match prefix `pressure:` yang lama tetap jalan; yang match `budget:` harus pindah. Tidak ada test/layar yang mengunci string lama (`simple.ts` interpolasi generik; `control-plane.test.ts` menguji perilaku, hijau tanpa perubahan).
+
+### Changed
+- **Vendor provenance diregenerasi**: `VENDOR.md` kini pin `ae9d1be` (19 file, hash baru, tanpa daftar seam — tidak ada yang tersisa), worktree dinormalisasi LF sesuai `.gitattributes`, `docs/ARCHITECTURE.html` (pill `v0.9.27`, pin kernel) + `docs/CONTROL-PLANE-MAP.md` (reason generik) diselaraskan.
+- Artefak AI/workbench sibling (`.workbuddy-ai/`, `outputs/`) di-backup di luar repo dan tidak ikut ke upstream — bukan source, bukan patch.
+
 ## [0.9.26] - 2026-09-17 — Rename paket npm: `minicode-ai`
 
 ### Changed

@@ -24,7 +24,7 @@
     "anthropic",
     "ollama"
   ],
-  "homepage": "https://github.com/startupmini/minicode#readme",
+  "homepage": "https://minicode.fun",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/startupmini/minicode.git"

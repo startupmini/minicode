@@ -508,6 +508,15 @@ html[data-theme="dark"] .status.ok { background: #16283b; color: #7fd1a3; }
 @media (max-width: 520px) {
   .footer-in { grid-template-columns: 1fr; }
 }
+/* Blok "Postingan terkait" di permalink blog (audit SEO 2026-09-18:
+   discovery antar-post lemah — post hanya punya 1 inbound dari index).
+   Visual mengikuti .post-row: tanpa border (aturan flat), list sederhana. */
+.related { margin-top: 36px; }
+.related h2 { font: 600 14px var(--mono); color: var(--faint); margin-bottom: 8px; }
+.related ul { list-style: none; padding: 0; margin: 0; }
+.related li { margin: 6px 0; }
+.related a { color: var(--acc-text); font-size: 13.5px; display: inline-block; padding: 5px 0; }
+.related a:hover { color: var(--ink); }
 /* Motion website: mikro-interaksi + entrance + transisi halaman.
    Aturan keras (jangan dilanggar):
    - Hanya opacity/transform (+ color/background 0.15s) — tanpa layout,

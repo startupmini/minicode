@@ -39,6 +39,24 @@ export function blogLastmod(repoRoot: string, base: string): Map<string, string>
   return out
 }
 
+// Pemilihan "Postingan terkait" untuk permalink (audit SEO 2026-09-18:
+// post hanya punya 1 inbound — dari index). Utamakan post ber-tag sama;
+// bila kurang, isi dengan post terbaru lain agar blok tak pernah kosong
+// (post ber-tag unik seperti rename-paket dulu tanpa blok). Max 3 supaya
+// daftar tak membengkak — bukan pengganti curation: saat post >12, ganti
+// ke sambungan manual/semantik. Murni & diekspor agar bisa diuji.
+export function relatedPosts<T extends { slug: string; fm: { tags: string[] } }>(
+  posts: T[],
+  slug: string,
+  max = 3,
+): T[] {
+  const self = posts.find((p) => p.slug === slug)
+  const others = posts.filter((r) => r.slug !== slug)
+  const shared = others.filter((r) => self && r.fm.tags.some((t) => self.fm.tags.includes(t)))
+  const fill = others.filter((r) => !shared.includes(r))
+  return [...shared, ...fill].slice(-max)
+}
+
 export function buildBlog(
   repoRoot: string,
   webDir: string,
@@ -114,7 +132,24 @@ export function buildBlog(
       (p.fm.tags.length
         ? `<div class="tags">${p.fm.tags.map((t) => escHtml(t)).join(", ")}</div>`
         : "") +
-      `${html}<p style="margin-top:40px"><a href="/blog/">← Semua artikel</a></p></article>`
+      `${html}${
+        // Blok "Postingan terkait" (audit SEO 2026-09-18: post hanya punya 1
+        // inbound link — dari index; discovery antar-post & sinyal topikal
+        // lemah). Aturan sederhana satu-pemilik: tag diurutkan alfabetis,
+        // arah lama→baru (pelengkap arah RSS yang baru→lama); max 3 agar
+        // daftar tak membengkak. BUKAN pengganti curation: saat jumlah post
+        // tumbuh (>12), ganti ke sambungan manual/semantik.
+        // Blok "Postingan terkait" (lihat relatedPosts): tag-share dulu,
+        // sisanya post terbaru — blok hidup untuk semua post.
+        (() => {
+          const related = relatedPosts(posts, p.slug)
+          return related.length
+            ? `<section class="related"><h2>Postingan terkait</h2><ul>${related
+                .map((r) => `<li><a href="/blog/${r.slug}.html">${escHtml(r.fm.title)}</a></li>`)
+                .join("")}</ul></section>`
+            : ""
+        })()
+      }<p style="margin-top:40px"><a href="/blog/">← Semua artikel</a></p></article>`
     write(
       `blog/${p.slug}.html`,
       renderPage(webDir, {
@@ -132,6 +167,10 @@ export function buildBlog(
               "@type": "Article",
               headline: p.fm.title,
               datePublished: p.fm.date,
+              // Pelengkap audit SEO 2026-09-18: author & inLanguage — sinyal
+              // keaslian & bahasa yang sebelumnya absen di schema post.
+              author: { "@type": "Organization", name: "Minicode" },
+              inLanguage: "id-ID",
             },
             // Sama seperti softwareJsonld: `</` di-escape agar string tak bisa
             // menutup tag script (`</script>` di judul = breakout).

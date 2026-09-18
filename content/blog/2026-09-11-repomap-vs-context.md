@@ -1,5 +1,5 @@
 ---
-title: "Repo map: kenapa Minicode membaca peta kode dulu sebelum detailnya"
+title: "Repo map: Minicode membaca peta kode dulu"
 date: 2026-09-11
 tags: [ai, llm, coding-agent]
 desc: "Repo map Minicode memberi LLM peta simbol kode sebelum membaca detail: hemat token, lebih murah, dan model lebih fokus. Pola yang bisa Anda tiru."

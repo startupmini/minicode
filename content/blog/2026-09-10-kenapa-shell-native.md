@@ -1,5 +1,5 @@
 ---
-title: "Kenapa Minicode bekerja di terminal biasa, bukan layar khusus"
+title: "Kenapa Minicode bekerja di terminal biasa"
 date: 2026-09-10
 tags: [minicode, cli, desain]
 desc: "Kenapa coding agent CLI Minicode tampil di terminal biasa, bukan layar khusus: hasil kerja berurutan di scrollback, tanpa panel tersembunyi."

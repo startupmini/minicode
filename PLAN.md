@@ -78,6 +78,23 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   bukti scroll depth); (F-4) skrip exact>prefix dipilih atas build-time
   attr (butuh plumb baru) dan CSS-only (tak bisa exact-match). Upgrade
   path tercatat: media pointer:coarse & validasi user nyata.
+- ✅ AUDIT SEO + EKSEKUSI TEMUAN (2026-09-18): full crawl 36 URL + 3 SERP +
+  probe authority — fondasi teknis sehat (nol orphan, canonical↔sitemap
+  34/34 konsisten, 404 benar, BreadcrumbList 32/32); risiko utama di
+  observabilitas Bing & authority nol (brand SERP "minicode" tak muncul —
+  normal utk domain 3 hari). Diperbaiki dari sisi repo: (1) plumb
+  BingSiteAuth.xml — file hasil download bing.com/webmasters diletakkan di
+  web/, build menyalinnya utuh (pola key IndexNow) + guard test; klik
+  verifikasi BWT tetap tanggung jawab browser pemilik; (2) 3 judul post
+  dipangkas <=65 char TERMASUK sufiks " — Minicode" dari layout — web:check
+  kini menjaga (title kepanjangan = FAIL deploy); (3) blok "Postingan
+  terkait" di tiap permalink via relatedPosts() (tag-share dulu, fallback
+  post terbaru, max 3; dulu 4 post hanya 1 inbound dari index); (4) Article
+  JSON-LD + author Organization + inLanguage id-ID; (5) homepage npm ->
+  https://minicode.fun (kanal authority; field repository tetap ke repo).
+  Temuan terkoreksi saat eksekusi: post ternyata SUDAH ber-JSON-LD Article
+  + FAQPage SUDAH ada — crawl extractor awal melewati @graph. Peluang  tercatat (belum dieksekusi): SERP query kategori berbahasa Indonesia
+  100% berbahasa Inggris = celah konten ID (Wave 2–3).
 - ✅ DISCOVERABILITY AI/AGENT (2026-09-17): situs mudah ditemukan & dipelajari
   AI-assistant/agent yang browsing: (1) `llms-full.txt` — korpus seluruh docs
   dalam satu markdown (±140 KB) digenerate dari SUMBER sama dgn sitemap

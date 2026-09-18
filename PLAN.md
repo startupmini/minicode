@@ -54,7 +54,10 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   Sitemap lastmod (2026-09-18): tiap URL kini bawa <lastmod> — post blog
   dari frontmatter (sumber sama via blogLastmod, tak maju tiap deploy),
   halaman lain stempel waktu build; guard test mengunci 34 entri +
-  silang-cek tanggal post vs sumber.
+  silang-cek tanggal post vs sumber. Atribut lain DITINJAU & DITOLAK
+  (2026-09-18): priority/changefreq diabaikan Google (docs Search Central
+  dicek langsung), hreflang tak relevan utk situs satu bahasa — keputusan
+  dicatat web/README.md.
 - ✅ DISCOVERABILITY AI/AGENT (2026-09-17): situs mudah ditemukan & dipelajari
   AI-assistant/agent yang browsing: (1) `llms-full.txt` — korpus seluruh docs
   dalam satu markdown (±140 KB) digenerate dari SUMBER sama dgn sitemap

@@ -131,10 +131,15 @@ model/reasoning/bash di `simple.ts`, flush deterministik saat
 completed/detach); F2 via kebijakan `stripSgr` non-TTY di `wOut`/`wErr` +
 `rememberTurn` (cerminan `colorLevel` → `stdout.isTTY`); F3 via marker
 `… (earlier thinking truncated)`; O1 didokumentasikan di `cli/repl.ts`
-(tanpa refactor). Dijaga `test/ansi-fragmentation.test.ts`
+(tanpa refactor). Snap kiri/kanan: render pertama sesudah geometri berubah
+me-reset jangkar relatif askLine (`lastGeoCols/Rows` di `input.ts`) —
+geometri lebar tak dilacak footer karena erase baris-absolut tak sound
+pasca-reflow (terbukti model + ConPTY: reflow milik konsumen).
+Dijaga `test/ansi-fragmentation.test.ts`
 (termasuk properti semua-titik-belah ≡ whole-string),
 `test/non-tty-output.test.ts`, `test/thinking-truncation.test.ts`,
-`test/ui-combined.test.ts` (satu sistem: stream + tool + resize + footer).
+`test/ui-combined.test.ts` (satu sistem: stream + tool + resize + footer),
+`test/input-resize.test.ts` (gagal di kode lama: CUP ke anchor basi).
 
 Batas yang TERVERIFIKASI BENAR (bukti harness + 178 test UI hijau):
 token-by-token tepat-1x (E1), chunk 50KB utuh (E2), fence terbelah benar

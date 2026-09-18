@@ -159,6 +159,9 @@ error: `✗ pesan actionable` sekali per kegagalan (`takePendingError`).
   head membawa marker, bukan diam-diam).
 - `test/ui-combined.test.ts` — I2/I6/I7 (satu sistem: teks model
   terfragmentasi + tool + resize + footer sticky dalam satu stdout mock).
+- `test/input-resize.test.ts` — I5/I12 (render pertama sesudah geometri
+  berubah me-reset jangkar relatif askLine; tanpa gerakan CUP ke anchor
+  basi, nilai submit utuh).
 - `test/repl-linear.test.ts` / `tui-classic` — I5 interaksi user
   (Ctrl+C/Esc/idle).
 - `test/ui-boundary.test.ts` — I1/I3 batas lapisan (ui tak impor keluar).

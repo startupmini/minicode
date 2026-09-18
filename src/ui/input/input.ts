@@ -226,6 +226,18 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
     let prevInputRows = 1 // jumlah baris input visual frame lalu (multiline)
     let prevCursorRow = 0 // baris kursor frame lalu (0 = anchor)
     let printedW = 0 // lebar teks yang ditulis (fallback inline)
+    // Geometri terakhir yang dipakai render. BUKAN cache performa — tugasnya
+    // mendeteksi resize/reflow: hitungan baris di atas mengasumsikan grid
+    // pra-reflow, jadi render pertama sesudah geometri berubah WAJIB me-reset
+    // ketiganya (jangkar relatif tak lagi menunjuk anchor). Tanpa ini render
+    // dari jangkar basi mendarat di baris salah: kopi di area ketik/output
+    // dan hapus baris salah via clearOverlay (temuan snap kiri/kanan).
+    // 0 = belum pernah render (render pertama selalu "berubah" → reset ke
+    // nilai awal di atas, alias no-op). printedW SENGAJA tak ikut: nilainya
+    // konservatif (kelebihan spasi pulih frame berikut; mengosongkannya
+    // justru membiarkan ekor lama).
+    let lastGeoCols = 0
+    let lastGeoRows = 0
 
     const matches = (): string[] => hints(state.line)
 
@@ -328,6 +340,20 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
     }
 
     const renderAnsi = () => {
+      // Invalidasi jangkar saat geometri berubah (lihat lastGeoCols/Rows):
+      // render dari hitungan basi mendarat di baris salah. Mulai dari kursor
+      // saat ini; render berikut menjangkar ulang dengan benar (prev* di
+      // bawah). Tanpa keypress tak ada render — frame basi cukup ditimpa
+      // render berikutnya, bukan listener baru.
+      const colsNow = process.stdout.columns || 80
+      const rowsNow = process.stdout.rows || 24
+      if (colsNow !== lastGeoCols || rowsNow !== lastGeoRows) {
+        prevRows = 0
+        prevInputRows = 1
+        prevCursorRow = 0
+        lastGeoCols = colsNow
+        lastGeoRows = rowsNow
+      }
       // Satu frame = satu unit sinkron: terminal menahan tampil sampai SYNC_END,
       // sehingga navigasi dropdown (atas/bawah) tak berkedip/robek. Terminal
       // tanpa dukungan mengabaikan sekuens ini (sudah dipakai clearOverlay).

@@ -1,9 +1,17 @@
 # Changelog
 
-## [Unreleased]
+## [Unreleased] — 0.9.27
 
 ### Fixed
 - **Wizard setup pertama tak lagi tampak macet di `⠴ Menyiapkan sesi…`**: spinner setup sesi (`cli/index.ts`) menulis frame `\r\x1b[2K` mentah ke stderr tiap 120ms — termasuk saat wizard memilih gateway dan meminta API key, sehingga prompt picker/`askLine` dihapus setiap tick (laporan: `minicode` dari home selalu berhenti di "Menyiapkan sesi…"). Layar raw-mode kini menahan SEMUA painter transient (`beginInteractiveScreen` di `statusline.ts`; nol byte + baris painter dibersihkan sekali saat layar mengambil alih), dan kedua spinner CLI memakai `createSpinner` (ownership tunggal — tulis `[warn]` saat setup tidak lagi hilang tertimpa tick). Test regresi di `test/transient-arbitration.test.ts` (I15: painter diam selama layar, nesting/idempoten, `delayMs`) + `test/wizard.test.ts` (prompt `Base URL` terlihat selama spinner hidup).
+
+### Changed
+- **Provenance vendor tarball**: `VENDOR.md` kini mencatat **shipped hash**
+  (fingerprint file vendor yang ikut paket npm, tanpa `test/fakes.ts` yang
+  sengaja tidak terkirim) di samping hash sinkron 19-file — hash dari tarball
+  terbit kini bisa direproduksi siapa pun (celah ditemukan saat verifikasi
+  `minicode-ai@0.9.26`: hash artefak ≠ hash tercatat, 18 vs 19 file). Guard di
+  `test/pack-integrity.test.ts`; generator `vendor:minicore` menulis otomatis.
 
 ## [0.9.26] - 2026-09-17 — Rename paket npm: `minicode-ai`
 

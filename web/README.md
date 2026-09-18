@@ -168,6 +168,15 @@ Situs dibuat mudah ditemukan & dipelajari AI-assistant/agent yang browsing:
 - **FAQPage + SoftwareApplication JSON-LD** di landing, dari SATU sumber FAQ
   (`FAQS` di `landing2.ts`) — HTML dan JSON-LD tidak bisa saling stale.
 
+**Sitemap: `loc` + `lastmod`, itu saja.** Lastmod per URL: post blog dari
+frontmatter (via `blogLastmod` — sumber sama dengan buildBlog, slug helper
+diekstrak bersama), halaman lain stempel waktu build. `priority`/
+`changefreq` sengaja TIDAK dipakai (Google mengabaikannya — keduanya tak
+disebut lagi di docs Search Central, diverifikasi langsung 2026-09-18),
+dan `hreflang` tak relevan: situs satu bahasa (`lang="id"`, tanpa
+varian). Revisit hanya bila situs jadi multi-bahasa — pakai
+`xhtml:link rel="alternate"` per varian, bukan sitemap terpisah.
+
 **Ping sitemap sudah mati** (Google `/ping` 404, Bing 410 — deprecated
 2025). Jalur push yang masih hidup: **IndexNow** — key file `<key>.txt` di
 root site di-build dari `web/indexnow-key.txt` (bukan rahasia; protokol

@@ -14,13 +14,14 @@ Minicode itu apa, kenapa dibangun begitu, dan kenapa beberapa hal sengaja tidak 
 
 Setiap prompt berjalan sebagai loop `Thought → Action → Observation` sampai jawaban final, batas `--max-steps` (default 50), atau `--timeout` (default 15 menit). Model menerima system prompt berisi `# Environment` (cwd + platform), repo-map ringkas, dan memory yang relevan — lalu memilih tool, melihat hasilnya, dan memilih langkah berikutnya. Tidak ada grafik alur tersembunyi: apa pun yang agent lakukan tampil sebagai ledger di layar.
 
-## Shell-native, bukan TUI
+## TUI alternate-screen, sensasi shell
 
-Minicode sengaja **bukan** aplikasi TUI (tanpa Ink/React, tanpa alternate screen, tanpa panel permanen). Konsekuensinya:
+Sesi interaktif berjalan sebagai **TUI alternate-screen** (bukan Ink/React) dengan sensasi shell: prompt `minicode ›` steril, input tumbuh ke atas, status `✦` di baris terakhir permanen, dropdown `/` dan reverse-search in-flow, ledger per-baris yang sama. Konsekuensinya:
 
-- Output mengalir **append-only ke scrollback** — hasil agen adalah artefak terminal biasa yang bisa di-pipe, di-grep, dan tersimpan di scrollback Anda sendiri.
-- Picker/wizard bersifat transient: muncul saat dibutuhkan, menghapus dirinya sendiri setelah selesai.
-- Warna hanya saat TTY; `NO_COLOR` selalu menang; output program tetap bersih dari cursor-control saat di-pipe.
+- Transkrip adalah dokumen milik app di dalam TUI (bukan scrollback terminal) — resize = re-layout penuh, tanpa fosil.
+- Alur cetak builtin ditangkap ke dokumen; approval/ask/pick in-flow via holder sesi TUI.
+- Jalur non-interaktif (one-shot, pipe, `exec --json`) tetap append-only dan bisa di-pipe/grep.
+- Warna hanya saat TTY; `NO_COLOR` selalu menang; output program tetap bersih saat di-pipe.
 
 Detail lengkap + kontrak FROZEN-nya di [Kontrak Terminal](terminal.md).
 

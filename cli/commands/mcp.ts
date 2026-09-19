@@ -27,9 +27,10 @@ export async function handleMcp(
     })
     process.exit(0)
   }
-  // Help kontekstual, bukan HELP global 45 baris. Subcommand asing = exit 1.
+  // Help kontekstual, bukan HELP global 45 baris. Subcommand asing = salah
+  // pakai (exit 2), bukan gagal runtime (exit 1).
   const asking = sub === undefined || sub === "--help" || sub === "-h"
   if (!asking) console.error(`unknown mcp subcommand: ${sub}\n`)
   console.log(MCP_HELP)
-  process.exit(asking ? 0 : 1)
+  process.exit(asking ? 0 : 2)
 }

@@ -60,6 +60,7 @@ import { todoSession } from "../src/tools/todo.ts"
 import { promptAsk, promptAskText } from "../src/ui/approval/prompt.ts"
 import { attachSimpleLogger } from "../src/ui/assistant/simple.ts"
 import { c } from "../src/ui/render/theme.ts"
+import { tuiSessionUi } from "../src/ui/tui/session.ts"
 import { runSetupWizard } from "./wizard.ts"
 
 export interface CliSessionOptions {
@@ -97,6 +98,10 @@ export interface CliSessionOptions {
    * prefiks prompt. Dicetak di sini (setelah provider layer lolos) supaya
    * invokasi yang mati sebelumnya tetap senyap. */
   sandboxNotice?: string
+  /** Mode TUI (I16): lewati transient turn-status (spark lewat status TUI)
+   * karena paintWrite-nya akan mengotori alt-buffer. Driver TUI (P3) yang
+   * mengeset; linear tak tersentuh. */
+  tui?: boolean
 }
 
 export interface CliSession {
@@ -353,7 +358,14 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   todoSession.cwd = cwd
   // View pertanyaan ask_user — composition root meng-inject, tool menolak
   // jalan tanpanya (fail-closed, sama seperti `ask` pada permission).
-  setAskTextFn(promptAskText)
+  // Mode TUI: versi in-flow (blok + baca kunci/teks di alt-screen) lewat
+  // holder sesi TUI; absen = tolak (fail-closed, driver selalu mengisi
+  // sebelum loop pertama).
+  setAskTextFn(
+    opts.tui
+      ? async (question, options) => (await tuiSessionUi()?.askText(question, options)) ?? null
+      : promptAskText,
+  )
   // Warisan routing sub-agen (audit #14): anak memakai limiter BERSAMA
   // (satu bucket — tak memicu 429 yang baru dihindari parent) dan menghormati
   // --provider parent. Model diwarisi live via ToolContext (lihat task.ts).
@@ -381,7 +393,12 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       allowLocalConfig,
       systemExtra: (systemExtra ?? "") + recoveryAppendix,
       model: modelRef.current,
-      ask: promptAsk,
+      // Mode TUI: approval dirender in-flow (blok + kunci di alt-screen)
+      // lewat holder sesi TUI; absen = deny (fail-closed).
+      ask: opts.tui
+        ? async (call) =>
+            (await tuiSessionUi()?.approval({ name: call.name, args: call.args })) ?? "deny"
+        : promptAsk,
       onPermissions: (ctl) => {
         permissions = ctl
       },
@@ -697,18 +714,23 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   const attachUI = () => {
     detachUI()
     detachSimple = attachSimpleLogger(session.events, { verbose })
-    turnStatus = attachTurnStatus(session.events, {
-      initialModel: effectiveInitialModel,
-      getModel: () => modelRef.current ?? effectiveInitialModel,
-      ...(richStatus
-        ? {
-            getStats: () => {
-              const u = usage.getSession(modelRef.current)
-              return `${u.totalTokens.toLocaleString()} tok${u.cost != null ? ` · ${formatUsd(u.cost)}` : ""}`
-            },
-          }
-        : {}),
-    })
+    // Mode TUI: garis transient turn-status DILARANG (melukis ke alt-buffer
+    // di luar grid driver = korupsi layout + desync dirty-check). Spark busy
+    // tetap ada via baris status TUI. Linear: seperti sebelumnya.
+    if (!opts.tui) {
+      turnStatus = attachTurnStatus(session.events, {
+        initialModel: effectiveInitialModel,
+        getModel: () => modelRef.current ?? effectiveInitialModel,
+        ...(richStatus
+          ? {
+              getStats: () => {
+                const u = usage.getSession(modelRef.current)
+                return `${u.totalTokens.toLocaleString()} tok${u.cost != null ? ` · ${formatUsd(u.cost)}` : ""}`
+              },
+            }
+          : {}),
+      })
+    }
   }
   const detachUI = () => {
     try {

@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { resolve as resolvePath } from "node:path"
+import { NoProviderError } from "../src/app/provider-layer.ts"
 import { createMinicodeSession } from "../src/app/session.ts"
 import { createRateLimiter } from "../src/policy/ratelimit.ts"
 import { resolveSandbox, sandboxRefusalReason } from "../src/policy/sandbox-policy.ts"
@@ -22,6 +23,7 @@ import {
 } from "./args.ts"
 import { dispatch } from "./router.ts"
 import { createCliSession } from "./setup.ts"
+import { resolveTuiMode } from "./tui-policy.ts"
 
 /** Versi dibaca dari package.json — satu sumber, tidak di-hardcode dua tempat. */
 function readVersion(): string {
@@ -300,7 +302,9 @@ if (enterRepl) {
 }
 if (!prompt && !enterRepl) {
   process.stderr.write('usage: minicode "prompt"  |  minicode (interactive mode)\n')
-  process.exit(1)
+  // Salah pakai (bukan gagal runtime): exit 2 agar skrip bisa membedakan
+  // dari kegagalan provider/budget (exit 1). Lihat TERMINAL_CONTRACT.md.
+  process.exit(2)
 }
 
 // -- skills: expand /name args --
@@ -333,6 +337,18 @@ const setupSpin = enterRepl ? createSpinner("Menyiapkan sesi…") : undefined
 // membocorkan interval — tanpa ini spinner menulis ke stderr selamanya dan
 // proses tak pernah exit (terlihat hang).
 let ctx: Awaited<ReturnType<typeof createCliSession>>
+// Mode TUI diputuskan SEBELUM setup (hanya butuh TTY/kapabilitas): setup
+// butuh flag-nya untuk wiring ask in-flow (holder sesi TUI).
+const tuiCapable = enterRepl ? resolveTuiMode() === "tui" : true
+if (enterRepl && !tuiCapable) {
+  // Terminal tak mampu alt-screen: tolak jujur (bukan fallback diam-diam —
+  // REPL linier dihapus). Jalur non-interaktif (one-shot/exec/pipe) tak
+  // tersentuh: mereka tak pernah sampai sini.
+  console.error(
+    "minicode needs an interactive terminal with alternate-screen support (not a pipe, dumb terminal, legacy console, or tiny window).",
+  )
+  process.exit(1)
+}
 try {
   ctx = await createCliSession({
     cwd,
@@ -357,14 +373,25 @@ try {
     timeoutMs,
     rateLimiter,
     sandboxNotice: requestedSandbox ? sandbox.notice : undefined,
+    tui: enterRepl,
   })
+} catch (e) {
+  // Tanpa provider = setup gagal sebelum sesi ada. Pesan + exit(1) sama
+  // persis seperti dulu (provider-layer tak lagi exit sendiri agar
+  // exec --json bisa memasang envelope mesinnya — lihat exec.ts).
+  if (e instanceof NoProviderError) {
+    console.error(e.message)
+    process.exit(1)
+  }
+  throw e
 } finally {
   setupSpin?.stop()
 }
 
 if (enterRepl) {
-  const { runRepl } = await import("./repl.ts")
-  await runRepl(ctx)
+  // REPL linier dihapus: interaktif selalu TUI (tak mampu = ditolak di atas).
+  const { runTuiRepl } = await import("./repl-tui.ts")
+  await runTuiRepl(ctx)
 } else {
   const {
     session,

@@ -4,7 +4,6 @@ import { join } from "node:path"
 import { createInterface } from "node:readline"
 import { stripAnsi } from "../render/theme.ts"
 import { displayWidth, escapeLength, truncateToWidth } from "../render/width.ts"
-import { footerReserveRows } from "../runtime/chrome.ts"
 import { beginInteractiveScreen } from "../runtime/statusline.ts"
 import {
   applyKey,
@@ -345,13 +344,11 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
       // Baris input visual ikut memakan tinggi: kurangi jatah dropdown agar
       // blok input + dropdown tetap muat di terminal pendek.
       const nInGuess = state.line.split("\n").length
-      // Sisakan ruang untuk prompt + 1 baris status + jatah footer lengket
-      // (chrome sticky = 3 baris dasar) agar dropdown tidak membungkus maupun
-      // menimpa footer di terminal pendek.
-      const maxVisible = Math.max(
-        1,
-        Math.min(MAX_VISIBLE, rows - 3 - footerReserveRows() - (nInGuess - 1)),
-      )
+      // Sisakan ruang untuk prompt + 1 baris status agar dropdown tidak
+      // membungkus di terminal pendek. (Dulu dikurangi jatah footer lengket
+      // chrome sticky — modul itu dihapus bersama REPL linier; tidak ada
+      // lagi region yang perlu disisakan.)
+      const maxVisible = Math.max(1, Math.min(MAX_VISIBLE, rows - 3 - (nInGuess - 1)))
       const spec = buildRenderSpec(state, effPrompt(), matches(), opts.groupOf, maxVisible)
       const view = scrollableMultiline(effPrompt(), state.line, state.cursor)
       const nIn = view.texts.length

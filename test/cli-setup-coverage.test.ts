@@ -323,7 +323,7 @@ describe("last-model: default = terakhir dipakai", () => {
 
   test("persistModelChoice update ref + simpan", async () => {
     await withHome(async () => {
-      const { persistModelChoice } = await import("../cli/repl.ts")
+      const { persistModelChoice } = await import("../cli/repl-core.ts")
       const { loadLastModel } = await import("../src/config.ts")
       const ref: { current?: string } = {}
       persistModelChoice("p::m", ref)

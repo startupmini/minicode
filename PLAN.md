@@ -325,14 +325,36 @@ Skor saat ini **8.2**. Target **P0 (≤3 hari): 8.4**, **P1 (sprint): 8.6**. Ber
 - `memory status --json`: kategori + scope tampil ✅; summary persist opt-out ✅ (kecuali `MINICODE_AUTO_MEMORY=0`).
 - SWE-Lite-20: dataset pin + harness benar + fake hijau + **run nyata 0/20 (terkonfoundasi env — lihat P1.2)** ✅; angka leaderboard-comparable ⏳ (butuh Docker per-instance).
 
+## P14 — TUI alt-screen (keputusan pemilik 2026-09-19, mengamandemen I1)
+
+Latar: footer lengket tidak selamat dari resize PowerShell/Windows Terminal
+(salinan ganda + hilang total — 3 ronde fix menutup sebagian, kelas risikonya
+tetap: lukisan absolut + reflow terminal). Pemilik memutuskan: sesi
+interaktif boleh berjalan sebagai TUI alternate-screen satu sesi penuh,
+didesain senatural bash (prompt `minicode ›`, binding Tab/Ctrl+C tetap,
+riwayat layar dibuang + info sesi saat keluar, zero-dep hand-rolled).
+
+Keputusan terkunci: `MINICODE_TUI=auto|always|never` + `--no-tui`
+(auto = TUI bila TTY+mampu, linear bila tidak); wizard tetap linear;
+jalur non-interaktif tak tersentuh; fallback linear first-class (aksesibel).
+Kontrak: I16 baru di `docs/TERMINAL_CONTRACT.md` (I1–I15 tetap mengikat
+penuh mode linear). Lapisan: `src/ui/tui/` hanya impor `src/ui/*` + node
+builtin (dijaga `test/ui-boundary.test.ts` yang kini mencakup berkas belum
+di-stage); controller di `cli/repl-tui.ts` via DI.
+
+Fase: P0 kontrak+boundary (ini) → P1 model dokumen-baris + renderer +
+emulator grid harness → P2 input (prompt-engine reuse) → P3 transcript/box/
+policy/info-sesi → P4 fallback-a11y/docs/re-audit. Selesai bila: gate hijau
++ resize brutal tanpa duplikat (live WT) + fallback linear terbukti.
+
 ## Yang sengaja TIDAK dikerjakan
 
 Agar cakupan jelas dan tidak melebar diam-diam:
 
-- **Tidak ada framework TUI baru.** Pure ANSI tetap. Ink/blessed akan membuang seluruh `fullscreen.ts` demi masalah yang perbaikannya berukuran satu fungsi.
-- **Tidak ada mouse support.** Mouse tracking sudah dimatikan di V6 karena byte koordinatnya bocor ke input dan tidak ada konsumennya.
+- **Tidak ada framework TUI baru.** Pure ANSI tetap — renderer TUI (P14) hand-rolled minimal memakai ulang `render/*` + `prompt-engine`, BUKAN Ink/blessed/dep baru. Aturan "jangan memperkenalkan pustaka baru" tetap berlaku penuh.
+- **Tidak ada mouse support.** Mouse tracking sudah dimatikan di V6 karena byte koordinatnya bocor ke input dan tidak ada konsumennya. (Berlaku juga di mode TUI.)
 - **Tidak ada tema baru.** Empat preset sudah bekerja; menambah tema tanpa pengguna yang meminta adalah spekulasi.
-- **Tidak ada virtual scroll transcript.** Output append-only ke scrollback terminal; layar interaktif (manager/wizard/picker) transient dan menghapus diri sendiri.
+- **Tidak ada virtual scroll transcript (mode linear).** Output append-only ke scrollback terminal; layar interaktif (manager/wizard/picker) transient dan menghapus diri sendiri. **Diamandemen untuk mode TUI saja (P14):** transcript milik app + follow-mode di alt-screen; keluar membuang riwayat + cetak info sesi.
 - **Repo-map tetap regex.** Alasan lengkap (dengan tabel pengukuran) ada di komentar `extractSymbolsAsync` di `src/repo/repomap.ts`. Tree-sitter menambah dua dependensi dan ~1,4 MB wasm per bahasa untuk simbol yang hampir seluruhnya member kelas — bukan yang berguna untuk orientasi.
 
 ---

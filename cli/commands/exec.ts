@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { resolve as resolvePath } from "node:path"
+import { NoProviderError } from "../../src/app/provider-layer.ts"
 import { createRateLimiter } from "../../src/policy/ratelimit.ts"
 import { resolveSandbox, sandboxRefusalReason } from "../../src/policy/sandbox-policy.ts"
 import { scrubSecrets } from "../../src/policy/scrub.ts"
@@ -22,8 +23,13 @@ export async function handleExec(
   // ikut masuk ke prompt. `exec "tes" --provider gorouter --timeout 60000` benar-
   // benar mengirim "tes gorouter 60000" ke model, dan model membalas dengan
   // menebak-nebak soal "gorouter" dan "60000".
-  const prompt = promptFromArgs(args.slice(1)) || (rawGetArg(args, "--prompt") ?? "")
-  const jsonMode = hasFlag(args, "--json") || rawGetArg(args, "--output-format") === "json"
+  // Router memanggil dengan argv penuh (["exec", ...]) sementara hasFlag/
+  // getArg berhenti di token subcommand (boundary anti-injeksi) — tanpa
+  // slice, SEMUA flag boolean exec (--json/--verify/--ask/...) mati diam-diam
+  // di CLI nyata. Pola yang sama dengan promptFromArgs di bawah.
+  const subArgs = args[0] === "exec" ? args.slice(1) : args
+  const prompt = promptFromArgs(subArgs) || (rawGetArg(subArgs, "--prompt") ?? "")
+  const jsonMode = hasFlag(subArgs, "--json") || rawGetArg(subArgs, "--output-format") === "json"
   const cwdRaw = getArg("--cwd")
   const cwd = cwdRaw ? resolvePath(cwdRaw) : undefined
   const modelOverride = getArg("--model")
@@ -32,10 +38,10 @@ export async function handleExec(
     getArg("--session")
       ?.replace(/[^A-Za-z0-9._-]/g, "-")
       .slice(0, 64) || randomUUID().slice(0, 8)
-  const allowAll = hasFlag(args, "--allow-all")
-  const ask = hasFlag(args, "--ask")
-  const plan = hasFlag(args, "--plan")
-  const allowlistFlag = hasFlag(args, "--allowlist")
+  const allowAll = hasFlag(subArgs, "--allow-all")
+  const ask = hasFlag(subArgs, "--ask")
+  const plan = hasFlag(subArgs, "--plan")
+  const allowlistFlag = hasFlag(subArgs, "--allowlist")
   // Sama seperti jalur interaktif: OS sandbox otomatis, dan tanpa isolasi nyata
   // permission default turun ke allowlist. Headless CI justru paling butuh ini —
   // di sana tak ada manusia yang bisa menyetujui prompt.
@@ -52,7 +58,7 @@ export async function handleExec(
   else process.env.MINICODE_SANDBOX = sandbox.mode
   const allowlist = allowlistFlag || sandbox.fallbackPermission === "allowlist"
   // Audit #07 P0: local config repo tak dipercaya kecuali operator opt-in.
-  const allowLocal = allowLocalConfig(args)
+  const allowLocal = allowLocalConfig(subArgs)
   const budgetRaw = getArg("--budget")
   const parsedBudget = budgetRaw ? Number(budgetRaw) : undefined
   const budget =
@@ -61,7 +67,7 @@ export async function handleExec(
       : undefined
   // Harness-P1: sama seperti one-shot — strict fail-closed bila cost tak dikenal.
   const budgetStrict =
-    hasFlag(args, "--budget-strict") || process.env.MINICODE_BUDGET_STRICT === "1"
+    hasFlag(subArgs, "--budget-strict") || process.env.MINICODE_BUDGET_STRICT === "1"
   // Harness-P2: scope tool sesi.
   const toolScopeRaw = (
     getArg("--tool-scope") ??
@@ -77,7 +83,7 @@ export async function handleExec(
     console.error(
       'usage: minicode exec "prompt" [--json] [--cwd <dir>] [--model <m>] [--sandbox docker|os]',
     )
-    process.exit(1)
+    process.exit(2)
   }
 
   const ctx = await createCliSession({
@@ -92,7 +98,7 @@ export async function handleExec(
     ask,
     plan,
     allowlist,
-    verify: hasFlag(args, "--verify"),
+    verify: hasFlag(subArgs, "--verify"),
     allowLocalConfig: allowLocal,
     budget,
     budgetStrict,
@@ -100,6 +106,19 @@ export async function handleExec(
     rateLimiter,
     // Notice hanya bila user eksplisit meminta mode (daemon mati / tak dikenal).
     sandboxNotice: requestedSandbox ? sandbox.notice : undefined,
+  }).catch((e) => {
+    // Setup gagal SEBELUM envelope JSON dipasang (tanpa provider): mode
+    // mesin tetap pulang membawa satu baris summary agar pipeline CI tak
+    // menerima stream kosong — stderr manusia + exit 1 tidak berubah.
+    if (e instanceof NoProviderError) {
+      if (jsonMode)
+        process.stdout.write(
+          `${scrubSecrets(JSON.stringify({ type: "summary", ok: false, error: formatError(e), prompt: effectivePrompt }))}\n`,
+        )
+      console.error(e.message)
+      process.exit(1)
+    }
+    throw e
   })
   const t0 = Date.now()
   const events: unknown[] = []

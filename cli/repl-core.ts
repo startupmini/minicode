@@ -1,18 +1,13 @@
-// REPL linier — Minicode sebagai agentic Unix shell.
+// Inti REPL bersama (dipakai driver linier `cli/repl.ts` DAN driver TUI
+// `cli/repl-tui.ts`). Diekstrak verbatim dari runRepl agar orkestrasi
+// (loop, dispatch slash, turn, budget, recovery) TUNGGAL — driver hanya
+// memasok primitif UI lewat ReplUi. Perilaku linier byte-identik; TUI
+// mengimplementasi primitif yang sama di atas screen/box.
 //
-// Loop `askLine` + printer linier (src/ui/assistant/simple.ts, dipasang di
-// cli/setup.ts) + spinner turn-status. Output append-only di scrollback:
-// tanpa alternate screen, tanpa redraw penuh, tanpa overlay modal. Saat agen
-// bekerja terminal "dipakai" sampai selesai atau dibatalkan Ctrl+C — persis
-// seperti menjalankan perintah shell.
-//
-// Semantik interupsi:
-// - busy:  stdin tidak raw, jadi Ctrl+C menjadi SIGINT → abort turn.
-//          Listener byte \x03 dipasang sebagai cadangan untuk konsol yang
-//          tidak mengirim SIGINT (conhost legacy).
-// - idle:  askLine menangkap Ctrl+C/Ctrl+D → null → cetak ^C; null dua kali
-//          beruntun → keluar. `/exit` tetap cara utama.
-
+// Aturan: modul ini BOLEH impor src/* (logika+UI, seperti repl.ts dulu).
+// Tak ada lukisan langsung di sini kecuali lewat hooks — SEMUA teks
+// user-visible mengalir via hooks agar driver TUI bisa mengarahkannya ke
+// dokumen (I16) dan driver linier ke scrollback (I2/I4).
 import { resolve as resolvePath } from "node:path"
 import { expandMentions } from "../src/app/mentions.ts"
 import { saveLastModel } from "../src/config.ts"
@@ -26,7 +21,7 @@ import {
   takePendingError,
   writeClipboardOsc52,
 } from "../src/ui/assistant/simple.ts"
-import { appendHistory, askLine } from "../src/ui/input/input.ts"
+import { appendHistory } from "../src/ui/input/input.ts"
 import type { PromptKey } from "../src/ui/input/prompt-engine.ts"
 import {
   type CollapseSection,
@@ -40,8 +35,6 @@ import { setCompactMode } from "../src/ui/render/detail.ts"
 import { formatUsd } from "../src/ui/render/money.ts"
 import { setReasoningVisible } from "../src/ui/render/reasoning.ts"
 import { c, glyphs } from "../src/ui/render/theme.ts"
-import { createFooterChrome, type FooterChrome } from "../src/ui/runtime/chrome.ts"
-import { paintWrite } from "../src/ui/runtime/statusline.ts"
 import {
   BUILTIN_COMMANDS,
   type CommandContext,
@@ -50,7 +43,15 @@ import {
 } from "./commands.ts"
 import type { CliSession } from "./setup.ts"
 
-const MODES = ["auto", "ask", "plan", "allowlist", "allow-all"] as const
+export const MODES = ["auto", "ask", "plan", "allowlist", "allow-all"] as const
+
+// Perintah REPL yang ditangani driver sendiri DAN ikut di dropdown completion.
+// Yang hanya ditampilkan di /help (bukan dropdown) tinggal di commands.ts
+// (DRIVER_HELP_COMMANDS) — dropdown tetap pendek. /mode pindah ke sana:
+// Tab/Shift+Tab sudah memutar mode tanpa baris baru, jadi /mode tak perlu
+// memenuhi dropdown. /thinking = toggle TAMPILAN reasoning (expand/minimize),
+// bukan effort — effort diatur lewat picker /model (Enter).
+export const DRIVER_COMMANDS = ["/compact", "/thinking", "/expand", "/minimize"]
 
 // Jarak edit untuk did-you-mean — cukup untuk typo 1-2 huruf (/modle,
 // /sessons), cukup ketat untuk tidak menebak perintah yang memang asing.
@@ -69,7 +70,7 @@ function editDistance(a: string, b: string): number {
 }
 
 /** Saran perintah terdekat untuk typo slash; undefined bila tak ada yang dekat.
- * Diekspor untuk test. */
+ * Diekspor untuk test (via repl.ts re-export). */
 export function suggestSimilar(name: string, candidates: string[]): string | undefined {
   let best: string | undefined
   let bestD = 3 // ambang: >2 dianggap perintah asing, bukan typo
@@ -85,19 +86,11 @@ export function suggestSimilar(name: string, candidates: string[]): string | und
 }
 
 /** Terapkan pilihan model + ingat untuk sesi berikutnya (global,
- * fire-and-forget). Diekspor untuk test. */
+ * fire-and-forget). Diekspor untuk test (via repl.ts re-export). */
 export function persistModelChoice(m: string, modelRef: { current?: string }): void {
   modelRef.current = m
   void saveLastModel(m).catch(() => {})
 }
-
-// Perintah REPL yang ditangani driver sendiri DAN ikut di dropdown completion.
-// Yang hanya ditampilkan di /help (bukan dropdown) tinggal di commands.ts
-// (DRIVER_HELP_COMMANDS) — dropdown tetap pendek. /mode pindah ke sana:
-// Tab/Shift+Tab sudah memutar mode tanpa baris baru, jadi /mode tak perlu
-// memenuhi dropdown. /thinking = toggle TAMPILAN reasoning (expand/minimize),
-// bukan effort — effort diatur lewat picker /model (Enter).
-const DRIVER_COMMANDS = ["/compact", "/thinking", "/expand", "/minimize"]
 
 // Pemetaan byte tombol yang ditangkap SELAMA turn (raw mode). Dipisah agar
 // bisa di-unit-test murni. `+`/`=` expand section aktif, `-`/`_` minimize,
@@ -118,17 +111,193 @@ export function applyBusyKey(byte: number, active: CollapseSection | null): Busy
   return null
 }
 
-export async function runRepl(ctx: CliSession): Promise<void> {
+/** Langkah mode berikutnya (murni): allow-all hanya via flag --allow-all,
+ * tidak di-cycle tombol — mencegah aktivasi tak sengaja mode paling permisif. */
+export function cycleModeValue(mode: string): string {
+  const idx = MODES.indexOf(mode as (typeof MODES)[number])
+  let next = MODES[(idx + 1) % MODES.length]!
+  if (next === "allow-all") next = MODES[(idx + 2) % MODES.length]!
+  return next
+}
+
+// Primitif UI yang disediakan driver (linier vs TUI). Semua teks
+// user-visible mengalir lewat sini — inti tak pernah menyentuh stdout,
+// stdin, atau escape sequence langsung.
+export interface ReplUi {
+  /** Lukis idle (footer.present / TUI present status+input). */
+  presentIdle(): void
+  /** Baca satu baris prompt (askLine / pompa box TUI). */
+  readPrompt(prompt: string): Promise<string | null>
+  printOut(msg: string): void
+  printErr(msg: string): void
+  /** Notifikasi satu baris (linier: baris scrollback; TUI: baris dokumen). */
+  notify(msg: string): void
+  /** Umpan balik tombol busy (linier: transient; TUI: baris dokumen). */
+  busyFeedback(msg: string): void
+  setBusy(busy: boolean): void
+  refresh(): void
+  /** Jalankan fn sambil menangkap tulisannya ke dokumen (linier: teruskan
+   * langsung — perilaku byte-identik; TUI: capture stdout/stderr/console,
+   * wrap, append, repaint — TANPA leave alt-screen). Dipakai SEMUA alur
+   * cetak builtin (/help, tabel, /expand). */
+  suspend<T>(fn: () => Promise<T>): Promise<T>
+  /** Baca satu baris teks in-flow (follow-up pickSession): linier askLine,
+   * TUI mini-reader (box sementara, tanpa history/dropdown). */
+  promptLine(prompt: string): Promise<string | null>
+  /** Lepas chrome/region (respawn path). */
+  detachUi(): void
+  /** Pompa input driver aktif/nonaktif selama turn (linier: noop — askLine
+   * mengelola listener sendiri; TUI: lepas/pasang listener box). */
+  setInputActive(on: boolean): void
+  /** Suntik batal saat idle (linier: byte Ctrl+C ke stdin; TUI: ke box). */
+  injectCancel(): void
+  /** Bersihkan transkrip (linier: penanda scrollback; TUI: reset dokumen). */
+  clearTranscript(): void
+  /** Finalisasi visual sebelum close+exit (footer.detach / leave+info). */
+  finish(): void
+}
+
+// State mode milik loop inti; driver membaca/menulis lewat handle ini
+// (status/footer TUI maupun linier selalu konsisten).
+export interface ReplShared {
+  getMode(): string
+  /** Set eksplisit (dipakai `/mode <nama>`); cycle via cycleMode(). */
+  setMode(m: string): void
+  cycleMode(): void
+}
+
+// Ganti mode TANPA baris scrollback baru (dipakai Tab/Shift-Tab baik linier
+// maupun TUI): mode baru terlihat di footer/status pada repaint berikutnya.
+// compact tetap notify (statusnya tak ada di prefiks).
+export function handlePromptKey(
+  key: PromptKey,
+  ctl: { shared: ReplShared; notify(msg: string): void; refresh(): void },
+): boolean {
+  if (key.type === "shift-tab") {
+    ctl.shared.cycleMode()
+    ctl.refresh()
+    return true
+  }
+  // Tab SELALU putar mode (keputusan user: tanpa peduli baris kosong/isi).
+  // Completion dropdown tidak lagi pakai Tab — user pilih via ↑/↓ lalu
+  // Enter. Tanpa ini Tab saat mengetik tidak bisa ganti mode (keluhan nyata).
+  if (key.type === "tab") {
+    ctl.shared.cycleMode()
+    ctl.refresh()
+    return true
+  }
+  if (key.type === "ctrl-o") {
+    const compact = setCompactMode()
+    ctl.notify(c.muted(`tool call: ${compact ? "compact" : "expanded"}`))
+    return true
+  }
+  if (key.type === "ctrl-t") {
+    const vis = setReasoningVisible()
+    ctl.notify(c.muted(`thinking: ${vis ? "expanded" : "minimized"}`))
+    return true
+  }
+  return false
+}
+
+/** Angka konteks ringkas untuk status (`14.2k`): dipakai footer linier DAN
+ * status TUI — satu sumber, bukan dua duplikat yang bisa drift. */
+export function formatContextCount(n: number): string | undefined {
+  if (!Number.isFinite(n) || n <= 0) return undefined
+  if (n < 1000) return String(n)
+  if (n < 10000) return `${(n / 1000).toFixed(1)}k`
+  if (n < 1000000) return `${Math.round(n / 1000)}k`
+  return `${(n / 1000000).toFixed(1)}m`
+}
+
+/** Prompt steril: tanpa status apa pun (mode/model/cwd pindah ke footer/
+ * status TUI). Dipakai askLine linier maupun box TUI. */
+export function promptPrefix(): string {
+  return `${c.dim("minicode")} › `
+}
+
+/** Prompt lanjutan `\`-continuation (driver-level, bukan askLine). */
+export function contPrompt(): string {
+  return c.dim("··· › ")
+}
+
+export function buildSuggestions(ctx: CliSession): (line: string) => string[] {
+  return (line: string): string[] => {
+    if (!line.startsWith("/")) return []
+    const all = [
+      ...BUILTIN_COMMANDS.map((b) => `/${b.name}`),
+      ...DRIVER_COMMANDS,
+      ...ctx.allLoadedSkills.map((s) => `/${s.name}`),
+    ]
+    return all.filter((t) => t.startsWith(line))
+  }
+}
+
+export function buildGroupOf(): (text: string) => string {
+  return (text: string): string =>
+    BUILTIN_COMMANDS.some((b) => `/${b.name}` === text) || DRIVER_COMMANDS.includes(text)
+      ? "commands"
+      : "skills"
+}
+
+function buildCommandCtx(ctx: CliSession, setModelOverride: (m: string) => void): CommandContext {
   const {
     cfg,
     cwd,
     sessionId,
     modelRef,
+    usage,
+    sessionTools,
+    allowLocalConfig,
+    budget,
+    budgetStrict,
+  } = ctx
+  return {
+    cwd,
+    sessionId,
+    allowLocalConfig,
+    get currentModel() {
+      return modelRef.current ?? cfg.providers[0]?.models[0]
+    },
+    set currentModel(v) {
+      modelRef.current = v
+    },
+    usage,
+    skills: ctx.allLoadedSkills,
+    toolsCount: sessionTools.length,
+    providerHint: cfg.providers[0]?.providerHint,
+    setModelOverride,
+    // Kontrak control-plane (Phase 6): angka konteks dari sumber kebenaran
+    // kernel (estimateSessionContext) — bukan usage kumulatif.
+    getContextTokens: () => ctx.session.contextTokens,
+    budgetState: () => {
+      const u = usage.getSession()
+      return budgetStatus(budget, u.cost, budgetStrict ?? false, u.totalTokens)
+    },
+  }
+}
+
+/** Pilih id sesi dari input pengguna (nomor = indeks daftar, selain itu id
+ * verbatim; kosong = batal → null). Murni agar teruji tanpa DB/proses. */
+export function parseSessionPick(pick: string, ids: (string | undefined)[]): string | null {
+  const t = pick.trim()
+  if (!t) return null
+  const asNum = Number(t)
+  if (Number.isInteger(asNum) && asNum >= 0 && asNum < ids.length)
+    return (ids[asNum] ?? t).trim() || t
+  return t
+}
+
+export async function runReplLoop(
+  ctx: CliSession,
+  createUi: (shared: ReplShared) => ReplUi,
+): Promise<void> {
+  const {
+    cwd,
+    sessionId,
+    modelRef,
     permissionMode,
     permissions,
-    sessionTools,
     allLoadedSkills,
-    allowLocalConfig,
     usage,
     budget,
     budgetStrict,
@@ -136,13 +305,30 @@ export async function runRepl(ctx: CliSession): Promise<void> {
     runPromptWithVerify,
     close,
   } = ctx
-  // Kontrak control-plane (Phase 6): sumber kebenaran konteks = kernel.
-  const { session } = ctx
 
   // Kernel tidak mengekspos `config`, jadi handle permission datang dari
   // createMinicodeSession lewat CliSession. Tanpa ini Shift+Tab hanya mengubah
   // label prompt sementara mode sebenarnya tidak berubah.
   let mode: string = permissions?.getMode() ?? permissionMode ?? "auto"
+  // Satu-satunya penulis mode (+ penerus ke permission handle): dipakai
+  // set eksplisit (/mode) maupun cycle (Tab). Semantik disalin persis dari
+  // kode lama (set var dulu, lalu teruskan / fallback tanpa label palsu).
+  const applyMode = (m: string): void => {
+    mode = m
+    if (permissions) permissions.setMode(m as (typeof MODES)[number])
+    else mode = permissionMode ?? m
+  }
+  const shared: ReplShared = {
+    getMode: () => mode,
+    setMode: (m: string): void => {
+      applyMode(m)
+    },
+    cycleMode: () => {
+      applyMode(cycleModeValue(mode))
+    },
+  }
+  const ui = createUi(shared)
+
   // REPL default ringkas (minimize): output tool minimize, bisa di-expand via
   // /compact atau Ctrl+O. Env eksplisit selalu menang; one-shot/exec/CI tak
   // tersentuh (tetap expanded). Lihat detail.compact.
@@ -158,105 +344,14 @@ export async function runRepl(ctx: CliSession): Promise<void> {
   // Non-null selama turn berjalan — target abort SIGINT/Ctrl+C.
   let abort: AbortController | null = null
 
-  const commandCtx: CommandContext = {
-    cwd,
-    sessionId,
-    allowLocalConfig,
-    get currentModel() {
-      return modelRef.current ?? cfg.providers[0]?.models[0]
-    },
-    set currentModel(v) {
-      modelRef.current = v
-    },
-    usage,
-    skills: allLoadedSkills,
-    toolsCount: sessionTools.length,
-    providerHint: cfg.providers[0]?.providerHint,
-    setModelOverride: (m) => {
-      persistModelChoice(m, modelRef)
-    },
-    // Kontrak control-plane (Phase 6): angka konteks dari sumber kebenaran
-    // kernel (estimateSessionContext) — bukan usage kumulatif.
-    getContextTokens: () => session.contextTokens,
-    budgetState: () => {
-      const u = usage.getSession()
-      return budgetStatus(budget, u.cost, budgetStrict ?? false, u.totalTokens)
-    },
-  }
-
-  const suggestions = (line: string): string[] => {
-    if (!line.startsWith("/")) return []
-    const all = [
-      ...BUILTIN_COMMANDS.map((b) => `/${b.name}`),
-      ...DRIVER_COMMANDS,
-      ...allLoadedSkills.map((s) => `/${s.name}`),
-    ]
-    return all.filter((t) => t.startsWith(line))
-  }
-  const groupOf = (text: string): string =>
-    BUILTIN_COMMANDS.some((b) => `/${b.name}` === text) || DRIVER_COMMANDS.includes(text)
-      ? "commands"
-      : "skills"
-
-  // Prompt steril: tanpa status apa pun (mode/model/cwd pindah ke footer).
-  // Bentuk fungsi dipertahankan karena askLine menerima string|fungsi.
-  const promptPrefix = (): string => {
-    return `${c.dim("minicode")} › `
-  }
-
-  // Notifikasi satu baris saat prompt masih aktif: bersihkan baris berjalan,
-  // cetak, lalu askLine menggambar ulang prompt di baris bawahnya.
-  const notify = (msg: string) => process.stdout.write(`\r\x1b[2K${msg}\n`)
-
-  const cycleMode = () => {
-    const idx = MODES.indexOf(mode as (typeof MODES)[number])
-    // allow-all hanya via flag --allow-all, tidak di-cycle tombol
-    // — mencegah aktivasi tak sengaja mode paling permisif.
-    let next = MODES[(idx + 1) % MODES.length]!
-    if (next === "allow-all") next = MODES[(idx + 2) % MODES.length]!
-    mode = next
-    if (permissions) permissions.setMode(mode as (typeof MODES)[number])
-    else mode = permissionMode ?? mode // tak ada handle: jangan tampilkan label palsu
-  }
-
-  const onKey = (key: PromptKey, _line: string): boolean => {
-    // Ganti mode TANPA baris scrollback baru: askLine me-render ulang baris
-    // berjalan setelah onKey (lihat input.ts); mode baru terlihat di footer
-    // yang dicetak pada idle berikutnya. notify() di sini hanya menambah
-    // histori "mode: x" tiap tekan tombol.
-    // (compact di bawah tetap notify: statusnya tak ada di prefiks.)
-    if (key.type === "shift-tab") {
-      cycleMode()
-      // Mode baru langsung terlihat di footer (repaint di tempat, tanpa
-      // memindahkan kursor) — bukan menunggu idle berikutnya.
-      footer.refresh()
-      return true
-    }
-    // Tab SELALU putar mode (keputusan user: tanpa peduli baris kosong/isi).
-    // Completion dropdown tidak lagi pakai Tab — user pilih via ↑/↓ lalu
-    // Enter. Tanpa ini Tab saat mengetik tidak bisa ganti mode (keluhan nyata).
-    if (key.type === "tab") {
-      cycleMode()
-      footer.refresh()
-      return true
-    }
-    if (key.type === "ctrl-o") {
-      const compact = setCompactMode()
-      notify(c.muted(`tool call: ${compact ? "compact" : "expanded"}`))
-      return true
-    }
-    if (key.type === "ctrl-t") {
-      const vis = setReasoningVisible()
-      notify(c.muted(`thinking: ${vis ? "expanded" : "minimized"}`))
-      return true
-    }
-    return false
-  }
+  const commandCtx: CommandContext = buildCommandCtx(ctx, (m) => {
+    persistModelChoice(m, modelRef)
+  })
 
   async function respawnWithResume(id: string): Promise<void> {
-    // Lepas region footer sebelum spawn anak stdio-inherit — anak tidak boleh
-    // mewarisi terminal yang region-nya terkunci milik parent.
-    footer.detach()
+    // Lepas chrome/region sebelum spawn anak stdio-inherit — anak tidak boleh
+    // mewarisi terminal yang terkunci milik parent.
+    ui.detachUi()
     await close()
     const { spawn } = await import("node:child_process")
     const { waitChildExit } = await import("./auto-update.ts")
@@ -267,25 +362,23 @@ export async function runRepl(ctx: CliSession): Promise<void> {
       { stdio: "inherit", env: { ...process.env, MINICODE_RESUME_NEW: "1" } },
     )
     void waitChildExit(child).then((code) => process.exit(code ?? 0))
+    process.stdin.resume()
   }
 
   // `/sessions` tanpa argumen: builtin mencetak daftar bernomor, lalu satu
-  // askLine linier meminta pilihan — pengganti picker modal lama.
+  // prompt meminta pilihan — pengganti picker modal lama.
   async function pickSession(): Promise<void> {
-    await handleBuiltinCommand("/sessions", commandCtx)
+    await ui.suspend(() => handleBuiltinCommand("/sessions", commandCtx))
     const rows = listSessions(cwd).slice(0, 25)
     if (rows.length === 0) return
-    const choice = await askLine({ prompt: "resume (number/id, empty = cancel) › " })
-    const pick = choice?.trim()
-    if (!pick) return
-    const asNum = Number(pick)
-    const id =
-      Number.isInteger(asNum) && asNum >= 0 && asNum < rows.length
-        ? (rows[asNum]?.id ?? pick)
-        : pick
+    const id = parseSessionPick(
+      (await ui.promptLine("resume (number/id, empty = cancel) › ")) ?? "",
+      rows.map((r) => r.id),
+    )
+    if (!id) return
     const sess = loadSession(id, cwd)
     if (!sess?.messages.length) {
-      console.log(`Session "${id}" not found or empty.`)
+      ui.printOut(`Session "${id}" not found or empty.`)
       return
     }
     await respawnWithResume(id)
@@ -296,15 +389,15 @@ export async function runRepl(ctx: CliSession): Promise<void> {
   function copyLastTurn(): boolean {
     const txt = getLastTurnText().trim()
     if (!txt) {
-      console.log(c.dim("(nothing to copy yet — run a prompt first)"))
+      ui.printOut(c.dim("(nothing to copy yet — run a prompt first)"))
       return false
     }
     // OSC 52 diblokir default di banyak terminal; sampaikan jujur.
     if (writeClipboardOsc52(txt))
-      console.log(
+      ui.printOut(
         c.dim(`copied ${txt.length} chars (OSC 52 — allow clipboard access in terminal if empty)`),
       )
-    else console.log(c.dim("(clipboard needs a TTY terminal)"))
+    else ui.printOut(c.dim("(clipboard needs a TTY terminal)"))
     return true
   }
 
@@ -315,7 +408,7 @@ export async function runRepl(ctx: CliSession): Promise<void> {
     const spent = usage.getSession(modelRef.current)
     const preStatus = budgetStatus(budget, spent.cost, budgetStrict ?? false, spent.totalTokens)
     if (preStatus === "over" && spent.cost != null && budget != null) {
-      console.log(
+      ui.printOut(
         c.red(
           `[budget] ${formatUsd(spent.cost)} > ${formatUsd(budget)} — over budget, new prompts rejected. /exit to quit.`,
         ),
@@ -323,7 +416,7 @@ export async function runRepl(ctx: CliSession): Promise<void> {
       return
     }
     if (preStatus === "unknown-strict") {
-      console.log(
+      ui.printOut(
         c.red(
           `[budget] cost unknown (model without pricing) with ${spent.totalTokens} tokens spent — over budget, new prompts rejected. /exit to quit.`,
         ),
@@ -335,15 +428,16 @@ export async function runRepl(ctx: CliSession): Promise<void> {
     if (finalPrompt.includes("@")) {
       const expanded = await expandMentions(finalPrompt, cwd ?? process.cwd())
       prompt = expanded.prompt
-      for (const n of expanded.notes) process.stderr.write(`  [@mention] ${n}\n`)
+      for (const n of expanded.notes) ui.printErr(`  [@mention] ${n}\n`)
     }
 
-    footer.setBusy(true)
+    ui.setBusy(true)
+    ui.setInputActive(false)
     const ctrl = new AbortController()
     abort = ctrl
     // Raw mode selama turn: tombol + / - / Ctrl+T dibaca live (section
     // collapse), Ctrl+C tetap abort via byte 0x03. Di luar turn stdin tidak
-    // raw — askLine mengelola mode raw sendiri. Bukan TTY (pipe/CI) = tanpa
+    // raw — prompt mengelolanya sendiri. Bukan TTY (pipe/CI) = tanpa
     // raw, tanpa tombol live (perilaku lama: hanya Ctrl+C via sinyal).
     const ttyStdin = !!process.stdin.isTTY
     if (ttyStdin) {
@@ -352,9 +446,7 @@ export async function runRepl(ctx: CliSession): Promise<void> {
       } catch {}
     }
     const busyFeedback = (msg: string) => {
-      try {
-        paintWrite(`\r\x1b[2K✦ ${msg}`)
-      } catch {}
+      ui.busyFeedback(msg)
     }
     // Esc sendirian = abort. 0x1b juga awal SEMUA escape sequence (panah,
     // F-key, mouse), jadi kita tunggu ~50ms: kalau ada byte lanjutan, itu
@@ -404,9 +496,9 @@ export async function runRepl(ctx: CliSession): Promise<void> {
     const turnStart = Date.now()
     try {
       await runPromptWithVerify(prompt, ctrl.signal)
-      if (ctrl.signal.aborted) console.log(c.yellow("\n(stopped)"))
+      if (ctrl.signal.aborted) ui.printOut(c.yellow("\n(stopped)"))
     } catch (e) {
-      if (ctrl.signal.aborted) console.log(c.yellow("\n(stopped)"))
+      if (ctrl.signal.aborted) ui.printOut(c.yellow("\n(stopped)"))
       else {
         // Audit #04 P1: turn gagal SETELAH delegasi committed = efek anak
         // tetap ada sementara riwayat bersih. Model (dan retry berikut)
@@ -416,7 +508,7 @@ export async function runRepl(ctx: CliSession): Promise<void> {
           const { committedDelegatesSince } = await import("../src/session/journal.ts")
           const done = await committedDelegatesSince(sessionId, cwd, turnStart)
           for (const d of done) {
-            console.log(
+            ui.printOut(
               c.yellow(
                 `[recovery] turn failed after sub-agent ${d.childSessionId} completed — its effects stand; verify before re-delegating\n`,
               ),
@@ -426,7 +518,8 @@ export async function runRepl(ctx: CliSession): Promise<void> {
         throw e
       }
     } finally {
-      footer.setBusy(false)
+      ui.setBusy(false)
+      ui.setInputActive(true)
       if (escTimer) {
         clearTimeout(escTimer)
         escTimer = undefined
@@ -445,16 +538,18 @@ export async function runRepl(ctx: CliSession): Promise<void> {
     const u = usage.get(modelRef.current)
     await persistCurrent(u)
     usage.reset()
-    const session = usage.getSession(modelRef.current)
+    const sessionUsage = usage.getSession(modelRef.current)
     if (
       budget != null &&
-      session.cost != null &&
-      session.cost > budget * 0.8 &&
-      session.cost <= budget &&
+      sessionUsage.cost != null &&
+      sessionUsage.cost > budget * 0.8 &&
+      sessionUsage.cost <= budget &&
       !warned80
     ) {
       warned80 = true
-      console.log(c.yellow(`[budget] ${formatUsd(session.cost)} / ${formatUsd(budget)} (80% used)`))
+      ui.printOut(
+        c.yellow(`[budget] ${formatUsd(sessionUsage.cost)} / ${formatUsd(budget)} (80% used)`),
+      )
     }
   }
 
@@ -467,32 +562,33 @@ export async function runRepl(ctx: CliSession): Promise<void> {
 
       // Slash sendirian = minta daftar perintah, bukan unknown command.
       if (name === "") {
-        return handleBuiltinCommand("/help", commandCtx).then((r) => !!r.shouldExit)
+        return ui
+          .suspend(() => handleBuiltinCommand("/help", commandCtx))
+          .then((r) => !!r.shouldExit)
       }
       if (name === "mode") {
         if (args) {
           if (!(MODES as readonly string[]).includes(args)) {
-            console.log(c.yellow(`unknown mode: ${args} — choices: ${MODES.join(", ")}`))
+            ui.printOut(c.yellow(`unknown mode: ${args} — choices: ${MODES.join(", ")}`))
             return false
           }
-          mode = args
-          permissions?.setMode(args as (typeof MODES)[number])
+          shared.setMode(args)
         } else {
-          cycleMode()
+          shared.cycleMode()
         }
-        console.log(c.muted(`mode: ${mode}`))
+        ui.printOut(c.muted(`mode: ${shared.getMode()}`))
         return false
       }
       if (name === "compact") {
         const next = args === "" ? undefined : args === "on" || args === "1"
         const compact = setCompactMode(next)
-        console.log(c.muted(`tool call: ${compact ? "compact" : "expanded"}`))
+        ui.printOut(c.muted(`tool call: ${compact ? "compact" : "expanded"}`))
         return false
       }
       if (name === "thinking") {
         const next = args === "" ? undefined : args === "on" || args === "1"
         const vis = setReasoningVisible(next)
-        console.log(c.muted(`thinking: ${vis ? "expanded" : "minimized"}`))
+        ui.printOut(c.muted(`thinking: ${vis ? "expanded" : "minimized"}`))
         return false
       }
       if (name === "expand") {
@@ -501,21 +597,23 @@ export async function runRepl(ctx: CliSession): Promise<void> {
         // Ringkasan/kontrol = stdout.
         const sections = getBufferedSections()
         if (sections.length === 0) {
-          console.log(
+          ui.printOut(
             c.dim(
               "(nothing to expand — all sections were visible; press + during the turn to collapse)",
             ),
           )
           return false
         }
-        for (const s of sections) {
-          const out = s.stream === "stdout" ? process.stdout : process.stderr
-          out.write(`${c.muted(`  ── ${s.label} ──`)}\n`)
-          out.write(s.text.endsWith("\n") ? s.text : `${s.text}\n`)
-        }
-        // Sudah dibuka = selesai; cetak ulang butuh buffer baru dari turn baru.
-        resetBufferedSections()
-        return false
+        return ui.suspend(async () => {
+          for (const s of sections) {
+            const out = s.stream === "stdout" ? process.stdout : process.stderr
+            out.write(`${c.muted(`  ── ${s.label} ──`)}\n`)
+            out.write(s.text.endsWith("\n") ? s.text : `${s.text}\n`)
+          }
+          // Sudah dibuka = selesai; cetak ulang butuh buffer baru dari turn baru.
+          resetBufferedSections()
+          return false
+        })
       }
       if (name === "minimize") {
         // Saklar tunggal "rapi ⇄ penuh" seperti /compact dan /thinking:
@@ -527,12 +625,12 @@ export async function runRepl(ctx: CliSession): Promise<void> {
         else if (arg === "on" || arg === "1") next = true
         else if (arg === "off" || arg === "0") next = false
         else {
-          console.log(c.muted("usage: /minimize [on|off]"))
+          ui.printOut(c.muted("usage: /minimize [on|off]"))
           return false
         }
         setSectionMinimized("tool", next)
         setSectionMinimized("answer", next)
-        console.log(
+        ui.printOut(
           c.muted(
             next
               ? "sections: minimized (press + / - during the turn to expand/collapse)"
@@ -543,20 +641,22 @@ export async function runRepl(ctx: CliSession): Promise<void> {
       }
       if (name === "undo") {
         const res = await undoLastCheckpoint(sessionId, cwd)
-        console.log(res.message)
-        if (res.restoredFiles.length) console.log(res.restoredFiles.join("\n"))
+        ui.printOut(res.message)
+        if (res.restoredFiles.length) ui.printOut(res.restoredFiles.join("\n"))
         return false
       }
       if (name === "redo") {
         const res = await redoLastCheckpoint(sessionId, cwd)
-        console.log(res.message)
-        if (res.reappliedFiles.length) console.log(res.reappliedFiles.join("\n"))
+        ui.printOut(res.message)
+        if (res.reappliedFiles.length) ui.printOut(res.reappliedFiles.join("\n"))
         return false
       }
       if (name === "cost" || name === "usage") {
         // Opsi A: /cost tidak punya tampilan sendiri lagi — arahkan ke /status
         // (satu-satunya sumber biaya sesi: input/output/total/cost).
-        return handleBuiltinCommand("/status", commandCtx).then((r) => !!r.shouldExit)
+        return ui
+          .suspend(() => handleBuiltinCommand("/status", commandCtx))
+          .then((r) => !!r.shouldExit)
       }
       if (name === "resume") {
         // Opsi A: /resume = pintas /sessions (daftar + picker, atau respawn <id>).
@@ -564,11 +664,12 @@ export async function runRepl(ctx: CliSession): Promise<void> {
           await pickSession()
           return false
         }
-        return handleBuiltinCommand(`/sessions ${args}`, commandCtx).then((r) => !!r.shouldExit)
+        return ui
+          .suspend(() => handleBuiltinCommand(`/sessions ${args}`, commandCtx))
+          .then((r) => !!r.shouldExit)
       }
       if (name === "clear") {
-        // Shell-first: scrollback adalah transcript — jangan hapus, tandai saja.
-        console.log(c.dim("--- cleared (scrollback preserved) ---"))
+        ui.clearTranscript()
         return false
       }
       if (name === "copy") {
@@ -577,13 +678,17 @@ export async function runRepl(ctx: CliSession): Promise<void> {
       }
       if (name === "history") {
         const { loadHistory } = await import("../src/ui/input/input.ts")
-        console.log((await loadHistory()).slice(-20).join("\n"))
+        ui.printOut((await loadHistory()).slice(-20).join("\n"))
         return false
       }
       if (name === "models")
-        return handleBuiltinCommand("/model", commandCtx).then((r) => !!r.shouldExit)
+        return ui
+          .suspend(() => handleBuiltinCommand("/model", commandCtx))
+          .then((r) => !!r.shouldExit)
       if (name === "providers")
-        return handleBuiltinCommand("/provider", commandCtx).then((r) => !!r.shouldExit)
+        return ui
+          .suspend(() => handleBuiltinCommand("/provider", commandCtx))
+          .then((r) => !!r.shouldExit)
       if (name === "sessions" && !args) {
         await pickSession()
         return false
@@ -592,7 +697,7 @@ export async function runRepl(ctx: CliSession): Promise<void> {
       // Builtin mengalir langsung ke scrollback (console.log) — tanpa
       // penangkap output/overlay. Manajer /model & /provider transient:
       // menghapus diri sendiri dan tidak menyentuh scrollback.
-      const builtin = await handleBuiltinCommand(q, commandCtx)
+      const builtin = await ui.suspend(() => handleBuiltinCommand(q, commandCtx))
       if (builtin.handled) return !!builtin.shouldExit
 
       const skill = allLoadedSkills.find((s) => s.name === name)
@@ -608,12 +713,12 @@ export async function runRepl(ctx: CliSession): Promise<void> {
           "resume",
           ...allLoadedSkills.map((s) => s.name),
         ])
-        console.log(
+        ui.printOut(
           c.yellow(`Unknown command: /${name}.${hint ? ` Did you mean /${hint}?` : " Try /help."}`),
         )
         return false
       }
-      await runTurn(await renderSkill(skill, args), q)
+      await ui.suspend(async () => runTurn(await renderSkill(skill, args), q))
       return false
     }
     await runTurn(q, q)
@@ -624,9 +729,9 @@ export async function runRepl(ctx: CliSession): Promise<void> {
     if (abort) abort.abort()
     else {
       // Idle: jangan biarkan SIGINT bocor ke PowerShell batch (Terminate batch job)
-      // Kirim byte Ctrl+C ke stdin agar askLine tangani sebagai null (idle) — konsisten dengan raw mode
+      // Serahkan ke prompt aktif via adapter (linier: byte Ctrl+C ke stdin).
       try {
-        process.stdin.emit("data", Buffer.from([0x03]))
+        ui.injectCancel()
       } catch {}
     }
   }
@@ -634,63 +739,31 @@ export async function runRepl(ctx: CliSession): Promise<void> {
   // Baris konteks startup (model/mode/dir + hint) dihapus: status kini milik
   // footer yang dicetak fresh tiap idle — startup tetap steril seperti prompt.
 
-  // Footer status (mode • model • cwd • konteks): lengket di dasar terminal
-  // bila terminal mampu (DECSTBM), jatuh ke cetak bila tidak, mati total di
-  // pipe. Diresolve per present/refresh agar mode/model/cwd/konteks selalu
-  // aktual (Shift+Tab, /model, cwd berubah, konteks live). Reset region
-  // dijamin pada semua jalur keluar. Mode di-pad agar teks kanan tak bergeser
-  // (lihat footer.ts MODE_WIDTH), garis = faint tipis hampir tak terlihat.
-  const fmtCtx = (n: number): string | undefined => {
-    if (!Number.isFinite(n) || n <= 0) return undefined
-    if (n < 1000) return String(n)
-    if (n < 10000) return `${(n / 1000).toFixed(1)}k`
-    if (n < 1000000) return `${Math.round(n / 1000)}k`
-    return `${(n / 1000000).toFixed(1)}m`
-  }
-  const footer: FooterChrome = createFooterChrome({
-    enabled: true,
-    status: () => {
-      return {
-        mode,
-        model: modelRef.current ?? cfg.providers[0]?.models[0] ?? "no model",
-        cwd: cwd ?? process.cwd(),
-        // Kontrak control-plane (Phase 6): angka footer = UKURAN JENDELA
-        // saat ini (kernel contextTokens, estimateSessionContext) — bukan
-        // totalTokens kumulatif provider (dulu salah konsep; sama dengan
-        // /status yang kini membedakan keduanya).
-        context: fmtCtx(session.contextTokens),
-      }
-    },
-  })
-  process.on("exit", () => footer.detach())
-
   let shouldExit = false
   // Akumulasi baris yang diakhiri `\` — shell-like continuation di driver
   // (bukan di askLine) agar hanya prompt REPL yang punya, tidak semua pemanggil askLine.
-  // Sesuai USAGE.md "akhiri baris dengan \ untuk menyambung".
   let pending = ""
-  const contPrompt = () => c.dim("··· › ")
   try {
     for (;;) {
       let line: string | null
       try {
-        const usePrompt = pending ? contPrompt : promptPrefix
+        const usePrompt = pending ? contPrompt() : promptPrefix()
         // Footer di-print/repaint tepat sebelum prompt idle: sticky → pastikan
         // region + posisikan kursor di baris input; print → baris scrollback.
-        footer.present()
+        ui.presentIdle()
         // idleMs mati DI SINI saja: prompt utama adalah home state proses —
         // null dihitung Ctrl+C (2x = exit), sehingga auto-batal akan
         // mengeluarkan user yang diam. Dialog transient (approval, add/edit,
         // wizard) tetap pakai default 90 dtk.
-        line = await askLine({ prompt: usePrompt, hints: suggestions, groupOf, onKey, idleMs: 0 })
+        line = await ui.readPrompt(usePrompt)
       } catch (e) {
-        console.log(`${c.red(glyphs.cross)} ${formatError(e)}`)
+        ui.printOut(`${c.red(glyphs.cross)} ${formatError(e)}`)
         continue
       }
       if (line == null) {
         if (pending) {
           pending = ""
-          console.log("^C")
+          ui.printOut("^C")
           nullStreak = 0
           continue
         }
@@ -719,7 +792,7 @@ export async function runRepl(ctx: CliSession): Promise<void> {
         shouldExit = await dispatchLine(q)
       } catch (e) {
         const shown = takePendingError()
-        console.log(`${c.red(glyphs.cross)} ${shown ?? formatError(e)}`)
+        ui.printOut(`${c.red(glyphs.cross)} ${shown ?? formatError(e)}`)
       }
       if (shouldExit) break
     }
@@ -728,7 +801,7 @@ export async function runRepl(ctx: CliSession): Promise<void> {
   }
   // Reset region + cetak footer terakhir SEBELUM process.exit — jalur keluar
   // normal; jalur crash dilindungi handler on("exit") di atas (idempotent).
-  footer.detach()
+  ui.finish()
   await close()
   process.exit(0)
 }

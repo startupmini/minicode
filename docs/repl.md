@@ -1,6 +1,6 @@
-# REPL — Slash & Keyboard
+# REPL — TUI + Slash & Keyboard
 
-Ketik `/` di prompt → floating dropdown (max 10 item + `… N more`). `↑`/`↓` navigasi, `Tab` lengkapi, `Enter` lengkapi + submit, `Esc` tutup. Terminal tanpa ANSI: fallback hint inline.
+Di dalam TUI alternate-screen: ketik `/` di prompt → dropdown (max 10 item + `… N more`). `↑`/`↓` navigasi, `Enter` lengkapi + submit, `Esc` tutup. Status di baris terakhir permanen; input di atasnya tumbuh ke atas.
 
 
 ## Slash commands
@@ -40,7 +40,7 @@ Did-you-mean: typo `/sessoons` → `Did you mean /sessions?` (jarak ≤ 2).
 | `ctrl+o` | Putar tool call compact/expanded (juga `/compact`) |
 | `ctrl+t` | Toggle tampilan reasoning expanded/minimized (juga `/thinking`) |
 | `+` / `-` | Saat turn berjalan: expand / minimize section aktif (thinking & tool) |
-| `ctrl+r` | Reverse-i-search history (substring; Esc/Ctrl+C/Ctrl+D batal, Ctrl+U hapus query) |
+| `ctrl+r` | Reverse-i-search history (substring; Esc/Ctrl+C batal, ketik lain keluar search lalu proses) |
 | `ctrl+j` | Newline (multiline opt-in; Enter tetap submit) |
 | `←` / `→` | Geser kursor (editing tengah baris) |
 | `ctrl+a` / `ctrl+e` | Awal / akhir baris |

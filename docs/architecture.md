@@ -23,17 +23,9 @@ L3 vendor/minicore  → kernel STATE/MODEL/ACTION/LOOP (freeze, zero-dep, via #m
 
 ## UI/UX terminal (kontrak FROZEN)
 
-Minicode **shell-native CLI, bukan TUI**. Tanpa alternate screen/panel/header permanen. Output append-only scrollback; picker/manager transient dan menghapus diri sendiri.
+Sesi interaktif = **TUI alternate-screen** (transkrip milik app + status `✦ mode • model • cwd … 14.2k` di baris terakhir permanen — pad anti-geser, spark pulse, konteks rata kanan via CHA + input di atasnya). Jalur non-interaktif tetap shell-native append-only. 16 invariant + peta test (`terminal-contract`, `transient-arbitration`, `turn-status`, `tui-format`, `theme`, `tui-*`, `ui-boundary`, `footer-render`) ada di `TERMINAL_CONTRACT.md`.
 
-| Stream | Isi |
-|---|---|
-| stdout | Output program: teks model, receipt perubahan (`› write_file …`), daftar/artefak perintah. Bersih dari cursor-control saat non-TTY |
-| stderr | Progress/diagnostik: ledger tool (`› …` hijau/merah), reasoning (verbose), warning, error. Boleh transient bila TTY |
-| Keduanya | Warna hanya bila TTY (`stdout.isTTY`); `NO_COLOR` menang; `TERM`/`COLORTERM` tidak menyalakan warna di pipe |
-
-Satu-satunya arbitrator transient: `src/ui/runtime/statusline.ts` (`acquireTransientPaint` + `paintWrite`). Painter aktif (garis status turn vs spinner wizard) mutually exclusive; overlap = signal `[transient-paint]`, bukan crash. Foreign stderr writer (non-UI) boleh mentah — arbitrator mengkomitnya sebagai baris permanen bersih. 14 invariant + peta test (`terminal-contract`, `transient-arbitration`, `turn-status`, `tui-format`, `theme`, `repl-linear`, `ui-boundary`, `footer-render`, `footer-chrome`) ada di `TERMINAL_CONTRACT.md`.
-
-Lima primitif tampilan: prompt `minicode ›` (steril — status pindah ke footer), footer status lengket `✦ mode • model • cwd … 14.2k` (spark pulse saat busy/redup saat idle; mode pad anti-geser; konteks rata kanan `14.2k`; garis `faint`; `src/ui/footer.ts` render + `src/ui/runtime/chrome.ts` DECSTBM `setBusy()`; `MINICODE_FOOTER=off|print|sticky|auto`, non-TTY nol byte), activity (garis transient stderr `···` tanpa spark), ledger `  › name target` hijau / `  › name: …` merah (stderr, indent 2), teks model (stdout, wrapped, fence 2-spasi), error `✗ pesan actionable` sekali per kegagalan (`takePendingError`). `✓`/`✗` tetap untuk status/konfirmasi perintah (sync, auth, config, spinner).
+Lima primitif tampilan (di dalam TUI): prompt `minicode ›` steril, status `✦ … 14.2k` di dasar, input dropdown `/` + reverse-search, activity via spark status, ledger `  › name target` hijau / `  › name: …` merah (indent 2), teks model wrapped, fence 2-spasi, error `✗ pesan actionable` sekali per kegagalan (`takePendingError`). `✓`/`✗` tetap untuk status/konfirmasi perintah (sync, auth, config, spinner).
 
 ## Modul kunci
 

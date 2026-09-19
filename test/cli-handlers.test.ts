@@ -174,9 +174,9 @@ describe("sessions", () => {
     expect(r.out).toContain("no recorded sessions yet")
   })
 
-  test("export tanpa id = salah pakai (exit 1)", async () => {
+  test("export tanpa id = salah pakai (exit 2)", async () => {
     const r = await runDispatch(["sessions", "export", "--cwd", tmp])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out).toContain("usage:")
   })
 
@@ -186,9 +186,9 @@ describe("sessions", () => {
     expect(r.out).toContain("not found")
   })
 
-  test("unknown subcommand = exit 1 + sessions help", async () => {
+  test("unknown subcommand = exit 2 + sessions help", async () => {
     const r = await runDispatch(["sessions", "bogus", "--cwd", tmp])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out).toContain("unknown sessions subcommand")
     expect(r.out).toContain("minicode sessions")
   })
@@ -269,9 +269,9 @@ describe("skills", () => {
     expect(r.out).toContain("Isi skill gamma")
   })
 
-  test("show tanpa nama = exit 1", async () => {
+  test("show tanpa nama = exit 2", async () => {
     const r = await runDispatch(["skills", "show", "--cwd", tmp])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out).toContain("usage:")
   })
 
@@ -282,9 +282,9 @@ describe("skills", () => {
     expect(r.out).toContain("skills list")
   })
 
-  test("unknown subcommand = exit 1", async () => {
+  test("unknown subcommand = exit 2", async () => {
     const r = await runDispatch(["skills", "bogus", "--cwd", tmp])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out).toContain("unknown skills subcommand")
   })
 })
@@ -298,9 +298,9 @@ describe("config", () => {
     expect(r.out).not.toContain("GLOBAL HELP")
   })
 
-  test("unknown subcommand = exit 1", async () => {
+  test("unknown subcommand = exit 2", async () => {
     const r = await runDispatch(["config", "bogus"])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out).toContain("unknown subcommand")
   })
 
@@ -314,45 +314,45 @@ describe("config", () => {
     expect(lsp.out).toContain("minicode config lsp")
   })
 
-  test("add tanpa kredensial = exit 1 dengan usage", async () => {
+  test("add tanpa kredensial = exit 2 dengan usage", async () => {
     const r = await runDispatch(["config", "add"])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out).toContain("usage:")
   })
 
-  test("remove tanpa id = exit 1", async () => {
+  test("remove tanpa id = exit 2", async () => {
     const r = await runDispatch(["config", "remove"])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out).toContain("usage:")
   })
 
-  test("detect tanpa kredensial = exit 1", async () => {
+  test("detect tanpa kredensial = exit 2", async () => {
     const r = await runDispatch(["config", "detect"])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out).toContain("usage:")
   })
 
   test("mcp add menolak URL non-http", async () => {
     const r = await runDispatch(["config", "mcp", "add", "x", "--url", "ftp://contoh.com"])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out.toLowerCase()).toContain("http")
   })
 
   test("mcp add rejects malformed URL", async () => {
     const r = await runDispatch(["config", "mcp", "add", "x", "--url", "not-a-url"])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out).toContain("Invalid URL")
   })
 
-  test("mcp add tanpa command maupun url = exit 1", async () => {
+  test("mcp add tanpa command maupun url = exit 2", async () => {
     const r = await runDispatch(["config", "mcp", "add", "x"])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out).toContain("usage:")
   })
 
-  test("lsp add tanpa command = exit 1", async () => {
+  test("lsp add tanpa command = exit 2", async () => {
     const r = await runDispatch(["config", "lsp", "add", ".ts"])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out).toContain("usage:")
   })
 })
@@ -365,9 +365,9 @@ describe("mcp", () => {
     expect(r.out).not.toContain("GLOBAL HELP")
   })
 
-  test("unknown subcommand = exit 1", async () => {
+  test("unknown subcommand = exit 2", async () => {
     const r = await runDispatch(["mcp", "bogus"])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out).toContain("unknown mcp subcommand")
   })
 })
@@ -385,9 +385,9 @@ describe("pricing", () => {
     expect(r.out).toContain("minicode pricing")
   })
 
-  test("show tanpa model = exit 1", async () => {
+  test("show tanpa model = exit 2", async () => {
     const r = await runDispatch(["pricing", "show"])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out).toContain("usage:")
   })
 
@@ -404,9 +404,9 @@ describe("pricing", () => {
     expect(r.out).toContain("N/A")
   })
 
-  test("unknown subcommand = exit 1", async () => {
+  test("unknown subcommand = exit 2", async () => {
     const r = await runDispatch(["pricing", "bogus"])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out).toContain("unknown pricing subcommand")
   })
 })

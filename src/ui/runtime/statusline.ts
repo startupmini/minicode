@@ -150,6 +150,12 @@ let screenDepth = 0
  *
  * Nesting aman (depth dihitung): picker yang dibuka dari dalam manager hanya
  * melepas kepemilikannya sendiri saat selesai.
+ *
+ * CATATAN mode TUI: tidak ada auto-suspend di sini — alur interaktif mode
+ * TUI (approval/select/ask) diimplementasi in-flow di dalam alt-screen
+ * (lihat src/ui/tui/), dan alur cetak lewat capture driver. Layar linier
+ * (askLine/picker) hanya berjalan di buffer utama: setup wizard,
+ * subcommand TTY, dan suspend yang sudah dihapus bersama driver linier.
  */
 export function beginInteractiveScreen(): () => void {
   // Baris painter terakhir dibersihkan SEKARANG (kursor masih persis di sana),

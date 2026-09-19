@@ -43,11 +43,12 @@ const LSP_HELP = `minicode config lsp — language servers per file extension
 
   [--global|--local]   save to ~/.minicode (default) or local .minicode/`
 
-/** Cetak help lalu keluar: 0 bila user memang meminta, 1 bila salah pakai. */
+/** Cetak help lalu keluar: 0 bila user memang meminta, 2 bila salah pakai
+ * (aturan kontrak: gagal runtime = 1). */
 function showHelp(text: string, asked: boolean, unknown?: string): never {
   if (!asked) console.error(`unknown subcommand: ${unknown}\n`)
   console.log(text)
-  process.exit(asked ? 0 : 1)
+  process.exit(asked ? 0 : 2)
 }
 
 const isHelpFlag = (s: string | undefined): boolean =>
@@ -80,7 +81,7 @@ export async function handleConfig(
     const id = getArg("--id")
     if (!baseUrl || !apiKey) {
       console.error("usage: minicode config add --baseUrl <url> --apiKey <key> [--id <id>]")
-      process.exit(1)
+      process.exit(2)
     }
     const entry = await detectAndSave(baseUrl, apiKey, id, {
       // Default GLOBAL seperti remove/set-key: menulis provider+key ke
@@ -126,7 +127,7 @@ export async function handleConfig(
     const id = positionalArg(args, 2)
     if (!id) {
       console.error("usage: minicode config remove <id> [--global|--local] [--cwd <dir>]")
-      process.exit(1)
+      process.exit(2)
     }
     await removeProvider(id, { global: !args.includes("--local"), cwd: getArg("--cwd") })
     console.log(
@@ -140,7 +141,7 @@ export async function handleConfig(
     const id = positionalArg(args, 2)
     if (!id) {
       console.error("usage: minicode config set-key <id> [--global|--local] [--cwd <dir>]")
-      process.exit(1)
+      process.exit(2)
     }
     const { deleteSecret, setSecret } = await import("../../src/lib/keystore.ts")
     const key = `provider:${id}`
@@ -191,7 +192,7 @@ export async function handleConfig(
     const apiKey = getArg("--apiKey")
     if (!baseUrl || !apiKey) {
       console.error("usage: minicode config detect --baseUrl <url> --apiKey <key>")
-      process.exit(1)
+      process.exit(2)
     }
     const { detectModels } = await import("../../src/providers/detect.ts")
     const res = await detectModels(baseUrl, apiKey).catch((e) => {
@@ -218,7 +219,7 @@ export async function handleConfig(
             "       minicode config mcp add <id> --url <https://…> [--header K=V] [--allow-private]\n" +
             "       [--global|--local]",
         )
-        process.exit(1)
+        process.exit(2)
       }
       const env: Record<string, string> = {}
       for (const kv of (getArg("--env") ?? "").split(",")) {
@@ -236,11 +237,11 @@ export async function handleConfig(
           const parsed = new URL(url)
           if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
             console.error(`URL must use http/https, not ${parsed.protocol}`)
-            process.exit(1)
+            process.exit(2)
           }
         } catch {
           console.error(`Invalid URL: ${url}`)
-          process.exit(1)
+          process.exit(2)
         }
         // P10: add branch WAJIB menghormati --cwd seperti remove —
         // sebelumnya menulis ke process.cwd() diam-diam (salah direktori).
@@ -299,7 +300,7 @@ export async function handleConfig(
       const id = positionalArg(args, 3)
       if (!id) {
         console.error("usage: minicode config mcp remove <id> [--global|--local]")
-        process.exit(1)
+        process.exit(2)
       }
       await removeMcpServer(id, { global: !args.includes("--local"), cwd: getArg("--cwd") })
       console.log(
@@ -319,7 +320,7 @@ export async function handleConfig(
         console.error(
           'usage: minicode config lsp add <ext> --command <cmd> [--args "<arg1,arg2>"] [--env K=V] [--global|--local]',
         )
-        process.exit(1)
+        process.exit(2)
       }
       const cmdArgs = cmdArgsRaw
         .split(",")
@@ -366,7 +367,7 @@ export async function handleConfig(
       const ext = positionalArg(args, 3)
       if (!ext) {
         console.error("usage: minicode config lsp remove <ext> [--global|--local]")
-        process.exit(1)
+        process.exit(2)
       }
       await removeLspServer(ext, { global: !args.includes("--local"), cwd: getArg("--cwd") })
       console.log(

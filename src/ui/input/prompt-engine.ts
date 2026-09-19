@@ -172,8 +172,7 @@ export function applyKey(
       // agar tidak melebihi tinggi terminal, tapi itu membuat copas code
       // multilines cuma baris pertama (keluhan nyata). Sekarang "\n" dipertahankan
       // sebagai baris baru — renderer `scrollableMultiline` sudah memperhitungkan
-      // tinggi (`nInGuess`, `maxVisible - footerReserveRows`) sehingga tidak
-      // menabrak footer. Tab jadi spasi; kontrol lain dibuang.
+      // tinggi sehingga tidak menabrak status. Tab jadi spasi; kontrol lain dibuang.
       const ins = key.ch
         .replace(/\r\n|\r/g, "\n")
         .replace(/\t/g, " ")

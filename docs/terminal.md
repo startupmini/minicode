@@ -1,9 +1,9 @@
 # Kontrak Terminal
 
 
-Minicode **shell-native CLI, bukan TUI**. Tanpa alternate screen/panel/header permanen. Output append-only ke scrollback; picker/manager transient dan menghapus diri sendiri. Ini kenapa hasil agen bisa di-pipe, di-grep, dan tinggal di scrollback Anda sendiri. Satu-satunya chrome permanen yang diizinkan: footer status lengket (`src/ui/runtime/chrome.ts`, DECSTBM scroll-region) — reset region wajib di semua jalur keluar, nol byte di non-TTY.
+Sesi interaktif berjalan sebagai **TUI alternate-screen** (transkrip milik app + status 1 baris di dasar + input, kontrak I16). Satu-satunya penulis piksel adalah viewport TUI via dirty-diff: resize = re-layout + redraw penuh dari state, repaint identik menulis NOL byte, tanpa space-fill selebar terminal. Terminal tak mampu (non-TTY/dumb/legacy/mungil) ditolak jujur — tidak ada fallback linier diam-diam. Jalur non-interaktif (one-shot, pipe, `exec --json`, subcommand) tetap append-only ke scrollback dan tak tersentuh.
 
-## Dua stream, dua isi
+## Dua stream, dua isi (jalur non-interaktif & log)
 
 | Stream | Isi |
 |---|---|
@@ -13,22 +13,24 @@ Minicode **shell-native CLI, bukan TUI**. Tanpa alternate screen/panel/header pe
 - Warna hanya bila TTY (`stdout.isTTY`); `NO_COLOR` menang; `TERM`/`COLORTERM` tidak menyalakan warna di pipe.
 - Error `✗ pesan actionable` sekali per kegagalan (`takePendingError`) — bukan spam di setiap langkah.
 
-## Enam primitif tampilan
+## Enam primitif tampilan (di dalam TUI)
 
-1. Prompt `minicode ›` (steril — status pindah ke footer)
-2. Footer status lengket — `✦ mode • model • cwd … 14.2k` (mode pad anti-geser; spark pulse saat busy/redup saat idle; konteks rata kanan); `MINICODE_FOOTER=off|print|sticky|auto`
-3. Activity — garis transient di stderr
-4. Ledger — `  › name target` hijau / `  › name: …` merah (stderr, indent 2)
-5. Teks model — stdout, wrapped
-6. Error actionable — sekali per kegagalan
+1. Prompt `minicode ›` (steril — status pindah ke baris status)
+2. Status — `✦ mode • model • cwd … 14.2k` (mode pad anti-geser; spark pulse saat busy/redup saat idle; konteks rata kanan)
+3. Input — dropdown `/` dan reverse-search in-flow
+4. Activity — spark denyut di status (bukan garis terpisah)
+5. Ledger — `  › name target` hijau / `  › name: …` merah (indent 2)
+6. Teks model — wrapped, fence 2-spasi; error actionable sekali per kegagalan
 
-## Arbitrasi transient
+## TUI alternate screen
 
-Satu-satunya arbitrator transient: `src/ui/runtime/statusline.ts` (`acquireTransientPaint` + `paintWrite`). Painter aktif (garis status turn vs spinner wizard) mutually exclusive; overlap = signal `[transient-paint]`, bukan crash. Foreign stderr writer (non-UI) boleh mentah — arbitrator mengkomitnya sebagai baris permanen bersih.
+## TUI alternate screen
+
+Satu-satunya penulis piksel adalah `src/ui/tui/screen.ts` (dirty-diff per baris, `?1049h/l` idempoten). Alur cetak builtin ditangkap ke dokumen; approval/ask/pick in-flow via `src/ui/tui/session.ts`. Resize = re-layout penuh; null byte bila identik. Hanya `src/ui/tui/` yang boleh impor `src/ui/*` + builtin.
 
 ## 14 invariant
 
-Peta lengkap 14 invariant + test proteksinya (`terminal-contract`, `transient-arbitration`, `turn-status`, `tui-format`, `theme`, `repl-linear`, `ui-boundary`, `footer-render`, `footer-chrome`) ada di `docs/TERMINAL_CONTRACT.md`. Setiap fitur terminal baru tunduk pada invariant itu — mis. tak boleh menulis cursor-control ke stdout non-TTY, tak boleh mengandalkan alternate screen.
+Peta lengkap 16 invariant + test proteksinya (`terminal-contract`, `transient-arbitration`, `turn-status`, `tui-format`, `theme`, `tui-*`, `ui-boundary`, `footer-render`) ada di `docs/TERMINAL_CONTRACT.md`. Setiap fitur terminal baru tunduk pada invariant itu — mis. tak boleh menulis cursor-control ke stdout non-TTY, tak ada space-fill selebar terminal.
 
 ## Aksesibilitas & konsol lawas
 

@@ -14,7 +14,7 @@
 
 import { describe, expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
-import { readFileSync } from "node:fs"
+import { type Dirent, readdirSync, readFileSync } from "node:fs"
 import { join, posix } from "node:path"
 
 const repoRoot = process.cwd()
@@ -26,6 +26,30 @@ function trackedFiles(pattern: RegExp): string[] {
     .split("\n")
     .map((s) => s.trim())
     .filter((s) => pattern.test(s))
+}
+
+/** Berkas .ts di disk (termasuk yang belum di-stage): modul baru seperti
+ * `src/ui/tui/` harus dijaga batasnya SEBELUM `git add`, bukan sesudah.
+ * `git ls-files` saja buta terhadapnya — union ini menutup lubang itu.
+ * Scratch di luar `src/` tetap diabaikan (bukan bagian paket). */
+function onDiskFiles(pattern: RegExp): string[] {
+  const out: string[] = []
+  const walk = (dir: string): void => {
+    let entries: Dirent[]
+    try {
+      entries = readdirSync(join(repoRoot, dir), { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      const rel = posix.join(dir, e.name)
+      if (e.isDirectory()) {
+        if (e.name !== "node_modules") walk(rel)
+      } else if (e.name.endsWith(".ts") && pattern.test(rel)) out.push(rel)
+    }
+  }
+  walk("src")
+  return out
 }
 
 /** Ekstrak semua spesifier import (from/import/import()/require) dari sumber. */
@@ -42,8 +66,10 @@ function resolveSpec(fileDir: string, spec: string): string | null {
   return posix.normalize(posix.join(fileDir, spec))
 }
 
-const uiFiles = trackedFiles(/^src\/ui\/.*\.ts$/)
-const srcFiles = trackedFiles(/^src\/.*\.ts$/)
+const uiFiles = [
+  ...new Set([...trackedFiles(/^src\/ui\/.*\.ts$/), ...onDiskFiles(/^src\/ui\/.*\.ts$/)]),
+]
+const srcFiles = [...new Set([...trackedFiles(/^src\/.*\.ts$/), ...onDiskFiles(/^src\/.*\.ts$/)])]
 
 describe("batas presentation layer (src/ui)", () => {
   test("ada berkas src/ui untuk diperiksa (sanity)", () => {

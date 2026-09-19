@@ -79,7 +79,8 @@ describe("cli: help kontekstual + exit code", () => {
     })
   }
 
-  // Subcommand asing = salah pakai -> exit 1 supaya skrip bisa mendeteksi.
+  // Subcommand asing = salah pakai -> exit 2 supaya skrip bisa mendeteksi
+  // dan membedakannya dari gagal runtime (exit 1).
   const unknown: string[][] = [
     ["config", "bogus"],
     ["config", "mcp", "bogus"],
@@ -91,9 +92,9 @@ describe("cli: help kontekstual + exit code", () => {
     ["auth", "bogus"],
   ]
   for (const args of unknown) {
-    test(`${args.join(" ")} -> exit 1 + mentions unknown subcommand`, () => {
+    test(`${args.join(" ")} -> exit 2 + mentions unknown subcommand`, () => {
       const r = run(args)
-      expect(r.code).toBe(1)
+      expect(r.code).toBe(2)
       expect(r.out.toLowerCase()).toContain("unknown")
       expect(r.out.toLowerCase()).toContain("subcommand")
     })
@@ -158,9 +159,9 @@ describe("cli: memory", () => {
     }
   })
 
-  test("subcommand tak dikenal = exit 1", () => {
+  test("subcommand tak dikenal = exit 2", () => {
     const r = run(["memory", "bogus"])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out.toLowerCase()).toContain("unknown")
   })
 })
@@ -185,6 +186,32 @@ describe("cli: perintah tanpa LLM tetap jalan", () => {
       const r = run(["sessions", "list", "--cwd", tmp])
       expect(r.code).toBe(0)
       expect(r.out).toContain("no recorded sessions yet")
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  test("sessions list mengumumkan scope global bila tanpa .minicode lokal", () => {
+    // Regresi F-C audit terminal UI/UX: fallback ke DB global dulu diam-diam,
+    // daftar lintas-workspace bisa dibaca sebagai isi workspace ini.
+    const tmp = mkdtempSync(join(tmpdir(), "minicode-noscope-"))
+    try {
+      const r = run(["sessions", "list", "--cwd", tmp])
+      expect(r.code).toBe(0)
+      expect(r.out).toContain("global scope")
+      expect(r.out).toContain(tmp)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  test("sessions list lokal tidak memuat baris scope", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "minicode-local-"))
+    try {
+      mkdirSync(join(tmp, ".minicode"), { recursive: true })
+      const r = run(["sessions", "list", "--cwd", tmp])
+      expect(r.code).toBe(0)
+      expect(r.out).not.toContain("global scope")
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }

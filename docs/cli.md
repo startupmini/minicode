@@ -53,6 +53,7 @@ Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `s
 | `--max-steps <n>` | Batas langkah tool (default 50) |
 | `--context-window <n>` | Ukuran jendela konteks (token) |
 | `--session <id>` | ID sesi (default random, disanitasi) |
+| `--no-tui` | Paksa REPL linier (tanpa alternate screen; pasangan `MINICODE_TUI=never`) |
 
 Di REPL, **Shift+Tab** memutar permission (`auto` → `ask` → `plan` → `allowlist`) dan benar-benar mengubah keputusan, bukan label. Di baris kosong, **Tab** juga memutar mode (`auto` → `ask` → `plan` → `allowlist`).
 
@@ -117,3 +118,13 @@ itu MCP server lokal tidak di-spawn, endpoint provider lokal tidak dipakai,
 ## Anti-injeksi flag
 
 `cli/args.ts:53` berhenti di prompt word pertama: prompt `"review --allow-all"` tidak mengaktifkan flag. `--cwd`/value-flag setelah nama subcommand diparse per-subcommand agar tidak menembus boundary prompt.
+
+## Exit codes
+
+| Kode | Arti |
+|---|---|
+| `0` | Sukses, atau help yang memang diminta |
+| `1` | Gagal runtime: provider error, budget lewat, turn gagal, setup gagal |
+| `2` | Salah pakai: argumen hilang/malformed, subcommand asing |
+
+Lookup yang gagal (provider/skill/sesi tak dikenal) = `1`: itu kegagalan operasi, bukan pemakaian. Skrip cukup cek `!= 0` untuk gagal; cek `== 2` untuk spesifik salah pakai.

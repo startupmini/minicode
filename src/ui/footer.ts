@@ -87,12 +87,24 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
   // agar rapi dan tidak mepet (keluhan: terlalu rapat → 1→2→4→6).
   // Bila tak muat, konteks diprioritaskan — kiri dipotong duluan lewat
   // tangga di bawah, bukan konteks yang dilepas.
+  //
+  // Gap dibuat dengan LOMPAT KURSOR (CHA `\x1b[{kolom}G`), BUKAN deretan
+  // spasi: baris status dilukis absolut oleh chrome sticky, dan saat jendela
+  // menyempit terminal me-reflow tiap KARAKTER baris logis menjadi baris
+  // visual baru — deretan spasi selebar terminal berubah menjadi baris-baris
+  // hantu, dan tiap repaint menambah baris logis baru (laporan live:
+  // belasan salinan footer di PowerShell setelah resize lebar). Sel kosong
+  // hasil lompatan tak punya karakter untuk di-reflow; visual identik
+  // (konteks tetap di ujung kanan). Terminal yang mengabaikan CHA hanya
+  // menampilkan konteks menempel — terbaca, tidak korup.
   const align = (left: string): string => {
     const lw = displayWidth(left)
     if (!ctx) return left
     if (lw + ctxW + 2 > target) return left
     const gap = Math.max(6, target - lw - ctxW)
-    return `${left}${" ".repeat(gap)}${c.gray(ctx)}`
+    // displayWidth sadar-ANSI (CJK = 2 kolom, SGR = 0), jadi kolom lompat =
+    // posisi tampak. CHA 1-indexed.
+    return `${left}\x1b[${lw + gap + 1}G${c.gray(ctx)}`
   }
 
   // Tangga prioritas buang saat sempit: cwd → model (spark+mode+context kekal).

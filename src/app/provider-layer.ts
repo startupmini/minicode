@@ -7,6 +7,17 @@ import { withStreamGuards } from "../providers/guards.ts"
 import { createRouterProvider } from "../providers/router.ts"
 
 let currentRouter: ReturnType<typeof createRouterProvider> | null = null
+
+/** Setup tanpa provider apa pun. Dilempar (bukan exit di sini) agar
+ * composition root bisa memilih presentasi: REPL/one-shot mencetak pesan
+ * manusia ke stderr, `exec --json` menambah envelope mesin ke stdout.
+ * Pesan = teks yang dulu dicetak langsung sebelum exit(1) — byte-identik. */
+export class NoProviderError extends Error {
+  readonly name = "NoProviderError"
+}
+
+const NO_PROVIDER_MESSAGE =
+  "no provider configured — run `minicode` for setup wizard,\nor: minicode auth login (free, no API key), minicode config add --baseUrl <url> --apiKey <key>, or set OPENAI_API_KEY"
 export async function reloadProviders(
   cwd?: string,
   opts: { allowLocal?: boolean } = {},
@@ -104,10 +115,7 @@ export async function createProviderLayer(opts: {
     }
   }
   if (providers.length === 0) {
-    console.error(
-      "no provider configured — run `minicode` for setup wizard,\nor: minicode auth login (free, no API key), minicode config add --baseUrl <url> --apiKey <key>, or set OPENAI_API_KEY",
-    )
-    process.exit(1)
+    throw new NoProviderError(NO_PROVIDER_MESSAGE)
   }
   const router = createRouterProvider({
     providers,

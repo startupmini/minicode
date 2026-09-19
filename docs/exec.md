@@ -8,7 +8,7 @@
 | `echo "prompt" \| minicode` | Prompt datang dari pipeline/another tool |
 | `minicode exec "prompt" --json` | CI: event JSONL di stdout + baris terakhir `{"type":"summary"}` |
 
-`exec --json` memancarkan satu JSON per event (langkah tool, output, error) dan **summary** terstruktur di akhir — cukup untuk diparse pipeline tanpa screen-scraping.
+`exec --json` memancarkan satu JSON per event (langkah tool, output, error) dan **summary** terstruktur di akhir — cukup untuk diparse pipeline tanpa screen-scraping. Kegagalan *setup* (mis. tanpa provider) pun membawa satu baris `{"type":"summary","ok":false,…}` di stdout — stream tak pernah kosong; pesan manusia tetap di stderr, exit `1`.
 
 ## Hasil terstruktur: `submit_result`
 

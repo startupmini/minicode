@@ -60,8 +60,24 @@ export function writeClipboardOsc52(text: string): boolean {
   return true
 }
 
-const wOut = (s: string) => runWithoutStatus(() => process.stdout.write(s))
-const wErr = (s: string) => runWithoutStatus(() => process.stderr.write(s))
+const defaultOut = (s: string) => runWithoutStatus(() => process.stdout.write(s))
+const defaultErr = (s: string) => runWithoutStatus(() => process.stderr.write(s))
+let writerOut: ((s: string) => void) | null = null
+let writerErr: ((s: string) => void) | null = null
+/**
+ * Alihkan tujuan tulis logger (dipakai driver TUI: append ke dokumen
+ * transkrip alih-alih stdout/stderr). `null` = kembalikan default.
+ * Preseden DI: setAskTextFn, setSubAgentSessionFactory. Tanpa override,
+ * jalur linier byte-identik seperti sebelumnya.
+ */
+export function setUiWriters(
+  w: { out?: (s: string) => void; err?: (s: string) => void } | null,
+): void {
+  writerOut = w?.out ?? null
+  writerErr = w?.err ?? null
+}
+const wOut = (s: string) => (writerOut ?? defaultOut)(s)
+const wErr = (s: string) => (writerErr ?? defaultErr)(s)
 
 // Error provider terakhir turn ini — diingat, BUKAN dicetak langsung.
 // Alasan: error tengah-turn sering pulih via fallback router; mencetak tiap

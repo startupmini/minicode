@@ -65,6 +65,33 @@ describe("footer render", () => {
     expect(plain).toContain("cwd")
   })
 
+  test("reflow-safe: rata kanan tanpa space-fill selebar terminal", () => {
+    // Regresi laporan live (PowerShell + resize lebar): gap konteks dibuat
+    // dari deretan spasi selebar terminal — saat jendela menyempit, terminal
+    // me-reflow SATU baris logis itu menjadi beberapa baris visual ("baris
+    // hantu"), dan tiap repaint menambah baris logis baru. Sel kosong dari
+    // column-addressing tak punya karakter untuk di-reflow.
+    tty = installFakeTty({ columns: 100 })
+    const [status] = renderFooter(
+      {
+        mode: "allowlist",
+        model: "acme::deepseek-v4-flash",
+        cwd: "C:\\Temp\\coba",
+        context: "4.5k",
+      },
+      100,
+    )
+    const plain = stripAnsi(status!)
+    // Run spasi terpanjang yang sah ≤10 ("ask"/mode pendek + separator);
+    // gap fill lama puluhan spasi.
+    expect(plain).not.toMatch(/ {20,}/)
+    // Konteks tetap di ujung kanan via column-addressing (CHA `[nG`),
+    // bukan spasi. Tanpa byte ESC mentah di regex (aturan noControlChars):
+    // SGR berakhiran `m`, CUP `H` — hanya CHA yang berakhiran `G`.
+    expect(status!).toMatch(/\[\d+G/)
+    expect(plain.endsWith("4.5k")).toBe(true)
+  })
+
   test("mode diwarnai per mapping prompt lama; padding tak mengubah warna", () => {
     tty = installFakeTty({ columns: 60 })
     // Mapping: plan=kuning, ask=biru, sisanya=hijau — konten polosnya = mode

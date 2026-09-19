@@ -127,8 +127,11 @@ describe("REPL TUI: siklus dasar", () => {
     const p = start(h)
     await typeLine("halo")
     expect(h.ran).toEqual(["halo"])
-    // Jejak shell: prompt yang di-submit tinggal di transkrip seperti PS>
-    expect(visible()).toContain("halo")
+    // Jejak shell: prompt yang di-submit tinggal di transkrip seperti PS>.
+    // Tepat SATU kemunculan — box input harus sudah di-reset sinkron, kalau
+    // tidak teks yang sama tampil dua kali (jejak doc + baris input).
+    const after = visible()
+    expect(after.split("minicode › halo").length - 1).toBe(1)
     // ?1049h adalah sekuens ANSI: asersi di byte mentah (stripAnsi
     // menghapusnya sehingga tak terlihat di `visible()`).
     expect(tty!.all()).toContain("\x1b[?1049h")

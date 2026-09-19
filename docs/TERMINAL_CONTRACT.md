@@ -122,7 +122,9 @@ operasi, bukan pemakaian.
 ## Grammar (ringkas — TUI shell-like, I16)
 
 prompt `minicode ›` di **bawah transkrip** seperti PowerShell: tiap submit
-meninggalkan jejak `minicode › <teks>` di transkrip (bertumpuk ke bawah),
+meninggalkan jejak `minicode › <teks>` di transkrip (bertumpuk ke bawah,
+**tanpa duplikat** — box input di-reset sinkron saat submit agar teks yang
+sama tidak tampil dua kali),
 output model/ledger muncul di bawahnya, prompt baru di bawah output — status
 `src/ui/footer.ts` di **baris-R paling bawah** permanen (`✦ mode • model •
 cwd … 14.2k`, pad 9 anti-geser, spark pulse busy/redup idle, konteks rata

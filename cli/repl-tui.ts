@@ -133,11 +133,14 @@ export async function runTuiRepl(ctx: CliSession): Promise<void> {
       if (ev.type === "submit") {
         // Jejak shell: prompt yang di-submit tetap di transkrip seperti
         // `PS> halo` di PowerShell — bukan hilang seperti widget.
+        // Reset sinkron SEBELUM render: tanpa ini teks yang sama tampil dua
+        // kali (jejak di doc + baris input yang belum dibersihkan).
         if (ev.line.trim()) {
           doc.push(`${currentPrompt}${ev.line}`)
           if (doc.length > TUI_DOC_MAX_LINES) doc.splice(0, doc.length - TUI_DOC_MAX_LINES)
-          render()
         }
+        box.reset()
+        render()
         const done = pumpResolver
         pumpResolver = null
         detachPump()

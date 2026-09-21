@@ -65,6 +65,30 @@ export function sanitizeAnsi(s: string): string {
       i += 1
       continue
     }
+    // Kontrol C1 (0x80–0x9F): di terminal modern 0x9B bertindak sebagai CSI —
+    // tanpa ini model bisa menyelundupkan sekuens kontrol tanpa byte ESC.
+    if (code >= 0x80 && code <= 0x9f) {
+      i += 1
+      continue
+    }
+    // Format tak-terlihat yang mengubah tampilan tanpa menempati kolom:
+    // bidi override/isolate (202A–202E, 2066–2069) membalik urutan tampil
+    // path/perintah; soft hyphen (00AD) dan word joiner/invisible (2060–2064)
+    // menyembunyikan teks. ZWJ/ZWNJ (200D/200C) dan ZWSP (200B) SENGAJA
+    // dipertahankan — dibutuhkan emoji ZWJ-sequence dan sebagian skrip;
+    // risikonya ditutup hitungan lebar-nol di width.ts.
+    // Tag E0020–E007F astral (surrogate pair) dicek via codePointAt agar
+    // kedua unit ikut dibuang — charCodeAt hanya melihat separuhnya.
+    const cp = s.codePointAt(i)!
+    if (
+      code === 0xad ||
+      (code >= 0x202a && code <= 0x202e) ||
+      (code >= 0x2060 && code <= 0x2069) ||
+      (cp >= 0xe0020 && cp <= 0xe007f)
+    ) {
+      i += cp > 0xffff ? 2 : 1
+      continue
+    }
     out += ch
     i += 1
   }
@@ -175,9 +199,12 @@ export function stripSgr(s: string): string {
  * Satu pintu kebijakan ANSI teks tak-terpercaya: TTY → SGR dipertahankan
  * (renderer mewarnai); non-TTY → semua ANSI dibuang agar pipe/CI
  * deterministik. Cerminan colorLevel() di theme.ts yang mengacu
- * stdout.isTTY — satu aturan untuk semua stream.
+ * stdout.isTTY — satu aturan untuk semua stream. NO_COLOR menang di kedua
+ * jalur (aturan aksesibilitas yang sama dengan theme.noColorEnv).
  */
 export function cleanUntrusted(s: string, stdoutTty: boolean): string {
   const clean = sanitizeAnsi(s)
-  return stdoutTty ? clean : stripSgr(clean)
+  if (!stdoutTty) return stripSgr(clean)
+  if (process.env.NO_COLOR != null && process.env.NO_COLOR !== "0") return stripSgr(clean)
+  return clean
 }

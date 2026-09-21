@@ -62,6 +62,9 @@ export class Transcript {
   private lines: string[] = []
   private pending = ""
   private sections: BufferedSection[] = []
+  /** Hitung monotonik baris yang pernah ditambah — basis indikator "baru"
+   * yang kebal evict cap 5000 (size() menyusut saat tertua dibuang). */
+  private totalAppended = 0
   /** Thinking terakumulasi (tersanitasi). Minimized: penanda hidup + buffer
    * /expand; expanded: mengalir redup seperti teks. */
   private thinkingBuf = ""
@@ -182,12 +185,13 @@ export class Transcript {
     return this.lines.length + (this.pending ? 1 : 0)
   }
 
-  /**
-   * Baris tampil untuk viewport: wrap ke `width`, ambil `height` baris
-   * terakhir dikurangi `scrollBack` (0 = ikut ekor). Selalu kembalikan
-   * TEPAT `height` string (padding "" bila kurang) supaya frame penuh.
-   */
-  view(width: number, height: number, scrollBack: number): string[] {
+  /** Total baris logis yang pernah ditambah (monotonik, kebal evict cap). */
+  total(): number {
+    return this.totalAppended + (this.pending ? 1 : 0)
+  }
+
+  /** Baris visual (ter-wrap) untuk lebar kolom — dipakai view + kunci scroll. */
+  private wrapAll(width: number): string[] {
     const w = Math.max(10, width)
     const wrapped: string[] = []
     for (const logical of this.lines) {
@@ -210,6 +214,21 @@ export class Transcript {
     } else if (this.thinkingBuf.trim()) {
       wrapped.push(c.muted(t("ts.thinking")))
     }
+    return wrapped
+  }
+
+  /** Panjang visual viewport (untuk kunci posisi baca App saat stream masuk). */
+  wrappedLength(width: number): number {
+    return this.wrapAll(width).length
+  }
+
+  /**
+   * Baris tampil untuk viewport: wrap ke `width`, ambil `height` baris
+   * terakhir dikurangi `scrollBack` (0 = ikut ekor). Selalu kembalikan
+   * TEPAT `height` string (padding "" bila kurang) supaya frame penuh.
+   */
+  view(width: number, height: number, scrollBack: number): string[] {
+    const wrapped = this.wrapAll(width)
     const back = Math.max(0, Math.min(scrollBack, Math.max(0, wrapped.length - height)))
     const tail = wrapped.slice(0, wrapped.length - back)
     const shown = tail.slice(Math.max(0, tail.length - height))
@@ -264,6 +283,7 @@ export class Transcript {
 
   private append(line: string): void {
     this.lines.push(line)
+    this.totalAppended++
     if (this.lines.length > TRANSCRIPT_CAP) {
       this.lines.splice(0, this.lines.length - TRANSCRIPT_CAP)
     }

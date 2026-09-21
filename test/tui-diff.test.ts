@@ -24,6 +24,15 @@ test("diff: renderDiffCard formats bordered diff output", () => {
   expect(clean).toContain("+ const a = 2;")
 })
 
+test("diff: path & isi tak-terpercaya disanitasi (F-04)", () => {
+  // \n di path dulu menjadi baris diff palsu; ESC[2J lolos via cut.
+  const card = renderDiffCard("a.ts\n+ EVIL\x1b[2J", "lama\x1b[2J", "baru")
+  expect(card).not.toContain("\x1b[2J")
+  // EVIL hanya di baris judul (satu baris), bukan baris diff palsu.
+  expect(card.split("\n").filter((l) => l.includes("EVIL")).length).toBe(1)
+  expect(stripAnsi(card)).toContain("a.ts")
+})
+
 // ── Temuan bug-hunter UI ────────────────────────────────────────────────────
 
 // Baris diff sepanjang baris kode aslinya. Tanpa batas, satu baris 300 karakter

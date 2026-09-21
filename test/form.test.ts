@@ -59,6 +59,30 @@ describe("runForm", () => {
     expect(res.values).toBeUndefined()
     s.close()
   })
+  test("Esc tekan-1 kembalikan prefill (bukan hapus), tekan-2 batal", async () => {
+    // Bug-hunter TUI F-10: prefill edit (mis. URL preset) musnah sekali tekan
+    // tanpa undo. Kini tekan-1 = revert ke bawaan, tekan-2 = batal.
+    const s = screen()
+    const p = runForm(
+      {
+        title: "E",
+        fields: [{ id: "u", label: "U", kind: "text", initial: "https://preset.example" }],
+      },
+      s,
+    )
+    await tty!.ready()
+    await tty!.send("X")
+    expect(tty!.screen().join("\n")).toContain("Xhttps://preset.example")
+    await tty!.send(KEY.esc, 90)
+    // Prefill kembali utuh, form TETAP terbuka.
+    const frame = tty!.screen().join("\n")
+    expect(frame).toContain("https://preset.example")
+    expect(frame).not.toContain("Xhttps://preset.example")
+    await tty!.send(KEY.esc, 90)
+    const res = await p
+    expect(res.cancelled).toBe(true)
+    s.close()
+  })
   test("secret di-mask di layar", async () => {
     const s = screen()
     const p = runForm({ title: "K", fields: [{ id: "k", label: "Key", kind: "secret" }] }, s)

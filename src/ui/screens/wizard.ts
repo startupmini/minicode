@@ -22,6 +22,9 @@ export interface SetupWizardViewOptions {
   onSubmit(baseUrl: string, apiKey: string): Promise<string>
 }
 
+/** Lebar kotak wizard TETAP (paritas picker/form/manager — tak bernapas antar langkah). */
+const WIZARD_BOX_W = 64
+
 /**
  * Tunggu tanpa menahan process hidup (unref): jeda sukses/gagal wizard tak
  * boleh menahan exit bila stdin sudah ditutup. Gagal-di-kode-lama: timer
@@ -134,7 +137,12 @@ export async function runSetupWizardView(opts: SetupWizardViewOptions): Promise<
 
     // Progres sebagai baris dalam kotak (bukan spinner liar di bawah popup).
     const box = dialogBox(
-      { title: t("wiz.title"), body: [c.muted(t("wiz.detecting"))] },
+      {
+        title: t("wiz.title"),
+        body: [c.muted(t("wiz.detecting"))],
+        minWidth: WIZARD_BOX_W,
+        maxWidth: WIZARD_BOX_W,
+      },
       screen.cols,
       screen.rows,
     )
@@ -147,6 +155,8 @@ export async function runSetupWizardView(opts: SetupWizardViewOptions): Promise<
         {
           title: t("wiz.title"),
           body: [`${glyphs.check} ${sanitizeAnsiLine(message)}`, "", t("wiz.done")],
+          minWidth: WIZARD_BOX_W,
+          maxWidth: WIZARD_BOX_W,
         },
         screen.cols,
         screen.rows,
@@ -160,6 +170,8 @@ export async function runSetupWizardView(opts: SetupWizardViewOptions): Promise<
         {
           title: t("wiz.title"),
           body: [c.error(`${glyphs.cross} ${t("wiz.detectFail", { msg: formatError(e) })}`)],
+          minWidth: WIZARD_BOX_W,
+          maxWidth: WIZARD_BOX_W,
         },
         screen.cols,
         screen.rows,

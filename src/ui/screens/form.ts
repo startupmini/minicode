@@ -76,8 +76,7 @@ interface FieldState {
   viewStart: number
 }
 
-const DIM = "\x1b[2m"
-const RESTORE = "\x1b[22m"
+const dim = (s: string): string => c.dim(s)
 
 /** Lebar kotak form TETAP (keputusan rasa: geometri stabil). */
 const FORM_BOX_W = 64
@@ -204,9 +203,7 @@ export async function runForm(spec: FormSpec, screen: AltScreen): Promise<FormRe
           const marker = active ? c.accent("›") : " "
           if (active) activeCol = -1 // select tanpa kursor ketik
           body.push(
-            cut(
-              `${marker} ${sanitizeAnsiLine(st.def.label)}: ${DIM}‹${RESTORE} ${cur} ${DIM}›${RESTORE}`,
-            ),
+            cut(`${marker} ${sanitizeAnsiLine(st.def.label)}: ${dim("‹")} ${cur} ${dim("›")}`),
           )
           activeRow = active ? body.length - 1 : activeRow
         } else {
@@ -334,14 +331,17 @@ export async function runForm(spec: FormSpec, screen: AltScreen): Promise<FormRe
       const st = fields[idx]!
       for (const d of keys) {
         const k = d.key
-        // Esc/Ctrl+C dua-tahap (anti-hilang draft): field berisi → bersihkan
-        // field aktif saja; kosong → batal total. Ctrl+D = batal langsung
-        // (konvensi EOF, tidak dipakai menghapus).
+        // Esc/Ctrl+C dua-tahap (anti-hilang draft): field kotor → kembalikan
+        // ke nilai bawaan (prefill edit tak hilang sekali tekan — dulu
+        // langsung dikosongkan tanpa undo); sudah bawaan/kosong → batal
+        // total. Ctrl+D = batal langsung (konvensi EOF, tidak dipakai
+        // menghapus).
         if (k.type === "esc" || k.type === "ctrl-c") {
           const cur = fields[idx]!
-          if ((cur.def.kind === "text" || cur.def.kind === "secret") && cur.text.length > 0) {
-            cur.text = ""
-            cur.cursor = 0
+          const initial = typeof cur.def.initial === "string" ? cur.def.initial : ""
+          if ((cur.def.kind === "text" || cur.def.kind === "secret") && cur.text !== initial) {
+            cur.text = initial
+            cur.cursor = toGraphemes(initial).length
             cur.viewStart = 0
             cur.error = null
             render()

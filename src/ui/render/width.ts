@@ -73,9 +73,14 @@ function inRanges(cp: number, ranges: [number, number][]): boolean {
   return false
 }
 
-/** Lebar kolom satu code point: 0, 1, atau 2. */
+/** Lebar kolom satu code point: 0, 1, 2, atau 8 (tab). */
 export function charWidth(cp: number): number {
   if (cp === 0) return 0
+  // Tab dirender terminal sebagai lompatan ke stop berikutnya (kelipatan 8).
+  // Tanpa posisi kolom, hitung 8 = batas atas: tak pernah undercount (arah
+  // aman — overcount hanya wrap lebih awal, undercount merusak frame/popup).
+  // sanitizeAnsi SENGAJA mempertahankan tab agar isi (indentasi kode) utuh.
+  if (cp === 0x09) return 8
   // C0/C1 control: tidak menempati kolom (dan seharusnya tidak sampai ke layar).
   if (cp < 0x20 || (cp >= 0x7f && cp < 0xa0)) return 0
   if (inRanges(cp, ZERO)) return 0
@@ -117,6 +122,40 @@ function csiByteKind(b: number): "param" | "inter" | "final" | "other" {
   return "other"
 }
 
+/** Parameter SGR yang menutup gaya (reset/off) — arah aman saat pecah chunk. */
+const SGR_OFF = new Set(["0", "22", "23", "24", "25", "27", "28", "29", "39", "49"])
+
+/** True bila sekuens escape utuh adalah SGR pewarnaan (satu-satunya yang boleh lewat). */
+function isSgrSeq(seq: string): boolean {
+  if (!seq.startsWith("\x1b[") || !seq.endsWith("m")) return false
+  const params = seq.slice(2, -1)
+  if (params === "") return true
+  return params.split(/[:;]/).every((p) => p === "" || /^[0-9]+$/.test(p))
+}
+
+/** True bila string berakhir dengan gaya SGR masih terbuka (butuh reset). */
+function sgrLeftOpen(s: string): boolean {
+  let open = false
+  let i = 0
+  while (i < s.length) {
+    if (s[i] === "\x1b") {
+      const len = escapeLength(s, i)
+      if (len > 0) {
+        const seq = s.slice(i, i + len)
+        if (isSgrSeq(seq)) {
+          const params = seq.slice(2, -1).split(/[:;]/)
+          if (params.some((p) => SGR_OFF.has(p) || p === "")) open = false
+          else if (params.some((p) => p !== "")) open = true
+        }
+        i += len
+        continue
+      }
+    }
+    const cp = s.codePointAt(i)!
+    i += cp > 0xffff ? 2 : 1
+  }
+  return open
+}
 /** Panjang sekuens escape yang mulai di `i`, atau 0 bila bukan escape. */
 export function escapeLength(s: string, i: number): number {
   if (s[i] !== "\x1b") return 0
@@ -162,6 +201,21 @@ export function escapeLength(s: string, i: number): number {
   return code >= 0x30 && code <= 0x7e ? 2 : 1
 }
 
+/** True bila string memuat escape non-SGR (atau ESC liar) yang wajib dibuang. */
+function hasNonSgrEscape(s: string): boolean {
+  let i = 0
+  while (i < s.length) {
+    if (s[i] === "\x1b") {
+      const len = escapeLength(s, i)
+      if (len <= 0 || !isSgrSeq(s.slice(i, i + len))) return true
+      i += len
+      continue
+    }
+    const cp = s.codePointAt(i)!
+    i += cp > 0xffff ? 2 : 1
+  }
+  return false
+}
 /**
  * Potong string ke `width` KOLOM (bukan jumlah karakter), pertahankan sekuens
  * ANSI utuh, dan tutup atribut yang masih terbuka. Tidak pernah membelah
@@ -169,19 +223,34 @@ export function escapeLength(s: string, i: number): number {
  */
 export function truncateToWidth(s: string, width: number, ellipsis = "..."): string {
   if (width <= 0) return ""
-  if (displayWidth(s) <= width) return s
+  // Muat tanpa potong DAN tanpa escape asing: tetap tutup SGR yang terbuka
+  // agar tak bleed ke chrome berikut (dulu early-return membocorkan warna).
+  // Bila ada non-SGR, jatuh ke loop filter di bawah (tanpa ellipsis bila
+  // akhirnya tak ada yang dipotong).
+  if (displayWidth(s) <= width && !hasNonSgrEscape(s)) {
+    return sgrLeftOpen(s) ? `${s}\x1b[0m` : s
+  }
 
   const ellW = displayWidth(ellipsis)
   const budget = width > ellW ? width - ellW : width
   let out = ""
   let w = 0
   let sawSgr = false
+  let cut = false
   let i = 0
   while (i < s.length) {
     if (s[i] === "\x1b") {
       const len = escapeLength(s, i)
       if (len > 0) {
         const seq = s.slice(i, i + len)
+        // Hanya SGR yang disalin — sekuens kontrol lain (clear, alternate
+        // screen, OSC) DIBUANG di sini agar satu pemanggil yang lupa sanitasi
+        // tidak menjadi injeksi terminal (defense-in-depth, bukan pengganti
+        // sanitizeAnsi di batas input tak-terpercaya).
+        if (!isSgrSeq(seq)) {
+          i += len
+          continue
+        }
         if (seq.endsWith("m")) sawSgr = true
         out += seq
         i += len
@@ -190,13 +259,16 @@ export function truncateToWidth(s: string, width: number, ellipsis = "..."): str
     }
     const cp = s.codePointAt(i)!
     const cw = charWidth(cp)
-    if (w + cw > budget) break
+    if (w + cw > budget) {
+      cut = true
+      break
+    }
     const size = cp > 0xffff ? 2 : 1
     out += s.slice(i, i + size)
     w += cw
     i += size
   }
-  const tail = width > ellW ? ellipsis : ""
+  const tail = cut && width > ellW ? ellipsis : ""
   return sawSgr ? `${out}\x1b[0m${tail}` : out + tail
 }
 
@@ -214,7 +286,7 @@ export function padToWidth(s: string, width: number, align: "left" | "right" = "
  * dipecah di batas kata.
  */
 export function chunkByWidth(s: string, width: number): string[] {
-  if (width <= 0) return [s]
+  if (width <= 0) return [""]
   const out: string[] = []
   let cur = ""
   let w = 0
@@ -225,13 +297,22 @@ export function chunkByWidth(s: string, width: number): string[] {
   // DAN merah ke potongan berikut. Reset/off (0, 22–29, 39, 49) mengosongkan
   // tumpukan — arah aman: potongan berikut mulai tanpa gaya daripada dengan
   // gaya basi yang salah.
-  const SGR_OFF = new Set(["0", "22", "23", "24", "25", "27", "28", "29", "39", "49"])
+  // Non-SGR DIBUANG seperti truncateToWidth (defense-in-depth yang sama).
   let openSgr: string[] = []
+  const pushChunk = (): void => {
+    out.push(openSgr.length > 0 ? `${cur}\x1b[0m` : cur)
+    cur = openSgr.join("") // lanjutkan warna ke potongan berikutnya
+    w = 0
+  }
   while (i < s.length) {
     if (s[i] === "\x1b") {
       const len = escapeLength(s, i)
       if (len > 0) {
         const seq = s.slice(i, i + len)
+        if (!isSgrSeq(seq)) {
+          i += len
+          continue
+        }
         if (seq.endsWith("m")) {
           const params = seq.slice(2, -1).split(/[:;]/)
           if (params.some((p) => SGR_OFF.has(p) || p === "")) openSgr = []
@@ -251,14 +332,12 @@ export function chunkByWidth(s: string, width: number): string[] {
     const cw = charWidth(cp)
     const size = cp > 0xffff ? 2 : 1
     if (w + cw > width && cur !== "") {
-      out.push(cur)
-      cur = openSgr.join("") // lanjutkan warna ke potongan berikutnya
-      w = 0
+      pushChunk()
     }
     cur += s.slice(i, i + size)
     w += cw
     i += size
   }
-  if (cur !== "") out.push(cur)
+  if (cur !== "") pushChunk()
   return out.length ? out : [""]
 }

@@ -23,6 +23,11 @@ export interface ApprovalRequest {
 
 export async function promptAsk(call: ApprovalRequest): Promise<"allow" | "deny" | "always"> {
   if (!process.stdin.isTTY) return "deny"
+  const sink = getApprovalSink()
+  // Tanpa sink (one-shot/exec) + stdout di-pipe: prompt tak terlihat user DAN
+  // askLine/blok akan mencemari stdout (kontrak: stdout = output PROGRAM).
+  // Fail-closed: tolak daripada mencemari pipe (kontrak I23).
+  if (!sink && !process.stdout.isTTY) return "deny"
   // Non-visual feedback bisa dimatikan untuk aksesibilitas/recording.
   // Bell hanya bila stdout TTY: byte `\x07` di stdout pipe mengotori output
   // program (kontrak: stdout = output PROGRAM, bukan diagnostik).
@@ -39,9 +44,9 @@ export async function promptAsk(call: ApprovalRequest): Promise<"allow" | "deny"
   const args = (call.args ?? {}) as Record<string, unknown>
 
   let actionSummary = ""
-  if (args.command) actionSummary = `Command: ${String(args.command).slice(0, 100)}`
-  else if (args.path) actionSummary = `File: ${String(args.path)}`
-  else if (args.query) actionSummary = `Query: ${String(args.query)}`
+  if (args.command) actionSummary = `${t("appr.cmdLabel")} ${String(args.command).slice(0, 100)}`
+  else if (args.path) actionSummary = `${t("appr.fileLabel")} ${String(args.path)}`
+  else if (args.query) actionSummary = `${t("appr.queryLabel")} ${String(args.query)}`
   else {
     let json = ""
     try {
@@ -49,7 +54,7 @@ export async function promptAsk(call: ApprovalRequest): Promise<"allow" | "deny"
     } catch {
       json = String(args)
     }
-    actionSummary = `Args: ${json.slice(0, 100)}`
+    actionSummary = `${t("appr.argsLabel")} ${json.slice(0, 100)}`
   }
   actionSummary = sanitizeAnsiLine(actionSummary)
 
@@ -59,7 +64,6 @@ export async function promptAsk(call: ApprovalRequest): Promise<"allow" | "deny"
     `  ${c.bold(t("appr.tool"))} ${c.info(toolName)}`,
     `  ${actionSummary}`,
   ]
-  const sink = getApprovalSink()
   if (sink) {
     sink.pushBlock(block)
     sink.repaint()
@@ -109,6 +113,10 @@ export async function promptAsk(call: ApprovalRequest): Promise<"allow" | "deny"
  * bila user membatalkan (Esc/Ctrl+C → askLine null) atau jawaban kosong. */
 export async function promptAskText(question: string, options?: string[]): Promise<string | null> {
   if (!process.stdin.isTTY) return null
+  const textSink = getApprovalSink()
+  // Paritas promptAsk: tanpa sink + stdout pipe = jawab tak terlihat & pipe
+  // tercemar → batal fail-closed.
+  if (!textSink && !process.stdout.isTTY) return null
   const q = sanitizeAnsiLine(question).slice(0, 2000)
   const block = [
     ``,
@@ -118,7 +126,7 @@ export async function promptAskText(question: string, options?: string[]): Promi
       ? options.map((o, i) => `  ${c.dim(`${i + 1}.`)} ${sanitizeAnsiLine(o)}`)
       : []),
   ]
-  const sink = getApprovalSink()
+  const sink = textSink
   if (sink) {
     sink.pushBlock(block)
     sink.repaint()

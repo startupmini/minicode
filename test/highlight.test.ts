@@ -299,18 +299,18 @@ describe("highlight: masukan adversarial", () => {
     }
   })
 
-  test("karakter kontrol dan ANSI dari sumber tak terpercaya tidak dibuang", () => {
-    // highlight BUKAN lapisan sanitasi (itu `sanitizeAnsi`); tugasnya hanya tidak
-    // merusak teks. Kalau ia diam-diam membuang byte, sanitizer di hilir menerima
-    // masukan berbeda dari yang dianggap penelepon.
-    const inputs = [`const x = "${ESC}[31mmerah${ESC}[0m"`, "a\tb", "a\u0007b", "a\u0000b"]
+  test("kontrol + non-SGR dibuang di hulu (F-04; aman-di-pipeline)", () => {
+    // Keputusan lama ("highlight BUKAN sanitasi") dibalik SADAR: tokenizer
+    // justru MEMBELAH sekuens SGR (warna sah rusak) dan MELOLOSKAN non-SGR —
+    // klaim "tidak membuang byte" sudah bohong. Sanitasi di hulu idempoten
+    // bagi pemanggil yang sudah sanitasi (kasus umum: decorateMarkdown).
     for (const lang of languages) {
-      for (const input of inputs) {
-        const out = highlightCode(input, lang)
-        for (const ch of ["\t", "\u0007", "\u0000", "merah"]) {
-          if (input.includes(ch)) expect(out).toContain(ch)
-        }
-      }
+      expect(highlightCode("a\x1b[2Jb", lang)).not.toContain("\x1b[2J")
+      expect(stripAnsi(highlightCode("a\x1b[2Jb", lang))).toBe("ab")
+      expect(stripAnsi(highlightCode("a\x07b", lang))).toBe("ab")
+      expect(stripAnsi(highlightCode("a\x00b", lang))).toBe("ab")
+      // Tab dipertahankan (sanitasi tak menyentuhnya; tokenizer tak merusak).
+      expect(highlightCode("a\tb", lang)).toContain("\t")
     }
   })
 
@@ -345,9 +345,16 @@ describe("highlight: masukan adversarial", () => {
     }
   })
 
-  test("CRLF tidak menghasilkan CR ganda", () => {
+  test("CR dibuang (anti-overwrite baris, F-04)", () => {
+    // Dulu \r dipertahankan: "hello\rEVIL" menimpa baris di terminal.
     const input = "const a = 1\r\nconst b = 2"
-    expect(stripAnsi(highlightCode(input, "ts"))).toBe(input)
+    expect(stripAnsi(highlightCode(input, "ts"))).toBe("const a = 1\nconst b = 2")
+  })
+
+  test("escape di dalam kode dibuang sebelum tokenize (F-04)", () => {
+    // Tokenizer dulu membelah SGR (warna sah rusak) dan meloloskan non-SGR.
+    expect(highlightCode("a\x1b[2Jb", "ts")).not.toContain("\x1b[2J")
+    expect(stripAnsi(highlightCode("const \x1b[31mx\x1b[0m = 1", "ts"))).toContain("const x = 1")
   })
 
   test("NO_COLOR mematikan pewarnaan di semua bahasa", () => {

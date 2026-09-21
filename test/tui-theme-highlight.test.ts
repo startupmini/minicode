@@ -53,3 +53,17 @@ test("theme: section separator uses display width for CJK/emoji", () => {
   expect(displayWidth(line)).toBeGreaterThanOrEqual(40)
   Object.defineProperty(process.stdout, "columns", { value: orig, configurable: true })
 })
+
+test("theme: section() sanitasi judul tak-terpercaya satu-baris (F-04)", () => {
+  const line = stripAnsi(section("a\nb\x1b[2Jc"))
+  expect(line).not.toContain("\n")
+  expect(line).not.toContain("\x1b[2J")
+  expect(line).toContain("a b")
+})
+
+test("markdown: escape model dibuang di hulu (F-04)", () => {
+  const out = decorateMarkdown("halo\x1b[2Jdunia\n```ts\nkode\x1b[?1049hx\n```")
+  expect(out).not.toContain("\x1b[2J")
+  expect(out).not.toContain("?1049h")
+  expect(stripAnsi(out)).toContain("halodunia")
+})

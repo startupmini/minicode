@@ -1,4 +1,5 @@
 // Diff renderer - Ubuntu Server style: indentasi + warna, tanpa border.
+import { sanitizeAnsi, sanitizeAnsiLine } from "./sanitize.ts"
 import { c } from "./theme.ts"
 import { truncateToWidth } from "./width.ts"
 
@@ -107,7 +108,11 @@ export function renderDiffCard(
   newText: string,
   opts: { maxLines?: number; width?: number } = {},
 ): string {
-  const diff = computeLineDiff(oldText, newText)
+  // Path & isi dari tool/model/berkas = tak-terpercaya: sanitasi sebelum
+  // dirender. Tanpa ini `\n` di path menjadi baris diff palsu dan `ESC[2J`
+  // lolos via `cut` (truncate menyalin escape apa pun sebelum F-04).
+  const safePath = sanitizeAnsiLine(filePath)
+  const diff = computeLineDiff(sanitizeAnsi(oldText), sanitizeAnsi(newText))
   const changes = diff.filter((d) => d.type !== "context")
   if (changes.length === 0) return c.muted("  (no changes)")
   // Pasangan del/add untuk sorot kata: kelompokkan run perubahan beruntun,
@@ -146,7 +151,7 @@ export function renderDiffCard(
   const width = opts.width ?? (process.stdout.columns || 80)
   const cut = (s: string) => truncateToWidth(s, Math.max(8, width - 1))
 
-  const lines: string[] = [c.accent(c.bold(cut(`  ${filePath}`)))]
+  const lines: string[] = [c.accent(c.bold(cut(`  ${safePath}`)))]
   // collect indices of changes plus 1 context line before/after
   const include = new Set<number>()
   diff.forEach((d, i) => {

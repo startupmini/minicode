@@ -90,3 +90,12 @@ test("stripAnsi: menangkap sekuens private-mode dan OSC", () => {
   expect(stripAnsi("\x1b[38;2;1;2;3mwarna\x1b[39m")).toBe("warna")
   expect(stripAnsi("\x1b]0;judul\x07teks")).toBe("teks")
 })
+
+test("stripAnsi: DCS/APC/PM/SOS + final CSI non-huruf (F-01)", () => {
+  // Pola lama \\[P_\\^X] hanya cocok ESC[ + satu char: payload DCS bocor
+  // sebagai "1$q0" + BEL. Final [a-zA-Z] menyisakan "~" dari ESC[3~.
+  expect(stripAnsi("a\x1bP1$q0\x07b")).toBe("ab")
+  expect(stripAnsi("a\x1b_Xpayload\x1b\\b")).toBe("ab")
+  expect(stripAnsi("a\x1b[3~b")).toBe("ab")
+  expect(stripAnsi("a\x1b[@b")).toBe("ab")
+})

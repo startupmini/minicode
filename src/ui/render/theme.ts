@@ -1,3 +1,4 @@
+import { sanitizeAnsiLine } from "./sanitize.ts"
 import { displayWidth, truncateToWidth } from "./width.ts"
 
 // Semantic color system - Ubuntu Server style.
@@ -312,12 +313,15 @@ export const glyphs = {
 // ── Section separator ──
 export function section(title: string): string {
   const width = getTerminalWidth()
+  // Judul bisa berasal dari model/berkas: sanitasi satu-baris agar `\n`/ANSI
+  // tak memecah separator menjadi multi-baris atau menyuntik kontrol.
+  const clean = sanitizeAnsiLine(title)
   // Label lebih panjang dari terminal (judul CJK/emoji panjang): potong dulu
   // per kolom — tanpa ini dashes jatuh ke 4 dan total label+4 tetap meluap.
   const label =
-    displayWidth(` ${title} `) > Math.max(4, width - 4)
-      ? truncateToWidth(` ${title} `, Math.max(4, width - 4), "…")
-      : ` ${title} `
+    displayWidth(` ${clean} `) > Math.max(4, width - 4)
+      ? truncateToWidth(` ${clean} `, Math.max(4, width - 4), "…")
+      : ` ${clean} `
   // Lebar pemisah dihitung per KOLOM terminal: CJK/emoji bisa 2 kolom.
   // Clamp agar garis tak memicu wrap sendiri di terminal sempit.
   const dashes = Math.min(Math.max(4, width - displayWidth(label)), Math.max(4, width - 4))
@@ -336,7 +340,11 @@ export const ESC = String.fromCharCode(27)
 // ESC[?25l, ESC[?2026h, ESC[?1049h dipakai untuk kursor/sync/alternate-screen.
 // Tanpa itu sekuens kontrol lolos ke teks yang seharusnya sudah bersih —
 // terlihat saat output ditangkap/disanitasi untuk tampilan.
-export const ANSI_PATTERN = `${ESC}(?:\\[[0-9;?<=>]*[a-zA-Z]|\\[[0-9;?<=>]*|\\][^${ESC}\\u0007]*(?:\\u0007|${ESC}\\\\)|\\[P_\\^X][^${ESC}\\u0007]*(?:\\u0007|${ESC}\\\\)|[()#][0-9A-Za-z]|[0-9A-Za-z])`
+// Final CSI = 0x40–0x7E (`[@-~]`), bukan hanya huruf — tanpanya `ESC[3~`
+// menyisakan `~` dan merusak hitungan kolom. DCS/APC/PM/SOS = `ESC` + satu
+// huruf `P/_/^/X` (BUKAN `ESC[` + kelas karakter) — pola lama `\[P_\^X]`
+// hanya cocok untuk `ESC[P`/`ESC[_` dst. sehingga payload DCS bocor.
+export const ANSI_PATTERN = `${ESC}(?:\\[[0-9;?<=>]*[@-~]|\\[[0-9;?<=>]*|\\][^${ESC}\\u0007]*(?:\\u0007|${ESC}\\\\)|(?:P|_|\\^|X)[^${ESC}\\u0007]*(?:\\u0007|${ESC}\\\\)|[()#][0-~]|[0-~])`
 
 export function stripAnsi(str: string): string {
   // regex baru per panggilan: aman dari lastIndex bersama antar pemanggil

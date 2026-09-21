@@ -3,6 +3,7 @@
 import type { UiToolCallRef } from "../contract.ts"
 import { formatFriendly, friendlyFromCategory } from "./errors.ts"
 import { formatUsd } from "./money.ts"
+import { sanitizeAnsiLine } from "./sanitize.ts"
 
 /**
  * Potong per code point (bukan UTF-16 unit): slice mentah membelah surrogate
@@ -15,22 +16,29 @@ function safeSlice(s: string, n: number): string {
 }
 
 export function formatArgsPreview(args: unknown): string {
+  // Nilai arg berasal dari model/MCP (tak-terpercaya) dan tampil di baris
+  // status satu-baris: sanitasi agar `\n`/ANSI tak memecah baris/menyuntik.
   try {
     const a = args as Record<string, unknown>
-    if (a.path) return String(a.path)
-    if (a.command) return safeSlice(String(a.command), 60)
-    if (a.cmd) return safeSlice(String(a.cmd), 60)
-    if (a.pattern) return String(a.pattern)
-    if (a.query) return String(a.query)
-    if (a.prompt) return safeSlice(String(a.prompt), 40)
-    return safeSlice(JSON.stringify(a), 40)
+    if (a.path) return sanitizeAnsiLine(String(a.path))
+    if (a.command) return safeSlice(sanitizeAnsiLine(String(a.command)), 60)
+    if (a.cmd) return safeSlice(sanitizeAnsiLine(String(a.cmd)), 60)
+    if (a.pattern) return sanitizeAnsiLine(String(a.pattern))
+    if (a.query) return sanitizeAnsiLine(String(a.query))
+    if (a.prompt) return safeSlice(sanitizeAnsiLine(String(a.prompt)), 40)
+    return safeSlice(sanitizeAnsiLine(JSON.stringify(a)), 40)
   } catch {
     return "[args]"
   }
 }
 
 export function formatStepCalls(calls: readonly UiToolCallRef[], argCap = 35): string {
-  return calls.map((tc) => `${tc.name}(${safeSlice(JSON.stringify(tc.args), argCap)})`).join(", ")
+  return calls
+    .map(
+      (tc) =>
+        `${sanitizeAnsiLine(tc.name)}(${safeSlice(sanitizeAnsiLine(JSON.stringify(tc.args)), argCap)})`,
+    )
+    .join(", ")
 }
 
 export function formatUsage(parts: {

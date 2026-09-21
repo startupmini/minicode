@@ -34,6 +34,14 @@ describe("charWidth", () => {
     }
   })
 
+  test("tab delapan kolom (batas atas stop terminal, arah aman)", () => {
+    // Bug-hunter TUI F-03: tab dihitung 0 → wrap/table/truncate undercount dan
+    // frame meluap. 8 = lompatan maksimum ke stop kelipatan-8 (tak pernah
+    // undercount; overcount hanya wrap lebih awal).
+    expect(charWidth(0x09)).toBe(8)
+    expect(displayWidth("a\tb")).toBe(10)
+  })
+
   test("combining mark & variation selector nol kolom", () => {
     expect(charWidth(0x0301)).toBe(0) // combining acute
     expect(charWidth(0xfe0f)).toBe(0) // variation selector-16
@@ -191,8 +199,10 @@ describe("chunkByWidth", () => {
     expect(chunkByWidth("abc", 10)).toEqual(["abc"])
   })
 
-  test("width 0 tidak infinite loop", () => {
-    expect(chunkByWidth("abc", 0)).toEqual(["abc"])
+  test("width 0 mengembalikan potongan kosong (kontrak <= width)", () => {
+    // Bug-hunter TUI: kode lama mengembalikan [s] utuh — melanggar kontraknya
+    // sendiri (potongan masing-masing <= width).
+    expect(chunkByWidth("abc", 0)).toEqual([""])
   })
 
   test("emoji tidak terbelah antar potongan", () => {
@@ -220,5 +230,23 @@ describe("chunkByWidth", () => {
     const chunks = chunkByWidth(src, 5)
     expect(chunks.length).toBeGreaterThan(1)
     for (const ch of chunks.slice(1)) expect(ch).not.toContain("23m")
+  })
+
+  test("sekuens non-SGR dibuang (defense-in-depth F-04)", () => {
+    // truncateToWidth/chunkByWidth dulu menyalin SEMUA escape: satu pemanggil
+    // yang lupa sanitizeAnsi = injeksi clear/altscreen.
+    expect(truncateToWidth("a\x1b[2Jb", 10)).toBe("ab")
+    expect(truncateToWidth("a\x1b[2Jb", 10)).not.toContain("\x1b[2J")
+    for (const ch of chunkByWidth("ab\x1b[?1049hcdefgh", 4)) {
+      expect(ch).not.toContain("?1049h")
+    }
+  })
+
+  test("SGR terbuka ditutup otomatis (tanpa bleed)", () => {
+    // Early-return muat + tiap chunk: gaya tak boleh bocor ke baris berikut.
+    expect(truncateToWidth("\x1b[31mhi", 10)).toBe("\x1b[31mhi\x1b[0m")
+    const chunks = chunkByWidth(`\x1b[31m${"a".repeat(30)}`, 10)
+    expect(chunks.length).toBeGreaterThan(1)
+    for (const ch of chunks.slice(0, -1)) expect(ch.endsWith("\x1b[0m")).toBe(true)
   })
 })

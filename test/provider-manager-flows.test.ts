@@ -247,15 +247,14 @@ describe.serial("provider-manager: add (a)", () => {
   })
 
   test("Ctrl+C in form cancels WITHOUT killing the session", async () => {
-    // Dua-tahap (anti-hilang draft): tekan-1 bersihkan field prefill,
-    // tekan-2 batal. Manager tetap hidup.
+    // Prefill utuh (tak ada draft kotor) → tekan-1 langsung batal; manager
+    // tetap hidup (dulu tekan-1 membersihkan prefill, tekan-2 baru batal).
     tty = installFakeTty({ rows: 24 })
     const mgr = await openManager()
     await tty.send("a")
     await tty.waitForOutput((o) => o.includes("Filter"))
     await tty.send(KEY.enter)
     await tty.waitForOutput((o) => o.includes("Base URL"))
-    await tty.send(KEY.ctrlC, 90)
     await tty.send(KEY.ctrlC, 90)
     await waitFor(() => {
       const t = tty
@@ -264,6 +263,27 @@ describe.serial("provider-manager: add (a)", () => {
     })
     // Manager is still alive: Esc can still close it (if process died, this
     // would never complete).
+    await mgr.close()
+  })
+
+  test("Ctrl+C dua-tahap saat prefill diubah: tekan-1 kembalikan, tekan-2 batal", async () => {
+    tty = installFakeTty({ rows: 24 })
+    const mgr = await openManager()
+    await tty.send("a")
+    await tty.waitForOutput((o) => o.includes("Filter"))
+    await tty.send(KEY.enter)
+    await tty.waitForOutput((o) => o.includes("Base URL"))
+    await tty.send("X") // kotori prefill
+    await tty.send(KEY.ctrlC, 150)
+    // Tekan-1: prefill dikembalikan, form TETAP terbuka (tanpa "Canceled").
+    expect(visible(tty)).not.toContain("Canceled")
+    await tty.send(KEY.ctrlC, 90)
+    // Tekan-2: batal total, manager tetap hidup.
+    await waitFor(() => {
+      const t = tty
+      if (!t) throw new Error("tty gone")
+      return visible(t).includes("Canceled")
+    })
     await mgr.close()
   })
 

@@ -51,6 +51,11 @@ function getArg(name: string, fallback: number): number {
 // TUI single-tampilan (hapus repl/chrome/overlay/info-window + form popup +
 // thinking + approval tercatat + live repaint): 83,10/84,53 dua run identik.
 // Kunci lines di 84,5; funcs tetap 80.
+// Bug-hunt TUI deep + fix semua (sanitize C1/bidi, truncate/chunk SGR-only,
+// boundary diff/format/table/section/markdown/highlight, locale LC_ALL,
+// tooSmall abort, stale-handle, clear/scroll, approval pipe-deny, form
+// revert, i18n label + 30 test baru): 83,28/84,58 satu run. Lines +0,05
+// (noise) — kunci tetap 84,5; funcs tetap 80 (aturan lama anti-flaky).
 const MIN_LINES = getArg("--lines", 84.5)
 const MIN_FUNCS = getArg("--funcs", 80)
 

@@ -11,14 +11,13 @@ import {
 } from "../input/prompt-engine.ts"
 import { sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, glyphs, stripAnsi } from "../render/theme.ts"
-import { padToWidth, truncateToWidth } from "../render/width.ts"
+import { displayWidth, padToWidth, truncateToWidth } from "../render/width.ts"
 import { type AltScreen, openAltScreen } from "../runtime/screen.ts"
 import { boxLeftPad, dialogBox } from "./dialog.ts"
 import { runForm, validateRequired, validateUrl } from "./form.ts"
 import { runPicker } from "./picker.ts"
 
-const DIM = "\x1b[2m",
-  RESTORE = "\x1b[22m"
+const dim = (s: string): string => c.dim(s)
 
 /** Lebar kotak popup provider TETAP (lebih lebar: kolom URL panjang). */
 const PROVIDER_BOX_W = 76
@@ -109,7 +108,7 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
       const rows = providers.slice(scroll, scroll + v)
       const lines: string[] = []
       if (providers.length === 0) {
-        lines.push(cut(`${DIM}  ${t("prov.empty")}${RESTORE}`))
+        lines.push(cut(dim(`  ${t("prov.empty")}`)))
       } else {
         for (let i = 0; i < rows.length; i++) {
           const it = rows[i]!
@@ -120,19 +119,21 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
           const aktif = opts.currentModel?.startsWith(`${it.id}::`)
             ? ` (${t("common.active")})`
             : ""
-          const label = truncateToWidth(
-            `${padToWidth(sanitizeAnsiLine(it.id), 18)} ${padToWidth(String(it.models), 3, "right")} models  ${sanitizeAnsiLine(it.baseUrl)}${aktif}`,
-            w - 4,
-          )
-          if (picked) lines.push(`  ${c.accent("›")} ${c.accent(c.bold(label))}${RESTORE}`)
-          else lines.push(`   ${DIM}${label}${RESTORE}`)
+          // Status aktif TAK BOLEH ikut terpotong: URL dipotong dari budget
+          // sisa SETELAH head+aktif (dulu truncate menelan "(aktif)" dulu
+          // saat URL panjang — user tak tahu mana yang aktif).
+          const head = `${padToWidth(sanitizeAnsiLine(it.id), 18)} ${t("prov.models", { n: it.models })}  `
+          const urlBudget = Math.max(8, w - 4 - displayWidth(head) - displayWidth(aktif))
+          const label = `${head}${truncateToWidth(sanitizeAnsiLine(it.baseUrl), urlBudget, "…")}${aktif}`
+          if (picked) lines.push(`  ${c.accent("›")} ${c.accent(c.bold(label))}`)
+          else lines.push(`   ${dim(label)}`)
         }
         if (providers.length > scroll + v) {
-          lines.push(cut(`${DIM}${t("dlg.more", { n: providers.length - scroll - v })}${RESTORE}`))
+          lines.push(cut(dim(t("dlg.more", { n: providers.length - scroll - v }))))
         }
       }
       // Struk transient (jalur legacy maupun modal).
-      if (notice) lines.push(cut(`${DIM}${sanitizeAnsiLine(notice)}${RESTORE}`))
+      if (notice) lines.push(cut(dim(sanitizeAnsiLine(notice))))
       return lines
     }
 

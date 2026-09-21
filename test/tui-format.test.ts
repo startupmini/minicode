@@ -237,6 +237,14 @@ describe("format: preview argumen tool", () => {
     circular.self = circular
     expect(formatArgsPreview(circular)).toBe("[args]")
   })
+
+  test("arg tak-terpercaya disanitasi satu-baris (F-04)", () => {
+    // Model/MCP bisa menyelipkan \n/ANSI di path/command: status satu-baris
+    // tak boleh pecah atau menyuntik kontrol.
+    expect(formatArgsPreview({ path: "a.ts\nEVIL" })).toBe("a.ts EVIL")
+    expect(formatArgsPreview({ command: "ls\x1b[2J" })).toBe("ls")
+    expect(formatArgsPreview({ query: "x\x1b[?1049hy" })).toBe("xy")
+  })
 })
 
 describe("format: usage, cost, error, step", () => {

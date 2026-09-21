@@ -51,6 +51,16 @@ describe("resolusi locale", () => {
     process.env.LANG = "id_ID.UTF-8"
     expect(currentLocale()).toBe("id")
   })
+  test("LC_ALL mengalahkan LANG (urutan POSIX, F-06)", () => {
+    process.env.LANG = "en_US.UTF-8"
+    process.env.LC_ALL = "id_ID.UTF-8"
+    expect(currentLocale()).toBe("id")
+  })
+  test("LANG kosong tak memblokir LC_ALL (F-06)", () => {
+    process.env.LANG = ""
+    process.env.LC_ALL = "id_ID.UTF-8"
+    expect(currentLocale()).toBe("id")
+  })
 })
 
 describe("t()", () => {

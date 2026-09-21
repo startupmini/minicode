@@ -127,10 +127,11 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
 13. Status bar: 1 baris dasar (`✦ mode • model • cwd … ctx`) dari sumber yang
     sama dengan angka sesi; spark pulse saat busy.
 14. Binding TUI: PgUp/PgDn scroll; Up/Down histori; Tab/Shift+Tab mode;
-    Ctrl+O/T compact/thinking; Ctrl+D baris-kosong keluar; Esc/Ctrl+C =
-    batal input / abort turn (busy: SEMUA input dibekukan kecuali abort dan
-    scroll — Enter pun sunyi). Baris kosong menampilkan placeholder +
-    cara keluar; scroll ke atas + stream masuk = indikator `↓ N baris baru`.
+     Ctrl+O/T compact/thinking; Ctrl+D baris-kosong keluar; Esc/Ctrl+C =
+     batal input / abort turn (busy: SEMUA input dibekukan kecuali abort dan
+     scroll — Enter pun sunyi; berlaku juga saat layar MENCIUT: abort+scroll
+     selalu lolos agar turn bisa dibatalkan tanpa kill -9). Baris kosong menampilkan placeholder +
+     cara keluar; scroll ke atas + stream masuk = indikator `↓ N baris baru`.
 15. (Dihapus bersama jendela info — nomor dipertahankan.)
 16. Popup komposit: region tanpa clear + union-clear anti-hantu + clearRegion
     saat tutup + suspend/resume berpasangan; layar tak mampu = tolak bersuara
@@ -145,12 +146,15 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     form 64 — min=max); nama/ID di depan label; seleksi murni warna; search
     selalu tampil.
 21. Form dalam popup: semua input teks/pilihan di dalam kotak (text/secret/
-    select/confirm + validasi inline + kursor diparkir); tak ada ketikan di
-    luar kotak.
+     select/confirm + validasi inline + kursor diparkir); tak ada ketikan di
+     luar kotak. Esc dua-tahap: tekan-1 KEMBALIKAN nilai bawaan field
+     (prefill/edit tak hilang sekali tekan), tekan-2 batal.
 22. Thinking terlihat: minimized = penanda `… thinking` + isi di `/expand`;
     expanded = alir redup; fase berakhir = commit (tak ada thinking yatim).
 23. Approval & ask_user tercatat di transkrip (pertanyaan + keputusan) dan
-    terlihat sebelum menjawab; non-TTY = deny/null fail-closed.
+     terlihat sebelum menjawab; non-TTY = deny/null fail-closed; stdout
+     di-pipe tanpa sink TUI = deny/null (prompt tak terlihat + mencemari
+     output program bila dipaksa).
 24. `/expand` membuka buffer isi tool (sekali ambil habis); pilihan `/model`
     persist antar sesi + struk `model: x`; `/help` ringkas (penuh via
     `/help tombol`).
@@ -159,8 +163,9 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     (`↑↓`, pgup/pgdn, home/end) di semua popup; hint footer akurat
     per permukaan; kursor diparkir di semua permukaan.
 26. i18n dwibahasa: semua string user-visible lewat `t()`; id kunci = en
-    (tsc mengawal); fallback kunci hilang → en; prioritas sesi > env >
-    state.json > locale OS > en; literal Indonesia hardcode dilarang.
+     (tsc mengawal); fallback kunci hilang → en; prioritas sesi > env >
+     state.json > locale OS > en (di OS: `LC_ALL` > `LANG`, string kosong
+     diabaikan); literal Indonesia hardcode dilarang.
 
 ## Grammar (ringkas)
 
@@ -171,7 +176,11 @@ kegagalan · thinking: `… thinking` / alir redup · popup: konten redup di
 belakang + kotak terpusat (form di dalam) + Esc tutup · approval tercatat ·
 `/status`, `/history`, `/help` ringkas & `/expand` mengalir ke transkrip ·
 `Ctrl+C`/`Esc` saat turn = abort; busy = input beku total · PgUp/PgDn =
-scroll + indikator `↓ N baris baru`.
+scroll + indikator `↓ N baris baru` · tab dihitung 8 kolom (batas atas stop
+terminal — tak pernah undercount) · C1/bidi/tag dibuang dari teks
+tak-terpercaya (sanitasi) · truncate/chunk hanya menyalin SGR (non-SGR
+dibuang) · penanda `(aktif)` di luar budget truncasi (tak termakan URL
+panjang).
 
 ## Residual risk (DISENGAJA — jangan "perbaiki" tanpa keputusan)
 
@@ -188,21 +197,24 @@ scroll + indikator `↓ N baris baru`.
 
 - `test/tui-app.test.ts` — I1/I14/I17-I20 (boot/exit pairing, transcript viewport,
   scroll + indikator, prompt + placeholder, status bar, quit, suspend/resume,
-  busy-freeze, live repaint).
+  busy-freeze, live repaint; I14: abort/scroll lolos saat menciut; I17: kunci
+  posisi baca + basis monotonik).
 - `test/screen-buffer.test.ts` — parser frame harness (unit).
 - `test/tui-transcript.test.ts` — I7/I12/I17/I22/I24 (ledger, cap, viewport,
-  thinking, buffer /expand).
+  thinking, buffer /expand; total() monotonik kebal evict).
 - `test/tui-popup.test.ts` — I16 (komposit di atas transkrip, anti-bocor,
   anti-hantu).
-- `test/form.test.ts` — I21 (field, validasi, secret, select, confirm, batal).
-- `test/approval-tui.test.ts` — I23 (blok + keputusan tercatat, deny).
+- `test/form.test.ts` — I21 (field, validasi, secret, select, confirm, batal;
+  Esc-1 kembalikan prefill, Esc-2 batal).
+- `test/approval-tui.test.ts` — I23 (blok + keputusan tercatat, deny;
+  stdout-pipe tanpa sink = deny).
 - `test/footer-render.test.ts` — I13.
 - `test/terminal-contract.test.ts` — I2/I3/I5/I7/I8/I9/I12.
 - `test/transient-arbitration.test.ts` — I3/I9.
 - `test/statusline-bun-guard.test.ts` — I4/I5.
 - `test/turn-status.test.ts` — I5.
-- `test/tui-format.test.ts` — I2/I7/I8.
-- `test/theme.test.ts` — I6.
+- `test/tui-format.test.ts` — I2/I7/I8 (preview arg sanitasi satu-baris).
+- `test/theme.test.ts` — I6 (strip DCS/APC/PM/SOS + final CSI non-huruf).
 - `test/ansi-fragmentation.test.ts` — I6/I8.
 - `test/non-tty-output.test.ts` — I6.
 - `test/thinking-truncation.test.ts` — I12.
@@ -214,10 +226,21 @@ scroll + indikator `↓ N baris baru`.
 - `test/dialog.test.ts` — I11/I16/I20 (geometri, backdrop, box).
 - `test/tui-overlay.test.ts` — I11/I16 (popup region + gate layar).
 - `test/ui-boundary.test.ts` — I1/I3 (src/ui tak impor keluar).
-- `test/i18n.test.ts` — I26 (resolusi, fallback, interpolasi, kelengkapan).
+- `test/i18n.test.ts` — I26 (resolusi, fallback, interpolasi, kelengkapan;
+  LC_ALL > LANG, string kosong diabaikan).
 - `test/i18n-hardcode.test.ts` — I26 (lexer sadar-state: tanpa literal
   Indonesia di luar kamus; kontrol positif id.ts kena, negatif en.ts bersih).
 - `test/tui-lang.test.ts` — I26/I24 (/lang end-to-end, /help satu sumber).
 - `test/cli-help-language.test.ts` — I26/I25 (label en, kelengkapan /help).
 - `test/tui-geometry.test.ts` — I20/I25 (lebar tetap per permukaan, step
   wizard, form error).
+- `test/sanitize.test.ts` — I2 (C1/bidi/tag dibuang, ZWJ dipertahankan;
+  NO_COLOR menang di cleanUntrusted).
+- `test/width.test.ts` — I2/I7 (tab 8 kolom; truncate/chunk hanya-SGR +
+  auto-reset; chunk(0) kosong).
+- `test/tui-diff.test.ts` — I2/I7 (path & isi disanitasi).
+- `test/highlight.test.ts` — I2/I8 (CR dibuang; escape dibuang di hulu).
+- `test/tui-theme-highlight.test.ts` — I2 (section satu-baris; markdown
+  buang escape di hulu).
+- `test/provider-manager-flows.test.ts` — I21 (Ctrl+C dua-tahap revert
+  prefill; penanda aktif anti-truncasi).

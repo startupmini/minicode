@@ -116,6 +116,8 @@ export class TuiApp {
   private tailSize = 0
   /** Ukuran transkrip saat mulai scroll ke atas (basis hitung baris baru). */
   private scrollBase = 0
+  /** Panjang visual terakhir (kunci posisi baca agar stream tak merampasnya). */
+  private lastWrapped = 0
 
   constructor(
     private readonly transcript: Transcript,
@@ -156,7 +158,10 @@ export class TuiApp {
       // Saat popup fokus, view popup yang melukis ulang regionnya sendiri;
       // repaint penuh App akan menghapus popup dari layar.
       if (this.suspended > 0) return
-      this.paint(screen)
+      // Lukis layar AKTIF (bukan handle `screen` run() yang basi setelah
+      // release+reacquire gagal — dulu repaint/resize melukis ke handle
+      // tertutup sekaligus menimpa currentScreen baru dengannya).
+      this.paintCurrent()
     }
     try {
       stdin.setRawMode(true)
@@ -177,7 +182,7 @@ export class TuiApp {
       if (this.repaintTimer !== undefined) return
       this.repaintTimer = setTimeout(() => {
         this.repaintTimer = undefined
-        if (!this.quitRequested && this.suspended === 0 && !this.released) this.paint(screen)
+        if (!this.quitRequested && this.suspended === 0 && !this.released) this.paintCurrent()
       }, 30)
       try {
         ;(this.repaintTimer as unknown as { unref?: () => void }).unref?.()
@@ -195,7 +200,7 @@ export class TuiApp {
     sub("turn:started")
     sub("turn:completed")
     sub("context:compacted")
-    this.tailSize = this.transcript.size()
+    this.tailSize = this.transcript.total()
     this.scrollBase = this.tailSize
     this.paint(screen)
     await done
@@ -250,20 +255,16 @@ export class TuiApp {
   }
 
   private handleKey(key: PromptKey): void {
-    // Terminal menciut di bawah minimum: abaikan SEMUA kecuali keluar.
-    // Tanpa ini layout rusak (kolom negatif, kursor melompat) dan user
-    // terkunci tanpa jalan keluar yang terlihat.
-    if (this.tooSmall()) {
-      if (key.type === "ctrl-d") this.quit()
-      return
-    }
-    // Scroll SELALU tersedia (menu buka/tutup, busy/idle) — di-intercept
-    // sebelum engine supaya tak jadi histori maupun teks.
+    // Scroll SELALU tersedia (menu buka/tutup, busy/idle, layar menciut) —
+    // di-intercept sebelum engine supaya tak jadi histori maupun teks.
+    // Dulu di bawah gate tooSmall: terminal menciut + turn busy = tak bisa
+    // scroll maupun abort (harus kill -9).
     if (key.type === "pageup" || key.type === "pagedown") {
       this.scrollBy(key.type === "pageup" ? 1 : -1)
       return
     }
-    // Abort/batal: Esc & Ctrl+C. Saat busy = abort turn; idle = bersih baris.
+    // Abort/batal: Esc & Ctrl+C — berlaku juga saat layar menciut (jalan
+    // keluar saat terminal mengecil di tengah turn busy).
     // Jalan keluar saat abort macet (provider/tool non-kooperatif abaikan
     // sinyal): Esc/Ctrl+C KEDUA dalam 1.5 dtk, atau Ctrl+D baris-kosong,
     // = abort + quit. Tanpa ini sesi hanya bisa dibunuh kill -9 (kontrak I14).
@@ -278,6 +279,7 @@ export class TuiApp {
         if (doubleTap) this.quit()
         return
       }
+      if (this.tooSmall()) return
       if (key.type === "esc" && this.state.menuOpen) {
         this.applyEngine(key)
         return
@@ -287,6 +289,13 @@ export class TuiApp {
         this.histIdx = -1
         this.paintCurrent()
       }
+      return
+    }
+    // Terminal menciut di bawah minimum: abaikan SEMUA kecuali keluar.
+    // Tanpa ini layout rusak (kolom negatif, kursor melompat) dan user
+    // terkunci tanpa jalan keluar yang terlihat.
+    if (this.tooSmall()) {
+      if (key.type === "ctrl-d") this.quit()
       return
     }
     // Saat turn berjalan SEMUA input dibekukan kecuali abort (Esc/Ctrl+C),
@@ -553,11 +562,12 @@ export class TuiApp {
     const rows = process.stdout.rows || 24
     const page = Math.max(1, this.viewportHeight(rows, process.stdout.columns || 80) - 1)
     // scrollBack dihitung dalam BARIS agar presisi di terminal pendek. Basis
-    // hitung "baris baru" dicatat saat mulai meninggalkan ekor.
-    if (this.scrollBack === 0 && pages > 0) this.scrollBase = this.transcript.size()
+    // hitung "baris baru" dicatat saat mulai meninggalkan ekor. total()
+    // (monotonik) dipakai agar evict cap 5000 tak merusak hitungan.
+    if (this.scrollBack === 0 && pages > 0) this.scrollBase = this.transcript.total()
     this.scrollBack = Math.max(0, this.scrollBack + pages * page)
     if (this.scrollBack === 0) {
-      this.tailSize = this.transcript.size()
+      this.tailSize = this.transcript.total()
       this.scrollBase = this.tailSize
     }
     this.paintCurrent()
@@ -566,8 +576,17 @@ export class TuiApp {
   /** Kembali ke ekor: dipakai tiap ketikan/submit baru (I18). */
   private followTail(): void {
     this.scrollBack = 0
-    this.tailSize = this.transcript.size()
+    this.tailSize = this.transcript.total()
     this.scrollBase = this.tailSize
+  }
+
+  /** Kosongkan transkrip (/clear): viewport + basis scroll ikut di-reset agar
+   * tak tertinggal scrollBack basi (layar kosong + user harus PgDn manual). */
+  clearView(): void {
+    this.transcript.clear()
+    this.followTail()
+    this.lastWrapped = 0
+    this.paintCurrent()
   }
 
   // ── Paint ──
@@ -674,9 +693,21 @@ export class TuiApp {
     const inputH = Math.min(MAX_INPUT_ROWS, Math.max(1, inputAll.length))
     // Indikator "output baru di bawah": user membaca ke atas saat stream
     // masuk — tanpa ini output baru lewat diam-diam. Makan 1 baris viewport.
-    const newCount = this.scrollBack > 0 ? this.transcript.size() - this.scrollBase : 0
+    // total() monotonik: evict cap tak membuat hitungan negatif/hilang.
+    const newCount = this.scrollBack > 0 ? this.transcript.total() - this.scrollBase : 0
     const indicator = newCount > 0 ? [c.muted(t("app.newBelow", { n: newCount }))] : []
     const viewH = Math.max(1, rows - 1 - inputH - menu.length - indicator.length)
+    // Kunci posisi baca: stream yang menambah baris saat user scroll ke atas
+    // ikut menggeser scrollBack agar jendela menunjuk baris absolut yang sama
+    // (dulu viewport merayap mengikuti ekor — kontrak I17).
+    const curWrapped = this.transcript.wrappedLength(cols)
+    if (this.scrollBack > 0 && this.lastWrapped > 0) {
+      this.scrollBack = Math.max(
+        0,
+        Math.min(this.scrollBack + (curWrapped - this.lastWrapped), Math.max(0, curWrapped - 1)),
+      )
+    }
+    this.lastWrapped = curWrapped
     const body = this.transcript.view(cols, viewH, this.scrollBack)
     // Jendela input mengikuti kursor: bila kursor di atas jendela ekor
     // (mis. paste 10 baris lalu Home), gulir ke atas agar kursor terlihat.

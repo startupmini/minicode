@@ -46,7 +46,9 @@ export function currentLocale(): Locale {
   const env = parseLocale(process.env.MINICODE_LANG)
   if (env) return env
   if (configLocale) return configLocale
-  const sys = process.env.LANG ?? process.env.LC_ALL ?? ""
+  const sys = process.env.LC_ALL || process.env.LANG || ""
+  // Urutan POSIX: LC_ALL mengalahkan LANG; string kosong diabaikan agar tak
+  // memblokir fallback (dulu `??` membuat LANG="" menang atas LC_ALL=id).
   // Prefix `id` (id_ID.UTF-8, id_ID, id): sistem berbahasa Indonesia.
   if (/^id([_.@-]|$)/i.test(sys.trim())) return "id"
   return "en"

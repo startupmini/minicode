@@ -73,6 +73,21 @@ describe("Transcript", () => {
     expect(t.size()).toBe(5000)
     expect(t.view(40, 1, 4999)[0]).toBe("l10")
   })
+  test("total() monotonik kebal evict (basis indikator F-08)", () => {
+    // size() menyusut saat cap membuang tertua → newCount negatif/hilang.
+    const { t } = setup()
+    t.pushInfo(Array.from({ length: 5010 }, (_, i) => `l${i}`))
+    expect(t.size()).toBe(5000)
+    expect(t.total()).toBe(5010)
+    t.pushInfo(["baru"])
+    expect(t.total()).toBe(5011)
+  })
+  test("wrappedLength = jumlah baris visual view (kunci scroll)", () => {
+    const { t } = setup()
+    t.pushInfo(["a", "b", "c"])
+    expect(t.wrappedLength(40)).toBe(3)
+    expect(t.view(40, 3, 0).filter((l) => l !== "").length).toBe(3)
+  })
   test("kompaksi konteks jadi baris redup", () => {
     const { bus, t } = setup()
     bus.emit("context:compacted", { reason: "penuh" })

@@ -311,7 +311,9 @@ export async function runTui(ctx: CliSession): Promise<void> {
     }
     if (name === "exit" || name === "quit") return { quit: true }
     if (name === "clear") {
-      transcript.clear()
+      // Reset via App (bukan transcript.clear langsung) agar scrollBack dan
+      // basis indikator ikut kembali ke ekor — tanpa ini viewport basi.
+      app.clearView()
       return
     }
     if (name === "mode") {

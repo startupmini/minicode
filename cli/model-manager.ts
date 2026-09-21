@@ -13,6 +13,7 @@ import {
 } from "../src/config.ts"
 import { effortOptionsForModel } from "../src/providers/effort.ts"
 import { t } from "../src/ui/i18n/locale.ts"
+import { sanitizeAnsiLine } from "../src/ui/render/sanitize.ts"
 import { type ModelRow, runModelManagerView } from "../src/ui/screens/model-manager.ts"
 
 /** Minimal model registry: list, select, add, and remove. */
@@ -28,7 +29,11 @@ export async function runModelManager(opts: {
 }): Promise<void> {
   const cfg = await loadConfig(opts.cwd, { allowLocal: opts.allowLocalConfig })
   if (!process.stdin.isTTY) {
-    for (const p of cfg.providers) for (const model of p.models) console.log(`${p.id}::${model}`)
+    // ID dari berkas config (tak-terpercaya): sanitasi satu-baris agar ANSI
+    // mentah tak mencemari pipe (kontrak stdout non-TTY).
+    for (const p of cfg.providers)
+      for (const model of p.models)
+        console.log(`${sanitizeAnsiLine(p.id)}::${sanitizeAnsiLine(model)}`)
     return
   }
 

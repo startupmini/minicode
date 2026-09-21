@@ -126,4 +126,17 @@ describe("approval sink TUI", () => {
       expect(await p, ans).toBe(want)
     }
   })
+  test("tanpa sink + stdout pipe → deny tanpa tanya (F-09, anti-cemar pipe)", async () => {
+    // stdin TTY (user bisa jawab) tapi stdout di-pipe: prompt tak terlihat dan
+    // askLine/blok mencemari output program → fail-closed deny.
+    tty = installFakeTty({ columns: 80, rows: 24 })
+    expect(getApprovalSink()).toBeNull()
+    Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true })
+    try {
+      await expect(promptAsk({ name: "bash", args: { command: "ls" } })).resolves.toBe("deny")
+      await expect(promptAskText("apa ini?")).resolves.toBeNull()
+    } finally {
+      Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true })
+    }
+  })
 })

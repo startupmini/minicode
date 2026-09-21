@@ -3,6 +3,7 @@
 // Inline: **bold**, *italic*, `code`, ~~strike~~, [text](url) -> teks accent (no underline).
 
 import { highlightCode } from "./highlight.ts"
+import { sanitizeAnsi } from "./sanitize.ts"
 import { c } from "./theme.ts"
 
 export interface FenceMatch {
@@ -59,7 +60,10 @@ export function renderInline(text: string): string {
 }
 
 export function decorateMarkdown(text: string): string {
-  const lines = text.split("\n")
+  // Teks model tak-terpercaya: sanitasi SEKALI di hulu agar fence-content,
+  // renderInline, dan highlight tak pernah melihat escape mentah. Urutan ini
+  // juga melindungi placeholder `\u0000` (sanitize membuang null model).
+  const lines = sanitizeAnsi(text).split("\n")
   const out: string[] = []
   let inFence = false
   let fenceLang = ""

@@ -5,7 +5,7 @@
 // layar, keluar dari alternate screen, dan mengubah judul jendela.
 
 import { describe, expect, test } from "bun:test"
-import { sanitizeAnsi, sanitizeAnsiLine } from "../src/ui/render/sanitize.ts"
+import { cleanUntrusted, sanitizeAnsi, sanitizeAnsiLine } from "../src/ui/render/sanitize.ts"
 
 describe("sanitizeAnsi: yang DIPERTAHANKAN", () => {
   test("SGR warna sederhana", () => {
@@ -91,6 +91,24 @@ describe("sanitizeAnsi: yang DIBUANG", () => {
   test("DEL dibuang", () => {
     expect(sanitizeAnsi("a\u007fb")).toBe("ab")
   })
+
+  test("kontrol C1 dibuang (0x9B = CSI di terminal modern)", () => {
+    // Bug-hunter TUI F-02: C1 lolos utuh ke terminal.
+    expect(sanitizeAnsi("a\u0085b")).toBe("ab")
+    expect(sanitizeAnsi("a\u009b3Jb")).toBe("a3Jb")
+  })
+
+  test("bidi override/isolate + soft hyphen + tag dibuang", () => {
+    expect(sanitizeAnsi("exe\u202etxt")).toBe("exetxt")
+    expect(sanitizeAnsi("a\u202ab\u202cc")).toBe("abc")
+    expect(sanitizeAnsi("a\u00adb")).toBe("ab")
+    expect(sanitizeAnsi("a\u{E0021}b")).toBe("ab")
+  })
+
+  test("ZWJ dipertahankan (emoji dan skrip butuh)", () => {
+    expect(sanitizeAnsi("a\u200db")).toBe("a\u200db")
+    expect(sanitizeAnsi("a\u200cb")).toBe("a\u200cb")
+  })
 })
 
 describe("sanitizeAnsi: serangan gabungan", () => {
@@ -139,5 +157,24 @@ describe("sanitizeAnsiLine", () => {
 
   test("warna tetap lewat", () => {
     expect(sanitizeAnsiLine("\x1b[32ma\x1b[39m")).toBe("\x1b[32ma\x1b[39m")
+  })
+})
+
+describe("cleanUntrusted", () => {
+  test("TTY mempertahankan SGR, non-TTY membuang", () => {
+    expect(cleanUntrusted("\x1b[31mhi", true)).toBe("\x1b[31mhi")
+    expect(cleanUntrusted("\x1b[31mhi", false)).toBe("hi")
+  })
+
+  test("NO_COLOR menang walau TTY (F-05)", () => {
+    // Bug-hunter TUI: NO_COLOR=1 diabaikan saat TTY.
+    const prev = process.env.NO_COLOR
+    process.env.NO_COLOR = "1"
+    try {
+      expect(cleanUntrusted("\x1b[31mhi", true)).toBe("hi")
+    } finally {
+      if (prev === undefined) delete process.env.NO_COLOR
+      else process.env.NO_COLOR = prev
+    }
   })
 })

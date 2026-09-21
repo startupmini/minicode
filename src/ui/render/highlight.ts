@@ -1,4 +1,5 @@
 import { t } from "../i18n/locale.ts"
+import { sanitizeAnsi, sanitizeAnsiLine } from "./sanitize.ts"
 import { c } from "./theme.ts"
 
 const TS_KEYWORDS = new Set([
@@ -121,8 +122,11 @@ const SH_KEYWORDS = new Set([
 ])
 
 export function highlightCode(code: string, lang: string = ""): string {
-  const language = lang.trim().toLowerCase()
-  const lines = code.split("\n")
+  // Kode adalah input tak-terpercaya (model/tool/berkas): sanitasi DULU agar
+  // tokenizer tak membelah SGR (merusak warna sah) dan sekuens non-SGR tak
+  // lolos ke terminal. sanitizeAnsi membuang \r sehingga CR-overwrite mati.
+  const language = sanitizeAnsiLine(lang).trim().toLowerCase()
+  const lines = sanitizeAnsi(code).split("\n")
 
   return lines
     .map((line) => {
@@ -284,7 +288,7 @@ export function formatCodeBlock(code: string, lang: string = "", maxLines?: numb
       ? [...lines.slice(0, maxLines), c.dim(t("hl.moreLines", { n: lines.length - maxLines }))]
       : lines
 
-  const header = lang ? ` ${lang.toLowerCase()} ` : " code "
+  const header = sanitizeAnsiLine(lang) ? ` ${sanitizeAnsiLine(lang).toLowerCase()} ` : " code "
   const topBorder = c.muted(`── ${header.trim()}`)
   const bottomBorder = c.muted("──")
 

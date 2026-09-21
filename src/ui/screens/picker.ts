@@ -10,7 +10,7 @@ import {
 } from "../input/prompt-engine.ts"
 import { sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, stripAnsi } from "../render/theme.ts"
-import { truncateToWidth } from "../render/width.ts"
+import { displayWidth, truncateToWidth } from "../render/width.ts"
 import { type AltScreen, openAltScreen } from "../runtime/screen.ts"
 import { boxLeftPad, dialogBox } from "./dialog.ts"
 
@@ -29,8 +29,7 @@ export interface PickerOptions {
   filterable?: boolean
 }
 
-const DIM = "\x1b[2m",
-  RESTORE = "\x1b[22m",
+const dim = (s: string): string => c.dim(s),
   ACC_DIM = (s: string) => c.accent(s)
 
 /** Lebar kotak popup picker TETAP (keputusan rasa: geometri stabil). */
@@ -51,8 +50,11 @@ function highlightMatch(label: string, query: string): string {
 
 export async function runPicker(opts: PickerOptions): Promise<void> {
   if (!process.stdin.isTTY) {
+    // Pipe/redirect: item dari config (tak-terpercaya) disanitasi agar ANSI
+    // mentah tak mencemari output program (kontrak stdout non-TTY).
     console.log(`\n${opts.title}`)
-    for (const [i, it] of opts.items.entries()) console.log(`  [${i}] ${it.provider}::${it.name}`)
+    for (const [i, it] of opts.items.entries())
+      console.log(`  [${i}] ${sanitizeAnsiLine(it.provider)}::${sanitizeAnsiLine(it.name)}`)
     console.log("")
     // Fail-closed: pemanggil nested (mis. pickEffort di /model) menunggu
     // onPick/onCancel — tanpa ini await-nya gantung selamanya (busy=true)
@@ -114,14 +116,12 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       if (isFilterable) {
         const placeholderText = opts.placeholder ?? t("pick.placeholder")
         // Filter = input user tak terpercaya — sanitasi sebelum tampil.
-        const display = filter
-          ? c.brightCyan(sanitizeAnsiLine(filter))
-          : DIM + placeholderText + RESTORE
-        const label = filter ? ACC_DIM(t("pick.filter")) : `${DIM}${t("pick.filter")}${RESTORE}`
+        const display = filter ? c.brightCyan(sanitizeAnsiLine(filter)) : dim(placeholderText)
+        const label = filter ? ACC_DIM(t("pick.filter")) : dim(t("pick.filter"))
         lines.push(cut(`${label} ${display}`))
       }
       if (items.length === 0) {
-        lines.push(cut(`${DIM}  ${t("pick.noMatch", { q: sanitizeAnsiLine(filter) })}${RESTORE}`))
+        lines.push(cut(dim(`  ${t("pick.noMatch", { q: sanitizeAnsiLine(filter) })}`)))
         return lines
       }
       for (let i = 0; i < rows.length; i++) {
@@ -135,16 +135,14 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
         // menyalin semua escape (juga 2J).
         const rawLabel = `${sanitizeAnsiLine(it.name)}${it.provider ? ` — ${sanitizeAnsiLine(it.provider)}` : ""}`
         const label = highlightMatch(truncateToWidth(rawLabel, w - 4), filter)
-        if (picked) lines.push(`  ${c.accent("›")} ${c.accent(c.bold(label))}${RESTORE}`)
-        else lines.push(`   ${DIM}${label}${RESTORE}`)
+        if (picked) lines.push(`  ${c.accent("›")} ${c.accent(c.bold(label))}`)
+        else lines.push(`   ${dim(label)}`)
       }
       if (items.length > scroll + v) {
-        lines.push(cut(`${DIM}${t("dlg.more", { n: items.length - scroll - v })}${RESTORE}`))
+        lines.push(cut(dim(t("dlg.more", { n: items.length - scroll - v }))))
       } else if (isFilterable && filter) {
         lines.push(
-          cut(
-            `${DIM}  ${t("pick.matches", { n: items.length, total: opts.items.length })}${RESTORE}`,
-          ),
+          cut(dim(`  ${t("pick.matches", { n: items.length, total: opts.items.length })}`)),
         )
       }
       return lines
@@ -168,15 +166,25 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
         screen.rows,
       )
       screen.paintRegion(box.lines, box.topRow)
-      // Parkir kursor terminal di baris item aktif (paritas form/App).
-      // Kolom = padding kiri + 1 (di border). Indeks via box.bodyTop.
-      const itemRow = Math.min(Math.max(0, sel - scroll), Math.max(0, visibleRows() - 1))
-      const bodyOffset = isFilterable ? 1 : 0
-      const li = Math.min(box.lines.length - 1, box.bodyTop + bodyOffset + itemRow)
-      const row = box.topRow + li
+      // Parkir kursor: saat filter terisi, user sedang mengetik → kursor di
+      // ujung teks filter (dulu selalu di baris item = ketik buta). Saat
+      // filter kosong, parkir di baris item aktif (navigasi ↑↓).
+      // Kolom = padding kiri + border + spasi + lebar label+filter + 1.
       try {
-        const leftPad = boxLeftPad(stripAnsi(box.lines[li] ?? ""))
-        process.stdout.write(`\x1b[${row};${Math.max(1, leftPad + 1)}H\x1b[?25h`)
+        if (isFilterable && filter !== "") {
+          const li = Math.min(box.lines.length - 1, box.bodyTop)
+          const row = box.topRow + li
+          const leftPad = boxLeftPad(stripAnsi(box.lines[li] ?? ""))
+          const col = leftPad + 2 + displayWidth(stripAnsi(`${t("pick.filter")} ${filter}`)) + 1
+          process.stdout.write(`\x1b[${row};${Math.max(1, col)}H\x1b[?25h`)
+        } else {
+          const itemRow = Math.min(Math.max(0, sel - scroll), Math.max(0, visibleRows() - 1))
+          const bodyOffset = isFilterable ? 1 : 0
+          const li = Math.min(box.lines.length - 1, box.bodyTop + bodyOffset + itemRow)
+          const row = box.topRow + li
+          const leftPad = boxLeftPad(stripAnsi(box.lines[li] ?? ""))
+          process.stdout.write(`\x1b[${row};${Math.max(1, leftPad + 1)}H\x1b[?25h`)
+        }
       } catch {}
     }
 

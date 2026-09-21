@@ -10,14 +10,13 @@ import {
 } from "../input/prompt-engine.ts"
 import { sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, glyphs, stripAnsi } from "../render/theme.ts"
-import { displayWidth, padToWidth, truncateToWidth } from "../render/width.ts"
+import { displayWidth, truncateToWidth } from "../render/width.ts"
 import { type AltScreen, openAltScreen } from "../runtime/screen.ts"
 import { boxLeftPad, dialogBox } from "./dialog.ts"
 import { runForm } from "./form.ts"
 import { runPicker } from "./picker.ts"
 
-const DIM = "\x1b[2m",
-  RESTORE = "\x1b[22m"
+const dim = (s: string): string => c.dim(s)
 
 export interface ModelRow {
   /** Format "providerId::model". */
@@ -92,8 +91,9 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
     }
     // Lantai lebar tak boleh melebihi terminal. Lebar konten = lebar kotak
     // tetap dikurangi chrome dialog (border+padding = 4) agar sepakat dengan
-    // dialogBox (tanpa potong ulang).
-    const width = () => Math.max(8, Math.min((process.stdout.columns || 80) - 4, MODAL_BOX_W - 4))
+    // dialogBox (tanpa potong ulang). innerMax dialog = cols−6, jadi konten
+    // = cols−6 juga (dulu cols−4 → potong-ganda 2 kolom di terminal sempit).
+    const width = () => Math.max(8, Math.min((process.stdout.columns || 80) - 6, MODAL_BOX_W - 4))
 
     // Isi MINIMAL dialog /model (tanpa judul/footer/hitungan/penanda —
     // seleksi murni warna). Search selalu tampil, daftar tanpa `›`.
@@ -106,25 +106,24 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
       const cut = (s: string) => truncateToWidth(s, w)
       const view = list.slice(scroll, scroll + v)
       const lines: string[] = []
-      lines.push(cut(`${DIM}>${RESTORE} ${c.brightCyan(sanitizeAnsiLine(filter ?? ""))}█`))
+      lines.push(cut(`${dim(">")} ${c.brightCyan(sanitizeAnsiLine(filter ?? ""))}█`))
       if (!list.length) {
-        lines.push(
-          cut(`${DIM}  ${filter == null ? t("model.empty") : t("model.noMatch")}${RESTORE}`),
-        )
+        lines.push(cut(dim(`  ${filter == null ? t("model.empty") : t("model.noMatch")}`)))
       } else {
         for (let i = 0; i < view.length; i++) {
           const row = view[i]!
           const picked = i === sel - scroll
           const badge = row.effort && row.effort !== "default" ? ` [${row.effort}]` : ""
-          const label = truncateToWidth(
-            `${padToWidth(`${sanitizeAnsiLine(row.id)}${badge}`, w - 14)}${row.active ? ` (${t("common.active")})` : ""}`,
-            w - 4,
-          )
-          if (picked) lines.push(`  ${c.accent(c.bold(label))}${RESTORE}`)
-          else lines.push(`  ${DIM}${label}${RESTORE}`)
+          // Penanda aktif di luar budget truncasi (paritas provider-manager):
+          // nama yang dipotong, status yang selamat.
+          const active = row.active ? ` (${t("common.active")})` : ""
+          const nameBudget = Math.max(8, w - 4 - displayWidth(active))
+          const label = `${truncateToWidth(`${sanitizeAnsiLine(row.id)}${badge}`, nameBudget, "…")}${active}`
+          if (picked) lines.push(`  ${c.accent(c.bold(label))}`)
+          else lines.push(`  ${dim(label)}`)
         }
       }
-      if (notice) lines.push(cut(`${DIM}${sanitizeAnsiLine(notice)}${RESTORE}`))
+      if (notice) lines.push(cut(dim(sanitizeAnsiLine(notice))))
       return lines
     }
 

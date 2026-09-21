@@ -35,6 +35,9 @@ export function renderTable(columns: ColumnDef[], data: Record<string, unknown>[
   if (data.length === 0) return c.muted("(no entries)")
 
   const cells = data.map((row) => columns.map((col) => sanitizeCell(row[col.key])))
+  // Header bisa berasal dari frontmatter/config (tak-terpercaya): sanitasi
+  // seperti sel agar `\n`/ANSI tak memecah baris vertikal atau lolos.
+  const heads = columns.map((col) => sanitizeCell(col.header))
 
   const termW = getTerminalWidth()
   // Terminal sangat sempit + banyak kolom: budget per kolom (~10) membuat
@@ -43,12 +46,12 @@ export function renderTable(columns: ColumnDef[], data: Record<string, unknown>[
     return data
       .map((row) =>
         columns
-          .map((col) => {
+          .map((col, ci) => {
             // Nilai dipotong dari sisa budget SETELAH header: tanpa ini
             // header+": "+value pasti > termW di terminal sempit (jalur
             // penyelamat yang malah wrap sendiri).
-            const budget = Math.max(4, termW - displayWidth(col.header) - 2)
-            return `${c.bold(col.header)}: ${truncateToWidth(sanitizeCell(row[col.key]), budget, ELLIPSIS)}`
+            const budget = Math.max(4, termW - displayWidth(heads[ci] ?? "") - 2)
+            return `${c.bold(heads[ci] ?? "")}: ${truncateToWidth(sanitizeCell(row[col.key]), budget, ELLIPSIS)}`
           })
           .join("\n"),
       )
@@ -62,7 +65,7 @@ export function renderTable(columns: ColumnDef[], data: Record<string, unknown>[
   const widths = columns.map((col, i) => {
     // Nilai negatif/NaN dari pemanggil tidak boleh membuat "".repeat() melempar.
     if (col.width != null && Number.isFinite(col.width)) return Math.max(0, Math.trunc(col.width))
-    let max = displayWidth(col.header)
+    let max = displayWidth(heads[i] ?? "")
     for (const row of cells) {
       const w = displayWidth(row[i] ?? "")
       if (w > max) max = w
@@ -76,7 +79,7 @@ export function renderTable(columns: ColumnDef[], data: Record<string, unknown>[
     padToWidth(truncateToWidth(text, width, ELLIPSIS), width, align)
 
   const header = columns
-    .map((col, i) => ` ${c.bold(c.accent(cell(col.header, widths[i]!, col.align)))} `)
+    .map((col, i) => ` ${c.bold(c.accent(cell(heads[i] ?? "", widths[i]!, col.align)))} `)
     .join(" ")
 
   // Separator (─ antara header dan body). Lebarnya harus SAMA dengan baris

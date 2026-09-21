@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-21 — Satu TUI fullscreen + popup komposit + i18n dwibahasa
+
+### Changed
+- **Satu tampilan interaktif: TUI fullscreen** (`bun cli/index.ts` langsung
+  fullscreen rasa shell). REPL linier, chrome footer lama, overlay, dan
+  info-window DIHAPUS total tanpa jalur legacy; flag `--tui` usang = no-op.
+  Non-TTY/pipe/one-shot/`exec`/`TERM=dumb`/layar <10 baris tetap cetak polos
+  (fail-closed, tak pernah diam).
+- **Popup komposit satu kotak**: picker, `/model` (lebar tetap 64), provider
+  (76), form dalam popup (text/secret/select/confirm + validasi inline),
+  wizard, dan approval tool — semua via `paintRegion` tanpa clear +
+  `suspend`/`resume` berpasangan; Esc dua-tahap; kursor diparkir; seleksi
+  `›` + aksen.
+- **i18n dwibahasa id/en** (`src/ui/i18n/`, nol dependensi): `/lang`,
+  `MINICODE_LANG`, `lang` state.json, locale OS, fallback en. `/help` ringkas
+  satu sumber, `/expand` buffer tool, pilihan `/model` persist + struk,
+  thinking minimized/expanded, live repaint coalesce 30ms + indikator
+  `↓ N`, busy-freeze kecuali abort+scroll, watchdog 60 detik, approval
+  tercatat di transkrip.
+- Kontrak terminal v6 (I1–I26) + peta proteksi diselaraskan, termasuk test
+  anti-hardcode (lexer sadar-state: literal Indonesia di luar kamus dilarang).
+- Gate: tsc/lint hijau, 2235 pass / 0 fail, coverage 83,28/84,58, pack 22/0.
+
 ## [0.9.29] - 2026-09-18 — Identitas publik: homepage npm → minicode.fun
 
 ### Changed

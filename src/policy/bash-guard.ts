@@ -43,6 +43,47 @@ export function stripQuotes(cmd: string): string {
 }
 
 /**
+ * Lepas escape caret command-line cmd.exe: `^` di luar kutip ganda
+ * menghilangkan dirinya dan membuat karakter berikutnya harfiah.
+ *
+ *   type .e^nv   → cmd.exe membuka `.env` (guard membaca `.e^nv`)
+ *   ty^pe .env   → cmd.exe menjalankan `type` (READERS tak pernah cocok)
+ *   echo x > .e^nv → menulis `.env` (target redirect tak terlihat sensitif)
+ *
+ * Mengapa wajib: SELURUH aturan berkas di modul ini (SENSITIVE_TARGET,
+ * SENSITIVE_DIR, isSensitive/isOwnedState, cek jail) mencocokkan nama
+ * LITERAL, jadi satu caret memindahkan perintah dari "ditahan" ke "lolos" —
+ * kelas yang sama dengan `.e""nv` yang jadi alasan modul ini ada. Temuan F1
+ * audit 2026-09-20: `type .e^nv` ALLOW padahal `type .env` DENY.
+ *
+ * Quote-aware karena cmd.exe TIDAK memproses caret di dalam kutip ganda:
+ * melepas buta akan mengubah arti `echo "a^b"` (aman) menjadi `echo "ab"`.
+ * `^^` → `^` benar dengan sendirinya (caret pertama meng-escape yang kedua).
+ *
+ * Backtick PowerShell SENGAJA tidak diperlakukan sama: di sana backtick
+ * sebelum huruf adalah escape KONTROL (`n`=newline, `t`=tab), sehingga
+ * `.e\`nv` bukan `.env` melainkan dua baris — melepasnya akan memblokir
+ * perintah sah (over-block) tanpa menutup jalur serangan nyata, karena
+ * membaca `.env` di PowerShell tidak butuh escape sama sekali.
+ *
+ * Diekspor untuk test.
+ */
+export function stripCaretEscapes(cmd: string): string {
+  let out = ""
+  let inDouble = false
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i]!
+    if (ch === '"') inDouble = !inDouble
+    if (ch === "^" && !inDouble && i + 1 < cmd.length) {
+      out += cmd[++i]!
+      continue
+    }
+    out += ch
+  }
+  return out
+}
+
+/**
  * Substitusi assignment variabel sederhana dalam satu perintah.
  * `X=.env; cat $X` → `X=.env; cat .env`
  * `p=python3 && $p -c 1` → `p=python3 && python3 -c 1`
@@ -112,9 +153,15 @@ export function stripCommandWrappers(cmd: string): string {
   return out
 }
 
-/** Bentuk kanonik untuk pemeriksaan: quote dibuang + variabel disubstitusi. */
+/**
+ * Bentuk kanonik untuk pemeriksaan: escape caret dilepas, quote dibuang,
+ * variabel disubstitusi, wrapper perintah dibuang.
+ *
+ * Urutan penting: `stripCaretEscapes` berjalan SEBELUM quote dibuang karena
+ * ia butuh melihat kutip ganda asli untuk tahu apakah caret harfiah.
+ */
 export function normalizeCommand(cmd: string): string {
-  return stripCommandWrappers(inlineSimpleVars(stripQuotes(cmd)))
+  return stripCommandWrappers(inlineSimpleVars(stripQuotes(stripCaretEscapes(cmd))))
 }
 
 // ── Aturan ──
@@ -144,7 +191,9 @@ const NTDSUTIL = /\bntdsutil\b/i
 
 /** Perintah yang membaca/menyalin isi berkas. Daftar ini + ekstraktor argumen
  * di inspectBashCommand WAJIB sinkron (audit 2026-09-16 B4: certutil/tac/
- * findstr lolos karena hanya ada di satu sisi). Denylist takkan pernah
+ * findstr lolos karena hanya ada di satu sisi). Pembaca yang BUKAN utilitas —
+ * `for /f` (loop bawaan cmd.exe) — diekstrak terpisah di blok `forFileSets`;
+ * menambah pembaca baru berarti menyentuh salah satu dari keduanya. Denylist takkan pernah
  * komplet (residual arsitektural, lihat kepala berkas) — tiap entri di sini
  * adalah kasus konkret terverifikasi, bukan tebakan. */
 const READERS =
@@ -381,7 +430,12 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
   // punya aturan redirect). Target di-resolve terhadap cwd pemanggil agar
   // presisi (`> local.txt` dan `> /dev/null` tetap jalan); tanpa cwd,
   // heuristik konservatif (`..`/absolut/sensitif) berlaku.
-  for (const t of findRedirectTargets(raw)) {
+  for (const tRaw of findRedirectTargets(raw)) {
+    // cmd.exe melepas caret SEBELUM membuka berkas: `echo x > .e^nv` menulis
+    // `.env`, jadi target diperiksa dalam bentuk kanoniknya, bukan mentah
+    // (temuan F1 audit 2026-09-20). Scan tetap dari `raw` supaya target di
+    // dalam kutip tetap tak terhitung sebagai redirect.
+    const t = stripCaretEscapes(tRaw)
     if (isNullSink(t)) continue
     // Ekspansi %VAR% terjadi di cmd.exe SETELAH cek statis: `> "%TEMP%\x"`
     // terlihat di dalam cwd secara literal lalu menulis ke luar. Target dengan
@@ -422,7 +476,24 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
   // atau di luar workspace walau cocok allowlist. Ekstrak argumen path untuk
   // READER dan cek jail/sensitive. Wildcard `*` ditolak bila cwd tersedia
   // (bisa mengembang ke .env / .minicode).
-  if (both(READERS)) {
+  // `for /f ... in (<set>) do ...` = pembaca berkas bawaan cmd.exe, tanpa
+  // utilitas apa pun. Ia loop, bukan pembaca, jadi namanya tidak ada di
+  // READERS — ekstraksi terpisah ini yang membuat `for /f %i in (.env) do
+  // @echo %i` ikut diperiksa (temuan F3 audit 2026-09-20: `type .env` ditahan
+  // tapi `for /f` terhadap berkas yang sama lolos).
+  const forFileSets = (() => {
+    const out: string[] = []
+    const re = /\bfor\s+\/[a-z]*f[a-z]*\s+[^(\n]*\(\s*([^)\n]*)\)/gi
+    for (const m of norm.matchAll(re)) {
+      for (const rawTok of m[1]!.split(/[\s,]+/)) {
+        const tok = rawTok.trim()
+        if (tok && !tok.startsWith("-")) out.push(tok)
+      }
+    }
+    return out
+  })()
+
+  if (both(READERS) || forFileSets.length > 0) {
     const readerTargets = (() => {
       const out: string[] = []
       const re =
@@ -439,7 +510,15 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
       }
       return out
     })()
-    for (const t of readerTargets) {
+    for (const t of [...readerTargets, ...forFileSets]) {
+      // Argumen berpola %VAR% tak bisa dipastikan menunjuk ke mana: cmd.exe
+      // mengekspansi SETELAH cek statis, sementara resolve() melihatnya
+      // sebagai jalur relatif DI DALAM cwd — `type %USERPROFILE%\notes.txt`
+      // lolos padahal target redirect berpola sama ditahan di blok di atas
+      // (temuan F2 audit 2026-09-20). Fail-closed: minta path eksplisit.
+      // `%` tunggal (`100%.txt`) tetap lolos karena bukan pola ekspansi.
+      if (/%[^%\s]+%/.test(t))
+        return { denied: true, reason: "reader target with env expansion (%VAR%)" }
       if (t.includes("*")) {
         // Wildcard di READER bisa mengembang ke .env/.minicode — tolak bila
         // cwd tersedia (butuh path eksplisit). Tanpa cwd, heuristik sensitif.

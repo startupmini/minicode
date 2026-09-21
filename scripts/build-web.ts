@@ -125,7 +125,11 @@ write(
     "",
     "# Peta markdown untuk AI/agent: llms.txt (indeks) & llms-full.txt (korpus penuh)",
     `# IndexNow: kirim URL ke api.indexnow.org/indexnow dgn key ${indexNowKey}`,
-  ].join("\n") + "\n",
+    // Baris kosong terakhir menggantikan `+ "\n"` — konkatenasi string membuat
+    // biome melaporkan lint/style/useTemplate (temuan gate: error tunggal di
+    // repo saat audit 2026-09-20); hasil join identik.
+    "",
+  ].join("\n"),
 )
 write(
   "sitemap.xml",

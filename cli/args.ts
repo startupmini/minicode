@@ -5,6 +5,7 @@ const BOOLEAN_FLAGS = new Set([
   "--ask",
   "--plan",
   "--interactive",
+  "--tui", // alias usang: TUI fullscreen kini satu-satunya tampilan interaktif
   "--verify",
   "--allowlist",
   "--json", // dipakai `exec --json` dan `--help --json`

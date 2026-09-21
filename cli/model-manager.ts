@@ -12,6 +12,7 @@ import {
   writeConfigAtomic,
 } from "../src/config.ts"
 import { effortOptionsForModel } from "../src/providers/effort.ts"
+import { t } from "../src/ui/i18n/locale.ts"
 import { type ModelRow, runModelManagerView } from "../src/ui/screens/model-manager.ts"
 
 /** Minimal model registry: list, select, add, and remove. */
@@ -65,7 +66,7 @@ export async function runModelManager(opts: {
       await writeConfigAtomic(path, cfg)
       touched = true
     }
-    if (!touched) throw new Error(`provider not found: ${id}`)
+    if (!touched) throw new Error(`${t("ntc.notFound")}: ${id}`)
   }
 
   return runModelManagerView({
@@ -87,12 +88,6 @@ export async function runModelManager(opts: {
     },
     loadRows: async () =>
       rowsOf((await loadConfig(opts.cwd, { allowLocal: opts.allowLocalConfig })).providers),
-    onAdd: async (providerId, model) => {
-      await updateProviderInScopes(providerId, (p) => {
-        if (!p.models.includes(model)) p.models = [...p.models, model]
-      })
-      return rowsOf((await loadConfig(opts.cwd, { allowLocal: opts.allowLocalConfig })).providers)
-    },
     onDelete: async (id) => {
       const sep = id.indexOf("::")
       await updateProviderInScopes(id.slice(0, sep), (p) => {

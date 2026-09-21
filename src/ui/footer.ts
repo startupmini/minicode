@@ -1,11 +1,8 @@
-// Footer status REPL: 1 baris status (tanpa garis — keputusan clean).
+// Status bar TUI: 1 baris status (tanpa garis — keputusan clean).
 //
-// Dipakai dua mekanisme dengan KONTEN yang sama: mode cetak (idle, dicetak di
-// atas prompt sebagai scrollback biasa) dan mode lengket (chrome DECSTBM,
-// dilukis di 2 baris dasar terminal: blank + status). Modul ini murni render
-// tanpa IO, tanpa timer, tanpa tahu mekanisme mana yang memakainya. Frame
-// animasi spark dan angka konteks DIKIRIM pemanggil lewat FooterStatus, jadi
-// render tetap deterministik dan bisa diuji tanpa menunggu waktu.
+// Modul murni render tanpa IO/timer: dipakai App TUI sebagai baris dasar.
+// Frame animasi spark dan angka konteks DIKIRIM pemanggil lewat FooterStatus,
+// jadi render tetap deterministik dan bisa diuji tanpa menunggu waktu.
 //
 // Gaya (keputusan produk): footer hampir tak terlihat — garis + teks status
 // abu-abu gelap; SATU-SATUNYA yang berwarna adalah token mode (mapping sama
@@ -14,7 +11,7 @@
 // Tata letak: `✦ mode • model • cwd ……… 14.2k` — konteks rata kanan. Mode
 // di-pad ke lebar tetap agar teks di kanannya TIDAK bergeser saat mode berganti
 // (Shift+Tab): tanpa padding, `auto`→`allowlist` menggeser seluruh baris.
-import { sanitizeAnsi } from "./render/sanitize.ts"
+import { sanitizeAnsiLine } from "./render/sanitize.ts"
 import { c, glyphs } from "./render/theme.ts"
 import { displayWidth, padToWidth, truncateToWidth } from "./render/width.ts"
 
@@ -49,7 +46,9 @@ export function shortModel(id: string): string {
 export function paintFooterMode(mode: string): string {
   // Padding per KOLOM (bukan padEnd karakter): CJK/emoji = 2 kolom, dan
   // displayWidth sudah dipakai di bawah — konsisten satu penggaris.
-  const padded = padToWidth(sanitizeAnsi(mode), MODE_WIDTH)
+  // Mode satu-baris: newline dari input tak terpercaya wajib dibuang agar tak
+  // memecah frame lengket 2-baris chrome.ts.
+  const padded = padToWidth(sanitizeAnsiLine(mode), MODE_WIDTH)
   return mode === "plan" ? c.warning(padded) : mode === "ask" ? c.info(padded) : c.success(padded)
 }
 
@@ -72,15 +71,18 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
   const mode = paintFooterMode(s.mode)
   const dot = c.gray("•")
   const sep = `    ${dot}    `
-  const model = c.gray(sanitizeAnsi(shortModel(s.model)))
-  const cwdTxt = c.gray(sanitizeAnsi(s.cwd))
+  // Satu-baris: cwd/model bisa berisi newline (nama dir) — sanitizeAnsiLine
+  // agar \n tak memecah frame lengket ke scrollback (displayWidth menghitung
+  // \n = 0 sehingga align mengira muat).
+  const model = c.gray(sanitizeAnsiLine(shortModel(s.model)))
+  const cwdTxt = c.gray(sanitizeAnsiLine(s.cwd))
 
   const full = `${spark}  ${mode}${sep}${model}${sep}${cwdTxt}`
   const mid = `${spark}  ${mode}${sep}${model}`
   const lean = `${spark}  ${mode}`
 
   const target = Math.max(4, cols - 1)
-  const ctx = s.context ? sanitizeAnsi(s.context) : ""
+  const ctx = s.context ? sanitizeAnsiLine(s.context) : ""
   const ctxW = ctx ? displayWidth(ctx) : 0
 
   // Rata kanan: konteks didorong ke kolom `target` dengan gap ideal ≥6

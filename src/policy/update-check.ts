@@ -48,9 +48,12 @@ async function readCache(): Promise<Cache | null> {
 
 async function writeCache(latest: string): Promise<void> {
   try {
-    const { mkdir, writeFile } = await import("node:fs/promises")
+    const { mkdir, writeFile, chmod } = await import("node:fs/promises")
     await mkdir(join(homedir(), ".minicode"), { recursive: true })
     await writeFile(CACHE_FILE, JSON.stringify({ checkedAt: Date.now(), latest }), "utf8")
+    // 0600 seperti trace/journal (bug-hunt 2026-09-19 H6): default umask bisa
+    // world-readable. Isi kini non-rahasia, tapi konsistensi murah.
+    await chmod(CACHE_FILE, 0o600).catch(() => {})
   } catch {}
 }
 

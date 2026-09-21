@@ -114,4 +114,22 @@ describe("footer render", () => {
     expect(status!).not.toContain("[?25l")
     expect(stripAnsi(status!)).toContain("evilm")
   })
+
+  // Audit TUI P1-4: newline di model/cwd (nama dir bisa mengandung \n) tak boleh
+  // memecah frame lengket 2-baris chrome.ts — renderFooter selalu 1 baris.
+  // Kode lama memakai sanitizeAnsi (newline lolos, displayWidth menghitung 0).
+  test("newline di model/cwd/context/mode jadi spasi, tetap 1 baris", () => {
+    tty = installFakeTty({ columns: 80 })
+    const [status] = renderFooter(
+      { mode: "au\nto", model: "m\n1", cwd: "a\nb", context: "9\nk" },
+      80,
+    )
+    expect(status!).not.toContain("\n")
+    const plain = stripAnsi(status!)
+    expect(plain).toContain("au to")
+    expect(plain).toContain("m 1")
+    expect(plain).toContain("a b")
+    expect(plain).toContain("9 k")
+    expect(displayWidth(plain)).toBeLessThanOrEqual(79)
+  })
 })

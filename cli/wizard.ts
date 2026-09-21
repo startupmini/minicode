@@ -2,6 +2,7 @@
 // tampilannya di src/ui/screens/wizard.ts.
 import { GATEWAY_PRESETS } from "../src/providers/presets.ts"
 import { detectAndSave } from "../src/providers/provision.ts"
+import { t } from "../src/ui/i18n/locale.ts"
 import { runSetupWizardView } from "../src/ui/screens/wizard.ts"
 
 export async function runSetupWizard(): Promise<boolean> {
@@ -15,7 +16,7 @@ export async function runSetupWizard(): Promise<boolean> {
         preset?.fallbackModels ??
         (baseUrl.includes("anthropic") ? ["claude-sonnet-4"] : ["gpt-4o-mini"])
       const entry = await detectAndSave(baseUrl, apiKey, undefined, { fallbackModels })
-      return `Provider "${entry.id}" saved — ${entry.models.length} models`
+      return t("ntc.saved", { id: entry.id, n: entry.models.length, scope: "global" })
     },
   })
 }

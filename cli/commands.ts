@@ -1,9 +1,10 @@
-import { resolve as resolvePath } from "node:path"
-import { loadConfig } from "../src/config.ts"
+import { basename, resolve as resolvePath } from "node:path"
+import { loadConfig, saveLastModel } from "../src/config.ts"
 import type { Usage } from "../src/policy/usage.ts"
 import { refreshProviderModels } from "../src/providers/provision.ts"
 import { listSessions, loadSession } from "../src/session/persistence.ts"
 import type { Skill } from "../src/skills/loader.ts"
+import { type MsgKey, t } from "../src/ui/i18n/locale.ts"
 import { formatUsd } from "../src/ui/render/money.ts"
 import { glyphs } from "../src/ui/render/theme.ts"
 import { padToWidth } from "../src/ui/render/width.ts"
@@ -30,6 +31,10 @@ export interface CommandContext {
   toolsCount: number
   providerHint?: string
   setModelOverride: (model: string) => void
+  /** Dipanggil sebelum spawn anak stdio-inherit — composition root (tui.ts)
+   * mengisinya (saat ini no-op; DECSTBM tak pernah dipakai lagi). Tanpa
+   * injeksi tetap jalan. */
+  onBeforeSpawn?: () => void
   /** Kontrak control-plane (Phase 6): angka konteks SAAT INI dari sumber
    * kebenaran kernel (estimateSessionContext) — bukan usage kumulatif.
    * Dibedakan dari Input/Output/Total (provider usage) di /status. */
@@ -48,22 +53,62 @@ export interface CommandContext {
 export interface BuiltinCommand {
   name: string
   args?: string
-  desc: string
+  /** Kunci kamus i18n untuk deskripsi (bukan literal — /help dwibahasa). */
+  descKey: MsgKey
   hidden?: boolean
 }
 
+// Jarak edit untuk did-you-mean — cukup untuk typo 1-2 huruf (/modle,
+// /sessons), cukup ketat untuk tidak menebak perintah yang memang asing.
+// Pindahan dari driver REPL linier (dihapus: TUI satu-satunya tampilan).
+function editDistance(a: string, b: string): number {
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => i)
+  for (let j = 1; j <= b.length; j++) {
+    let prev = dp[0]!
+    dp[0] = j
+    for (let i = 1; i <= a.length; i++) {
+      const cur = dp[i]!
+      dp[i] = Math.min(dp[i]! + 1, dp[i - 1]! + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1))
+      prev = cur
+    }
+  }
+  return dp[a.length]!
+}
+
+/** Saran perintah terdekat untuk typo slash; undefined bila tak ada yang dekat. */
+export function suggestSimilar(name: string, candidates: string[]): string | undefined {
+  let best: string | undefined
+  let bestD = 3 // ambang: >2 dianggap perintah asing, bukan typo
+  for (const cand of candidates) {
+    if (cand === name) return cand
+    const d = editDistance(name.toLowerCase(), cand.toLowerCase())
+    if (d < bestD) {
+      bestD = d
+      best = cand
+    }
+  }
+  return best
+}
+
+/** Terapkan pilihan model + ingat untuk sesi berikutnya (global,
+ * fire-and-forget). */
+export function persistModelChoice(m: string, modelRef: { current?: string }): void {
+  modelRef.current = m
+  void saveLastModel(m).catch(() => {})
+}
+
 export const BUILTIN_COMMANDS: BuiltinCommand[] = [
-  { name: "help", desc: "Show commands" },
-  { name: "provider", desc: "Manage providers" },
-  { name: "model", desc: "Manage and select models" },
-  { name: "sync", desc: "Refresh provider models" },
-  { name: "status", desc: "Show session status and usage" },
-  { name: "sessions", desc: "List, inspect, and resume sessions" },
-  { name: "init", desc: "Create AGENTS.md" },
-  { name: "exit", desc: "Exit" },
+  { name: "help", descKey: "help.desc.help" },
+  { name: "provider", descKey: "help.desc.provider" },
+  { name: "model", descKey: "help.desc.model" },
+  { name: "sync", descKey: "help.desc.sync" },
+  { name: "status", descKey: "help.desc.status" },
+  { name: "sessions", descKey: "help.desc.sessions" },
+  { name: "init", descKey: "help.desc.init" },
+  { name: "exit", descKey: "help.desc.exit" },
 ]
 
-/** Perintah yang ditangani DRIVER REPL (bukan handleBuiltinCommand) —
+/** Perintah yang ditangani DRIVER TUI (bukan handleBuiltinCommand) —
  * ditampilkan di /help agar bisa ditemukan, tapi sengaja TIDAK masuk dropdown
  * completion (di dropdown cukup /compact + builtin; /mode tak perlu
  * karena Tab/Shift+Tab sudah memutar mode tanpa baris baru).
@@ -71,39 +116,80 @@ export const BUILTIN_COMMANDS: BuiltinCommand[] = [
  * effort diatur lewat picker /model (Enter).
  * Opsi A audit UX: undo/redo/clear/copy/history tidak punya duplikat lain. */
 export const DRIVER_HELP_COMMANDS: BuiltinCommand[] = [
-  { name: "mode", args: "[name]", desc: "Show or set permission mode" },
-  { name: "undo", desc: "Revert file changes from the last turn" },
-  { name: "redo", desc: "Re-apply reverted changes" },
-  { name: "clear", desc: "Mark a boundary (scrollback preserved)" },
-  { name: "copy", desc: "Copy last turn to clipboard (OSC 52)" },
-  { name: "history", desc: "Show recent prompt history" },
+  { name: "mode", args: "[name]", descKey: "help.desc.mode" },
+  { name: "lang", args: "[en|id]", descKey: "help.desc.lang" },
+  { name: "undo", descKey: "help.desc.undo" },
+  { name: "redo", descKey: "help.desc.redo" },
+  { name: "clear", descKey: "help.desc.clear" },
+  { name: "copy", descKey: "help.desc.copy" },
+  { name: "history", descKey: "help.desc.history" },
 ]
 
-/** Pintasan papan tombol — didokumentasikan di /help, bukan hanya di kode. */
-const KEYBOARD_HELP: [string, string][] = [
-  ["enter", "submit"],
-  ["tab", "complete command (empty line: cycle mode)"],
-  ["shift+tab", "cycle permission mode"],
-  ["up / down", "history or picker navigation"],
-  ["left / right", "move cursor"],
-  ["home / end", "jump to line start / end"],
-  ["delete", "delete character at cursor"],
-  ["ctrl+a / ctrl+e", "line start / end"],
-  ["ctrl+r", "reverse-i-search prompt history"],
-  ["ctrl+j", "insert newline (multiline input)"],
-  ["ctrl+w", "delete previous word"],
-  ["ctrl+u", "clear line"],
-  ["ctrl+o", "toggle compact/expanded tool output"],
-  ["+ / -", "during turn: expand / minimize thinking & tool output"],
-  ["ctrl+t", "toggle expand/minimize thinking output"],
-  ["esc", "close dropdown / picker / cancel empty prompt"],
-  ["ctrl+c", "stop turn when busy; cancel prompt when idle (2x exit)"],
-  ["ctrl+d", "cancel prompt like ctrl+c"],
-  ["\\ at end of line", "continue input on the next line"],
+/** Pintasan papan tombol TUI — didokumentasikan di /help, bukan hanya di kode. */
+const KEYBOARD_HELP: [string, MsgKey][] = [
+  ["enter", "help.k.submit"],
+  ["tab / shift+tab", "help.k.cycleMode"],
+  ["up / down", "help.k.history"],
+  ["pgup / pgdn", "help.k.scroll"],
+  ["left / right", "help.k.move"],
+  ["home / end", "help.k.jump"],
+  ["delete", "help.k.delChar"],
+  ["ctrl+a / ctrl+e", "help.k.lineEnds"],
+  ["ctrl+r", "help.k.histSearch"],
+  ["ctrl+j", "help.k.newline"],
+  ["ctrl+w", "help.k.delWord"],
+  ["ctrl+u", "help.k.clearLine"],
+  ["ctrl+o", "help.k.compact"],
+  ["ctrl+t", "help.k.thinking"],
+  ["esc", "help.k.esc"],
+  ["ctrl+c", "help.k.ctrlC"],
+  ["ctrl+d", "help.k.ctrlD"],
 ]
 
 function pad(text: string, width: number): string {
   return padToWidth(text, width)
+}
+
+/**
+ * Isi readout /status sebagai data (tanpa dekorasi cetak) — dipakai Jendela
+ * info transient dan jalur cetak (non-TTY/pin) yang formatnya harus identik.
+ */
+function statusLines(ctx: CommandContext): string[] {
+  // Kumulatif sesi, bukan turn terakhir — judulnya menjanjikan "biaya sesi".
+  const u = ctx.usage.getSession(ctx.currentModel)
+  // Kontrak control-plane (Phase 6): DUA angka berbeda, dua konsep —
+  // Context = ukuran jendela saat ini (kernel, estimateSessionContext);
+  // Total = pemakaian kumulatif provider (usage event). Dulu hanya Total
+  // yang tampil (label "konteks" di footer menyesatkan); kini /status
+  // membedakan Context vs Usage vs Cost vs Budget eksplisit.
+  const pinned = ctx.currentModel?.includes("::")
+    ? ctx.currentModel.slice(0, ctx.currentModel.indexOf("::"))
+    : undefined
+  const provider = ctx.usage.modelUsed().provider ?? pinned ?? ctx.providerHint ?? "-"
+  return [
+    t("st.session", { id: ctx.sessionId }),
+    t("st.model", { v: ctx.currentModel ?? "default" }),
+    t("st.provider", { v: provider }),
+    t("st.tools", { v: ctx.toolsCount }),
+    t("st.context", { v: ctx.getContextTokens().toLocaleString() }),
+    t("st.input", { v: u.inputTokens.toLocaleString() }),
+    t("st.output", { v: u.outputTokens.toLocaleString() }),
+    t("st.total", { v: u.totalTokens.toLocaleString() }),
+    t("st.cost", { v: u.cost != null ? formatUsd(u.cost) : "N/A" }),
+    t("st.budget", {
+      v: ctx.budgetState(),
+      extra: u.cost == null ? t("st.costUnknown") : "",
+    }),
+  ]
+}
+
+/** Cetak /status seperti dulu (jalur non-TTY + pin jendela). Struktur panggilan
+ * dipertahankan (satu console.log per baris): helper test captureOutput
+ * mencatat per panggilan, bukan per baris newline. */
+function printStatus(ctx: CommandContext): void {
+  console.log("")
+  for (const line of statusLines(ctx)) console.log(line)
+  console.log("")
 }
 
 /**
@@ -117,6 +203,33 @@ function pad(text: string, width: number): string {
 // FUNGSI, bukan konstanta: `glyphs` adalah getter yang memeriksa dukungan UTF-8
 // saat dipakai. Menyimpannya ke `const` di module scope membekukan nilai pada
 // saat import — kesalahan yang sama seperti objek warna `c` dan glyph di TUI.
+/** Resume ke sesi by id: validasi + spawn anak stdio-inherit. Dipakai jalur
+ * argumen langsung (`/sessions <id>`) dan pilihan picker popup.
+ * Return true bila anak di-spawn (false = sesi tak ditemukan, tanpa jejak). */
+async function resumeById(target: string, ctx: CommandContext): Promise<boolean> {
+  const sess = loadSession(target, ctx.cwd)
+  if (!sess?.messages.length) {
+    console.log(t("sess.notFound", { id: target }))
+    return false
+  }
+  // Anak stdio-inherit memakai terminal yang sama; App TUI sudah suspend
+  // (input dilepas) oleh pemanggil popup, dan proses ini exit mengikuti anak.
+  try {
+    ctx.onBeforeSpawn?.()
+  } catch {}
+  const { spawn } = await import("node:child_process")
+  const { waitChildExit } = await import("./auto-update.ts")
+  const entryPath = resolvePath(import.meta.dir, "index.ts")
+  const child = spawn(
+    process.execPath,
+    [entryPath, `--resume=${target}`, ...(ctx.cwd ? [`--cwd=${ctx.cwd}`] : [])],
+    { stdio: "inherit", env: { ...process.env, MINICODE_RESUME_NEW: "1" } },
+  )
+  void waitChildExit(child).then((code) => process.exit(code ?? 0))
+  process.stdin.pause()
+  return true
+}
+
 /** Petunjuk ke daftar pintasan lengkap, dipakai di /help. */
 
 export async function handleBuiltinCommand(
@@ -133,35 +246,35 @@ export async function handleBuiltinCommand(
   switch (cmd) {
     case "help": {
       // Ringkas: perintah utama + skill + pintasan yang paling sering dipakai.
-      // /help penuh 29 baris tidak muat di overlay terminal 24 baris, jadi
+      // /help penuh tidak muat di layar pendek, jadi
       // pintasan lengkap dipindah ke `/help tombol`.
       const wantKeys = /^(tombol|keys?|keyboard)$/i.test(args)
       if (wantKeys) {
-        console.log("\nKeyboard:")
-        for (const [key, desc] of KEYBOARD_HELP) {
-          console.log(`  ${pad(key, 22)}${desc}`)
+        console.log(`\n${t("help.kHead")}`)
+        for (const [key, keyDesc] of KEYBOARD_HELP) {
+          console.log(`  ${pad(key, 22)}${t(keyDesc)}`)
         }
         console.log("")
         return { handled: true }
       }
-      console.log("\nCommands:")
+      console.log(`\n${t("help.head")}`)
       for (const b of [...BUILTIN_COMMANDS, ...DRIVER_HELP_COMMANDS]) {
         if (b.hidden) continue
         const withArgs = b.args ? `${b.name} ${b.args}` : b.name
-        console.log(`  /${pad(withArgs, 22)}${b.desc}`)
+        console.log(`  /${pad(withArgs, 22)}${t(b.descKey)}`)
       }
       // Ringkas: perintah utama + skill + pintasan yang paling sering dipakai.
       // Panjang baris di bawah ≤80 kolom (dijaga test) dan tak boleh menyebut
       // /help tombol (juga dijaga test) — Ctrl+R satu-satunya yang paling
       // sering dicari yang muat setelah Enter/Tab/Shift+Tab.
-      console.log("\nEnter · Tab(empty:mode) · Shift+Tab mode · Ctrl+R search · Ctrl+C 2x exit\n")
+      console.log(`\n${t("help.keysLine")}\n`)
       return { handled: true }
     }
 
     case "init": {
       const target = resolvePath(ctx.cwd ?? process.cwd(), "AGENTS.md")
       if (require("node:fs").existsSync(target)) {
-        console.log(`\nAGENTS.md already exists - not overwritten.\n`)
+        console.log(`\n${t("cmd.initExists")}\n`)
         return { handled: true }
       }
       const { loadRepoMap } = await import("../src/repo/repomap.ts")
@@ -169,26 +282,26 @@ export async function handleBuiltinCommand(
       const body = [
         "# AGENTS.md",
         "",
-        "Instructions for agents working in this repo.",
+        "Petunjuk untuk agent yang bekerja di repo ini.",
         "",
         "## Struktur (repo-map)",
         "```",
-        map ?? "(repo-map empty)",
+        map ?? "(repo-map kosong)",
         "```",
         "",
         "## Konvensi",
         "- Ikuti gaya kode existing.",
-        "- Run typecheck/test before declaring done.",
+        "- Jalankan typecheck/test sebelum selesai.",
         "",
       ].join("\n")
       const { atomicWriteText } = await import("../src/lib/atomic-write.ts")
       await atomicWriteText(target, body)
-      console.log(`\nAGENTS.md created: ${target}\n`)
+      console.log(`\n${t("cmd.initCreated", { t: target })}\n`)
       return { handled: true }
     }
 
     case "exit":
-      console.log("Bye.")
+      console.log(t("cmd.bye"))
       return { handled: true, shouldExit: true }
 
     case "model": {
@@ -216,32 +329,10 @@ export async function handleBuiltinCommand(
       return { handled: true }
     }
     case "status": {
-      // Kumulatif sesi, bukan turn terakhir — judulnya menjanjikan "biaya sesi".
-      const u = ctx.usage.getSession(ctx.currentModel)
-      // Kontrak control-plane (Phase 6): DUA angka berbeda, dua konsep —
-      // Context = ukuran jendela saat ini (kernel, estimateSessionContext);
-      // Total = pemakaian kumulatif provider (usage event). Dulu hanya Total
-      // yang tampil (label "konteks" di footer menyesatkan); kini /status
-      // membedakan Context vs Usage vs Cost vs Budget eksplisit.
-      const pinned = ctx.currentModel?.includes("::")
-        ? ctx.currentModel.slice(0, ctx.currentModel.indexOf("::"))
-        : undefined
-      const provider = ctx.usage.modelUsed().provider ?? pinned ?? ctx.providerHint ?? "-"
-      console.log(`\nSession ${ctx.sessionId}`)
-      console.log(`  Model:    ${ctx.currentModel ?? "default"}`)
-      console.log(`  Provider: ${provider}`)
-      console.log(`  Tools:    ${ctx.toolsCount}`)
-      console.log(`  Context:  ~${ctx.getContextTokens().toLocaleString()} tok (window estimate)`)
-      console.log(`  Input:    ${u.inputTokens.toLocaleString()} (provider usage)`)
-      console.log(`  Output:   ${u.outputTokens.toLocaleString()} (provider usage)`)
-      console.log(`  Total:    ${u.totalTokens.toLocaleString()} (session cumulative)`)
-      console.log(
-        `  Cost:     ${u.cost != null ? formatUsd(u.cost) : "N/A"} (estimated from price table)`,
-      )
-      console.log(
-        `  Budget:   ${ctx.budgetState()}${u.cost == null ? " (cost unknown — model without pricing)" : ""}`,
-      )
-      console.log("")
+      // Selalu cetak: di TUI ditangkap ke transkrip (permukaan baca), di
+      // one-shot/pipe ke scrollback. Jendela info dihapus bersama REPL linier
+      // (satu-satunya tampilan interaktif = TUI fullscreen).
+      printStatus(ctx)
       return { handled: true }
     }
 
@@ -249,7 +340,7 @@ export async function handleBuiltinCommand(
       // Re-detect model dari semua provider -> config diperbarui otomatis.
       // Meneruskan flag local sesi: tanpa opt-in /sync tak boleh menghubungi
       // endpoint dari repo tak dikenal (audit #07 P0).
-      console.log("\nSyncing models…")
+      console.log(`\n${t("cmd.syncing")}`)
       const { updated, failed } = await refreshProviderModels({
         cwd: ctx.cwd,
         allowLocal: ctx.allowLocalConfig,
@@ -258,11 +349,13 @@ export async function handleBuiltinCommand(
         // Bedakan "belum ada provider" dari "ada tapi deteksi kosong" —
         // yang kedua jangan diklaim sebagai yang pertama.
         const cfg = await loadConfig(ctx.cwd, { allowLocal: ctx.allowLocalConfig })
-        if (cfg.providers.length === 0) console.log("  No providers configured.")
-        else console.log("  No changes — check API key and network, then retry.")
+        if (cfg.providers.length === 0) console.log(t("cmd.noProviders"))
+        else console.log(t("cmd.noChanges"))
       } else {
         for (const r of updated) {
-          console.log(`  ${glyphs.check} ${r.id}: ${r.from} -> ${r.to} models`)
+          console.log(
+            `  ${glyphs.check} ${r.id}: ${r.from} → ${r.to}${t("prov.models", { n: "" })}`,
+          )
         }
         for (const f of failed) {
           console.log(`  ${glyphs.cross} ${f.id}: ${f.reason}`)
@@ -270,8 +363,8 @@ export async function handleBuiltinCommand(
         // "Restart" hanya jujur bila ADA model baru — tanpa updated, restart
         // tak mengubah apa pun (sebelumnya selalu dicetak, menyesatkan saat
         // semua provider gagal).
-        if (updated.length > 0) console.log("  Restart to use updated models.")
-        else console.log("  Nothing updated — check API keys and network above, then retry /sync.")
+        if (updated.length > 0) console.log(t("cmd.restart"))
+        else console.log(t("cmd.nothingUpdated"))
       }
       return { handled: true }
     }
@@ -279,33 +372,56 @@ export async function handleBuiltinCommand(
     case "sessions": {
       const rows = listSessions(ctx.cwd).slice(0, 25)
       if (rows.length === 0) {
-        console.log("\nNo sessions.")
+        console.log(`\n${t("cmd.noSessions")}`)
       } else if (!args) {
-        console.log("\nSessions")
+        // Picker popup bila interaktif; tabel cetak bila bukan (kontrak I6 +
+        // one-shot). Pilihan picker mengalir ke resumeById yang sama dengan
+        // jalur argumen langsung.
+        if (process.stdin.isTTY && process.stdout.isTTY) {
+          const { runPicker } = await import("../src/ui/screens/picker.ts")
+          // ID di DEPAN (truncasi memakan ekor — ekor berisi tanggal/cwd,
+          // id adalah info terpenting dan harus selamat).
+          const shortDir = (d: string): string => basename(d) || "(cwd)"
+          await runPicker({
+            title: t("sess.title"),
+            items: rows.map((r) => ({
+              name: r.id,
+              provider: `${new Date(r.created_at).toLocaleString()} · ${r.cwd ? shortDir(r.cwd) : "(cwd)"}`,
+              value: r.id,
+            })),
+            filterable: true,
+            placeholder: t("pick.placeholder"),
+            onPick: (id) => {
+              void resumeById(id, ctx)
+            },
+            onCancel: () => {},
+          })
+          return { handled: true }
+        }
+        console.log(`\n${t("sess.listHead")}`)
         rows.forEach((r, i) => {
           console.log(
             `  [${i}] ${r.id.padEnd(14)} ${new Date(r.created_at).toLocaleString().padEnd(24)} ${r.cwd || "(cwd)"}`,
           )
         })
-        console.log("  Select a session to resume.")
+        console.log(t("sess.listHint"))
       }
       if (rows.length > 0 && args) {
-        const target = args
-        const sess = loadSession(target, ctx.cwd)
-        if (!sess?.messages.length) {
-          console.log(`Session "${target}" not found or empty.`)
-          return { handled: true }
-        }
-        const { spawn } = await import("node:child_process")
-        const { waitChildExit } = await import("./auto-update.ts")
-        const entryPath = resolvePath(import.meta.dir, "index.ts")
-        const child = spawn(
-          process.execPath,
-          [entryPath, `--resume=${target}`, ...(ctx.cwd ? [`--cwd=${ctx.cwd}`] : [])],
-          { stdio: "inherit", env: { ...process.env, MINICODE_RESUME_NEW: "1" } },
-        )
-        void waitChildExit(child).then((code) => process.exit(code ?? 0))
-        process.stdin.pause()
+        if (await resumeById(args, ctx)) console.log("")
+        return { handled: true }
+      }
+      console.log("")
+      return { handled: true }
+    }
+
+    case "resume": {
+      // Alias /sessions <id> (repl.md). Gagal-di-kode-lama: jatuh ke default
+      // → handled:false → sunyi total di TUI (tidak tercatat, tidak spawn).
+      if (!args) return { handled: false }
+      const rows = listSessions(ctx.cwd).slice(0, 25)
+      if (rows.length > 0) {
+        if (await resumeById(args, ctx)) console.log("")
+        return { handled: true }
       }
       console.log("")
       return { handled: true }

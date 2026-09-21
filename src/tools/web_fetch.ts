@@ -7,7 +7,8 @@ const MAX_REDIRECTS = LIMITS.WEB_FETCH_MAX_REDIRECTS
 // Hard-cap pembacaan body SEBELUM slicing — cegah OOM dari response raksasa.
 const BODY_HARD_CAP_CHARS = LIMITS.WEB_FETCH_BODY_HARD_CAP_CHARS
 
-async function readBodyCapped(res: Response, controller: AbortController): Promise<string> {
+// Diekspor untuk web_search (jalur DDG): satu kebijakan cap untuk semua fetch.
+export async function readBodyCapped(res: Response, controller: AbortController): Promise<string> {
   if (!res.body) return ""
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
@@ -151,7 +152,15 @@ export const webFetchTool: Tool = {
       const sliced = scrubbed.slice(0, limit)
       const truncated =
         scrubbed.length > limit ? `\n\n… truncated ${scrubbed.length - limit} chars` : ""
-      const header = `[${current} ${res.status} ${contentType}]\n`
+      // Header tak boleh menggema kredensial: userinfo dihapus STRUKTURAL
+      // (scrub pola tak kenal `user:pass@`), query disamarkan via scrubSecrets
+      // (pola sama seperti body). Divalidasi e2e bug-hunt 2026-09-19 F4:
+      // `?api_key=SECRET` + `user:pass@` lolos verbatim ke konteks model
+      // (lalu persist ke sessions.db) sebelum fix ini.
+      const shown = new URL(current.toString())
+      shown.username = ""
+      shown.password = ""
+      const header = `[${scrubSecrets(shown.toString())} ${res.status} ${contentType}]\n`
       return (header + sliced + truncated).slice(0, limit + 500)
     } finally {
       clearTimeout(timeout)

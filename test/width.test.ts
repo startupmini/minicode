@@ -201,4 +201,24 @@ describe("chunkByWidth", () => {
       expect(Buffer.from(ch, "utf8").toString("utf8")).toBe(ch)
     }
   })
+  test("semua SGR terbuka terbawa (bold+warna), bukan hanya 1", () => {
+    // Audit TUI P2-3a: kode lama hanya ingat 1 SGR — bold hilang di potongan 2.
+    const src = `\x1b[1m\x1b[31m${"a".repeat(30)}`
+    const chunks = chunkByWidth(src, 10)
+    expect(chunks.length).toBeGreaterThan(1)
+    for (const ch of chunks.slice(1)) {
+      expect(ch).toContain("\x1b[1m")
+      expect(ch).toContain("\x1b[31m")
+    }
+  })
+
+  test("kode penutup italic/underline/strike me-reset ingatan SGR", () => {
+    // Audit TUI P2-3b: \x1b[23m (italic-off) dulu dianggap pembuka dan bocor
+    // ke potongan berikut sebagai gaya basi (kode lama: tiap potongan >1
+    // diawali "\x1b[23m").
+    const src = `\x1b[3mabc\x1b[23m${"d".repeat(30)}`
+    const chunks = chunkByWidth(src, 5)
+    expect(chunks.length).toBeGreaterThan(1)
+    for (const ch of chunks.slice(1)) expect(ch).not.toContain("23m")
+  })
 })

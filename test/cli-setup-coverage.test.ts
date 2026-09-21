@@ -284,6 +284,25 @@ describe("last-model: default = terakhir dipakai", () => {
     })
   })
 
+  test("lang roundtrip; tak menimpa lastModel; asing/korup -> undefined", async () => {
+    await withHome(async (home) => {
+      const { loadLang, saveLang, loadLastModel, saveLastModel } = await import("../src/config.ts")
+      expect(await loadLang()).toBeUndefined()
+      await saveLang("id")
+      expect(await loadLang()).toBe("id")
+      // lastModel tetap utuh (merge, bukan timpa).
+      await saveLastModel("prov::m1")
+      expect(await loadLastModel()).toBe("prov::m1")
+      expect(await loadLang()).toBe("id")
+      await saveLang("en")
+      expect(await loadLang()).toBe("en")
+      expect(await loadLastModel()).toBe("prov::m1")
+      const { writeFile } = await import("node:fs/promises")
+      await writeFile(join(home, ".minicode", "state.json"), JSON.stringify({ lang: "xx" }), "utf8")
+      expect(await loadLang()).toBeUndefined()
+    })
+  })
+
   test("sesi memakai simpanan valid; --model menang; simpanan basi diabaikan", async () => {
     await withHome(async () => {
       const { saveLastModel } = await import("../src/config.ts")
@@ -323,7 +342,7 @@ describe("last-model: default = terakhir dipakai", () => {
 
   test("persistModelChoice update ref + simpan", async () => {
     await withHome(async () => {
-      const { persistModelChoice } = await import("../cli/repl.ts")
+      const { persistModelChoice } = await import("../cli/commands.ts")
       const { loadLastModel } = await import("../src/config.ts")
       const ref: { current?: string } = {}
       persistModelChoice("p::m", ref)

@@ -159,6 +159,34 @@ describe("terminal contract: tidak ada tulis setelah detach/endTurn", () => {
     expect(tty!.allErr()).toBe("")
     expect(tty!.all()).toBe("")
   }, 4000)
+
+  test("quiet TUI: paint ditekan, state tetap jalan (/copy + /expand hidup)", async () => {
+    // Kontrak I3: saat TUI memiliki layar, printer linier tidak boleh menulis
+    // apa pun — tapi rememberTurn (copy) dan bufferSection (expand) harus
+    // tetap terisi. Gagal-di-kode-lama: attach tanpa quiet mengotori alt-screen
+    // di sela repaint App.
+    const { getLastTurnText } = await import("../src/ui/assistant/simple.ts")
+    const { getBufferedSections } = await import("../src/ui/render/collapse.ts")
+    setCompactMode(true)
+    process.env.MINICODE_MINIMIZE_TOOL = "1"
+    tty = installFakeTty({ columns: 80, rows: 24 })
+    const bus = createFakeBus()
+    const detach = attachSimpleLogger(bus as never, { quiet: true })
+    bus.emit("turn:started", { turn: 1 })
+    bus.emit("provider:text", { text: "jawaban model\n" })
+    bus.emit("execution:completed", {
+      execution: {
+        call: { name: "read_file", args: { path: "a.ts" } },
+        result: { isError: false, content: "isi berkas\n" },
+      },
+    })
+    await sleep(60)
+    detach()
+    expect(tty!.all()).toBe("")
+    expect(tty!.allErr()).toBe("")
+    expect(getLastTurnText()).toContain("jawaban model")
+    expect(getBufferedSections().length).toBeGreaterThan(0)
+  }, 4000)
 })
 
 describe("terminal contract: ledger & streaming", () => {

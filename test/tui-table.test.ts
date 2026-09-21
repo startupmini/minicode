@@ -131,3 +131,29 @@ test("table: terminal sempit + banyak kolom jadi vertikal, bukan elipsis", () =>
     Object.defineProperty(process.stdout, "columns", { value: prev, configurable: true })
   }
 })
+
+test("table: fallback vertikal tak melebihi lebar terminal (header ikut dihitung)", () => {
+  // Audit TUI P1-6: kode lama memotong value ke termW PENUH lalu menambah
+  // "header: " di depan → baris pasti > termW dan wrap sendiri.
+  const prev = process.stdout.columns
+  Object.defineProperty(process.stdout, "columns", { value: 20, configurable: true })
+  try {
+    const out = stripAnsi(
+      renderTable(
+        [
+          { header: "ID", key: "id" },
+          { header: "Model", key: "m" },
+          { header: "URL", key: "u" },
+          { header: "Status", key: "s" },
+        ],
+        [{ id: "gw", m: "model-sangat-panjang-xxxxx", u: "https://example.com/abc", s: "ok" }],
+      ),
+    )
+    for (const line of out.split("\n")) {
+      if (!line) continue
+      expect(displayWidth(line)).toBeLessThanOrEqual(20)
+    }
+  } finally {
+    Object.defineProperty(process.stdout, "columns", { value: prev, configurable: true })
+  }
+})

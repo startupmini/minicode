@@ -3,9 +3,12 @@ import {
   applyKey,
   buildRenderSpec,
   createDecoderState,
+  createKeyStreamPump,
   createState,
   decodeKeys,
   decodeKeysStream,
+  flushLoneEsc,
+  hasPendingLoneEsc,
   MAX_VISIBLE,
   type PromptKey,
   pointLength,
@@ -395,6 +398,8 @@ test("decodeKey: home/end/delete dalam bentuk CSI dan VT", () => {
     ["\x1b[4~", "end"],
     ["\x1b[8~", "end"],
     ["\x1b[3~", "delete"],
+    ["\x1b[5~", "pageup"],
+    ["\x1b[6~", "pagedown"],
     ["\x01", "home"],
     ["\x05", "end"],
   ]
@@ -582,4 +587,79 @@ test("backspace emoji VS16: tetap satu tekan", () => {
   expect(s.line).toBe(heart)
   s = applyKey(s, { type: "backspace" }, hints).state
   expect(s.line).toBe("")
+})
+
+// ── Decoder split ESC (audit TUI P1-4) ──
+// Panah ESC[A yang terbelah [0x1b]+[0x5b,0x41] antar chunk JANGAN jadi
+// esc+"[A" (batal prompt + teks nyasar) — tahan sampai lengkap.
+test("decodeKeysStream: panah split antar chunk = up, bukan esc", () => {
+  const st = createDecoderState()
+  const first = decodeKeysStream(new Uint8Array([0x1b]), st)
+  // Kode lama: langsung [esc]. Kode baru: tahan (kosong), pending Esc tunggal.
+  expect(first).toEqual([])
+  expect(hasPendingLoneEsc(st)).toBe(true)
+  const second = decodeKeysStream(new Uint8Array([0x5b, 0x41]), st)
+  expect(second.map((d) => d.key.type)).toEqual(["up"])
+  expect(hasPendingLoneEsc(st)).toBe(false)
+})
+
+test("decodeKeysStream: ESC[ split di ujung chunk ditahan, bukan esc", () => {
+  const st = createDecoderState()
+  // Kode lama: [esc] + '[' hilang. Kode baru: tahan, pending bukan lone-ESC.
+  const keys = decodeKeysStream(new Uint8Array([0x1b, 0x5b]), st)
+  expect(keys).toEqual([])
+  expect(hasPendingLoneEsc(st)).toBe(false)
+  const rest = decodeKeysStream(new Uint8Array([0x41]), st)
+  expect(rest.map((d) => d.key.type)).toEqual(["up"])
+})
+
+test("flushLoneEsc: Esc tunggal tertahan jadi esc; sekuens lain tak tersentuh", () => {
+  const lone = createDecoderState()
+  expect(decodeKeysStream(new Uint8Array([0x1b]), lone)).toEqual([])
+  expect(flushLoneEsc(lone).map((d) => d.key.type)).toEqual(["esc"])
+  expect(hasPendingLoneEsc(lone)).toBe(false)
+  // Flush ganda = no-op (tak ada esc ganda).
+  expect(flushLoneEsc(lone)).toEqual([])
+  const csi = createDecoderState()
+  expect(decodeKeysStream(new Uint8Array([0x1b, 0x5b]), csi)).toEqual([])
+  // Bukan lone-ESC → flush tak boleh memaksa jadi esc.
+  expect(flushLoneEsc(csi)).toEqual([])
+})
+
+test("createKeyStreamPump: sekuens utuh sinkron, lone-ESC flush via timer", async () => {
+  const st = createDecoderState()
+  const got: string[] = []
+  const pump = createKeyStreamPump({
+    state: st,
+    onKeys: (keys) => {
+      got.push(...keys.map((d) => d.key.type))
+      return false
+    },
+    escMs: 10,
+  })
+  // Panah utuh satu chunk: langsung, tanpa timer.
+  pump.push(new Uint8Array([0x1b, 0x5b, 0x42]))
+  expect(got).toEqual(["down"])
+  // Esc tunggal: tertahan, lalu flush ~10ms.
+  pump.push(new Uint8Array([0x1b]))
+  expect(got).toEqual(["down"])
+  await new Promise((r) => setTimeout(r, 30))
+  expect(got).toEqual(["down", "esc"])
+  pump.dispose()
+  // Byte lanjutan membatalkan flush: panah split tetap up, tanpa esc ekstra.
+  const st2 = createDecoderState()
+  const got2: string[] = []
+  const pump2 = createKeyStreamPump({
+    state: st2,
+    onKeys: (keys) => {
+      got2.push(...keys.map((d) => d.key.type))
+      return false
+    },
+    escMs: 30,
+  })
+  pump2.push(new Uint8Array([0x1b]))
+  pump2.push(new Uint8Array([0x5b, 0x41]))
+  await new Promise((r) => setTimeout(r, 60))
+  expect(got2).toEqual(["up"])
+  pump2.dispose()
 })

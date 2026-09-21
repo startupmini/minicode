@@ -5,6 +5,7 @@ import { reloadProviders } from "../src/app/provider-layer.ts"
 import { loadConfig, type MinicodeConfig } from "../src/config.ts"
 import { GATEWAY_PRESETS } from "../src/providers/presets.ts"
 import { detectAndSave, removeProvider } from "../src/providers/provision.ts"
+import { t } from "../src/ui/i18n/locale.ts"
 import {
   type ProviderActionResult,
   type ProviderRow,
@@ -29,16 +30,15 @@ export async function runProviderManager(opts: {
 }): Promise<void> {
   if (!process.stdin.isTTY) {
     const cfg = await loadConfig(opts.cwd, { allowLocal: opts.allowLocalConfig })
-    console.log("\nProviders:")
+    console.log(`\n${t("prov.title")}:`)
     for (const p of cfg.providers)
-      console.log(`  ${p.id} - ${p.baseUrl} (${p.models.length} models)`)
+      console.log(`  ${p.id} - ${p.baseUrl} (${t("prov.models", { n: p.models.length })})`)
     return
   }
 
   // Router runtime gagal dimuat ulang (config IO) — jangan lapor sukses palsu:
   // tanpa pesan, user mengira pilihan langsung berlaku padahal butuh restart.
-  const warnReloadFail = () =>
-    process.stderr.write("[warn] provider reload failed — restart to apply changes\n")
+  const warnReloadFail = () => process.stderr.write(`[warn] ${t("prov.reloadFail")}\n`)
 
   await runProviderManagerView({
     initialRows: rowsFrom(await loadConfig(opts.cwd, { allowLocal: opts.allowLocalConfig })),
@@ -63,18 +63,18 @@ export async function runProviderManager(opts: {
           allowLocal: opts.allowLocalConfig,
         })
         await reloadProviders(opts.cwd, { allowLocal: opts.allowLocalConfig }).catch(warnReloadFail)
-        return { ok: `Provider "${entry.id}" saved (${entry.models.length} models, ${scope}).` }
+        return {
+          ok: t("ntc.saved", { id: entry.id, n: entry.models.length, scope }),
+        }
       } catch (e) {
-        return { err: `Model detection failed: ${(e as Error).message.slice(0, 80)}` }
+        return { err: t("prov.detectFail", { msg: (e as Error).message.slice(0, 80) }) }
       }
     },
     onDelete: async (row): Promise<ProviderActionResult> => {
       await removeProvider(row.id, { global: true })
       if (opts.cwd) await removeProvider(row.id, { global: false, cwd: opts.cwd })
-      await reloadProviders(opts.cwd, { allowLocal: opts.allowLocalConfig }).catch(() =>
-        process.stderr.write("[warn] provider reload failed — restart to apply changes\n"),
-      )
-      return { ok: `Provider "${row.id}" deleted.` }
+      await reloadProviders(opts.cwd, { allowLocal: opts.allowLocalConfig }).catch(warnReloadFail)
+      return { ok: t("prov.deleted", { id: row.id }) }
     },
     onEditDefaults: async (row) => {
       const cfg = await loadConfig(opts.cwd, { allowLocal: opts.allowLocalConfig })
@@ -85,7 +85,7 @@ export async function runProviderManager(opts: {
     onEditSave: async (row, { baseUrl, apiKey }): Promise<ProviderActionResult> => {
       const cfg = await loadConfig(opts.cwd, { allowLocal: opts.allowLocalConfig })
       const cur = cfg.providers.find((p) => p.id === row.id)
-      if (!cur) return { err: "Provider not found" }
+      if (!cur) return { err: t("ntc.notFound") }
       try {
         await removeProvider(row.id, { global: true })
         if (opts.cwd) await removeProvider(row.id, { global: false, cwd: opts.cwd })
@@ -96,7 +96,7 @@ export async function runProviderManager(opts: {
           allowLocal: opts.allowLocalConfig,
         })
         await reloadProviders(opts.cwd, { allowLocal: opts.allowLocalConfig }).catch(warnReloadFail)
-        return { ok: `Provider "${entry.id}" updated (${entry.models.length} models)` }
+        return { ok: t("ntc.updated", { id: entry.id, n: entry.models.length }) }
       } catch (e) {
         await detectAndSave(cur.baseUrl, cur.apiKey, cur.id, {
           global: true,
@@ -104,7 +104,7 @@ export async function runProviderManager(opts: {
           fallbackModels: cur.models,
         }).catch(() => {})
         await reloadProviders(opts.cwd, { allowLocal: opts.allowLocalConfig }).catch(warnReloadFail)
-        return { err: `Update failed: ${(e as Error).message.slice(0, 80)}` }
+        return { err: t("prov.updateFail", { msg: (e as Error).message.slice(0, 80) }) }
       }
     },
   })

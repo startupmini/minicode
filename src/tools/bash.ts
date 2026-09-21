@@ -212,6 +212,14 @@ export const bashTool: Tool = {
       throw new Error(`cwd outside workspace: ${c}`)
     const resolvedCwd = c ? resolvePath(sessionRoot, c) : undefined
     const effectiveCwd = resolvedCwd ?? sessionRoot
+    // Catatan TOCTOU (bug-hunt 2026-09-19, tervalidasi e2e): cek-cwd di atas
+    // (isCwdOutsideRoot = realpath) menutup varian cwd-form — swap setelah
+    // titik ini masih menang SEBELUM spawn (jendela mikrodetik pada alur
+    // executor normal; butuh penulis konkuren jahat). Varian redirect-form
+    // (`> sub/f` tanpa arg cwd) tak punya recheck saat spawn: shell me-resolve
+    // symlink — tak bisa ditutup murah dari sini (shell mengikuti symlink by
+    // design; safe-open O_NOFOLLOW hanya untuk tool file). Mitigasi: --sandbox
+    // untuk isolasi penuh; lihat permission.ts jail + safe-open.ts.
     const timeout = timeoutMs ?? LIMITS.BASH_DEFAULT_TIMEOUT_MS
 
     if (background === true) {

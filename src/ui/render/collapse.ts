@@ -8,6 +8,7 @@
 // /expand. Thinking memakai reasoning.visible sebagai invers dari minimize
 // (expanded = visible), jadi /thinking/Ctrl+T lama tetap satu arti.
 import { reasoning, setReasoningVisible } from "./reasoning.ts"
+import { splitTrailingEscape } from "./sanitize.ts"
 
 export type CollapseSection = "thinking" | "tool" | "answer"
 
@@ -62,7 +63,13 @@ export function bufferSection(
   stream: BufferedSection["stream"] = "stderr",
 ): void {
   if (!text) return
-  bufferedSections.push({ label, text: text.slice(0, MAX_SECTION_CHARS), stream })
+  // Cap jangan belah surrogate pair (U+FFFD di /expand) dan jangan sisakan
+  // ekor escape parsial (SGR gantung ikut tercetak saat /expand).
+  let cut = text.length > MAX_SECTION_CHARS ? text.slice(0, MAX_SECTION_CHARS) : text
+  const last = cut.charCodeAt(cut.length - 1)
+  if (cut.length > 0 && last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1)
+  cut = splitTrailingEscape(cut).head
+  bufferedSections.push({ label, text: cut, stream })
   // Buang yang tertua sampai total dalam budget — terbaru selalu dipertahankan.
   let total = 0
   let keepFrom = bufferedSections.length

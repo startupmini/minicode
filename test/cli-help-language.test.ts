@@ -1,11 +1,16 @@
 // Test permanen untuk temuan bug-hunter UI ronde 3: konsistensi bahasa &
 // penanda, kelengkapan /help, dan glyph yang menghormati dukungan UTF-8.
 
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { BUILTIN_COMMANDS, handleBuiltinCommand } from "../cli/commands.ts"
+import { resetLocaleState, setSessionLocale } from "../src/ui/i18n/locale.ts"
 import { glyphs, stripAnsi } from "../src/ui/render/theme.ts"
 import { displayWidth } from "../src/ui/render/width.ts"
 import { captureOutput } from "./helpers/capture.ts"
+
+// i18n: file ini mengunci keluaran INGGRIS (regex anti-bocor + label en) —
+beforeEach(() => setSessionLocale("en"))
+afterEach(() => resetLocaleState())
 
 /** Kata Inggris yang pernah bocor ke keluaran pengguna. */
 const INDONESIAN =
@@ -76,8 +81,8 @@ describe("BUILTIN_COMMANDS: setiap perintah yang ditangani terdaftar", () => {
     expect(hilang).toEqual([])
   })
 
-  test("setiap perintah punya deskripsi", () => {
-    for (const b of BUILTIN_COMMANDS) expect(b.desc, b.name).toBeTruthy()
+  test("setiap perintah punya kunci deskripsi (i18n)", () => {
+    for (const b of BUILTIN_COMMANDS) expect(b.descKey, b.name).toBeTruthy()
   })
 
   test("legacy aliases are absent", () => {

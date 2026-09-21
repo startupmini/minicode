@@ -116,7 +116,6 @@ describe("hang: manager fail-safe saat raw-mode rusak", () => {
         initialRows: [{ id: "a::m", active: true }],
         onSelect: () => {},
         loadRows: async () => [{ id: "a::m", active: true }],
-        onAdd: async () => [{ id: "a::m", active: true }],
         onDelete: async () => [{ id: "a::m", active: true }],
       })
       // Harus settle <2 dtk, bukan gantung.

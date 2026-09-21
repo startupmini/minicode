@@ -1,11 +1,17 @@
-import { expect, test } from "bun:test"
+import { afterEach, beforeEach, expect, test } from "bun:test"
 import { createEventBus } from "#minicore/core/events.ts"
 import { costFor, createUsageCollector } from "../src/policy/usage.ts"
+import { resetLocaleState, setSessionLocale } from "../src/ui/i18n/locale.ts"
 import {
   extractProviderDetail,
   friendlyError,
   friendlyFromCategory,
 } from "../src/ui/render/errors.ts"
+import { displayWidth } from "../src/ui/render/width.ts"
+
+// Pesan error dwibahasa — kunci en (paritas highlight.test.ts).
+beforeEach(() => setSessionLocale("en"))
+afterEach(() => resetLocaleState())
 
 test("friendlyFromCategory: auth + balance", () => {
   const f = friendlyFromCategory(
@@ -165,6 +171,52 @@ test("detail yang sama dengan pesan dasar tidak diulang dua kali", () => {
   )
   const occurrences = f.message.split("rate-limiting").length - 1
   expect(occurrences).toBe(1)
+})
+
+test("redactSecrets menutup format kunci provider + JWT + query (bug-hunt)", () => {
+  // Kode lama: hanya Bearer/kv — echo proxy key konkret lolos mentah ke layar.
+  const f = friendlyFromCategory(
+    "unknown",
+    "proxy says sk-ant-probe-1234567890abcdef and thk_live_probe12345678901234 and TOKEN",
+  )
+  expect(f.message).not.toContain("sk-ant-probe")
+  expect(f.message).not.toContain("thk_live_probe")
+  const j = friendlyError(
+    "oops eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c boom",
+  )
+  expect(j.message).not.toContain("eyJhbGciOi")
+  const q = friendlyFromCategory("unknown", "denied https://h.test/?api_key=SECRET42 rec")
+  expect(q.message).not.toContain("SECRET42")
+  expect(q.message).toContain("api_key=[redacted]")
+})
+
+// ── Audit TUI P1-1: pesan error provider = teks tak terpercaya ───────────────
+// Proxy jahat bisa menggemakan escape (bersihkan layar, alternate screen) di
+// body error yang lalu dirender writer mentah cli/. Kode lama meloloskan
+// utuh; kode baru sanitize satu-baris di errors.ts.
+test("friendlyFromCategory: escape di detail provider dibuang, teks kept", () => {
+  const evil = '{"error":{"message":"boom\x1b[2J\x1b[H\x1b[?1049h ha"}}'
+  const f = friendlyFromCategory("unknown", evil)
+  expect(f.message).toContain("boom")
+  expect(f.message).not.toContain("\x1b[2J")
+  expect(f.message).not.toContain("1049")
+  expect(f.message).not.toContain("\x1b[H")
+})
+
+test("friendlyFromCategory: judul HTML ber-ANSI tetap satu baris bersih", () => {
+  const f = friendlyFromCategory(
+    "server",
+    "<html><head><title>down\x1b]0;pwned\x07 | 502</title></head></html>",
+  )
+  expect(f.message).not.toContain("\x1b]")
+  expect(f.message).toContain("502")
+})
+
+test("friendlyError: potong CJK per kolom (bukan karakter)", () => {
+  // 100 emoji = 200 kolom + prefix; kode lama slice 157 char (=321 kolom).
+  const m = friendlyError(`gagal: ${"🔥".repeat(100)}`).message
+  expect(displayWidth(m)).toBeLessThanOrEqual(160)
+  expect(m.endsWith("…")).toBe(true)
 })
 
 // ── usage collector: effective model dari fallback ──

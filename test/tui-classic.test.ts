@@ -46,6 +46,19 @@ describe("askLine: dropdown & seleksi", () => {
     await p
   })
 
+  test("dropdown berbingkai garis (mini-window, bukan tulisan polos)", async () => {
+    // Kode lama: daftar polos tanpa pembatas visual. Baris ─ di atas-bawah
+    // daftar membuktikan bingkai mini-window versi baru.
+    tty = installFakeTty()
+    const p = askLine({ prompt: "> ", hints })
+    await tty.ready()
+    tty.clear()
+    await tty.send("/s")
+    expect(visible(tty)).toContain("─")
+    await tty.send(KEY.ctrlC, 20)
+    await p
+  })
+
   test("panah bawah menandai baris terpilih", async () => {
     tty = installFakeTty()
     const p = askLine({ prompt: "> ", hints })
@@ -472,9 +485,14 @@ describe("runPicker", () => {
     await tty.ready()
     tty.clear()
     await tty.send("model-31")
+    // Buffer harness kumulatif (frame perantara ikut terekam) + baris kotak
+    // di-pad spasi — baca frame TERKINI: clear lalu picu render ulang via Up.
+    tty.clear()
+    await tty.send(KEY.up, 30)
     const out = visible(tty)
     expect(out).toContain("model-31")
-    expect(out).not.toContain("model-0 ")
+    expect(out).toContain("1/40 matches")
+    expect(out).not.toContain("model-0")
     await tty.send(KEY.esc, 20)
     await tty.send(KEY.esc, 20)
     await p

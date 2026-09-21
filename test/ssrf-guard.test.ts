@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test"
 import { isPrivateHost } from "../src/lib/net.ts"
 import { webFetchTool } from "../src/tools/web_fetch.ts"
+import { webSearchTool } from "../src/tools/web_search.ts"
 
 const ctx = { signal: new AbortController().signal } as never
 
@@ -129,3 +130,36 @@ test("body hard-cap aborts oversized responses before OOM", async () => {
   expect(text).toContain("[https://big.example.com/blob")
   expect(text.length).toBeLessThan(6000)
 })
+
+test("header tak menggema userinfo/query kredensial (bug-hunt F4)", async () => {
+  globalThis.fetch = (async () =>
+    htmlResponse(200, { "content-type": "text/html" }, ["hi"])) as unknown as typeof fetch
+  const out1 = String(
+    await webFetchTool.execute({ url: "https://user:pass@public.example.com/" }, ctx),
+  )
+  expect(out1).not.toContain("user:pass")
+  expect(out1).toContain("public.example.com")
+  const out2 = String(
+    await webFetchTool.execute({ url: "https://public.example.com/?api_key=SECRET123" }, ctx),
+  )
+  expect(out2).not.toContain("SECRET123")
+  expect(out2).toContain("api_key=[REDACTED]")
+})
+
+test("DDG fallback cap streaming: stream tak-berujung tak gantung (bug-hunt)", async () => {
+  // Kode lama: await res.text() — stream ini tak pernah selesai = test
+  // timeout 5 dtk di kode lama. Kode baru: berhenti di hard-cap 2M.
+  const encoder = new TextEncoder()
+  const chunk = encoder.encode("x".repeat(65536))
+  globalThis.fetch = (async () =>
+    new Response(
+      new ReadableStream({
+        pull(controller) {
+          controller.enqueue(chunk)
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/html" } },
+    )) as unknown as typeof fetch
+  const out = String(await webSearchTool.execute({ query: "probe-cap" }, ctx))
+  expect(out.length).toBeLessThan(20000)
+}, 15000)

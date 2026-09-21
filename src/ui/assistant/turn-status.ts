@@ -117,7 +117,10 @@ export function attachTurnStatus(
     const dots = Array(1 + (tickGroup % 3))
       .fill(glyphs.dot)
       .join(" ")
-    const cols = process.stdout.columns || 80
+    // Garis dilukis ke stderr via paintWrite — ukur dari stderr (jatuh ke
+    // stdout bila tak ada). stdout|pipe + stderr TTY memakai fallback 80 yang
+    // salah: terminal 120 terpotong berlebih, terminal 40 wrap sendiri.
+    const cols = process.stderr.columns ?? process.stdout.columns ?? 80
     // Sinyal "alive" (spark pulse) kini MILIK FOOTER, bukan thinking line:
     // satu sumber agar tak ada dua denyut. Thinking = titik saja; tool line
     // tetap pakai spinner braille (itu progres, bukan spark).
@@ -217,15 +220,21 @@ export function attachTurnStatus(
     let target = ""
     if (typeof args.path === "string") target = args.path
     else if (typeof args.file === "string") target = args.file
-    else if (typeof args.cmd === "string") target = args.cmd.slice(0, 80)
-    else if (typeof args.command === "string") target = args.command.slice(0, 80)
-    // Potong panjang (bukan lebar) di sini; pemotongan LEBAR terjadi per-paint
-    // agar resize langsung berefek.
+    else if (typeof args.cmd === "string") target = args.cmd
+    else if (typeof args.command === "string") target = args.command
+    // Potong panjang di sini (batas 80/200), potong LEBAR per-paint agar resize
+    // langsung berefek. truncateToWidth: tak belah SGR/surrogate — slice mentah
+    // bisa mendarat di tengah `\x1b[31m` dan menyisakan escape gantung yang
+    // lolos paintWrite.
     // Nama + argumen datang dari model (tak terpercaya): sanitasi sebelum
     // masuk paintWrite — truncateToWidth memotong lebar, bukan sekuens kontrol.
     const cleanName = sanitizeAnsiLine(name)
-    const label2 = target ? `${cleanName} ${sanitizeAnsiLine(target)}` : cleanName
-    return label2.length > 200 ? label2.slice(0, 200) : label2
+    const cleanTarget =
+      target.length > 80
+        ? truncateToWidth(sanitizeAnsiLine(target), 80, "")
+        : sanitizeAnsiLine(target)
+    const label2 = cleanTarget ? `${cleanName} ${cleanTarget}` : cleanName
+    return label2.length > 200 ? truncateToWidth(label2, 200, "") : label2
   }
 
   const detach = [

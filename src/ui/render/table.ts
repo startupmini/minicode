@@ -43,10 +43,13 @@ export function renderTable(columns: ColumnDef[], data: Record<string, unknown>[
     return data
       .map((row) =>
         columns
-          .map(
-            (col) =>
-              `${c.bold(col.header)}: ${truncateToWidth(sanitizeCell(row[col.key]), termW, ELLIPSIS)}`,
-          )
+          .map((col) => {
+            // Nilai dipotong dari sisa budget SETELAH header: tanpa ini
+            // header+": "+value pasti > termW di terminal sempit (jalur
+            // penyelamat yang malah wrap sendiri).
+            const budget = Math.max(4, termW - displayWidth(col.header) - 2)
+            return `${c.bold(col.header)}: ${truncateToWidth(sanitizeCell(row[col.key]), budget, ELLIPSIS)}`
+          })
           .join("\n"),
       )
       .join("\n\n")

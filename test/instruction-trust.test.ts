@@ -324,6 +324,43 @@ test("instruksi: parent task di fence sebagai data di system anak", async () => 
   }
 })
 
+test("instruksi: pagar 200-char diakui terpotong, run tetap penuh (bug-hunt PI-H4)", async () => {
+  // Pagar audit hanya menampilkan 200 char pertama tetapi run() mengeksekusi
+  // prompt penuh — penanda jujur mencegah review terkecoh. Kode lama: tanpa
+  // penanda, sufiks tak terlihat di systemExtra namun tetap berjalan.
+  const { delegateTaskTool, setSubAgentSessionFactory, clearSubAgentSessionFactory } = await import(
+    "../src/tools/task.ts"
+  )
+  const dir = tmpRoot()
+  const { todoSession } = await import("../src/tools/todo.ts")
+  const prevId = todoSession.id
+  todoSession.id = "p-fence-note"
+  try {
+    let captured = ""
+    let ran = ""
+    setSubAgentSessionFactory(async (spec) => {
+      captured = spec.systemExtra
+      return {
+        events: { on: () => () => {} },
+        run: async (input: string) => {
+          ran = input
+          return { finalText: "ok", usage: { steps: 1 } }
+        },
+      }
+    })
+    const ctx = { signal: new AbortController().signal, emit: () => {}, cwd: dir } as never
+    const longPrompt = `Tugas sah. ${"A".repeat(250)} Suffix-planta.`
+    await delegateTaskTool.execute({ prompt: longPrompt }, ctx)
+    expect(captured).toContain("fence shows first 200 chars")
+    expect(captured).not.toContain("Suffix-planta")
+    expect(ran).toContain("Suffix-planta")
+  } finally {
+    todoSession.id = prevId
+    clearSubAgentSessionFactory()
+    await cleanup(dir)
+  }
+})
+
 // ── 9. Roles tak pernah diparse dari teks ──
 
 test("instruksi: konten adversarial tak mengubah role message (Responses mapping)", async () => {

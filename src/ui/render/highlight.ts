@@ -1,3 +1,4 @@
+import { t } from "../i18n/locale.ts"
 import { c } from "./theme.ts"
 
 const TS_KEYWORDS = new Set([
@@ -254,8 +255,10 @@ function highlightShellLine(line: string): string {
 }
 
 function highlightShellTokens(text: string): string {
+  // Alternatif flag (`-x`/`--long`) WAJIB sebelum kata: tanpa itu `-` tak pernah
+  // jadi awal token (cabang yellow di bawah mati — dulu flag tampil polos).
   return text.replace(
-    /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\$[A-Za-z0-9_]+|\b[A-Za-z_][A-Za-z0-9_-]*\b|\s+)/g,
+    /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\$[A-Za-z0-9_]+|-{1,2}[A-Za-z0-9][A-Za-z0-9_-]*|\b[A-Za-z_][A-Za-z0-9_-]*\b|\s+)/g,
     (token) => {
       if (token.startsWith('"') || token.startsWith("'")) return c.green(token)
       if (token.startsWith("$")) return c.brightCyan(token)
@@ -278,7 +281,7 @@ export function formatCodeBlock(code: string, lang: string = "", maxLines?: numb
   const lines = highlighted.split("\n")
   const displayLines =
     maxLines && lines.length > maxLines
-      ? [...lines.slice(0, maxLines), c.dim(`    ... (${lines.length - maxLines} more lines)`)]
+      ? [...lines.slice(0, maxLines), c.dim(t("hl.moreLines", { n: lines.length - maxLines }))]
       : lines
 
   const header = lang ? ` ${lang.toLowerCase()} ` : " code "

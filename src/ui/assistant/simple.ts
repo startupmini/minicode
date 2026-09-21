@@ -4,6 +4,7 @@
 // MINICODE_COMPACT=1 atau setCompactMode (/compact).
 import { Buffer } from "node:buffer"
 import type { UiBus, UiStep } from "../contract.ts"
+import { t } from "../i18n/locale.ts"
 import {
   bufferSection,
   collapse,
@@ -31,6 +32,13 @@ import { runWithoutStatus } from "../runtime/statusline.ts"
 
 export interface SimpleOptions {
   verbose?: boolean
+  /**
+   * Mode senyap untuk TUI fullscreen: semua tulis ke stdout/stderr DITEKAN,
+   * tapi state tetap jalan (rememberTurn untuk /copy, bufferSection untuk
+   * /expand, pendingError untuk driver). Tanpa ini printer linier mengotori
+   * alt-screen di sela repaint App — kontrak I3 (App penulis tunggal layar).
+   */
+  quiet?: boolean
 }
 
 // Buffer output turn terakhir untuk /copy: teks model (sudah sanitize, sama
@@ -67,9 +75,9 @@ export function writeClipboardOsc52(text: string): boolean {
   return true
 }
 
-const wOut = (s: string) =>
+const wOutDirect = (s: string) =>
   runWithoutStatus(() => process.stdout.write(process.stdout.isTTY ? s : stripSgr(s)))
-const wErr = (s: string) =>
+const wErrDirect = (s: string) =>
   runWithoutStatus(() => process.stderr.write(process.stdout.isTTY ? s : stripSgr(s)))
 
 // Error provider terakhir turn ini — diingat, BUKAN dicetak langsung.
@@ -111,6 +119,11 @@ function patchBlocks(patches: unknown): [string, string] {
 }
 
 export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => void {
+  // Shadow module-level wOut/wErr: saat quiet, paint ditekan tapi SEMUA state
+  // (rememberTurn, bufferSection, pendingError, sanitizer) tetap jalan.
+  // Shadowing disengaja agar ~20 call-site tak perlu diubah satu per satu.
+  const wOut = opts.quiet ? (_: string) => {} : wOutDirect
+  const wErr = opts.quiet ? (_: string) => {} : wErrDirect
   let streamBuffer = ""
   // Sanitizer sadar-stream per aliran teks (temuan F1): ekor escape yang
   // terpotong di batas chunk ditahan dan disambung ke chunk berikut SEBELUM
@@ -159,7 +172,12 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       return
     }
     if (answerBuf.length < ANSWER_BUF_MAX) {
-      answerBuf += s.slice(0, ANSWER_BUF_MAX - answerBuf.length)
+      // Jangan belah surrogate pair di batas cap: slice mentah bisa
+      // menyisakan lead-surrogate yatim yang tampil sebagai U+FFFD di /expand.
+      let chunk = s.slice(0, ANSWER_BUF_MAX - answerBuf.length)
+      const last = chunk.charCodeAt(chunk.length - 1)
+      if (chunk.length > 0 && last >= 0xd800 && last <= 0xdbff) chunk = chunk.slice(0, -1)
+      answerBuf += chunk
       if (answerBuf.length >= ANSWER_BUF_MAX) answerTruncated = true
     } else {
       answerTruncated = true
@@ -217,11 +235,13 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   // menghilangkan konten diam-diam (perilaku lama menampilkannya live).
   const finalizeAnswer = () => {
     if (answerBuf.length === 0) return
-    const n = stripAnsi(answerBuf).length
-    const cap = answerTruncated ? ", capped 1MB" : ""
+    // Hitung per code point (bukan UTF-16 unit): emoji surrogate dihitung 1,
+    // konsisten dengan label "chars" dan tak menggandakan di /expand.
+    const n = Array.from(stripAnsi(answerBuf)).length
+    const cap = answerTruncated ? t("one.answerCap") : ""
     // Petunjuk /expand WAJIB di baris ini: tanpa itu jawaban yang dikecilkan
     // terlihat "bisu" (tak ada cara membuka yang bisa ditemukan user).
-    wErr(c.info(`  + answer (${n} chars${cap}) — /expand to read\n`))
+    wErr(c.info(t("one.answerMin", { n, cap })))
     bufferSection("answer", answerBuf, "stdout")
     answerBuf = ""
     answerTruncated = false
@@ -278,7 +298,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       collapse.setActiveSection(null)
       lastTurnText = ""
       pendingError = null
-      if (opts.verbose) wErr(c.muted(`\n── Turn ${e.turn} ──\n`))
+      if (opts.verbose) wErr(c.muted(t("one.turnHead", { n: e.turn })))
     }),
   )
   offs.push(
@@ -295,7 +315,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       bashSan.flush()
       flushThinking()
       finalizeAnswer()
-      if (opts.verbose) wErr(c.muted(`\n  done\n`))
+      if (opts.verbose) wErr(c.muted(t("one.done")))
     }),
   )
   offs.push(
@@ -308,7 +328,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       flushThinking()
       collapse.setActiveSection("answer")
       if (!answerHidden() && answerBuf.length > 0) {
-        wErr(c.muted("  − answer\n"))
+        wErr(c.muted(t("one.answerOpen")))
         wOut(answerBuf)
         answerBuf = ""
         answerTruncated = false
@@ -334,7 +354,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         if (expanded) {
           if (thinkState !== "exp") {
             thinkState = "exp"
-            wErr(c.muted(`  − thinking\n`))
+            wErr(c.muted(t("one.thinkOpen")))
             if (thinkingBuf) {
               wErr(c.muted(thinkingBuf))
               thinkingBuf = ""
@@ -357,7 +377,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
             // Sisa baris expanded yang belum selesai dicetak dulu (terlihat),
             // baru header minimize — konten tak hilang, tak menempel.
             flushReasoningTail()
-            wErr(c.info(`  + thinking\n`))
+            wErr(c.info(t("one.thinkMin")))
           }
           if (text) {
             // Sama: buffer thinking ikut tercemar bila mentah (flush expanded
@@ -367,12 +387,15 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
             if (thinkingBuf.length > THINKING_BUF_MAX) {
               // Total ber-marker dibatasi THINKING_BUF_MAX (= cap per-entry
               // bufferSection) agar tak ada pemotongan diam-diam kedua di hilir.
+              // Tail-slice jangan mulai di tengah surrogate pair: trail
+              // yatim di awal tampil sebagai U+FFFD saat /expand.
               const body = thinkingBuf.startsWith(THINKING_TRUNCATED_MARKER)
                 ? thinkingBuf.slice(THINKING_TRUNCATED_MARKER.length)
                 : thinkingBuf
-              thinkingBuf =
-                THINKING_TRUNCATED_MARKER +
-                body.slice(-(THINKING_BUF_MAX - THINKING_TRUNCATED_MARKER.length))
+              let tail = body.slice(-(THINKING_BUF_MAX - THINKING_TRUNCATED_MARKER.length))
+              const first = tail.charCodeAt(0)
+              if (tail.length > 0 && first >= 0xdc00 && first <= 0xdfff) tail = tail.slice(1)
+              thinkingBuf = THINKING_TRUNCATED_MARKER + tail
             }
           }
         }
@@ -392,7 +415,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         const d = e.data as { message?: string; category?: string }
         pendingError = formatProviderError(d)
       } else if (e.kind === "content_filter") {
-        wErr(c.warning(`\n! Content filter blocked\n`))
+        wErr(c.warning(t("one.contentBlocked")))
       }
     }),
   )
@@ -406,7 +429,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
             `${c.info(sanitizeAnsiLine(tc.name))}(${c.muted(sanitizeAnsiLine(formatArgsPreview(tc.args)))})`,
         )
         .join(", ")
-      wErr(c.muted(`  Step ${e.step.index}: ${calls}\n`))
+      wErr(c.muted(t("one.step", { i: e.step.index, calls })))
     }),
   )
   offs.push(
@@ -443,11 +466,12 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       if (!r.isError && typeof r.content === "string")
         rememberTurn(truncateToWidth(sanitizeAnsi(r.content), 20000, ""))
       if (r.isError) {
-        // Error tool SELALU tampil penuh — tidak pernah dikecilkan.
+        // Error tool ditampilkan ringkas per baris (cap 200 kolom + marker) —
+        // tanpa marker user tak bisa bedakan "pesan 200 kolom" vs "terpotong".
         collapse.setActiveSection(null)
         wErr(
           c.error(
-            `  ${glyphs.arrow} ${sanitizeAnsiLine(name)}: ${truncateToWidth(sanitizeAnsi(String(r.content)), 200, "")}\n`,
+            `  ${glyphs.arrow} ${sanitizeAnsiLine(name)}: ${truncateToWidth(sanitizeAnsi(String(r.content)), 200, "…")}\n`,
           ),
         )
         return
@@ -495,8 +519,11 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       }
       // todo_write: tampilkan daftarnya utuh — ini rencana kerja, bukan noise.
       if (name === "todo_write" || name === "todo_read") {
+        // Nama tool dari event model (tak terpercaya): sanitasi seperti cabang
+        // lain agar ESC[2J/OSC tak lolos via label.
+        const cleanName = sanitizeAnsiLine(name)
         wErr(
-          c.success(`  ${glyphs.arrow} ${name}\n`) +
+          c.success(`  ${glyphs.arrow} ${cleanName}\n`) +
             c.muted(`${sanitizeAnsi(String(r.content))}\n`),
         )
         return
@@ -511,7 +538,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         if (detail.compact) {
           const preview =
             lines.length > 3
-              ? lines.slice(0, 3).join("\n    ") + c.muted(`\n    ... (${lines.length - 3} more)`)
+              ? lines.slice(0, 3).join("\n    ") + c.muted(t("one.more3", { n: lines.length - 3 }))
               : lines.join("\n    ")
           wErr(c.success(`  ${glyphs.arrow} $ ${cmdLabel}\n`) + c.muted(`    ${preview}\n`))
           return
@@ -519,7 +546,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         const maxLines = TOOL_OUT_MAX_LINES()
         const shown = lines.slice(0, maxLines).map((l) => `    ${sanitizeAnsi(l)}`)
         const more =
-          lines.length > maxLines ? c.muted(`\n    … (${lines.length - maxLines} more lines)`) : ""
+          lines.length > maxLines ? c.muted(t("one.moreLines", { n: lines.length - maxLines })) : ""
         wErr(
           c.success(`  ${glyphs.arrow} $ ${cmdLabel}\n`) +
             (shown.length ? `${c.muted(shown.join("\n")) + more}\n` : ""),
@@ -571,7 +598,13 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       wErr(c.success(`  ${glyphs.arrow} ${cleanName}${label ? ` ${label}` : ""}\n`))
     }),
   )
-  offs.push(bus.on("context:compacted", (e) => wErr(c.warning(`  ── compacted: ${e.reason}\n`))))
+  offs.push(
+    bus.on("context:compacted", (e) =>
+      wErr(
+        c.warning(`${t("ts.compacted", { reason: sanitizeAnsiLine(String(e.reason ?? "")) })}\n`),
+      ),
+    ),
+  )
 
   return () => {
     // Sisa parsal di-flush dulu (jangan hilang diam-diam), baru lepas.

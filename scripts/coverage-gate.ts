@@ -48,7 +48,10 @@ function getArg(name: string, fallback: number): number {
 // lines (turun 0,12 karena branch MINICODE_FOOTER/off/print + pulse timer
 // belum 100% tercakup). Turunkan sementara ke 84, naikkan lagi setelah test
 // pulse/esc/context lebih komplit. Funcs tetap 80.
-const MIN_LINES = getArg("--lines", 84)
+// TUI single-tampilan (hapus repl/chrome/overlay/info-window + form popup +
+// thinking + approval tercatat + live repaint): 83,10/84,53 dua run identik.
+// Kunci lines di 84,5; funcs tetap 80.
+const MIN_LINES = getArg("--lines", 84.5)
 const MIN_FUNCS = getArg("--funcs", 80)
 
 const res = spawnSync(

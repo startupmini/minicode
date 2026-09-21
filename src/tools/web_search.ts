@@ -1,6 +1,7 @@
 import type { Tool } from "#minicore"
 import { isPrivateHost } from "../lib/net.ts"
 import { scrubSecrets } from "../policy/scrub.ts"
+import { readBodyCapped } from "./web_fetch.ts"
 
 // Penanda truncation (temuan audit #02): snippet/total yang dipotong
 // diam-diam tampak lengkap. Snippet 400 char, total per-provider di-cap.
@@ -122,7 +123,9 @@ export const webSearchTool: Tool = {
           signal: controller.signal,
           headers: { "user-agent": "minicode-websearch/1.0" },
         })
-        const html = await res.text()
+        // Cap streaming seperti web_fetch (bug-hunt 2026-09-19: res.text()
+        // tanpa batas = transient ~2x body di heap untuk halaman raksasa).
+        const html = await readBodyCapped(res, controller)
         const scrubbed = scrubSecrets(html)
         // DDG markup berubah-ubah; coba dua pola kelas umum.
         const resRe = /<a[^>]+class="result__url"[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/g

@@ -57,7 +57,7 @@ Options:
   --max-steps <n>     max tool steps (default 50)
   --context-window <n> context window tokens
   --timeout <ms>      hard deadline per run (default 900000, 0 = off)
-  --interactive       REPL loop
+  --interactive       interactive TUI (default bila tanpa prompt di TTY)
   --verify            auto-verify + self-heal (typecheck/test/tsconfig)
   --sandbox <mode>    bash sandbox: docker (ephemeral, no network)
   --ratelimit <rpm>   LLM requests per minute
@@ -65,8 +65,8 @@ Options:
   --budget-strict     unknown cost + spend counts as over budget (fail-closed default)
   --tool-scope <s>    full (default) | explore (read-only subset)
 
-REPL: /help /provider /model /sync /status /sessions /init /exit /mode /undo /redo /clear /copy /history /compact /thinking /expand /minimize
-Keys: Enter submit · Tab complete (empty: cycle mode) · Up/Down history · Shift+Tab mode · Ctrl+R search · Ctrl+C stop (2x exit) · + / - expand (busy)
+TUI: /help /provider /model /sync /status /sessions /init /exit /mode /undo /redo /clear /copy /history /compact /thinking /minimize
+Keys: Enter submit · Tab/Shift+Tab mode · Up/Down history · PgUp/PgDn scroll · Ctrl+R search · Esc/Ctrl+C abort turn · Ctrl+D exit
 `
 
 const args = process.argv.slice(2)
@@ -161,7 +161,7 @@ if (args.includes("-h") || args.includes("--help")) {
           { flag: "--ask", desc: "ask per tool" },
           { flag: "--plan", desc: "read-only plan mode" },
           { flag: "--allowlist", desc: "bash allowlist only" },
-          { flag: "--interactive", desc: "REPL loop" },
+          { flag: "--interactive", desc: "interactive TUI" },
           { flag: "--verify", desc: "auto-verify + self-heal" },
           { flag: "--sandbox <docker|os>", desc: "bash sandbox" },
           { flag: "--ratelimit <rpm>", desc: "LLM requests/min" },
@@ -396,8 +396,10 @@ try {
 }
 
 if (enterRepl) {
-  const { runRepl } = await import("./repl.ts")
-  await runRepl(ctx)
+  // Satu-satunya tampilan interaktif = TUI fullscreen (REPL linier dihapus).
+  // One-shot/exec tak tersentuh (cabang else di bawah).
+  const { runTui } = await import("./tui.ts")
+  await runTui(ctx)
 } else {
   const {
     session,

@@ -1,4 +1,4 @@
-import { displayWidth } from "./width.ts"
+import { displayWidth, truncateToWidth } from "./width.ts"
 
 // Semantic color system - Ubuntu Server style.
 // Warna by function, bukan appearance. Satu palet (dark); NO_COLOR > truecolor
@@ -15,7 +15,7 @@ const isWindows = process.platform === "win32"
  * Sebelumnya dibekukan saat import, jadi `glyphs` selalu memakai nilai yang
  * ditentukan oleh env pada saat modul pertama dimuat.
  */
-function supportsUtf8(): boolean {
+export function supportsUtf8(): boolean {
   if (process.env.MINICODE_ASCII === "1") return false
   if (!isWindows) return true
   return (
@@ -312,7 +312,12 @@ export const glyphs = {
 // ── Section separator ──
 export function section(title: string): string {
   const width = getTerminalWidth()
-  const label = ` ${title} `
+  // Label lebih panjang dari terminal (judul CJK/emoji panjang): potong dulu
+  // per kolom — tanpa ini dashes jatuh ke 4 dan total label+4 tetap meluap.
+  const label =
+    displayWidth(` ${title} `) > Math.max(4, width - 4)
+      ? truncateToWidth(` ${title} `, Math.max(4, width - 4), "…")
+      : ` ${title} `
   // Lebar pemisah dihitung per KOLOM terminal: CJK/emoji bisa 2 kolom.
   // Clamp agar garis tak memicu wrap sendiri di terminal sempit.
   const dashes = Math.min(Math.max(4, width - displayWidth(label)), Math.max(4, width - 4))

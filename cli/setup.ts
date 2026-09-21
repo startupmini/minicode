@@ -696,7 +696,16 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   const richStatus = process.env.MINICODE_STATUSLINE === "rich"
   const attachUI = () => {
     detachUI()
-    detachSimple = attachSimpleLogger(session.events, { verbose })
+    // Mode interaktif = TUI fullscreen memiliki layar (kontrak I3: App
+    // penulis tunggal). Printer linier + spinner turn-status DITEKAN agar tak
+    // mengotori alt-screen — state tetap jalan (quiet: rememberTurn untuk
+    // /copy, bufferSection untuk /expand). One-shot/exec (enterRepl false)
+    // tetap melukis seperti dulu.
+    detachSimple = attachSimpleLogger(session.events, { verbose, quiet: enterRepl === true })
+    if (enterRepl === true) {
+      turnStatus = null
+      return
+    }
     turnStatus = attachTurnStatus(session.events, {
       initialModel: effectiveInitialModel,
       getModel: () => modelRef.current ?? effectiveInitialModel,

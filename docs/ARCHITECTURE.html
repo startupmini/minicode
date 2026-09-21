@@ -464,7 +464,7 @@ footer.site .spacer { flex: 1; }
     <span class="mi">search</span><span>Cari modul, simbol, env…</span><kbd>Ctrl K</kbd>
   </div>
   <div class="top-actions">
-    <span class="vpill hide-m">v0.9.28 · Bun-only · 0 deps</span>
+    <span class="vpill hide-m">v0.9.29 · Bun-only · 0 deps</span>
     <button class="iconbtn" id="themeBtn" aria-label="Ganti tema terang/gelap" title="Ganti tema"><span class="mi">dark_mode</span></button>
   </div>
 </header>
@@ -647,14 +647,14 @@ footer.site .spacer { flex: 1; }
   <div class="empty-note" id="emptyNote">Tidak ada modul yang cocok. Kosongkan saringan untuk melihat semua.</div>
 
   <details class="group" id="g-cli" open>
-    <summary><span class="chip c1">L1</span> cli/ <span class="role">— entry point, subcommand, penggerak REPL, controller layar</span> <span class="cnt">8 modul</span></summary>
+    <summary><span class="chip c1">L1</span> cli/ <span class="role">— entry point, subcommand, penggerak TUI, controller layar</span> <span class="cnt">8 modul</span></summary>
     <div class="mods">
       <div class="mod"><div class="fname">index.ts</div><div class="fdesc">Entry utama (bin package.json): parsing argv, HELP/versi, rute subcommand vs REPL; wiring DI factory sub-agen (setSubAgentSessionFactory) sebelum dispatch.</div><div class="exports">titik masuk — dieksekusi, tidak diimpor</div></div>
       <div class="mod"><div class="fname">args.ts</div><div class="fdesc">Parsing argumen murni: whitelist flag, bentuk <code>--f v</code> &amp; <code>--f=v</code>, baca stdin.</div><div class="exports">getArg · promptFromArgs · readPrompt</div></div>
       <div class="mod"><div class="fname">setup.ts</div><div class="fdesc">Composition root: rakit config + kernel session + tools + permission; inject wizard (setupWhenEmpty) dan approval (ask) ke lapisan logika; pemutus budget mid-turn (watchBudgetLimit menggugurkan turn via abort begitu pagu lewat).</div><div class="exports">createCliSession · CliSession</div></div>
       <div class="mod"><div class="fname">router.ts</div><div class="fdesc">Dispatch prompt ke provider dengan retry/backoff sisi CLI.</div><div class="exports">dispatch</div></div>
-      <div class="mod"><div class="fname">commands.ts</div><div class="fdesc">Registry slash builtin + eksekusinya. DRIVER_HELP_COMMANDS = perintah driver yang tampil di /help tapi TIDAK di dropdown (mode/undo/redo/clear/copy/history). /thinking = toggle tampilan reasoning (expand/minimize); effort via picker Enter di /model.</div><div class="exports">handleBuiltinCommand · BUILTIN_COMMANDS · DRIVER_HELP_COMMANDS · /help /provider /model /sync /status /sessions /init /exit /compact</div></div>
-      <div class="mod"><div class="fname">repl.ts</div><div class="fdesc">Driver REPL linier: loop askLine + dispatch slash/skill/prompt langsung ke scrollback; raw mode saat busy untuk tombol + / - / Ctrl+T (section collapse live), interupsi Ctrl+C saat busy (SIGINT + byte \x03; pipe/CI tanpa tombol live), budget di driver; /expand membuka buffer section, /minimize mengecilkan; Tab kosong toggle plan/build; did-you-mean untuk typo slash.</div><div class="exports">runRepl · suggestSimilar · applyBusyKey</div></div>
+      <div class="mod"><div class="fname">commands.ts</div><div class="fdesc">Registry slash builtin + eksekusinya. DRIVER_HELP_COMMANDS = perintah driver yang tampil di /help tapi TIDAK di dropdown (mode/undo/redo/clear/copy/history). /thinking = toggle tampilan reasoning (expand/minimize); effort via picker Enter di /model. /status = jendela info (pin `p` = cetak); /sessions tanpa arg = picker overlay (pilih = resume), kosong/non-TTY = satu baris cetak.</div><div class="exports">handleBuiltinCommand · BUILTIN_COMMANDS · DRIVER_HELP_COMMANDS · /help /provider /model /sync /status /sessions /init /exit /compact</div></div>
+      <div class="mod"><div class="fname">tui.ts</div><div class="fdesc">Driver TUNGGAL (satu-satunya tampilan interaktif): susun TuiHost dari CliSession lalu jalankan App fullscreen + daftarkan approval sink. Semua output ke Transcript (capture console.log selama handleBuiltinCommand). /status &amp; /history &amp; /help ringkas = readout transkrip; /model &amp; /provider &amp; /sessions = popup komposit via app.suspend()/resume(); /expand membuka buffer; histori prompt memori-sesi. REPL linier dihapus.</div><div class="exports">runTui</div></div>
       <div class="mod"><div class="fname">commands/ — 11 berkas, satu per subcommand</div><div class="fdesc">auth.ts · config.ts · exec.ts · mcp.ts · pricing.ts · providers.ts · sessions.ts · skills.ts · stats.ts · memory.ts (status RAG: rows/size/hit-rate) · doctor.ts (diagnosis lokal)</div><div class="exports">handleAuth · handleConfig · handleExec · handleMcp · handlePricing · handleProviders · handleSessions · handleSkills · handleStats · handleMemory · handleDoctor</div></div>
       <div class="mod"><div class="fname">wizard.ts · model-manager.ts · provider-manager.ts · auto-update.ts</div><div class="fdesc">Controller tipis: pegang CRUD config, panggil view murni di src/ui/screens/. /model Enter = pilih + picker thinking effort (Esc = batal total) via onSelect + onSetEffort; mutasi ditulis ke file scope asal provider; badge effort non-default di baris. auto-update.ts = cek/update mandiri (maybeAutoUpdate).</div></div>
     </div>
@@ -672,7 +672,7 @@ footer.site .spacer { flex: 1; }
   </details>
 
   <details class="group" id="g-policy" open>
-    <summary><span class="chip c2">L2</span> src/policy/ <span class="role">— semua kebijakan izin &amp; keamanan agen</span> <span class="cnt">10 modul</span></summary>
+    <summary><span class="chip c2">L2</span> src/policy/ <span class="role">— semua kebijakan izin &amp; keamanan agen</span> <span class="cnt">11 modul</span></summary>
     <div class="mods">
       <div class="mod"><div class="fname">permission.ts</div><div class="fdesc">Handler 6 mode: auto/ask/readonly/plan/allowlist/allow-all; kunci per tool. Allowlist lokal hanya dibaca bila opt-in <code>--allow-local-config</code>; grant "always" sesi ini disimpan in-memory.</div><div class="exports">createPermissionHandler · PermissionMode · PermissionAsk</div></div>
       <div class="mod"><div class="fname">allowlist.ts</div><div class="fdesc">Allowlist tool (global + proyek, merge dedup); pola wildcard <code>tool:args</code> — dipakai mode allowlist &amp; jawaban “always” di mode ask.</div><div class="exports">loadAllowlist · saveAllowlist · matchAllowlist · Allowlist</div></div>
@@ -683,6 +683,7 @@ footer.site .spacer { flex: 1; }
       <div class="mod"><div class="fname">pricing.ts · usage.ts</div><div class="fdesc">Tabel harga model; kolektor token &amp; biaya.</div></div>
       <div class="mod"><div class="fname">ratelimit.ts · sandbox-policy.ts</div><div class="fdesc">Batas laju permintaan; kebijakan fallback sandbox.</div></div>
       <div class="mod"><div class="fname">scrub.ts · verifier.ts</div><div class="fdesc">Pembersihan data sensitif; verifikasi hasil (mode --verify).</div></div>
+      <div class="mod"><div class="fname">update-check.ts</div><div class="fdesc">Update notifier: cek versi npm (cache 24 jam, fire-and-forget 2 dtk); diam saat offline; hormat NO_UPDATE_CHECK=1/CI=1.</div><div class="exports">isNewer · shouldAutoUpdate · installUpdate · formatUpdateMessage</div></div>
       <div class="mod"><div class="fname">executor.ts — urutan gerbang</div><div class="fdesc">Urutan tetap: jail → permission → bash-guard → validateArgs → execute → truncation. Jangan sisipkan gerbang baru tanpa test di test/.</div></div>
     </div>
   </details>
@@ -707,7 +708,7 @@ footer.site .spacer { flex: 1; }
   </details>
 
   <details class="group" id="g-providers">
-    <summary><span class="chip c2">L2</span> src/providers/ <span class="role">— koneksi model</span> <span class="cnt">6 modul</span></summary>
+    <summary><span class="chip c2">L2</span> src/providers/ <span class="role">— koneksi model</span> <span class="cnt">8 modul</span></summary>
     <div class="mods">
       <div class="mod"><div class="fname">router.ts</div><div class="fdesc">Pilih provider untuk satu request (byId per-stream + updateProviders agar provider baru langsung dikenali; fallback berantai; 429 + retry-after ditunggu — cap 30 dtk — lalu fallback, atau coba-ulang-di-tempat bila provider tunggal). Menyelipkan system prompt sebagai pesan user pertama untuk adapter tanpa dukungan system native (openai-compat; Anthropic/Responses diurus di adapter).</div><div class="exports">createRouterProvider · updateProviders</div></div>
       <div class="mod"><div class="fname">anthropic.ts</div><div class="fdesc">Adapter Anthropic native (stream SSE).</div></div>
@@ -715,16 +716,19 @@ footer.site .spacer { flex: 1; }
       <div class="mod"><div class="fname">build.ts · detect.ts · presets.ts</div><div class="fdesc">Bangun adapter (termasuk Responses API + peta reasoningEffort); deteksi tipe dari probe (path /responses → responses), bukan substring URL; preset provider populer.</div></div>
       <div class="mod"><div class="fname">provision.ts</div><div class="fdesc">Provisioning provider: deteksi model + simpan/hapus/sinkron entri config. Dipisah dari config.ts agar config murni IO — arah satu arah: providers → config.</div><div class="exports">saveProvider · detectAndSave · deriveProviderId · removeProvider · refreshProviderModels</div></div>
       <div class="mod"><div class="fname">oauth.ts · auth-store.ts</div><div class="fdesc">Alur OAuth dan penyimpanan kredensial.</div></div>
+      <div class="mod"><div class="fname">effort.ts</div><div class="fdesc">Thinking per keluarga model (fail-soft universal): reasoning_effort/budget/adaptive hanya untuk keluarga reasoning terbukti; default = omit (tune vendor).</div><div class="exports">thinkingFamily · allowedEfforts · effortOptionsForModel · withEffortFallback</div></div>
+      <div class="mod"><div class="fname">guards.ts</div><div class="fdesc">Penjaga stream semua adapter: fetch timeout (server hung = ProviderError server) + text-cap anti-OOM; preservasi kind/chain.</div><div class="exports">withStreamGuards</div></div>
     </div>
   </details>
 
   <details class="group" id="g-session">
-    <summary><span class="chip c2">L2</span> src/session/ <span class="role">— persistensi, checkpoint &amp; jurnal recovery</span> <span class="cnt">4 modul</span></summary>
+    <summary><span class="chip c2">L2</span> src/session/ <span class="role">— persistensi, checkpoint &amp; jurnal recovery</span> <span class="cnt">5 modul</span></summary>
     <div class="mods">
       <div class="mod"><div class="fname">persistence.ts</div><div class="fdesc">sqlite WAL: simpan pesan inkremental, daftar sesi, purge TTL, fork sesi (branch).</div><div class="exports">saveSession · loadSession · listSessions · deleteSession · branchSession · purgeExpired · getSessionTtlDays</div></div>
       <div class="mod"><div class="fname">shadow-git.ts</div><div class="fdesc">SHA tree git per turn di refs/minicode/* — tanpa menyentuh HEAD/index user.</div><div class="exports">ShadowSnapshot · ShadowChange · RestoreResult</div></div>
       <div class="mod"><div class="fname">checkpoint.ts</div><div class="fdesc">Manifes checkpoint di .minicode/checkpoints/ (maks 20) + undo per turn + validasi resume (divergensi workspace vs checkpoint terakhir, .minicode/ dikecualikan). Protokol undo/redo uniform: apply → marker jurnal (newIndex) → save pointer; crash di antaranya dipulihkan <code>reconcileUndoRedoPointer</code> dari marker (metadata-only, tanpa re-eksekusi).</div><div class="exports">Checkpoint · CheckpointManifest · FileSnapshot · validateResumeWorkspace · reconcileUndoRedoPointer</div></div>
       <div class="mod"><div class="fname">journal.ts</div><div class="fdesc">Mutation intent journal: status komitmen per mutasi (pending/committed/failed/finalized) via event execution:started/completed — menjawab "sudah/belum/ambigu" saat resume. File dibuat eager saat attach (empty ≠ absent); turn namespace per-sesi (anak tak cross-match parent); delegasi ter-cover transitif. Terminal bukti dedup (<code>dedup: true</code>, mis. MCP request id+hash) selamat dari sweep agar retry id-sama pasca-restart tetap terdeteksi. BUKAN transaksi: pending = ambigu (verify dulu), committed ≠ turn durable, MCP = external-acknowledged.</div><div class="exports">appendMutationIntent · appendMutationTerminal · decideRecovery · attachMutationJournal · planRecoveryForSession · classifyTool · findOrphanJournals</div></div>
+      <div class="mod"><div class="fname">turn-marker.ts</div><div class="fdesc">Penanda turn-aktif (pid + sessionId) untuk deteksi mati-tak-wajar (kill -9/segfault): sisa saat startup = proses lama mati di tengah turn; hanya marker yatim (pid mati, sessionId cocok) yang dilaporkan + dibersihkan.</div><div class="exports">markTurnActive · clearTurnActive · checkStaleTurn · clearStaleTurn</div></div>
     </div>
   </details>
 
@@ -742,14 +746,19 @@ footer.site .spacer { flex: 1; }
       <div class="mod"><div class="fname">runtime/statusline.ts</div><div class="fdesc">ARBITRASE SATU-SATUNYA untuk semua transient stderr: <code>acquireTransientPaint(kind)</code> (turn-painter vs wizard-spinner, overlap = signal <code>[transient-paint]</code>) + <code>paintWrite</code>; tulis asing non-UI saat painter aktif dikomit sebagai baris permanen; koordinasi suspend/resume baris status vs printer linier.</div><div class="exports">acquireTransientPaint · paintWrite · isTransientPainting · registerStatusLine · runWithoutStatus</div></div>
       <div class="mod"><div class="fname">runtime/bus-debug.ts</div><div class="fdesc">Dump diagnosis event bus (MINICODE_DEBUG_BUS=1): sekali per sesi agar event yatim pun terlihat; tanpa env = tanpa subscribe (zero-cost).</div><div class="exports">attachBusDebug</div></div>
       <div class="mod"><div class="fname">runtime/spinner.ts</div><div class="fdesc">Spinner wizard (glyphs.spinnerFrames); TTY-only — tanpa byte kontrol pada non-TTY; ikut arbitrase transient statusline.</div><div class="exports">createSpinner</div></div>
-      <div class="mod"><div class="fname">footer.ts</div><div class="fdesc">Render footer status REPL (murni, tanpa IO): 1 baris status <code>✦ mode • model • cwd … 14.2k</code> (+ 1 baris kosong reserve saat lengket; tanpa garis separator). Mode pad-9 anti-geser (per kolom via padToWidth), satu-satunya berwarna; spark pulse saat busy / redup saat idle; konteks rata kanan; <code>sanitizeAnsi</code> + potong per kolom. Non-TTY diputuskan mekanisme, bukan di sini.</div><div class="exports">renderFooter · shortModel · paintFooterMode · FooterStatus</div></div>
-      <div class="mod"><div class="fname">runtime/chrome.ts</div><div class="fdesc">Footer status LENGKET (satu-satunya chrome permanen): DECSTBM scroll-region 2 baris dasar (blank + status), output turn hanya di area atas — footer tak ikut scroll. Gaya <code>MINICODE_FOOTER=off|print|sticky|auto</code> (auto = lengket bila terminal mampu, cetak bila tidak; pipa non-TTY nol byte). <code>setBusy()</code> menggerakkan pulse spark redup→pulse; <code>Esc</code> lone-50ms saat turn = abort tanpa teks. Reset region dijamin di semua jalur keluar; fail-closed, tak pernah melempar (pola statusline).</div><div class="exports">createFooterChrome · footerReserveRows · FooterChrome · FooterMode</div></div>
+      <div class="mod"><div class="fname">footer.ts</div><div class="fdesc">Render status bar TUI (murni, tanpa IO): 1 baris status <code>✦ mode • model • cwd … 14.2k</code> (tanpa garis separator). Mode pad-9 anti-geser (per kolom via padToWidth), satu-satunya berwarna; spark pulse saat busy / redup saat idle; konteks rata kanan; <code>sanitizeAnsi</code> + potong per kolom.</div><div class="exports">renderFooter · shortModel · paintFooterMode · FooterStatus</div></div>
+      <div class="mod"><div class="fname">runtime/screen.ts</div><div class="fdesc">Pemilik alternate-screen (<code>?1049h/l</code>): enter/exit selalu berpasangan (refcount modal nested, idempoten), region di-reset unconditional, exit-handler sinkron sebagai jaring terakhir; <code>paintRegion</code> melukis popup TANPA clear di atas konten pemilik layar; null-screen fail-closed di non-TTY/<code>TERM=dumb</code>.</div><div class="exports">openAltScreen · AltScreen · altScreenDepth</div></div>
       <div class="mod"><div class="fname">input/prompt-engine.ts · input.ts</div><div class="fdesc">Engine input murni &amp; teruji: grapheme (Intl.Segmenter), state, dekode CSI/UTF-8 streaming, render spec; history (JSON per baris), askLine (+ onKey, multiline Ctrl+J, reverse-i-search Ctrl+R), askSecret; deletePrevUnit Thai/Lao-aware.</div><div class="exports">createState · applyKey · buildRenderSpec · decodeKeys · decodeKeysStream · toGraphemes · deletePrevUnit · MAX_VISIBLE · loadHistory · appendHistory · detectAnsi · askLine · askSecret</div></div>
       <div class="mod"><div class="fname">assistant/simple.ts · turn-status.ts</div><div class="fdesc">Printer linier (satu-satunya renderer, one-shot &amp; REPL): output append-only di scrollback; stdout = teks model/receipt, stderr = ledger tool &amp; diagnostik. Tool compact = satu baris <code>› nama target</code> (REPL default; env eksplisit menang; /compact / Ctrl+O membalik). Section besar (thinking/bash/edit/content) default minimize: satu baris <code>+ label</code>, isi di-buffer untuk /expand. Ledger SELALU ber-newline. Garis status turn lifecycle deterministik.</div><div class="exports">attachSimpleLogger · formatError · getLastTurnText · writeClipboardOsc52 · attachTurnStatus</div></div>
       <div class="mod"><div class="fname">approval/prompt.ts</div><div class="fdesc">View persetujuan tool call [y/a/n]; di-inject ke permission handler oleh cli/setup.ts; live-region screen reader saat MINICODE_A11Y=1.</div><div class="exports">promptAsk · ApprovalRequest</div></div>
-      <div class="mod"><div class="fname">screens/overlay.ts</div><div class="fdesc">Primitive overlay transient bersama: redraw + clear delete-line yang konsisten untuk semua layar interaktif (tetap shell-like, tanpa panel permanen).</div><div class="exports">renderTransientOverlay · clearTransientOverlay</div></div>
-      <div class="mod"><div class="fname">screens/picker.ts</div><div class="fdesc">Picker generik — dipakai manager &amp; wizard; transient, membersihkan diri sendiri; highlight substring query dengan bold.</div><div class="exports">runPicker</div></div>
-      <div class="mod"><div class="fname">screens/wizard.ts · model-manager.ts · provider-manager.ts</div><div class="fdesc">View murni layar interaktif: hanya props data + callback async; tanpa akses config/disk. Model manager mengikuti pola overlay transient yang sama.</div><div class="exports">runSetupWizardView · runModelManagerView · runProviderManagerView</div></div>
+      <div class="mod"><div class="fname">screens/picker.ts</div><div class="fdesc">Picker generik popup — dipakai manager, wizard &amp; daftar sesi (/sessions); melukis HANYA region kotak via paintRegion di atas konten pemilik layar; highlight substring query dengan bold; setup gagal BERSUARA; layar tak mampu = tolak + batal.</div><div class="exports">runPicker</div></div>
+      <div class="mod"><div class="fname">screens/dialog.ts</div><div class="fdesc">Kotak dialog popup: border + judul opsional, TANPA bayangan; <code>dialogBox</code> (kotak saja untuk komposit paintRegion) + <code>dialogFrame</code> (selayar + backdrop <code>░</code> redup, hanya untuk layar ber-buffer sendiri); frame tepat <code>rows</code> dari geometri saat paint; murni tanpa IO; fallback ASCII.</div><div class="exports">dialogFrame · dialogBox</div></div>
+      <div class="mod"><div class="fname">screens/wizard.ts · model-manager.ts · provider-manager.ts</div><div class="fdesc">View layar interaktif: hanya props data + callback async; tanpa akses config/disk. Lebar kotak TETAP per permukaan (model 64, picker 64, provider 76); /model berjudul + hint footer (Del/type-to-filter discoverable), seleksi murni warna; nama/ID di depan label. SEMUA input lewat form dalam popup (add/edit/confirm) — tak ada askLine liar.</div><div class="exports">runSetupWizardView · runModelManagerView · runProviderManagerView</div></div>
+      <div class="mod"><div class="fname">screens/form.ts</div><div class="fdesc">Form generik dalam popup (lebar TETAP 64): text/secret (mask •)/select/confirm, Tab/↑↓ pindah, ←/→ pilih atau geser kursor, Enter validasi+submit (error merah inline), Esc DUA-TAHAP (tekan-1 bersihkan field, tekan-2 batal — isi tak hilang sekali tekan); kursor terminal diparkir di field aktif; region dibersihkan saat tutup; idle 90 dtk auto-batal.</div><div class="exports">runForm · validateRequired · validateUrl · FormSpec</div></div>
+      <div class="mod"><div class="fname">i18n/locale.ts · en.ts · id.ts</div><div class="fdesc">i18n nol-dependensi dwibahasa: kamus statis (id WAJIB kunci = en — tsc mengawal), <code>t(key, params)</code> interpolasi, fallback kunci hilang → en; prioritas /lang > MINICODE_LANG > state.json <code>lang</code> > locale OS > en; getter runtime (jangan beku ke const — aturan c/glyphs).</div><div class="exports">t · currentLocale · setSessionLocale · setConfigLocale · Locale · MsgKey</div></div>
+      <div class="mod"><div class="fname">approval/prompt.ts</div><div class="fdesc">Prompt persetujuan tool &amp; ask_user: blok pertanyaan + keputusan dicatat ke transkrip via approval sink (terlihat sebelum menjawab); tanpa sink = tulis langsung warisan; non-TTY = deny/null fail-closed.</div><div class="exports">promptAsk · promptAskText</div></div>
+      <div class="mod"><div class="fname">tui/transcript.ts</div><div class="fdesc">Kolektor transkrip TUI: event bus → baris LOGIS append-only (cap 5000, tertua dibuang); teks model sebagai ekor hidup sampai commit; ledger compact <code>› nama target</code> + error satu baris; thinking (penanda minimized + buffer /expand, alir redup expanded); buffer section /expand (sekali ambil habis); view() wrap saat paint; approval sink (transkrip + repaint untuk prompt persetujuan).</div><div class="exports">Transcript · TRANSCRIPT_CAP · setApprovalSink</div></div>
+      <div class="mod"><div class="fname">tui/app.ts</div><div class="fdesc">Pemilik tunggal layar: satu repaint sinkron per event, frame SELALU tepat <code>rows</code> (viewport + dropdown + input + status bar dari renderFooter); PgUp/PgDn scroll baris, Up/Down histori, Tab/Shift-Tab mode, Ctrl+O/T compact/thinking, Ctrl+D baris-kosong keluar; busy = input beku kecuali abort+scroll; cek ukuran sebelum enter (tanpa flicker); <code>suspend()/resume()</code> untuk popup komposit (lepas stdin + redupkan layar).</div><div class="exports">TuiApp · TuiHost · TuiStatusSnapshot · TuiRunResult</div></div>
     </div>
   </details>
 
@@ -977,9 +986,9 @@ bun run bench            # benchmark loop agen</pre></div>
     <li><b>Flag tak dikenal = kata prompt.</b> <code>cli/args.ts</code> hanya mengenali whitelist flag; <code>--typo</code> tidak error tetapi ikut masuk teks prompt (args.ts:62). Tambah flag baru = daftarkan di whitelist.</li>
     <li><b>Jail mendahului segala mode.</b> Tidak ada jalur eksekusi tool yang boleh mem-bypass <code>src/policy/jail.ts</code>, termasuk allow-all dan tool MCP.</li>
     <li><b>Tool tidak mengimpor lapisan app/sesi.</b> Kebutuhan lintas-lapisan (mis. sesi sub-agen untuk <code>delegate_task</code>) disuntikkan dari composition root via setter DI; tanpa injeksi tool fail-closed. Arah <code>providers → config</code> juga satu arah sejak provisioning dipisah ke <code>providers/provision.ts</code>.</li>
-    <li><b>Output shell-first.</b> Tidak ada alternate screen (?1049h), tidak ada redraw penuh, tidak ada modal overlay: output mengalir append-only ke scrollback dan scrollback adalah satu-satunya transcript. Tool call compact di REPL (satu baris <code>› nama target</code>); section besar default minimize (<code>+ label</code>, dibuka via + / - atau /expand); expanded tersedia via env/<code>/compact</code>/verbose. UI ekran (manager/wizard/picker) transient — menghapus diri sendiri, tidak menyentuh scrollback.</li>
-    <li><b>Kontrak terminal FROZEN.</b> <code>docs/TERMINAL_CONTRACT.md</code> membekukan klasifikasi writer, contract stdout/stderr, dan 14 invariant terminal (§9) — wajib dibaca sebelum menyentuh output/rendering; setiap perubahan perilaku wajib update dokumen + test peta proteksinya.</li>
-    <li><b>Satu arbitrase transient.</b> Semua painter stderr (garis turn, wizard spinner) lewat <code>acquireTransientPaint</code>/<code>paintWrite</code> di <code>src/ui/runtime/statusline.ts</code>; tulis asing non-UI saat painter aktif dikomit sebagai baris permanen — tidak hilang, tidak merusak transient.</li>
+    <li><b>Satu tampilan: TUI fullscreen.</b> Transkrip ala shell + status bar + popup komposit (/model, /provider, /sessions) di atas transkrip yang tetap terlihat (redup). Alternate screen HANYA lewat <code>src/ui/runtime/screen.ts</code> (enter/exit berpasangan + <code>paintRegion</code> tanpa clear); non-TTY/one-shot/layar kecil = tolak bersuara + batal. Tool call compact (satu baris <code>› nama target</code>). Dropdown <code>/</code> berbingkai dan terhapus di semua jalur keluar. REPL linier, footer lengket, overlay inline, jendela info: DIHAPUS.</li>
+    <li><b>Kontrak terminal TUI.</b> <code>docs/TERMINAL_CONTRACT.md</code> (v4 single-TUI 2026-09-21) membekukan klasifikasi writer, contract stdout/stderr, komposit popup, dan 20 invariant terminal (§9) — wajib dibaca sebelum menyentuh output/rendering; setiap perubahan perilaku wajib update dokumen + test peta proteksinya.</li>
+    <li><b>Satu arbitrase transient + satu lifecycle modal.</b> Semua painter stderr (garis turn, wizard spinner) lewat <code>acquireTransientPaint</code>/<code>paintWrite</code> di <code>src/ui/runtime/statusline.ts</code>; tulis asing non-UI saat painter aktif dikomit sebagai baris permanen — tidak hilang, tidak merusak transient. Semua modal lewat <code>openAltScreen</code>/<code>close</code> di <code>src/ui/runtime/screen.ts</code>.</li>
     <li><b>Non-TTY = polos.</b> Pipe/redirect/CI tidak boleh mengandung cursor control, animasi, atau warna (warna digate <code>stdout.isTTY</code>; NO_COLOR menang).</li>
     <li><b>Peta ini harus hidup.</b> Setiap perubahan struktur (tambah/hapus/pindah modul atau lapisan) WAJIB memperbarui <code>docs/ARCHITECTURE.html</code> dalam perubahan yang sama — lihat AGENTS.md.</li>
   </ul>
@@ -988,7 +997,7 @@ bun run bench            # benchmark loop agen</pre></div>
 <!-- ── 9 · UI/UX UNTUK DEVELOPER ── -->
 <section id="ux">
   <h2 class="sec"><span class="hn">09</span> UI/UX untuk developer — rendering terminal <a class="anchor" href="#ux">#</a></h2>
-  <p class="lede">Ringkasan kontrak output yang menjaga MiniCode tetap shell-native: lima primitif tampilan, dua stream dengan peran tetap, satu arbitrase transient. Versi lengkap + residual risk yang disengaja ada di <code>docs/TERMINAL_CONTRACT.md</code> (FROZEN); panduan pengguna di <code>docs/USAGE.md</code>.</p>
+  <p class="lede">Ringkasan kontrak TUI fullscreen minicode: transkrip + status bar + popup komposit. Versi lengkap + residual risk yang disengaja ada di <code>docs/TERMINAL_CONTRACT.md</code> (v4 single-TUI 2026-09-21); panduan pengguna di <code>docs/USAGE.md</code>.</p>
 
   <div class="uxgrid">
     <div class="uxcard"><h4>1 · Prompt</h4><p><code>minicode &lt;mode&gt; ›</code> — baris input interaktif + dropdown slash; satu-satunya elemen “hidup” saat idle.</p></div>
@@ -1010,11 +1019,11 @@ bun run bench            # benchmark loop agen</pre></div>
   <div class="tscroll" style="margin-top:16px">
   <table>
     <tr><th>#</th><th>Invariant (ringkas)</th><th>Dijaga oleh test</th></tr>
-    <tr><td>1</td><td>Shell-native CLI — bukan TUI (tanpa alternate screen/panel)</td><td><code>ui-boundary</code></td></tr>
+    <tr><td>1</td><td>Satu tampilan interaktif: TUI fullscreen; frame penuh tepat rows</td><td><code>ui-boundary</code>, <code>screen</code>, <code>tui-app</code></td></tr>
     <tr><td>2</td><td>Contract stdout/stderr jelas (TTY &amp; non-TTY deterministic)</td><td><code>tui-format</code>, <code>terminal-contract</code></td></tr>
-    <tr><td>3</td><td>Transient rendering satu ownership mechanism</td><td><code>terminal-contract</code>, <code>transient-arbitration</code></td></tr>
+    <tr><td>3</td><td>Transient satu ownership + modal satu lifecycle</td><td><code>terminal-contract</code>, <code>transient-arbitration</code>, <code>screen</code></td></tr>
     <tr><td>4</td><td>Scrollback permanen tidak bergantung pada transient painter</td><td><code>transient-arbitration</code></td></tr>
-    <tr><td>5</td><td>Tanpa transient stale: success/failure/cancel/SIGINT/retry/detach/session-end</td><td><code>turn-status</code>, <code>terminal-contract</code>, <code>repl-linear</code></td></tr>
+    <tr><td>5</td><td>Tanpa popup yatim / input bocor: success/failure/cancel/SIGINT/session-end</td><td><code>turn-status</code>, <code>terminal-contract</code>, <code>tui-app</code></td></tr>
     <tr><td>6</td><td>Non-TTY: 0 cursor control / animasi / ANSI tak diperlukan</td><td><code>transient-arbitration</code>, <code>theme</code></td></tr>
     <tr><td>7</td><td>Tool activity default compact, tanpa bocor isi ke ledger</td><td><code>tui-format</code>, <code>terminal-contract</code></td></tr>
     <tr><td>8</td><td>Streaming tanpa duplicate/overlap/stale spinner-status</td><td><code>tui-format</code>, <code>terminal-contract</code></td></tr>
@@ -1022,8 +1031,18 @@ bun run bench            # benchmark loop agen</pre></div>
     <tr><td>10</td><td>Painter &amp; spinner mutually exclusive (signal overlap)</td><td><code>transient-arbitration</code>, <code>terminal-contract</code></td></tr>
     <tr><td>11</td><td>Resize memakai lebar saat paint (bukan lebar lama)</td><td><code>turn-status</code></td></tr>
     <tr><td>12</td><td>Long session tetap readable (ledger satu baris per tool)</td><td><code>terminal-contract</code></td></tr>
-    <tr><td>13</td><td>Footer lengket satu-satunya chrome permanen (sticky 2 baris, reset region di semua jalur keluar, non-TTY nol byte)</td><td><code>footer-render</code>, <code>footer-chrome</code></td></tr>
-    <tr><td>14</td><td>Idle binding: Esc/Ctrl+C/Ctrl+D resolve null; Ctrl+C 1x = copy, 2x = keluar; abort turn via lone Esc/Ctrl+C</td><td><code>repl-linear</code>, <code>terminal-contract</code></td></tr>
+    <tr><td>13</td><td>Status bar 1 baris dasar (mode • model • cwd … ctx); spark pulse saat busy</td><td><code>footer-render</code>, <code>tui-app</code></td></tr>
+    <tr><td>14</td><td>Binding TUI: PgUp/PgDn scroll, Up/Down histori, Tab/Shift+Tab mode, Ctrl+D baris-kosong keluar; busy = input beku total kecuali abort+scroll; placeholder + indikator baris baru</td><td><code>tui-app</code>, <code>terminal-contract</code></td></tr>
+    <tr><td>15</td><td>(Dihapus bersama jendela info — /status &amp; /history = readout transkrip)</td><td><code>cli-commands</code></td></tr>
+    <tr><td>16</td><td>Popup komposit: region tanpa clear + union-clear anti-hantu + clearRegion + suspend/resume; layar tak mampu = tolak bersuara + batal</td><td><code>screen</code>, <code>dialog</code>, <code>tui-app</code>, <code>tui-popup</code></td></tr>
+    <tr><td>17</td><td>TUI fullscreen: App satu-satunya penulis layar + repaint live bus; frame penuh tepat rows; scrollback utama tak tersentuh</td><td><code>tui-app</code>, <code>screen-buffer</code></td></tr>
+    <tr><td>18</td><td>Transkrip append-only + PgUp/PgDn scroll, Up/Down histori, ketikan baru kembali ke ekor</td><td><code>tui-app</code>, <code>tui-transcript</code></td></tr>
+    <tr><td>19</td><td>Prompt TUI multiline + Tab/Shift-Tab/Ctrl+O/T/R seperti REPL; Ctrl+D baris-kosong keluar; histori memori-sesi</td><td><code>tui-app</code>, <code>prompt-engine</code></td></tr>
+    <tr><td>20</td><td>Status bar 1 baris dari sumber yang sama dengan footer; spark pulse saat busy</td><td><code>tui-app</code>, <code>footer-render</code></td></tr>
+    <tr><td>21</td><td>Form dalam popup: input di dalam kotak + validasi + kursor diparkir</td><td><code>form</code>, <code>tui-popup</code></td></tr>
+    <tr><td>22</td><td>Thinking terlihat + commit fase; buffer /expand sekali ambil</td><td><code>tui-transcript</code></td></tr>
+    <tr><td>23</td><td>Approval &amp; ask_user tercatat + terlihat sebelum menjawab</td><td><code>approval-tui</code></td></tr>
+    <tr><td>24</td><td>/expand hidup; persist /model; /help ringkas</td><td><code>tui-transcript</code>, <code>cli-commands</code></td></tr>
   </table>
   </div>
 
@@ -1039,7 +1058,7 @@ bun run bench            # benchmark loop agen</pre></div>
 <footer class="site">
   <span>Minicode · Peta struktur hidup — terminal contract FROZEN (<a href="TERMINAL_CONTRACT.md">docs/TERMINAL_CONTRACT.md</a>)</span>
   <span class="spacer"></span>
-  <span>v0.9.28 · diperbarui 2026-09-18</span>
+  <span>v0.9.29 · diperbarui 2026-09-18</span>
 </footer>
 
 </div>

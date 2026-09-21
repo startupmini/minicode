@@ -21,9 +21,8 @@ afterEach(() => {
 })
 
 const lines = (t: FakeTty) => stripAnsi(t.all()).split("\n")
-const widest = (t: FakeTty) => Math.max(...lines(t).map((l) => displayWidth(l)))
 
-describe("picker: menghormati ukuran terminal", () => {
+describe("picker popup: region di atas layar, hormat ukuran terminal", () => {
   test("label CJK panjang dipotong ke lebar kolom", async () => {
     tty = installFakeTty({ columns: 40, rows: 20 })
     const p = runPicker({
@@ -36,24 +35,32 @@ describe("picker: menghormati ukuran terminal", () => {
       onCancel: () => {},
     })
     await tty.ready()
-    expect(widest(tty)).toBeLessThanOrEqual(40)
+    // paintRegion cursor-addressed: ukur via parser screen, bukan byte mentah
+    // (CSI CUP/EL bukan SGR dan tak di-strip oleh stripAnsi).
+    for (const l of tty.screen()) expect(displayWidth(l)).toBeLessThanOrEqual(40)
     await tty.send(KEY.esc, 30)
     await p
   })
 
-  test("terminal 3 baris tidak dilampaui", async () => {
+  test("terminal 3 baris: tolak BERSUARA + batal (tanpa inline, tanpa gantung)", async () => {
     tty = installFakeTty({ columns: 60, rows: 3 })
     const items = Array.from({ length: 30 }, (_, i) => ({
       name: `m${i}`,
       provider: "p",
       value: `${i}`,
     }))
-    const p = runPicker({ title: "Pendek", items, onPick: () => {}, onCancel: () => {} })
-    await tty.ready()
-    const drawn = lines(tty).filter((l) => l.trim() !== "").length
-    expect(drawn).toBeLessThanOrEqual(3)
-    await tty.send(KEY.esc, 30)
+    let cancelled = false
+    const p = runPicker({
+      title: "Pendek",
+      items,
+      onPick: () => {},
+      onCancel: () => (cancelled = true),
+    })
     await p
+    // Jalur overlay inline dihapus: popup butuh layar mampu. Tanpa listener
+    // stdin (ready() akan timeout) — langsung settle + pesan + onCancel.
+    expect(cancelled).toBe(true)
+    expect(tty.all()).toContain("needs an interactive terminal")
   })
 
   test("resize mengecil langsung diikuti", async () => {
@@ -65,10 +72,9 @@ describe("picker: menghormati ukuran terminal", () => {
     }))
     const p = runPicker({ title: "R", items, onPick: () => {}, onCancel: () => {} })
     await tty.ready()
-    tty.clear()
     tty.resize(40, 10)
     await tty.send("", 40)
-    expect(widest(tty)).toBeLessThanOrEqual(40)
+    for (const l of tty.screen()) expect(displayWidth(l)).toBeLessThanOrEqual(40)
     await tty.send(KEY.esc, 30)
     await p
   })
@@ -107,6 +113,47 @@ describe("picker: menghormati ukuran terminal", () => {
     await tty.send(KEY.enter, 40)
     await p
     expect(hasil).toBeNull()
+  })
+
+  test("label tak-terpercaya disanitasi, bukan passthrough ANSI", async () => {
+    // Sumber label (nama model/provider, cwd sesi) turun dari config/DB/file
+    // — barisnya bisa mengandung escape bila data kotor. truncateToWidth
+    // menyalin SEMUA sekuens escape (termasuk 2J/1049h), jadi sanitasi wajib
+    // di titik bangun label. Kode lama: lolos mentah ke terminal.
+    // CATATAN modal: bingkai screen.paint sendiri menulis 2J (clear buffer
+    // alt — tak merusak scrollback), jadi yang ditegaskan = RANGKAIAN SERANG
+    // dari data, bukan byte bingkai.
+    tty = installFakeTty({ columns: 60, rows: 20 })
+    const p = runPicker({
+      title: "T",
+      items: [{ name: "m\x1b[2JAHAT", provider: "p\x1b[?1049h", value: "v" }],
+      onPick: () => {},
+      onCancel: () => {},
+    })
+    await tty.ready()
+    const out = tty.all()
+    expect(out).not.toContain("m\x1b[2JAHAT")
+    expect(out).not.toContain("p\x1b[?1049h")
+    expect(stripAnsi(out)).toContain("mAHAT")
+    await tty.send(KEY.esc, 30)
+    await p
+  })
+
+  test("baris manager dengan id kotor disanitasi", async () => {
+    const { runModelManagerView } = await import("../src/ui/screens/model-manager.ts")
+    tty = installFakeTty({ columns: 60, rows: 20 })
+    const p = runModelManagerView({
+      initialRows: [{ id: "p::m\x1b[2JAHAT", active: false }],
+      onSelect: () => {},
+      loadRows: async () => [],
+      onDelete: async () => [],
+    })
+    await tty.ready()
+    const out = tty.all()
+    expect(out).not.toContain("m\x1b[2JAHAT")
+    expect(stripAnsi(out)).toContain("mAHAT")
+    await tty.send(KEY.esc, 30)
+    await p
   })
 })
 

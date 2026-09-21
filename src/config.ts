@@ -242,7 +242,36 @@ export async function saveLastModel(id: string): Promise<void> {
   const path = statePath()
   return withConfigLock(path, async () => {
     await mkdir(join(homeDir(), ".minicode"), { recursive: true, mode: 0o700 }).catch(() => {})
-    await atomicWriteText(path, JSON.stringify({ lastModel: id }))
+    // Merge (bukan timpa): state.json menampung preferensi lain (lang).
+    // Timpa utuh menghapusnya diam-diam.
+    let cur: Record<string, unknown> = {}
+    try {
+      cur = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>
+    } catch {}
+    await atomicWriteText(path, JSON.stringify({ ...cur, lastModel: id }))
+  })
+}
+
+/** Bahasa UI ("en"|"id") dari state.json; undefined = belum memilih. */
+export async function loadLang(): Promise<"en" | "id" | undefined> {
+  try {
+    const raw = await readFile(statePath(), "utf8")
+    const l = (JSON.parse(raw) as { lang?: unknown }).lang
+    return l === "en" || l === "id" ? l : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export async function saveLang(lang: "en" | "id"): Promise<void> {
+  const path = statePath()
+  return withConfigLock(path, async () => {
+    await mkdir(join(homeDir(), ".minicode"), { recursive: true, mode: 0o700 }).catch(() => {})
+    let cur: Record<string, unknown> = {}
+    try {
+      cur = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>
+    } catch {}
+    await atomicWriteText(path, JSON.stringify({ ...cur, lang }))
   })
 }
 

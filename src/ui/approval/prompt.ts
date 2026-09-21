@@ -1,9 +1,19 @@
-// View persetujuan tool — readline + warna, murni presentasi.
+// View persetujuan tool — murni presentasi.
 // Lapisan policy tidak mengimpor file ini; ia di-inject sebagai callback dari
 // composition root (cli/setup.ts -> createMinicodeSession -> permission).
+//
+// Warga TUI: bila approval sink terdaftar (cli/tui.ts saat App aktif), blok
+// pertanyaan dicatat ke transkrip + layar di-repaint SEBELUM user menjawab
+// (jejak keputusan permanen, terlihat saat menjawab). Tanpa sink = tulis
+// langsung warisan (one-shot/exec). Input jawaban tetap askLine inline di
+// baris kursor — aman dari App karena input App dibekukan saat busy (hanya
+// abort yang lolos; Esc/Ctrl+C di sini = abort turn + deny, fail-closed).
+
+import { t } from "../i18n/locale.ts"
 import { askLine } from "../input/input.ts"
 import { sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c } from "../render/theme.ts"
+import { getApprovalSink } from "../tui/transcript.ts"
 
 /** Subset struktural tool call yang dibutuhkan view — tanpa tipe kernel. */
 export interface ApprovalRequest {
@@ -20,7 +30,7 @@ export async function promptAsk(call: ApprovalRequest): Promise<"allow" | "deny"
   // Live-region untuk screen reader: baris polos tanpa ANSI agar terbaca
   // sebagai teks, bukan escape mentah. Bell saja mengganggu tanpa informasi.
   if (process.env.MINICODE_A11Y === "1")
-    process.stderr.write(`[approval required: ${sanitizeAnsiLine(call.name)}]\n`)
+    process.stderr.write(`${t("appr.a11y", { name: sanitizeAnsiLine(call.name) })}\n`)
 
   // toolName/actionSummary berasal dari model/MCP (tidak terpercaya). Tanpa
   // sanitasi, `\x1b[2J\x1b[H` di dalam args.command akan membersihkan layar
@@ -43,17 +53,54 @@ export async function promptAsk(call: ApprovalRequest): Promise<"allow" | "deny"
   }
   actionSummary = sanitizeAnsiLine(actionSummary)
 
-  process.stdout.write(`\n${c.warning(c.bold("Approval required"))}\n`)
-  process.stdout.write(`  ${c.bold("Tool:")} ${c.info(toolName)}\n`)
-  process.stdout.write(`  ${actionSummary}\n`)
+  const block = [
+    ``,
+    `${c.warning(c.bold(t("appr.title")))}`,
+    `  ${c.bold(t("appr.tool"))} ${c.info(toolName)}`,
+    `  ${actionSummary}`,
+  ]
+  const sink = getApprovalSink()
+  if (sink) {
+    sink.pushBlock(block)
+    sink.repaint()
+    // Bekukan App selama menunggu jawaban (pola popup komposit): tanpa ini
+    // listener App + repaint live berlomba dengan askLine — prompt tak
+    // terlihat, user mengetik buta. Esc/Ctrl+C di sini = deny (batal hanya
+    // tool ini), BUKAN abort turn — turn lanjut dengan tool lain.
+    sink.suspend()
+  } else {
+    for (const l of block) process.stdout.write(`${l}\n`)
+  }
 
-  const promptText = `${c.bold("[y]")} Allow once  ${c.bold("[a]")} Always  ${c.bold("[n]")} Deny: `
-  const ans = (await askLine({ prompt: promptText })) ?? ""
+  const promptText = `${c.bold(t("appr.allowOnce"))}  ${c.bold(t("appr.always"))}  ${c.bold(t("appr.deny"))}: `
+  let ans: string | null
+  try {
+    ans = (await askLine({ prompt: promptText })) ?? ""
+  } finally {
+    if (sink) sink.resume()
+  }
 
+  // Terima jawaban dwibahasa (prompt tampil per locale): y/yes/ya,
+  // n/no/tidak/t, a/always/selalu/s. Selain itu = deny (fail-closed).
   const a = ans.trim().toLowerCase()
-  if (a === "a" || a === "always") return "always"
-  if (a === "y" || a === "yes") return "allow"
-  return "deny"
+  const decisionKey =
+    a === "a" || a === "always" || a === "selalu" || a === "s"
+      ? ("appr.decAlways" as const)
+      : a === "y" || a === "yes" || a === "ya"
+        ? ("appr.decAllow" as const)
+        : ("appr.decDeny" as const)
+  const decision = t(decisionKey)
+  // Keputusan dicatat di transkrip (jejak audit); warisan mengandalkan
+  // scrollback askLine yang terhapus repaint.
+  if (sink) {
+    sink.pushBlock([c.muted(`  → ${decision}`)])
+    sink.repaint()
+  }
+  return decisionKey === "appr.decAlways"
+    ? "always"
+    : decisionKey === "appr.decAllow"
+      ? "allow"
+      : "deny"
 }
 
 /** View pertanyaan ask_user — di-inject ke src/tools/ask_user.ts dari cli/setup.ts.
@@ -63,14 +110,33 @@ export async function promptAsk(call: ApprovalRequest): Promise<"allow" | "deny"
 export async function promptAskText(question: string, options?: string[]): Promise<string | null> {
   if (!process.stdin.isTTY) return null
   const q = sanitizeAnsiLine(question).slice(0, 2000)
-  process.stdout.write(`\n${c.warning(c.bold("Agent asks"))}\n`)
-  process.stdout.write(`  ${q}\n`)
-  if (options?.length) {
-    options.forEach((o, i) => {
-      process.stdout.write(`  ${c.dim(`${i + 1}.`)} ${sanitizeAnsiLine(o)}\n`)
-    })
+  const block = [
+    ``,
+    `${c.warning(c.bold(t("appr.askTitle")))}`,
+    `  ${q}`,
+    ...(options?.length
+      ? options.map((o, i) => `  ${c.dim(`${i + 1}.`)} ${sanitizeAnsiLine(o)}`)
+      : []),
+  ]
+  const sink = getApprovalSink()
+  if (sink) {
+    sink.pushBlock(block)
+    sink.repaint()
+    sink.suspend()
+  } else {
+    for (const l of block) process.stdout.write(`${l}\n`)
   }
-  const ans = await askLine({ prompt: `${c.bold("Your answer")} (empty = cancel): ` })
+  let ans: string | null
+  try {
+    ans = await askLine({ prompt: `${c.bold(t("appr.answerPrompt"))}` })
+  } finally {
+    if (sink) sink.resume()
+  }
   if (ans == null || !ans.trim()) return null
-  return ans.trim()
+  const out = ans.trim()
+  if (sink) {
+    sink.pushBlock([c.muted(`  → ${sanitizeAnsiLine(out).slice(0, 200)}`)])
+    sink.repaint()
+  }
+  return out
 }

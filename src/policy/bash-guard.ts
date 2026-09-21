@@ -142,13 +142,15 @@ const HIVE_PATH =
 const VSS_SHADOW = /\bvssadmin\b[^\n]*\b(?:create\s+shadow|delete\s+shadows?)\b/i
 const NTDSUTIL = /\bntdsutil\b/i
 
-/** Perintah yang membaca/menyalin isi berkas. Daftar ini + ekstraktor argumen
+/** Perintah yang membaca/menyalin/menulis isi berkas. Daftar ini + ekstraktor argumen
  * di inspectBashCommand WAJIB sinkron (audit 2026-09-16 B4: certutil/tac/
- * findstr lolos karena hanya ada di satu sisi). Denylist takkan pernah
- * komplet (residual arsitektural, lihat kepala berkas) — tiap entri di sini
- * adalah kasus konkret terverifikasi, bukan tebakan. */
+ * findstr lolos karena hanya ada di satu sisi; bug-hunt 2026-09-19 F1:
+ * Out-File/Set-Content/xcopy/robocopy/Copy-Item lolos karena tak ada di
+ * dua sisi). Denylist takkan pernah komplet (residual arsitektural, lihat
+ * kepala berkas) — tiap entri di sini adalah kasus konkret terverifikasi,
+ * bukan tebakan. */
 const READERS =
-  /\b(?:cat|bat|less|more|head|tail|nl|od|xxd|strings|type|Get-Content|certutil|tac|findstr|fc|comp|cp|copy|mv|move|scp|rsync|tar|zip|gzip|base64|openssl|awk|sed|grep|egrep|fgrep|rg|cut|sort|uniq|tee|dd|install)\b/i
+  /\b(?:cat|bat|less|more|head|tail|nl|od|xxd|strings|type|Get-Content|certutil|tac|findstr|fc|comp|cp|copy|mv|move|scp|rsync|tar|zip|gzip|base64|openssl|awk|sed|grep|egrep|fgrep|rg|cut|sort|uniq|tee|dd|install|xcopy|robocopy|Out-File|Set-Content|Add-Content|New-Item|Copy-Item|Move-Item)\b/i
 
 /** Dump environment — `printenv` sudah lama diblok, sisanya belum. */
 const ENV_DUMP =
@@ -164,6 +166,33 @@ const ENV_SECRET_REF =
 /** Flag upload berkas pada klien HTTP — jalur exfiltrasi paling langsung. */
 const UPLOAD_FLAG =
   /\b(?:curl|wget|http|httpie|nc|ncat|socat)\b[^\n]*(?:-F\s*\S*=@|--form\s*\S*=@|-d\s*@|--data(?:-binary|-raw)?\s*@|-T\s+|--upload-file|--post-file=|-b\s*@)/i
+
+/** Upload DATA dari variabel bare (`-d $X`, bukan `@file` yang sudah ditahan
+ * UPLOAD_FLAG): bentuk exfiltrasi terakhir yang lolos — nama var arbitrer
+ * (mis. $TH_NGODING) tak cocok ENV_SECRET_REF dan tak butuh file sensitif
+ * literal. Literal `-d '{"a":1}'` tetap lolos (payload terlihat di review).
+ * Divalidasi e2e: canary odd-name terkirim ke listener loopback (bug-hunt
+ * 2026-09-19 F3). */
+const VAR_UPLOAD =
+  /\b(?:curl|wget|Invoke-WebRequest|iwr)\b[^\n]*(?:-d|--data(?:-binary|-raw-data|-urlencode)?|--body)\s+["']?[^;&|\n]*[$%][\w{(]/i
+
+/** Konfigurasi git berbahaya via `-c key=val`: eksekusi kode (pager/hook/
+ * helper) atau repo-confusion. Kunci jinak (`-c core.quotepath=false`) tetap
+ * lolos — hanya kunci eksekusi + helper eksternal yang ditahan. Divalidasi:
+ * `core.fsmonitor` mengeksekusi pipe-independent (bug-hunt 2026-09-19 F2);
+ * `core.pager` mati-di-pipe pada git-windows (negatif terdokumentasi). */
+const GIT_DANGEROUS_CONFIG =
+  /-c\s+["']?(?:core\.(?:pager|fsmonitor|sshCommand|askpass|editor)|protocol\.ext\.allow|core\.hooksPath)\s*=/i
+
+/** git keluar workspace: `-C dir` / `--git-dir=` / `--work-tree=` menunjuk
+ * repo/pohon lain (baca objek repo korban = jail-bypass READ, validasi e2e
+ * bug-hunt 2026-09-19 F2: `--git-dir=victim/.git log -p` bocor isi repo lain).
+ * Nilai dicek di bawah terhadap cwd (resolve+outside/sensitive/owned). */
+const GIT_DIR_OVERRIDE = /(?:^|\s)(?:-C|--git-dir=|--work-tree=)\s*(\S+)/i
+
+/** Env git eksekusi (`GIT_PAGER=id ...`, `GIT_SSH=...`): efek sama dengan
+ * `-c` di atas, lewat assignment env. */
+const GIT_EXEC_ENV = /(?:^|[;&|\n]\s*)GIT_(?:PAGER|SSH|ASKPASS|EDITOR)\s*=/i
 
 /** Interpreter dijalankan dengan kode inline (semua bentuk flag). */
 const INLINE_INTERPRETER =
@@ -182,9 +211,12 @@ const PROCESS_SUB = /<\s*\(|>\s*\(|<<<|\bsource\s+<|\.\s+<\(/
 const PIPE_TO_SHELL =
   /\|\s*(?:sudo\s+)?(?:sh|bash|dash|zsh|ksh|python|python2|python3|pyw?|node|deno|bun|perl|ruby|php|iex|Invoke-Expression)(?:\.exe)?\b/i
 
-/** Unduh ke berkas lalu jalankan berkas itu dalam satu baris. */
+/** Unduh ke berkas lalu jalankan berkas itu dalam satu baris. Catatan pola:
+ * - `certutil -urlcache` ikut (downloader Windows di luar curl/wget/iwr).
+ * - `\./` tanpa `\b` (bug-hunt 2026-09-19: `\b` sebelum `.` tak pernah cocok
+ *   setelah spasi — alternatif `./` mati total, `IWR ...; ./a.ps1` lolos). */
 const DOWNLOAD_THEN_RUN =
-  /\b(?:curl|wget|Invoke-WebRequest|iwr)\b[^\n]*?(?:-o|-O|--output|-OutFile)\s*(\S+)[^\n]*[;&|][^\n]*\b(?:sh|bash|dash|zsh|node|pyw?|python3?|perl|ruby|php|\.\/)(?:\.exe)?\b/i
+  /\b(?:curl|wget|Invoke-WebRequest|iwr|certutil)\b[^\n]*?(?:-o|-O|--output|-OutFile|-urlcache)\s*(\S+)[^\n]*[;&|][^\n]*(?:\b(?:sh|bash|dash|zsh|node|pyw?|python3?|perl|ruby|php)(?:\.exe)?\b|\.\/)/i
 
 /** Container escape: mount host root / privileged. */
 const CONTAINER_ESCAPE =
@@ -368,6 +400,30 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
   if (both(ENV_DUMP)) return { denied: true, reason: "environment dump" }
   if (both(ENV_SECRET_REF)) return { denied: true, reason: "credential env reference" }
   if (both(UPLOAD_FLAG)) return { denied: true, reason: "file upload to network" }
+  if (both(VAR_UPLOAD)) return { denied: true, reason: "variable data upload to network" }
+  if (both(GIT_DANGEROUS_CONFIG)) return { denied: true, reason: "git exec config override" }
+  if (both(GIT_EXEC_ENV)) return { denied: true, reason: "git exec env override" }
+  // -C/--git-dir/--work-tree: resolve nilai terhadap cwd seperti redirect —
+  // di luar workspace/sensitif/owned = deny (baca repo lain = jail-bypass).
+  {
+    const m = norm.match(GIT_DIR_OVERRIDE) ?? raw.match(GIT_DIR_OVERRIDE)
+    if (m?.[1]) {
+      const t = m[1]!.replace(/^["']|["']$/g, "")
+      if (cwd != null) {
+        const abs = isAbsolute(t) ? resolve(t) : resolve(cwd, t)
+        if (
+          isRealPathOutsideRoot(abs, cwd) ||
+          isSensitive(t) ||
+          isSensitive(abs) ||
+          isOwnedState(t) ||
+          isOwnedState(abs)
+        )
+          return { denied: true, reason: "git directory outside workspace" }
+      } else if (/^\.\.(?:[\\/]|$)|\b[a-zA-Z]:[\\/]|^\/(?!dev\/null$)|^~(?:[\\/]|$)/.test(t)) {
+        return { denied: true, reason: "git directory outside workspace" }
+      }
+    }
+  }
   // Hive Windows: `reg save HKLM\SAM` / `reg export ...\config\system` —
   // `reg query` diagnostik tetap lolos (tanpa kata kerja destruktif).
   if (both(REG_HIVE_EXPORT) && (HIVE_PATH.test(norm) || HIVE_PATH.test(raw)))
@@ -426,7 +482,7 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
     const readerTargets = (() => {
       const out: string[] = []
       const re =
-        /\b(?:cat|bat|less|more|head|tail|nl|od|xxd|strings|type|Get-Content|certutil|tac|findstr|fc|comp|cp|copy|mv|move|scp|rsync|tar|zip|gzip|base64|openssl|awk|sed|grep|egrep|fgrep|rg|cut|sort|uniq|tee|dd|install)\b\s+([^\n;&|]+)/gi
+        /\b(?:cat|bat|less|more|head|tail|nl|od|xxd|strings|type|Get-Content|certutil|tac|findstr|fc|comp|cp|copy|mv|move|scp|rsync|tar|zip|gzip|base64|openssl|awk|sed|grep|egrep|fgrep|rg|cut|sort|uniq|tee|dd|install|xcopy|robocopy|Out-File|Set-Content|Add-Content|New-Item|Copy-Item|Move-Item)\b\s+([^\n;&|]+)/gi
       for (const m of norm.matchAll(re)) {
         const args = m[1]!.split(/\s+/)
         for (const a of args) {

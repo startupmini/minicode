@@ -11,6 +11,7 @@
 // Sejak warna digate `stdout.isTTY` (output ke pipe/redirect harus polos),
 // suite ini men-stub stdout sebagai TTY — yang diuji adalah palet, bukan gate.
 import { afterAll, beforeEach, describe, expect, test } from "bun:test"
+import { resetLocaleState, setSessionLocale } from "../src/ui/i18n/locale.ts"
 import { formatCodeBlock, highlightCode } from "../src/ui/render/highlight.ts"
 import { stripAnsi } from "../src/ui/render/theme.ts"
 
@@ -21,6 +22,8 @@ beforeEach(() => {
   process.env.COLORTERM = "truecolor"
   delete process.env.NO_COLOR
   Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true })
+  // Marker "... (N more lines)" dwibahasa — kunci en seperti warna.
+  setSessionLocale("en")
 })
 
 afterAll(() => {
@@ -29,6 +32,7 @@ afterAll(() => {
   else process.env.COLORTERM = origColorterm
   if (origNoColor == null) delete process.env.NO_COLOR
   else process.env.NO_COLOR = origNoColor
+  resetLocaleState()
 })
 
 const ESC = String.fromCharCode(27)
@@ -154,6 +158,17 @@ describe("highlight: shell", () => {
   test("flag panjang tidak hilang", () => {
     const line = "curl --silent --location https://example.com"
     expect(stripAnsi(highlightCode(line, "sh"))).toBe(line)
+  })
+
+  test("flag shell (-x/--long) diwarnai kuning, bukan polos", () => {
+    // Audit TUI P2-4: cabang yellow untuk token "-" mati (tokenizer tak pernah
+    // menghasilkan token berawalan "-"). Kode lama: output == input persis.
+    const line = "curl --silent -L https://example.com"
+    const out = highlightCode(line, "sh")
+    expect(stripAnsi(out)).toBe(line)
+    expect(out).not.toBe(line) // ada SGR kuning pada flag
+    expect(out).toContain("--silent")
+    expect(out).toContain("-L")
   })
 
   test("komentar shell diwarnai tanpa mengubah teks", () => {

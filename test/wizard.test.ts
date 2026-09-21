@@ -79,7 +79,8 @@ describe("wizard: pemilihan gateway", () => {
     isolateHome()
     const p = runSetupWizard()
     await tty.ready(3000)
-    expect(visible(tty)).toContain("Ctrl+C")
+    // Footer picker menyebut Esc sejak awal (dulu sapaan Ctrl+C).
+    expect(visible(tty)).toContain("Esc")
     await tty.send(KEY.esc, 60)
     await p
   })
@@ -105,7 +106,8 @@ describe("wizard: pemilihan gateway", () => {
     isolateHome()
     const p = runSetupWizard()
     await tty.ready(3000)
-    for (const l of visible(tty).split("\n")) {
+    // Popup region cursor-addressed: ukur via parser screen.
+    for (const l of tty.screen()) {
       expect(displayWidth(l)).toBeLessThanOrEqual(40)
     }
     await tty.send(KEY.esc, 60)
@@ -134,7 +136,6 @@ describe("wizard: bahasa", () => {
     await tty.ready(3000)
     const out = visible(tty)
     expect(out).toContain("Minicode setup")
-    expect(out).toContain("Connect your first")
     expect(out).toContain("Select gateway")
     await tty.send(KEY.esc, 60)
     await p

@@ -2,16 +2,17 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { createInterface } from "node:readline"
+import { t } from "../i18n/locale.ts"
 import { stripAnsi } from "../render/theme.ts"
 import { displayWidth, escapeLength, truncateToWidth } from "../render/width.ts"
-import { footerReserveRows } from "../runtime/chrome.ts"
 import {
   applyKey,
   buildRenderSpec,
   createDecoderState,
+  createKeyStreamPump,
   createState,
+  type DecodedKey,
   type DecoderState,
-  decodeKeysStream,
   MAX_VISIBLE,
   type PromptKey,
   pointLength,
@@ -174,7 +175,7 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
     const base = promptOf()
     if (!search) return base
     const ok = searchMatches().length > 0
-    return `${ok ? "(reverse-i-search)" : "(failed reverse-i-search)"}\`${search.query}': `
+    return t(ok ? "ask.search" : "ask.searchFail", { q: search.query })
   }
 
   return new Promise((resolve, reject) => {
@@ -194,6 +195,12 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
       if (done) return
       done = true
       clearIdle()
+      // Flush lone-ESC yang tertunda tak boleh jalan setelah selesai (batal
+      // ganda). pump didefinisikan di bawah — cleanup selalu dipanggil
+      // setelah init, jadi aman dari TDZ.
+      try {
+        pump.dispose()
+      } catch {}
       try {
         process.stdin.setRawMode(false)
       } catch {}
@@ -209,6 +216,13 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
       resolve(v)
     }
     const fail = (e: unknown) => {
+      // Overlay dropdown WAJIB terhapus juga di jalur gagal (bukan cuma
+      // submit) — tanpanya sisa daftar menempel permanen di scrollback.
+      // clearOverlay didefinisikan di bawah; fail hanya jalan pasca-setup
+      // sehingga aman dari TDZ.
+      try {
+        clearOverlay()
+      } catch {}
       cleanup()
       reject(e)
     }
@@ -336,17 +350,18 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
       // Baris input visual ikut memakan tinggi: kurangi jatah dropdown agar
       // blok input + dropdown tetap muat di terminal pendek.
       const nInGuess = state.line.split("\n").length
-      // Sisakan ruang untuk prompt + 1 baris status + jatah footer lengket
-      // (chrome sticky = 3 baris dasar) agar dropdown tidak membungkus maupun
-      // menimpa footer di terminal pendek.
-      const maxVisible = Math.max(
-        1,
-        Math.min(MAX_VISIBLE, rows - 3 - footerReserveRows() - (nInGuess - 1)),
-      )
+      // Sisakan ruang untuk prompt + 1 baris status agar dropdown tidak
+      // membungkus di terminal pendek. (Footer lengket/chrome.ts dihapus
+      // bersama REPL linier — tak ada reserve.)
+      const maxVisible = Math.max(1, Math.min(MAX_VISIBLE, rows - 3 - (nInGuess - 1)))
       const spec = buildRenderSpec(state, effPrompt(), matches(), opts.groupOf, maxVisible)
       const view = scrollableMultiline(effPrompt(), state.line, state.cursor)
       const nIn = view.texts.length
-      const maxRows = Math.max(prevRows, spec.totalRows)
+      // Mini-window: bingkai garis di atas-bawah daftar agar terbaca sebagai
+      // jendela, bukan tulisan inline. +2 baris ikut akuntansi maxRows/prevRows
+      // dan matematika kursor agar tak ada sisa saat susut/tutup.
+      const ddRows = spec.rows.length > 0 ? spec.totalRows + 2 : 0
+      const maxRows = Math.max(prevRows, ddRows)
       const maxIn = Math.max(prevInputRows, nIn)
       // Kembali ke anchor: render lalu menaruh kursor di baris R.
       if (prevCursorRow > 0) process.stdout.write(`\x1b[${prevCursorRow}A`)
@@ -363,9 +378,16 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
 
       if (spec.rows.length > 0) {
         const cols = process.stdout.columns || 80
+        const rule = `${DIM}${"─".repeat(Math.max(8, Math.min(28, cols - 1)))}${RESTORE}`
+        // Tiap baris visual diawali \r\n sendiri (termasuk item pertama):
+        // total newline = 1(rule) + rows + (more?1) + 1(rule) = ddRows,
+        // seimbang dengan cursor-up di bawah. Pola lama (newline SEBAGAI
+        // pemisah) membuat item pertama menimpa garis bingkai.
         process.stdout.write("\r\n")
+        process.stdout.write(CLEAR + rule)
         for (let i = 0; i < spec.rows.length; i++) {
           const row = spec.rows[i]!
+          process.stdout.write("\r\n")
           if (row.kind === "header") {
             process.stdout.write(
               CLEAR + c.accent(c.bold(truncateToWidth(row.text, cols))) + RESTORE,
@@ -382,14 +404,17 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
               process.stdout.write(CLEAR + DIM + prefix + text + RESTORE)
             }
           }
-          if (i < spec.rows.length - 1) process.stdout.write("\r\n")
         }
         if (spec.moreCount > 0) {
           process.stdout.write("\r\n")
-          process.stdout.write(`${CLEAR + DIM}    … ${spec.moreCount} more${RESTORE}`)
+          process.stdout.write(
+            `${CLEAR + DIM}    ${t("ask.more", { n: spec.moreCount })}${RESTORE}`,
+          )
         }
-        // Kembali ke anchor (melewati dropdown + baris input lanjutan).
-        process.stdout.write(`\x1b[${spec.totalRows + (nIn - 1)}A`)
+        process.stdout.write("\r\n")
+        process.stdout.write(CLEAR + rule)
+        // Kembali ke anchor (melewati dropdown + bingkai + baris input lanjutan).
+        process.stdout.write(`\x1b[${ddRows + (nIn - 1)}A`)
         // Gambar ulang blok input (pastikan bersih setelah naik).
         process.stdout.write(`\r${CLEAR}${view.texts[0]}`)
         for (let k = 1; k < nIn; k++) process.stdout.write(`\r\n${CLEAR}${view.texts[k]!}`)
@@ -401,7 +426,7 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
       // Kursor sungguhan di posisi logis — bukan selalu di ujung baris.
       placeCursor(view.cursorCol)
       process.stdout.write(SYNC_END)
-      prevRows = spec.totalRows
+      prevRows = ddRows
       prevInputRows = nIn
       prevCursorRow = view.cursorRow
     }
@@ -504,9 +529,10 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
       } catch {}
     }
 
-    onData = (chunk: Buffer) => {
-      resetIdle()
-      const keys = decodeKeysStream(chunk, decoder)
+    // Jalur tunggal key (sinkron + flush lone-ESC via pump): hook → search →
+    // empty-cancel → history → applyKey → render. True = selesai via doSubmit
+    // (pemanggil wajib berhenti dan tak me-render lagi).
+    const handleKeys = (keys: DecodedKey[]): boolean => {
       for (const d of keys) {
         // Hook pemanggil: key yang ditangani sendiri (return truthy) dilewati
         // dari logika bawaan; render() di akhir chunk tetap menggambar efeknya.
@@ -537,7 +563,7 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
             historyIdx = -1
             savedLine = ""
             doSubmit(false)
-            return
+            return true
           }
           if (d.key.type === "esc" || d.key.type === "ctrl-c" || d.key.type === "ctrl-d") {
             // Batal cari saja (bukan batal baris): kembalikan draf. Ctrl+D ikut
@@ -600,7 +626,7 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
         // hilang karena salah tekan (menu yang terbuka tetap ditutup applyKey).
         if (!search && d.key.type === "esc" && !state.menuOpen && state.line === "") {
           doSubmit(true)
-          return
+          return true
         }
         // Navigasi history saat dropdown tertutup.
         //
@@ -653,12 +679,32 @@ export async function askLine(opts: AskLineOptions = {}): Promise<string | null>
         if (r.action === "submit" || r.action === "cancel") {
           // Empty Enter = "" (not null) - REPL continues; null = cancel (break)
           doSubmit(r.action === "cancel")
-          return
+          return true
         }
       }
-      // Satu render per chunk - paste 50+ char tidak meng-redraw 50 kali.
+      // Satu render per batch - paste 50+ char tidak meng-redraw 50 kali.
       try {
         render()
+      } catch (e) {
+        fail(e)
+        return true
+      }
+      return false
+    }
+    // Pompa decode + flush lone-ESC 50ms: panah split tak lagi jadi esc+"[A",
+    // Esc tunggal tetap batal (terlambat ≤50ms). resetIdle di sini agar
+    // flush (aktivitas user) juga memperpanjang idle, sama seperti chunk.
+    const pump = createKeyStreamPump({
+      state: decoder,
+      onKeys: (keys) => {
+        resetIdle()
+        return handleKeys(keys)
+      },
+    })
+
+    onData = (chunk: Buffer) => {
+      try {
+        pump.push(chunk)
       } catch (e) {
         fail(e)
       }
@@ -700,6 +746,9 @@ export async function askSecret(
       done = true
       clearIdle()
       try {
+        secretPump.dispose()
+      } catch {}
+      try {
         process.stdin.setRawMode(false)
       } catch {}
       // Tanpa pause — lihat cleanup askLine (stdin mengalir seumur proses).
@@ -731,62 +780,74 @@ export async function askSecret(
     process.stdout.write(promptText)
     let secret = ""
 
-    onData = (chunk: Buffer) => {
-      resetIdle()
-      try {
-        for (const d of decodeKeysStream(chunk, decoder)) {
-          const k = d.key
-          if (k.type === "enter") {
-            finish(secret.trim())
-            return
-          } else if (k.type === "esc" || k.type === "ctrl-c" || k.type === "ctrl-d") {
-            // Esc/Ctrl+C/Ctrl+D = BATALKAN PROMPT, bukan matikan proses.
-            //
-            // Dulu di sini `process.exit(130)`. Di raw mode Ctrl+C tidak
-            // menghasilkan SIGINT, jadi itu emulasi manual — tapi `askSecret`
-            // dipanggil dari `runProviderManager`, sebuah dialog di dalam REPL
-            // yang hidup. Menekan Ctrl+C saat salah ketik API key mematikan
-            // seluruh sesi beserta riwayatnya, bukan menutup dialognya.
-            finish(null)
-            return
-          } else if (k.type === "backspace") {
-            // Hapus satu GRAPHEME (bukan code point/UTF-16 unit): emoji ZWJ
-            // dan flag tidak meninggalkan setengah.
-            const graphemes = toGraphemes(secret)
-            if (graphemes.length > 0) {
-              graphemes.pop()
-              secret = graphemes.join("")
-              process.stdout.write("\b \b")
-            }
-          } else if (k.type === "ctrl-u") {
-            // Hapus SEMUA (mis. salah paste API key) — tanpa ini satu-satunya
-            // jalan adalah Backspace satu-satu.
-            const n = toGraphemes(secret).length
-            secret = ""
-            if (n > 0) process.stdout.write(`${"\b \b".repeat(n)}`)
-          } else if (k.type === "ctrl-w") {
-            // Hapus satu "kata" (sampai spasi terakhir) — sama dengan prompt
-            // teks biasa.
-            const graphemes = toGraphemes(secret)
-            const cut = secret.replace(/\S+\s*$/, "")
-            const removed = graphemes.length - toGraphemes(cut).length
-            if (removed > 0) {
-              secret = cut
-              process.stdout.write(`${"\b \b".repeat(removed)}`)
-            }
-          } else if (k.type === "char") {
-            // Sekuens kontrol dari paste dibuang — secret tidak boleh
-            // mengandung newline/C0 (Enter adalah satu-satunya terminasi).
-            const clean = k.ch
-              .replace(/\r\n|\r|\n|\t/g, "")
-              // biome-ignore lint/suspicious/noControlCharactersInRegex: membuang kontrol dari paste
-              .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "")
-            if (clean) {
-              secret += clean
-              process.stdout.write("*".repeat(toGraphemes(clean).length))
-            }
+    // Jalur tunggal key seperti askLine (sinkron + flush lone-ESC 50ms).
+    const handleSecretKeys = (keys: DecodedKey[]): boolean => {
+      for (const d of keys) {
+        const k = d.key
+        if (k.type === "enter") {
+          finish(secret.trim())
+          return true
+        } else if (k.type === "esc" || k.type === "ctrl-c" || k.type === "ctrl-d") {
+          // Esc/Ctrl+C/Ctrl+D = BATALKAN PROMPT, bukan matikan proses.
+          //
+          // Dulu di sini `process.exit(130)`. Di raw mode Ctrl+C tidak
+          // menghasilkan SIGINT, jadi itu emulasi manual — tapi `askSecret`
+          // dipanggil dari `runProviderManager`, sebuah dialog di dalam REPL
+          // yang hidup. Menekan Ctrl+C saat salah ketik API key mematikan
+          // seluruh sesi beserta riwayatnya, bukan menutup dialognya.
+          finish(null)
+          return true
+        } else if (k.type === "backspace") {
+          // Hapus satu GRAPHEME (bukan code point/UTF-16 unit): emoji ZWJ
+          // dan flag tidak meninggalkan setengah.
+          const graphemes = toGraphemes(secret)
+          if (graphemes.length > 0) {
+            graphemes.pop()
+            secret = graphemes.join("")
+            process.stdout.write("\b \b")
+          }
+        } else if (k.type === "ctrl-u") {
+          // Hapus SEMUA (mis. salah paste API key) — tanpa ini satu-satunya
+          // jalan adalah Backspace satu-satu.
+          const n = toGraphemes(secret).length
+          secret = ""
+          if (n > 0) process.stdout.write(`${"\b \b".repeat(n)}`)
+        } else if (k.type === "ctrl-w") {
+          // Hapus satu "kata" (sampai spasi terakhir) — sama dengan prompt
+          // teks biasa.
+          const graphemes = toGraphemes(secret)
+          const cut = secret.replace(/\S+\s*$/, "")
+          const removed = graphemes.length - toGraphemes(cut).length
+          if (removed > 0) {
+            secret = cut
+            process.stdout.write(`${"\b \b".repeat(removed)}`)
+          }
+        } else if (k.type === "char") {
+          // Sekuens kontrol dari paste dibuang — secret tidak boleh
+          // mengandung newline/C0 (Enter adalah satu-satunya terminasi).
+          const clean = k.ch
+            .replace(/\r\n|\r|\n|\t/g, "")
+            // biome-ignore lint/suspicious/noControlCharactersInRegex: membuang kontrol dari paste
+            .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "")
+          if (clean) {
+            secret += clean
+            process.stdout.write("*".repeat(toGraphemes(clean).length))
           }
         }
+      }
+      return false
+    }
+    const secretPump = createKeyStreamPump({
+      state: decoder,
+      onKeys: (keys) => {
+        resetIdle()
+        return handleSecretKeys(keys)
+      },
+    })
+
+    onData = (chunk: Buffer) => {
+      try {
+        secretPump.push(chunk)
       } catch (e) {
         fail(e)
       }

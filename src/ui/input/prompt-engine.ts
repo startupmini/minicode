@@ -43,6 +43,9 @@ export type PromptKey =
   | { type: "end" }
   | { type: "up" }
   | { type: "down" }
+  // PgUp/PgDn (ESC[5~/[6~) — di TUI scroll viewport transkrip, bukan histori.
+  | { type: "pageup" }
+  | { type: "pagedown" }
   | { type: "tab" }
   | { type: "enter" }
   | { type: "esc" }
@@ -264,6 +267,11 @@ export function applyKey(
       if (!state.line.length) return { state, action: "none" }
       return { state: createState(), action: "render" }
     }
+    // PgUp/PgDn: scroll viewport transkrip — ditangani App TUI SEBELUM
+    // applyKey; engine netral (tanpa ini switch tak exhaustive → tsc merah).
+    case "pageup":
+    case "pagedown":
+      return { state, action: "none" }
     case "ctrl-w": {
       if (state.cursor === 0) return { state, action: "none" }
       const at = unitIndex(state.line, state.cursor)
@@ -423,6 +431,13 @@ export function decodeKeysStream(chunk: Uint8Array, state: DecoderState): Decode
     const b = buf[i]!
     if (b === 0x1b) {
       const n1 = buf[i + 1]
+      // ESC di ujung chunk = awal sekuens yang terbelah (panah ESC[A jadi
+      // [0x1b]+[0x5b,0x41]) ATAU Esc tunggal. Tak bisa dibedakan sinkron —
+      // TAHAN di pending; pemanggil (input.ts) flush sebagai esc bila tak ada
+      // byte lanjutan dalam ~50ms (pola lone-ESC yang sama saat busy).
+      // Emisi langsung di sini mengubah panah split jadi esc+"[A" (batal prompt
+      // + teks nyasar).
+      if (n1 === undefined) break
       // Bracketed paste start: ESC[200~ … ESC[201~ — tahan sampai penutup.
       if (
         n1 === 0x5b &&
@@ -484,10 +499,11 @@ export function decodeKeysStream(chunk: Uint8Array, state: DecoderState): Decode
           continue
         }
         if (j === i + 2) {
-          // Hanya "ESC["/"ESC O" tanpa apa pun → ESC biasa, lengkap.
-          out.push({ key: { type: "esc" }, width: 0 })
-          i += 2
-          continue
+          // "ESC["/"ESC O" di ujung chunk = CSI belum lengkap (final di chunk
+          // berikut), BUKAN Esc biasa. Tahan agar panah split tak jadi esc.
+          // (ESC[ yang benar-benar lengkap selalu punya byte final dan sudah
+          // ditangani di atas.)
+          break
         }
         break // ada parameter tapi belum ada byte final — tahan
       }
@@ -517,6 +533,80 @@ export function decodeKeysStream(chunk: Uint8Array, state: DecoderState): Decode
   }
   state.pending = buf.slice(i)
   return out
+}
+
+/**
+ * Pending berupa Esc tunggal yang tertahan di ujung chunk ([0x1b])?
+ * Hanya kasus ini yang di-flush via timer ~50ms oleh pemanggil: sekuens lain
+ * yang tertahan (UTF-8/paste/mouse/CSI berparameter) menunggu chunk berikut
+ * dan tak boleh dipaksa jadi esc.
+ */
+export function hasPendingLoneEsc(state: DecoderState): boolean {
+  return state.pending.length === 1 && state.pending[0] === 0x1b
+}
+
+/**
+ * Paksa pending Esc tunggal menjadi key esc (dipanggil timer pemanggil bila
+ * tak ada byte lanjutan). No-op bila pending bukan Esc tunggal.
+ */
+export function flushLoneEsc(state: DecoderState): DecodedKey[] {
+  if (!hasPendingLoneEsc(state)) return []
+  state.pending = []
+  return [{ key: { type: "esc" }, width: 0 }]
+}
+
+// ── Pompa key stream + flush lone-ESC ──
+//
+// Decoder menahan ESC di ujung chunk (tak bisa bedakan Esc tunggal vs paruh
+// panah split secara sinkron). Pompa ini membungkus pola yang dipakai SEMUA
+// konsumen interaktif (askLine/askSecret/picker/manager): decode chunk →
+// teruskan key sinkron → bila pending Esc tunggal, tunggu ~50ms (pola
+// lone-ESC yang sama saat busy di cli/repl.ts); byte lanjutan membatalkan
+// timer dan melengkapi sekuens, sunyi berarti Esc asli → flush sebagai esc.
+//
+// Tanpa pompa tiap konsumen harus menulis timer sendiri (duplikasi 5× dan
+// drift); tanpa timer panah split jadi esc+"[A" (batal prompt + teks nyasar).
+// Timer di-unref agar tak menahan exit proses/test.
+export interface KeyStreamPump {
+  /** Decode chunk + kirim key sinkron; arm flush bila Esc tertahan. */
+  push(chunk: Uint8Array): void
+  /** Matikan timer (panggil di cleanup agar flush tak jalan setelah selesai). */
+  dispose(): void
+}
+
+export function createKeyStreamPump(opts: {
+  state: DecoderState
+  /** Dipanggil untuk key sinkron maupun hasil flush; return true = selesai. */
+  onKeys: (keys: DecodedKey[]) => boolean
+  escMs?: number
+}): KeyStreamPump {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const clear = () => {
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      timer = undefined
+    }
+  }
+  return {
+    push(chunk: Uint8Array): void {
+      clear()
+      const done = opts.onKeys(decodeKeysStream(chunk, opts.state))
+      if (done) return
+      if (hasPendingLoneEsc(opts.state)) {
+        timer = setTimeout(() => {
+          timer = undefined
+          const flushed = flushLoneEsc(opts.state)
+          if (flushed.length) opts.onKeys(flushed)
+        }, opts.escMs ?? 50)
+        try {
+          ;(timer as unknown as { unref?: () => void }).unref?.()
+        } catch {}
+      }
+    },
+    dispose(): void {
+      clear()
+    },
+  }
 }
 
 export function decodeKey(s: string, i: number): DecodedKey | null {
@@ -559,6 +649,9 @@ export function decodeKey(s: string, i: number): DecodedKey | null {
       if (kind === "4" && s[i + 3] === "~") return { key: { type: "end" }, width: 4 }
       if (kind === "8" && s[i + 3] === "~") return { key: { type: "end" }, width: 4 }
       if (kind === "3" && s[i + 3] === "~") return { key: { type: "delete" }, width: 4 }
+      // PgUp/PgDn — App TUI memakainya untuk scroll transkrip (I18).
+      if (kind === "5" && s[i + 3] === "~") return { key: { type: "pageup" }, width: 4 }
+      if (kind === "6" && s[i + 3] === "~") return { key: { type: "pagedown" }, width: 4 }
       // Shift+Tab (backtab) ESC [ Z — dipakai REPL linier untuk cycle mode.
       // Tanpa cabang eksplisit ini ia jatuh ke catch-all "esc" di bawah,
       // sehingga tipe "shift-tab" tidak pernah dihasilkan decodeKeys.

@@ -7,6 +7,10 @@
 // berisi `metadata`, `provider_error_code`, `limit_source`, dan URL dokumentasi
 // — di dalam frame TUI selebar 100 kolom.
 
+import { t } from "../i18n/locale.ts"
+import { sanitizeAnsiLine } from "./sanitize.ts"
+import { truncateToWidth } from "./width.ts"
+
 export interface FriendlyError {
   message: string
   fix?: string
@@ -45,7 +49,9 @@ export function extractProviderDetail(raw: string): { detail?: string; hint?: st
   }
   // HTML: judul halaman error biasanya sudah menjelaskan.
   const title = /<title>([^<]{1,120})<\/title>/i.exec(trimmed)
-  if (title) return { detail: title[1]!.trim() }
+  // Judul HTML dari provider tak terpercaya — sanitasi satu-baris agar tag
+  // / escape tak lolos via jalur error.
+  if (title) return { detail: sanitizeAnsiLine(title[1]!.trim()) }
   // Regex terakhir untuk body yang TERPOTONG (stream terputus di tengah JSON).
   // `raw` didahulukan: pada OpenRouter itu yang memuat alasan sebenarnya,
   // sementara `message` hanya "Provider returned error". Kutip penutup dibuat
@@ -66,7 +72,11 @@ function firstSentence(s?: string, max = 150): string | undefined {
   if (!clean) return undefined
   const cut = /^(.{20,}?[.!?])\s/.exec(clean)
   const one = cut ? cut[1]! : clean
-  return one.length > max ? `${one.slice(0, max - 1)}…` : one
+  // Potong per KOLOM terminal (CJK/emoji = 2) dan jangan belah SGR/surrogate;
+  // input di sini belum tentu sanitize, jadi sanitasi satu-baris dulu agar
+  // ESC[2J/OSC tak lolos via pesan error provider yang tak terpercaya.
+  const safe = sanitizeAnsiLine(one)
+  return truncateToWidth(safe, max, "…")
 }
 
 /**
@@ -95,24 +105,38 @@ function redactSecrets(s: string): string {
   // Identifier/type-word (`string`, `graphemes`, `?`) lolos; token realistis kena.
   // `=` termasuk agar nilai cookie berbentuk pasangan kunci-nilai utuh tersamarkan.
   const V = `(?:"[^"]+"|'[^']+'|[A-Za-z0-9_~+/=-]*\\d[A-Za-z0-9_~+/=-]*|[A-Za-z0-9_~+/=-]{12,})`
-  const V4 = `(?:"[^"]+"|'[^']+'|[A-Za-z0-9_~+/=-]*\\d[A-Za-z0-9_~+/=-]*|[A-Za-z0-9_~+/=-]{4,})`
-  return s
-    .replace(/\bbearer\s+["']?[A-Za-z0-9._~+/-]{6,}["']?/gi, "Bearer [redacted]")
-    .replace(
-      new RegExp(
-        `((?:api[_-]?key|token|authorization|secret|password|client[_-]?secret|cookie)\\s*[:=]\\s*)(?!\\[redacted\\])(${V})`,
-        "gi",
-      ),
-      "$1[redacted]",
-    )
-    .replace(new RegExp(`(\\bsession[-_]?id\\s*[:=]\\s*)(${V4})`, "g"), "$1[redacted]")
+  const V4 = `(?:"[^"]+"|'[^']+'|[A-Za-z0-9_~+/=-]*\\d[A-Za-z0-9_~+/-]*|[A-Za-z0-9_~+/=-]{4,})`
+  return (
+    s
+      // Format kunci provider konkret (subset scrub.ts — ui-boundary melarang
+      // impor policy/scrub; pola generik di bawah tak menangkap `sk-ant-…`,
+      // `thk_live_…`, `hf_…`, JWT tanpa konteks kv). Divalidasi bug-hunt
+      // 2026-09-19: echo proxy key-key ini lolos mentah ke layar sebelumnya.
+      .replace(/\b(sk-[A-Za-z0-9_-]{20,})\b/g, "[redacted]")
+      .replace(/\b(thk_live_[A-Za-z0-9_-]{16,})\b/g, "[redacted]")
+      .replace(/\b(hf_[A-Za-z0-9]{20,})\b/g, "[redacted]")
+      .replace(/\b(eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g, "[redacted]")
+      .replace(/([?&](?:api[_-]?key|apikey|token|secret|password)=)[^&\s"'<>]*/gi, "$1[redacted]")
+      .replace(/\bbearer\s+["']?[A-Za-z0-9._~+/-]{6,}["']?/gi, "Bearer [redacted]")
+      .replace(
+        new RegExp(
+          `((?:api[_-]?key|token|authorization|secret|password|client[_-]?secret|cookie)\\s*[:=]\\s*)(?!\\[redacted\\])(${V})`,
+          "gi",
+        ),
+        "$1[redacted]",
+      )
+      .replace(new RegExp(`(\\bsession[-_]?id\\s*[:=]\\s*)(${V4})`, "g"), "$1[redacted]")
+  )
 }
 
 // Mapping kategori formal -> pesan user-friendly. Detail provider disertakan
 // sebagai satu kalimat bila ada (itu yang memberi tahu model mana yang limit,
 // atau tool mana yang tidak didukung) — bukan seluruh body.
 export function friendlyFromCategory(category: string, detail: string): FriendlyError {
-  const truth = redactSecrets(detail.trim())
+  // Detail datang dari body error provider (proxy tak terpercaya): redact dulu
+  // lalu sanitasi satu-baris agar ESC[2J/OSC/alternate-screen tak bisa lolos
+  // via jalur error yang dicetak writer mentah di cli/.
+  const truth = sanitizeAnsiLine(redactSecrets(detail.trim()))
   const { detail: providerDetail, hint } = extractProviderDetail(truth)
   const withDetail = (base: string) =>
     providerDetail && providerDetail.toLowerCase() !== base.toLowerCase()
@@ -120,10 +144,12 @@ export function friendlyFromCategory(category: string, detail: string): Friendly
       : base
 
   switch (category) {
+    // Deteksi kata kunci TETAP Inggris: body error provider berbahasa Inggris
+    // apa pun locale UI. Yang diterjemahkan hanya pesan/fix tampil.
     case "rate_limit":
       return {
-        message: withDetail("Provider is rate-limiting requests"),
-        fix: hint ?? "Wait a moment and try again, or use --ratelimit to throttle requests.",
+        message: withDetail(t("err.rateLimit")),
+        fix: hint ?? t("err.rateLimitFix"),
       }
     case "auth": {
       const low = truth.toLowerCase()
@@ -135,41 +161,39 @@ export function friendlyFromCategory(category: string, detail: string): Friendly
         low.includes("credit limit")
       ) {
         return {
-          message: withDetail("API key balance or quota is exhausted"),
-          fix: hint ?? "Switch provider via /model, or top up credits.",
+          message: withDetail(t("err.balance")),
+          fix: hint ?? t("err.balanceFix"),
         }
       }
       return {
-        message: withDetail("Provider rejected authentication"),
-        fix: hint ?? "Check your API key, or switch provider via /model.",
+        message: withDetail(t("err.auth")),
+        fix: hint ?? t("err.authFix"),
       }
     }
     case "server":
       return {
-        message: withDetail("Provider is temporarily unavailable"),
-        fix: hint ?? "Wait a moment and try again, or switch provider via /model.",
+        message: withDetail(t("err.server")),
+        fix: hint ?? t("err.serverFix"),
       }
     case "network":
       return {
-        message: withDetail("Failed to reach provider"),
-        fix: hint ?? "Check your connection and try again.",
+        message: withDetail(t("err.network")),
+        fix: hint ?? t("err.networkFix"),
       }
     case "invalid_request":
       return {
-        message: withDetail("Request was rejected by provider"),
-        fix: hint ?? "Check the model name or select another model with /model.",
+        message: withDetail(t("err.invalid")),
+        fix: hint ?? t("err.invalidFix"),
       }
     case "context_length_exceeded":
       return {
-        message: withDetail("Context window exceeded"),
-        fix:
-          hint ??
-          "Start a new session (/exit then minicode), or use a model with a larger context window.",
+        message: withDetail(t("err.context")),
+        fix: hint ?? t("err.contextFix"),
       }
     case "content_filter":
       return {
-        message: withDetail("Request was blocked by provider content filter"),
-        fix: hint ?? "Rewrite the prompt, or switch provider via /model.",
+        message: withDetail(t("err.filter")),
+        fix: hint ?? t("err.filterFix"),
       }
     default: {
       // Kategori "unknown" menampung status HTTP lain (mis. 402 dari vendor
@@ -186,8 +210,8 @@ export function friendlyFromCategory(category: string, detail: string): Friendly
         low.includes("fewer max_tokens")
       ) {
         return {
-          message: withDetail("API key balance or quota is exhausted"),
-          fix: hint ?? "Switch provider via /model, or top up credits.",
+          message: withDetail(t("err.balance")),
+          fix: hint ?? t("err.balanceFix"),
         }
       }
       if (
@@ -198,13 +222,14 @@ export function friendlyFromCategory(category: string, detail: string): Friendly
         low.includes("try again later")
       ) {
         return {
-          message: withDetail("Provider is rate-limiting requests"),
-          fix: hint ?? "Wait a moment and try again, or use --ratelimit to throttle requests.",
+          message: withDetail(t("err.rateLimit")),
+          fix: hint ?? t("err.rateLimitFix"),
         }
       }
       if (providerDetail) return { message: providerDetail, ...(hint ? { fix: hint } : {}) }
-      const cut = truth.length > 160 ? `${truth.slice(0, 157)}…` : truth
-      return { message: cut }
+      // truth sudah sanitize satu-baris; potong per kolom agar CJK/emoji tak
+      // meluap dan tak belah SGR/surrogate.
+      return { message: truncateToWidth(truth, 160, "…") }
     }
   }
 }
@@ -214,23 +239,23 @@ export function friendlyError(raw: string): FriendlyError {
   const lower = raw.toLowerCase()
   if (lower.includes("timed out") || lower.includes("timeout"))
     return {
-      message: "Run exceeded timeout",
-      fix: "Increase --timeout or use a faster model.",
+      message: t("err.timeout"),
+      fix: t("err.timeoutFix"),
     }
   if (lower.includes("max steps") || lower.includes("max_steps"))
     return {
-      message: "Tool step limit reached",
-      fix: "Split the task into smaller prompts.",
+      message: t("err.steps"),
+      fix: t("err.stepsFix"),
     }
-  if (lower.includes("budget"))
-    return { message: "Session budget exceeded", fix: "Start a new session or increase --budget." }
-  if (lower.includes("busy"))
-    return { message: "A run is still in progress", fix: "Wait for the current run to finish." }
-  if (lower.includes("aborted")) return { message: "Run was aborted" }
+  if (lower.includes("budget")) return { message: t("err.budget"), fix: t("err.budgetFix") }
+  if (lower.includes("busy")) return { message: t("err.busy"), fix: t("err.busyFix") }
+  if (lower.includes("aborted")) return { message: t("err.aborted") }
   const { detail } = extractProviderDetail(raw)
-  if (detail) return { message: redactSecrets(detail) }
-  const cut = raw.length > 160 ? `${raw.slice(0, 157)}…` : raw
-  return { message: redactSecrets(cut) }
+  // detail sudah sanitize via firstSentence; redact tak menambah ANSI, tapi
+  // bungkus lagi agar idempoten bila pemanggil mengirim mentah di masa depan.
+  if (detail) return { message: sanitizeAnsiLine(redactSecrets(detail)) }
+  const safe = sanitizeAnsiLine(redactSecrets(raw))
+  return { message: truncateToWidth(safe, 160, "…") }
 }
 
 /** Satu baris siap tampil: pesan + saran. Dipakai renderer TUI & one-shot. */

@@ -219,20 +219,28 @@ export function chunkByWidth(s: string, width: number): string[] {
   let cur = ""
   let w = 0
   let i = 0
-  // Sekuens SGR yang masih "terbuka" (bukan reset) — disuntikkan ke potongan
-  // berikutnya agar warna tidak hilang saat kata berwarna panjang dipecah.
-  let openSgr = ""
+  // Sekuens SGR yang masih "terbuka" — disuntikkan ke potongan berikutnya
+  // agar warna tidak hilang saat kata berwarna panjang dipecah. SEMUA pembuka
+  // diingat (bukan satu): `\x1b[1m\x1b[31m…` yang terbelah harus membawa bold
+  // DAN merah ke potongan berikut. Reset/off (0, 22–29, 39, 49) mengosongkan
+  // tumpukan — arah aman: potongan berikut mulai tanpa gaya daripada dengan
+  // gaya basi yang salah.
+  const SGR_OFF = new Set(["0", "22", "23", "24", "25", "27", "28", "29", "39", "49"])
+  let openSgr: string[] = []
   while (i < s.length) {
     if (s[i] === "\x1b") {
       const len = escapeLength(s, i)
       if (len > 0) {
         const seq = s.slice(i, i + len)
         if (seq.endsWith("m")) {
-          // Reset/close menutup atribut; selain itu ingat sekuens pembuka.
-          const params = seq.slice(2, -1).split(";")
-          openSgr = params.some((p) => p === "0" || p === "22" || p === "39" || p === "49")
-            ? ""
-            : seq
+          const params = seq.slice(2, -1).split(/[:;]/)
+          if (params.some((p) => SGR_OFF.has(p) || p === "")) openSgr = []
+          if (params.some((p) => p !== "" && !SGR_OFF.has(p))) {
+            openSgr.push(seq)
+            // Batas tumpukan: input patologis (ganti warna tiap karakter tanpa
+            // reset) tak boleh membuat tiap potongan membawa ratusan sekuens.
+            if (openSgr.length > 8) openSgr = openSgr.slice(-8)
+          }
         }
         cur += seq
         i += len
@@ -244,7 +252,7 @@ export function chunkByWidth(s: string, width: number): string[] {
     const size = cp > 0xffff ? 2 : 1
     if (w + cw > width && cur !== "") {
       out.push(cur)
-      cur = openSgr // lanjutkan warna ke potongan berikutnya
+      cur = openSgr.join("") // lanjutkan warna ke potongan berikutnya
       w = 0
     }
     cur += s.slice(i, i + size)

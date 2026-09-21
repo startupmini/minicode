@@ -4,23 +4,33 @@ import type { UiToolCallRef } from "../contract.ts"
 import { formatFriendly, friendlyFromCategory } from "./errors.ts"
 import { formatUsd } from "./money.ts"
 
+/**
+ * Potong per code point (bukan UTF-16 unit): slice mentah membelah surrogate
+ * pair emoji menjadi U+FFFD di label. Batas di sini adalah cap KONTEN (bukan
+ * kolom terminal) — pemotongan kolom terjadi di hilir via truncateToWidth.
+ */
+function safeSlice(s: string, n: number): string {
+  if (s.length <= n) return s
+  return Array.from(s).slice(0, n).join("")
+}
+
 export function formatArgsPreview(args: unknown): string {
   try {
     const a = args as Record<string, unknown>
     if (a.path) return String(a.path)
-    if (a.command) return String(a.command).slice(0, 60)
-    if (a.cmd) return String(a.cmd).slice(0, 60)
+    if (a.command) return safeSlice(String(a.command), 60)
+    if (a.cmd) return safeSlice(String(a.cmd), 60)
     if (a.pattern) return String(a.pattern)
     if (a.query) return String(a.query)
-    if (a.prompt) return String(a.prompt).slice(0, 40)
-    return JSON.stringify(a).slice(0, 40)
+    if (a.prompt) return safeSlice(String(a.prompt), 40)
+    return safeSlice(JSON.stringify(a), 40)
   } catch {
     return "[args]"
   }
 }
 
 export function formatStepCalls(calls: readonly UiToolCallRef[], argCap = 35): string {
-  return calls.map((tc) => `${tc.name}(${JSON.stringify(tc.args).slice(0, argCap)})`).join(", ")
+  return calls.map((tc) => `${tc.name}(${safeSlice(JSON.stringify(tc.args), argCap)})`).join(", ")
 }
 
 export function formatUsage(parts: {

@@ -128,14 +128,25 @@ export interface FakeTty {
   clear(): void
   /** Ubah ukuran terminal dan picu event resize. */
   resize(columns: number, rows: number): void
+  /**
+   * Frame layar terakhir sebagai grid teks polos (satu string per baris).
+   *
+   * Parser menafsirkan urutan yang dipakai App/painter: HOME, ED, EL, kursor
+   * naik/turun, CR/LF, dan SGR (dibuang — sel menyimpan karakter polos).
+   * Alternatif masuk (`?1049h`) mengosongkan grid (semantik buffer alt);
+   * alternatif keluar (`?1049l`) membiarkan frame terakhir (untuk assertion
+   * pasca-quit pakai byte pairing, bukan parser). CJK/emoji dihitung 2 kolom
+   * via `displayWidth` supaya kursor tidak meleset setelah glyph lebar.
+   */
+  screen(): string[]
   /** Rejection/exception yang tertangkap selama test. Harus kosong. */
   failures(): string[]
   restore(): void
 }
 
 export function installFakeTty(opts: FakeTtyOptions = {}): FakeTty {
-  const columns = opts.columns ?? 100
-  const rows = opts.rows ?? 30
+  let columns = opts.columns ?? 100
+  let rows = opts.rows ?? 30
   const isTTY = opts.isTTY ?? true
 
   const chunks: string[] = []
@@ -193,6 +204,11 @@ export function installFakeTty(opts: FakeTtyOptions = {}): FakeTty {
     },
     setMaxListeners() {
       return fakeStdin
+    },
+    getMaxListeners() {
+      // Cermin default Node (10): kode produksi menyimpan & mengembalikan
+      // batas ini di sekitar sesi modal (setMaxListeners(0) sementara).
+      return 10
     },
     listenerCount(_event: string) {
       // `readline.emitKeypressEvents()` checks this before wiring internals.
@@ -254,7 +270,20 @@ export function installFakeTty(opts: FakeTtyOptions = {}): FakeTty {
     process.env.TERM = process.env.TERM || "xterm-256color"
     process.env.WT_SESSION = process.env.WT_SESSION || "fake-tty"
   }
+  if (opts.vt === false) {
+    // Simulasi terminal TANPA dukungan VT: openAltScreen menolak TERM=dumb.
+    // DITULIS di sini (setelah origTerm ditangkap) supaya restore()
+    // mengembalikan nilai ambient — mutasi manual di test lalu install
+    // membuat restore() menghidupkan lagi nilai transient (bug nyata:
+    // TERM=dumb bocor ke file test berikutnya).
+    process.env.TERM = "dumb"
+  }
   if (opts.ascii === true) process.env.MINICODE_ASCII = "1"
+  // Locale UI dipin ke en selama fake TTY aktif (paritas COLORTERM/TERM di
+  // atas): assertion string user-visible deterministik apa pun locale OS
+  // mesin CI. Test yang butuh locale lain memanggil setSessionLocale
+  // sendiri SETELAH install (setter menang atas pin ini).
+  setSessionLocale("en")
   ;(process.stdout as unknown as { write: unknown }).write = (chunk: string | Uint8Array) => {
     const s = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk)
     chunks.push(s)
@@ -380,6 +409,8 @@ export function installFakeTty(opts: FakeTtyOptions = {}): FakeTty {
       combinedChunks.length = 0
     },
     resize(nextColumns, nextRows) {
+      columns = nextColumns
+      rows = nextRows
       Object.defineProperty(process.stdout, "columns", {
         value: nextColumns,
         configurable: true,
@@ -387,6 +418,7 @@ export function installFakeTty(opts: FakeTtyOptions = {}): FakeTty {
       Object.defineProperty(process.stdout, "rows", { value: nextRows, configurable: true })
       for (const fn of [...resizeListeners]) fn()
     },
+    screen: () => parseScreenBuffer(chunks.join(""), columns, rows),
     failures: () => [...failures],
     restore() {
       process.off("unhandledRejection", onFailure)
@@ -426,6 +458,7 @@ export function installFakeTty(opts: FakeTtyOptions = {}): FakeTty {
       resizeListeners.length = 0
       listenerEpoch = 0
       rawMode = false
+      resetLocaleState()
     },
   }
   return tty
@@ -461,6 +494,139 @@ export function createFakeBus(): FakeBus {
   }
 }
 
+// ── Parser screen-buffer ──
+// Menafsirkan ulang byte VT menjadi grid teks agar test TUI bisa menegaskan
+// posisi/isi frame tanpa terminal nyata. Hanya yang dipakai painter minicode:
+// HOME, ED (2J), EL (2K/0K/1K), kursor naik/turun (A/B), CR, LF, SGR (dibuang).
+// Sisa CSI/OSC dikonsumsi tanpa efek supaya koordinat tak meleset.
+import { resetLocaleState, setSessionLocale } from "../../src/ui/i18n/locale.ts"
+import { displayWidth } from "../../src/ui/render/width"
+
+export function parseScreenBuffer(out: string, columns: number, rows: number): string[] {
+  const grid: string[][] = Array.from({ length: rows }, () => [])
+  let x = 0
+  let y = 0
+  const clamp = () => {
+    if (x < 0) x = 0
+    if (x > columns) x = columns
+    if (y < 0) y = 0
+    if (y >= rows) y = rows - 1
+  }
+  const eraseLine = (mode: number) => {
+    const row = grid[y]!
+    if (mode === 2) {
+      grid[y] = []
+      return
+    }
+    if (mode === 1) {
+      for (let i = 0; i <= x && i < row.length; i++) row[i] = " "
+      return
+    }
+    for (let i = x; i < columns; i++) row[i] = " "
+  }
+  let i = 0
+  while (i < out.length) {
+    const ch = out[i]!
+    if (ch === "\x1b") {
+      const nxt = out[i + 1]
+      if (nxt === "[") {
+        let j = i + 2
+        while (j < out.length && !/[a-zA-Z]/.test(out[j]!)) j++
+        const body = out.slice(i + 2, j)
+        const fin = out[j]
+        i = j + 1
+        if (fin === "H" || fin === "f") {
+          // CUP: ESC[H atau ESC[row;colH. Tanpa param = home.
+          if (body === "") {
+            x = 0
+            y = 0
+          } else {
+            const parts = body.split(";").map((p) => parseInt(p, 10))
+            const r = Number.isNaN(parts[0]) ? 1 : (parts[0] ?? 1)
+            const c = Number.isNaN(parts[1]) ? 1 : (parts[1] ?? 1)
+            y = r - 1
+            x = c - 1
+          }
+          clamp()
+          continue
+        }
+        if (fin === "A" || fin === "B") {
+          const n = parseInt(body, 10)
+          const d = Number.isNaN(n) ? 1 : n
+          y += fin === "A" ? -d : d
+          clamp()
+          continue
+        }
+        if (fin === "C" || fin === "D") {
+          const n = parseInt(body, 10)
+          const d = Number.isNaN(n) ? 1 : n
+          x += fin === "C" ? d : -d
+          clamp()
+          continue
+        }
+        if (fin === "J") {
+          // ED: 2J = seluruh grid (dipakai repaint penuh App).
+          if (body === "" || body === "2") {
+            for (const row of grid) row.length = 0
+            x = 0
+            y = 0
+          }
+          continue
+        }
+        if (fin === "K") {
+          const n = parseInt(body, 10)
+          eraseLine(Number.isNaN(n) ? 0 : n)
+          continue
+        }
+        // SGR (m), mode privat (h/l — termasuk ?1049h/l, ?2026h/l),
+        // DECSTBM (r), save/restore (s/u), dst: konsumsi tanpa efek.
+        // ?1049h = masuk buffer alt -> grid baru (kosongkan).
+        if ((fin === "h" || fin === "l") && body.includes("1049")) {
+          if (fin === "h") {
+            for (const row of grid) row.length = 0
+            x = 0
+            y = 0
+          }
+        }
+        continue
+      }
+      if (nxt === "]") {
+        // OSC ... BEL — lewati sampai BEL.
+        const bel = out.indexOf("\x07", i + 2)
+        i = bel === -1 ? out.length : bel + 1
+        continue
+      }
+      // ESC tunggal (lone-Esc key di aliran output tak terjadi; aman lewati).
+      i += nxt === undefined ? 1 : 2
+      continue
+    }
+    if (ch === "\r") {
+      x = 0
+      i++
+      continue
+    }
+    if (ch === "\n") {
+      y++
+      x = 0
+      clamp()
+      i++
+      continue
+    }
+    // Karakter tampil (termasuk emoji/CJK 2 kolom — placeholder kolom kedua).
+    const w = Math.max(1, displayWidth(ch))
+    clamp()
+    const row = grid[y]!
+    row[x] = ch
+    if (w >= 2 && x + 1 < columns) row[x + 1] = ""
+    x += w
+    i++
+  }
+  return grid.map((row) => {
+    let s = ""
+    for (let cxi = 0; cxi < columns; cxi++) s += row[cxi] ?? " "
+    return s.replace(/ +$/, "")
+  })
+}
 // ── Keystroke: nama simbolis supaya test terbaca ──
 export const KEY = {
   up: "\x1b[A",
@@ -471,6 +637,8 @@ export const KEY = {
   end: "\x1b[F",
   homeVt: "\x1b[1~",
   endVt: "\x1b[4~",
+  pgUp: "\x1b[5~",
+  pgDown: "\x1b[6~",
   enter: "\r",
   tab: "\t",
   shiftTab: "\x1b[Z",

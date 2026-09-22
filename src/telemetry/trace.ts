@@ -45,6 +45,10 @@ export interface StepTrace {
   errors?: number
   /** mode sandbox saat step berjalan — isolasi apa yang sebenarnya aktif. */
   sandbox?: string
+  /** F1.2: token kumulatif SESI saat baris ditulis (usage.getSession()).
+   * Monoton naik per sesi — replay file menghasilkan kurva token tanpa
+   * perlu join ke traces.jsonl. Opsional: baris lama tak memilikinya. */
+  totalTokens?: number
 }
 
 // Kunci argumen yang aman diringkas; `content`/`code`/body lain SENGAJA
@@ -234,6 +238,9 @@ export interface StepSummary {
   topErrors: { tool: string; n: number }[]
   sandboxes: string[]
   topDenyReasons: { reason: string; n: number }[]
+  /** F1.2: max totalTokens antar baris = taksiran akhir kumulatif sesi.
+   * 0 bila tak ada baris bertoken (format lama). */
+  peakTotalTokens: number
 }
 
 export function summarizeStepTraces(rows: StepTrace[]): StepSummary {
@@ -245,6 +252,7 @@ export function summarizeStepTraces(rows: StepTrace[]): StepSummary {
   const errBy = new Map<string, number>()
   const reasonBy = new Map<string, number>()
   const sandboxes = new Set<string>()
+  let peakTotalTokens = 0
   for (const t of tools) {
     const name = t.tool ?? "?"
     if (t.denied) {
@@ -269,6 +277,12 @@ export function summarizeStepTraces(rows: StepTrace[]): StepSummary {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
     .map(([reason, n]) => ({ reason, n }))
+  // Peak dihitung dari SEMUA baris (tool + step) — baris step-kind juga
+  // membawa totalTokens kumulatif; baris lama (tanpa field) diabaikan.
+  for (const t of rows) {
+    const v = t.totalTokens
+    if (typeof v === "number" && Number.isFinite(v) && v > peakTotalTokens) peakTotalTokens = v
+  }
   return {
     tools: tools.length,
     ok,
@@ -279,5 +293,6 @@ export function summarizeStepTraces(rows: StepTrace[]): StepSummary {
     topErrors: top(errBy),
     sandboxes: [...sandboxes],
     topDenyReasons: topReason,
+    peakTotalTokens,
   }
 }

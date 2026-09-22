@@ -29,6 +29,26 @@ describe("harness P3.1: summarizeStepTraces", () => {
     expect(s).toMatchObject({ tools: 0, ok: 0, denied: 0, errors: 0, denyRate: 0 })
     expect(s.topDenied).toEqual([])
     expect(s.sandboxes).toEqual([])
+    expect(s.peakTotalTokens).toBe(0)
+  })
+
+  test("F1.2: peakTotalTokens = max kumulatif antar baris (bahan kurva token)", () => {
+    // Gagal di kode lama: field tak ada (undefined), bukan 0/angka.
+    const s = summarizeStepTraces([
+      tool({ tool: "read_file", ok: true, totalTokens: 100 }),
+      tool({ tool: "bash", ok: true, totalTokens: 350 }),
+      {
+        sessionId: "s",
+        timestamp: "t",
+        kind: "step",
+        step: 1,
+        tools: 2,
+        errors: 0,
+        totalTokens: 200,
+      },
+      tool({ tool: "write_file", ok: true }), // format lama tanpa token: diabaikan
+    ])
+    expect(s.peakTotalTokens).toBe(350)
   })
 
   test("menghitung ok/denied/error + top + sandbox", () => {

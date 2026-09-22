@@ -7,6 +7,16 @@ import { LIMITS } from "../constants.ts"
 import { isPrivateHostWithDns } from "../lib/net.ts"
 import { scrubSecrets } from "./scrub.ts"
 
+/** F3.2: parse MINICODE_COMPACT_KEEP_TURNS (murni, diekspor untuk test).
+ * Bilangan bulat ≥1 → dipakai; selain itu (kosong/invalid) → undefined =
+ * default kernel. Tak pernah melempar. */
+export function parseCompactKeepTurns(raw: string | undefined): number | undefined {
+  const v = (raw ?? "").trim()
+  if (!v) return undefined
+  const n = Number(v)
+  return Number.isInteger(n) && n >= 1 ? n : undefined
+}
+
 export interface LlmCompactionOptions {
   provider?: ModelProvider
   model?: string // deepseek v4 flash
@@ -31,6 +41,15 @@ export interface LlmCompactionOptions {
 
 export function createLlmCompaction(opts: LlmCompactionOptions = {}): CompactionStrategy {
   const fallback = opts.fallback ?? mechanicalCompaction
+  // F3.1 anti-thrash (state per strategi = per sesi, karena strategy dibuat
+  // sekali di setup): kernel memicu kompaksi budget sekali PER TURN, jadi
+  // turn panjang dengan jendela penuh-kembali langsung (= satu output raksasa)
+  // membakar satu panggilan LLM + timeout tiap turn tanpa hasil. Setelah
+  // streak, LLM dimatikan sesi-ini — loop otomatis jatuh ke mekanikal sinkron
+  // (kontrak compactStore: compactAsync melempar → fallback sync).
+  let lowProgressStreak = 0
+  let llmDisabled = false
+  let warned = false
   return {
     // Kernel sekarang memanggil compactAsync bila ada (seam baru di loop.ts).
     // compact() sinkron tetap jadi fallback aman bila LLM gagal / tidak terkonfigurasi.
@@ -46,6 +65,9 @@ export function createLlmCompaction(opts: LlmCompactionOptions = {}): Compaction
       cOpts: { keepRecentTurns: number },
       signal: AbortSignal,
     ): Promise<readonly import("#minicore/core/types.ts").Message[]> {
+      // Jalur LLM sudah dinyatakan thrash sesi-ini: lempar agar loop memakai
+      // mekanikal sinkron (bukan diam, bukan retry LLM).
+      if (llmDisabled) throw new Error("llm compaction disabled after thrash")
       // cap 15s — jangan biarkan LLM summary memblokir loop terlalu lama;
       // kalau gagal/timeout, loop otomatis fallback ke compact() sinkron.
       const ac = new AbortController()
@@ -60,7 +82,8 @@ export function createLlmCompaction(opts: LlmCompactionOptions = {}): Compaction
       if (signal.aborted) onAbort()
       else signal.addEventListener("abort", onAbort, { once: true })
       try {
-        return await compactWithLlm(
+        const before = store.messages.length
+        const out = await compactWithLlm(
           store,
           {
             keepRecentTurns: cOpts.keepRecentTurns,
@@ -74,6 +97,26 @@ export function createLlmCompaction(opts: LlmCompactionOptions = {}): Compaction
           ac.signal,
           true, // noFallback: biarkan loop yang memutuskan fallback ke sync
         )
+        // F3.1: ukur progres per jumlah pesan. Ringkasan LLM normal
+        // mengganti prefix puluhan pesan jadi 1 (progres ≫ ambang); output
+        // raksasa tunggal tak terkompresi → progres ~0 beruntun = thrash.
+        // Panjang sama persis = no-op early-return TANPA panggilan LLM
+        // (tak ada biaya terbakar) — bukan thrash, jangan hitung.
+        if (out.length === before) return out
+        const progress = before > 0 ? (before - out.length) / before : 1
+        if (progress < LIMITS.COMPACTION_THRASH_MIN_PROGRESS) lowProgressStreak++
+        else lowProgressStreak = 0
+        if (lowProgressStreak >= LIMITS.COMPACTION_THRASH_MAX_STREAK && !llmDisabled) {
+          llmDisabled = true
+          if (!warned) {
+            warned = true
+            // Cat-3: tulis diagnostik mentah diizinkan dari lapisan non-UI.
+            process.stderr.write(
+              "[warn] LLM compaction thrashing (2× <10% reduction) — LLM path disabled for this session, mechanical fallback in use. Free a turn with /compact or /clear.\n",
+            )
+          }
+        }
+        return out
       } finally {
         clearTimeout(timer)
         signal.removeEventListener("abort", onAbort)

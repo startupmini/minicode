@@ -196,6 +196,7 @@ export const delegateTaskTool: Tool = {
           "bash_output",
           "bash_kill",
           "git_commit",
+          "submit_result",
         ].includes(t.name),
     )
     const subTools =

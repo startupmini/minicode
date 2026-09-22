@@ -141,6 +141,7 @@ export function createRouterProvider(config: RouterConfig): ModelProvider {
       let current: ModelProvider | undefined = target
       while (current) {
         tried.add(current.id)
+        let hasYieldedContent = false
         try {
           // rate limit: tunggu token bucket sebelum tiap request
           if (config.limiter) await config.limiter.acquire()
@@ -169,11 +170,23 @@ export function createRouterProvider(config: RouterConfig): ModelProvider {
             }
           }
           for await (const ev of current.stream(req, signal)) {
+            // Tandai bila konten substantif sudah keluar ke caller: sekali konten
+            // keluar, stream tak bisa lagi di-fallback diam-diam ke provider lain
+            // karena akan menduplikasi respons dari awal di sisi user.
+            if (
+              ev.type === "text" ||
+              ev.type === "tool_call" ||
+              (ev.type === "extension" && ev.kind === "reasoning")
+            ) {
+              hasYieldedContent = true
+            }
             yield ev
           }
           return
         } catch (e) {
           if (e instanceof ProviderError) {
+            // Stream yang sudah separuh terkirim ke klien tidak boleh di-restart dari awal
+            if (hasYieldedContent) throw e
             // cap retryAfter without mutating original
             let err: ProviderError = e
             if (e.retryAfterMs != null && e.retryAfterMs > maxRetry) {

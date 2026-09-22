@@ -367,6 +367,7 @@ export function createPermissionHandler(
         call.name === "edit" ||
         call.name === "apply_patch" ||
         call.name === "read_file" ||
+        call.name === "read_image" ||
         call.name === "delete_file"
       ) {
         const p = (earlyArgs?.path as string) ?? ""

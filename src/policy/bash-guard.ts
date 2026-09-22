@@ -199,18 +199,22 @@ const NTDSUTIL = /\bntdsutil\b/i
  * (residual arsitektural, lihat kepala berkas) — tiap entri di sini adalah
  * kasus konkret terverifikasi, bukan tebakan. */
 const READERS =
-  /\b(?:cat|bat|less|more|head|tail|nl|od|xxd|strings|type|Get-Content|certutil|tac|findstr|fc|comp|cp|copy|mv|move|scp|rsync|tar|zip|gzip|base64|openssl|awk|sed|grep|egrep|fgrep|rg|cut|sort|uniq|tee|dd|install|xcopy|robocopy|Out-File|Set-Content|Add-Content|New-Item|Copy-Item|Move-Item)\b/i
+  /\b(?:cat|bat|less|more|head|tail|nl|od|xxd|strings|type|Get-Content|gc|certutil|tac|findstr|fc|comp|cp|copy|mv|move|scp|rsync|tar|zip|gzip|base64|openssl|awk|sed|grep|egrep|fgrep|rg|cut|sort|uniq|tee|dd|install|xcopy|robocopy|Out-File|Set-Content|Add-Content|New-Item|Copy-Item|Move-Item)\b/i
 
-/** Dump environment — `printenv` sudah lama diblok, sisanya belum. */
+/** Dump environment — `printenv` sudah lama diblok, sisanya belum.
+ * Tambahan: PowerShell `Get-ChildItem env:` / alias `dir env:` / `ls env:`
+ * / `gci env:` juga dump env, perlu diblok. */
 const ENV_DUMP =
   // F-20: `\n` adalah pemisah perintah setara `;` — tanpa ini `echo hi\nenv`
   // lolos (anchor lama hanya [;&|]). Berlaku untuk semua aturan ber-anchor
   // awal-perintah di berkas ini.
-  /(?:^|[;&|\n]\s*)(?:printenv|env|set|export\s+-p|declare\s+-[xp]|compgen\s+-v)\s*(?:$|[;&|\n]|\|)/i
+  /(?:^|[;&|\n]\s*)(?:printenv|env|set|export\s+-p|declare\s+-[xp]|compgen\s+-v|(?:Get-ChildItem|dir|ls|gci)\s+env:)\s*(?:$|[;&|\n]|\|)/i
 
-/** Referensi eksplisit ke variabel env yang berbau kredensial. */
+/** Referensi eksplisit ke variabel env yang berbau kredensial.
+ * Case-insensitive karena bash case-sensitive tapi nama lazim campuran;
+ * PowerShell ($env:Var) dan CMD (%VAR%) juga dicakup agar cross-shell. */
 const ENV_SECRET_REF =
-  /\$\{?[A-Z_]*(?:API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_?KEY|ACCESS_?KEY)[A-Z_]*\}?/
+  /(?:\$(?:env:)?\{?[A-Za-z0-9_]*(?:API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_?KEY|ACCESS_?KEY)[A-Za-z0-9_]*\}?|%[A-Za-z0-9_]*(?:API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_?KEY|ACCESS_?KEY)[A-Za-z0-9_]*%)/i
 
 /** Flag upload berkas pada klien HTTP — jalur exfiltrasi paling langsung. */
 const UPLOAD_FLAG =
@@ -610,7 +614,7 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
     const readerTargets = (() => {
       const out: string[] = []
       const re =
-        /\b(?:cat|bat|less|more|head|tail|nl|od|xxd|strings|type|Get-Content|certutil|tac|findstr|fc|comp|cp|copy|mv|move|scp|rsync|tar|zip|gzip|base64|openssl|awk|sed|grep|egrep|fgrep|rg|cut|sort|uniq|tee|dd|install|xcopy|robocopy|Out-File|Set-Content|Add-Content|New-Item|Copy-Item|Move-Item)\b\s+([^\n;&|]+)/gi
+        /\b(?:cat|bat|less|more|head|tail|nl|od|xxd|strings|type|Get-Content|gc|certutil|tac|findstr|fc|comp|cp|copy|mv|move|scp|rsync|tar|zip|gzip|base64|openssl|awk|sed|grep|egrep|fgrep|rg|cut|sort|uniq|tee|dd|install|xcopy|robocopy|Out-File|Set-Content|Add-Content|New-Item|Copy-Item|Move-Item)\b\s+([^\n;&|]+)/gi
       for (const m of norm.matchAll(re)) {
         const args = m[1]!.split(/\s+/)
         for (const a of args) {

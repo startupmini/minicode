@@ -11,10 +11,10 @@
 // dipakai bila jaringan mati alih-alih jatuh ke "N/A".
 
 import { readFile } from "node:fs/promises"
-import { homedir } from "node:os"
 import { join } from "node:path"
 import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
+import { homeDir } from "../lib/db-path.ts"
 import { isPrivateHostWithDns } from "../lib/net.ts"
 
 export interface ModelPrice {
@@ -55,7 +55,14 @@ export const BUILTIN_PRICING: Record<string, ModelPrice> = {
   "text-embedding-3-small": { input: 0.02, output: 0 },
 }
 
-const CACHE_PATH = join(homedir(), ".minicode", "pricing.json")
+// Dinamis: MINICODE_HOME bisa diset setelah modul dimuat (oleh test hermetic
+// atau env wrapper). Const module-level membeku saat import — fungsi selalu
+// mengevaluasi ulang.
+
+export function pricingCachePath(): string {
+  return join(homeDir(), ".minicode", "pricing.json")
+}
+
 const MODELS_DEV_URL = "https://models.dev/api.json"
 
 interface PricingCache {
@@ -63,10 +70,6 @@ interface PricingCache {
   source: string
   /** modelId → harga. Kunci di-lowercase agar lookup konsisten. */
   models: Record<string, ModelPrice>
-}
-
-export function pricingCachePath(): string {
-  return CACHE_PATH
 }
 
 /** Overlay in-memory; null = belum dimuat pada proses ini. */
@@ -89,7 +92,7 @@ export function __resetPricingOverlay(): void {
 export async function loadPricingOverlay(): Promise<Record<string, ModelPrice>> {
   if (overlay) return overlay
   try {
-    const raw = await readFile(CACHE_PATH, "utf8")
+    const raw = await readFile(pricingCachePath(), "utf8")
     const parsed = JSON.parse(raw) as PricingCache
     if (parsed && typeof parsed.models === "object" && parsed.models) {
       overlay = normalizePriceMap(parsed.models)
@@ -277,10 +280,10 @@ export async function syncPricing(url: string = MODELS_DEV_URL): Promise<SyncRes
 
   const cache: PricingCache = { fetchedAt: Date.now(), source: url, models }
   const serialized = JSON.stringify(cache)
-  await atomicWriteText(CACHE_PATH, serialized)
+  await atomicWriteText(pricingCachePath(), serialized)
   overlay = models
   overlayMeta = { fetchedAt: cache.fetchedAt, count }
-  return { count, bytes: serialized.length, path: CACHE_PATH }
+  return { count, bytes: serialized.length, path: pricingCachePath() }
 }
 
 /**

@@ -78,7 +78,7 @@ function fakeFactory(
 
 // ── 1. Komposisi toolset anak ──
 
-test("delegate: explore = 12 read-only tepat; plan = 30 tanpa denylist", async () => {
+test("delegate: explore = 12 read-only tepat; plan = 29 tanpa denylist", async () => {
   const restore = providerEnv()
   const dir = tmpRoot()
   const prevTodo = todoSession.id
@@ -93,7 +93,7 @@ test("delegate: explore = 12 read-only tepat; plan = 30 tanpa denylist", async (
     seen.length = 0
     await delegateTaskTool.execute({ prompt: "x", mode: "plan" }, ctxFor(dir, "auto"))
     const planNames = new Set(seen[0]!.tools.map((t) => t.name))
-    expect(planNames.size).toBe(30)
+    expect(planNames.size).toBe(29)
     for (const banned of [
       "delegate_task",
       "write_memory",
@@ -102,6 +102,7 @@ test("delegate: explore = 12 read-only tepat; plan = 30 tanpa denylist", async (
       "bash_output",
       "bash_kill",
       "git_commit",
+      "submit_result",
     ]) {
       expect(planNames.has(banned)).toBe(false)
     }
@@ -113,7 +114,6 @@ test("delegate: explore = 12 read-only tepat; plan = 30 tanpa denylist", async (
       "read_file",
       "web_fetch",
       "mcp_list",
-      "submit_result",
       "ask_user",
     ]) {
       expect(planNames.has(kept)).toBe(true)

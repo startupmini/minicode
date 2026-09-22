@@ -310,5 +310,16 @@ export async function compactWithLlm(
       void addMemory(summary.slice(0, 1200), { category: "summary", cwd: opts.cwd }).catch(() => {})
     } catch {}
   }
-  return [...prior, lruSummary, ...messages.slice(-kept)]
+  // Bila ada prior (summary dari kompaksi sebelumnya), gabungkan isi prior dan
+  // lruSummary menjadi SATU pesan user. Tanpa ini, dua pesan user berturut-turut
+  // melanggar invariant alternating role Anthropic (HTTP 400).
+  if (prior.length > 0) {
+    const priorText = typeof prior[0]!.content === "string" ? prior[0]!.content : ""
+    const combined = {
+      role: "user" as const,
+      content: `${priorText}\n\n${lruSummary.content}`,
+    }
+    return [combined, ...messages.slice(-kept)]
+  }
+  return [lruSummary, ...messages.slice(-kept)]
 }

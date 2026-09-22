@@ -318,6 +318,15 @@ describe("acp: runAcpSession (sesi injeksi, tanpa provider)", () => {
   })
 })
 
+const HERMETIC_ENV = {
+  ...process.env,
+  OPENAI_API_KEY: undefined,
+  AGENT_API_KEY: undefined,
+  ANTHROPIC_API_KEY: undefined,
+  TOKENHARBOR_API_KEY: undefined,
+  TH_API_KEY: undefined,
+}
+
 describe("acp: smoke initialize→shutdown via stdio", () => {
   test("server menjawab capabilities lalu keluar 0 (tanpa provider)", async () => {
     // Hermetic: initialize tak menyentuh provider/config/jaringan.
@@ -326,6 +335,7 @@ describe("acp: smoke initialize→shutdown via stdio", () => {
       stdout: "pipe",
       stderr: "pipe",
       cwd: process.cwd(),
+      env: HERMETIC_ENV,
     })
     const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
     const lines: string[] = []
@@ -369,7 +379,7 @@ describe("acp: smoke initialize→shutdown via stdio", () => {
         stdout: "pipe",
         stderr: "pipe",
         cwd: process.cwd(),
-        env: { ...process.env, MINICODE_HOME: home },
+        env: { ...HERMETIC_ENV, MINICODE_HOME: home },
       })
       const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
       const lines: string[] = []
@@ -425,7 +435,7 @@ describe("acp: smoke initialize→shutdown via stdio", () => {
         stdout: "pipe",
         stderr: "pipe",
         cwd: process.cwd(),
-        env: { ...process.env, MINICODE_HOME: home },
+        env: { ...HERMETIC_ENV, MINICODE_HOME: home },
       })
       // Tunggu startup SELESAI total (transpile + wiring) — server yang benar
       // menunggu selamanya; yang buggy sudah exit 1 via one-shot.

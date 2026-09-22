@@ -244,14 +244,32 @@ function sniffImageMime(b: Uint8Array): string | null {
   return null
 }
 
-function toAnthropicMessages(messages: readonly Message[]): unknown[] {
-  const out: unknown[] = []
+export function toAnthropicMessages(messages: readonly Message[]): unknown[] {
+  const out: { role: string; content: unknown }[] = []
   let toolGroup:
     | { type: "tool_result"; tool_use_id: string; content: unknown; is_error?: boolean }[]
     | null = null
+
+  const pushUser = (content: unknown) => {
+    const last = out.length > 0 ? out[out.length - 1] : undefined
+    if (last && last.role === "user") {
+      // Invarian peran Anthropic: peran user↔assistant wajib bergantian.
+      // Bila turn sebelumnya sudah user (mis. prompt steering atau tool-result),
+      // satukan blok kontennya alih-alih melempar dua entri user berturut-turut.
+      const toBlocks = (val: unknown): unknown[] => {
+        if (Array.isArray(val)) return val
+        if (typeof val === "string") return [{ type: "text", text: val }]
+        return [{ type: "text", text: String(val) }]
+      }
+      last.content = [...toBlocks(last.content), ...toBlocks(content)]
+    } else {
+      out.push({ role: "user", content })
+    }
+  }
+
   const flushToolGroup = () => {
     if (toolGroup) {
-      out.push({ role: "user", content: toolGroup })
+      pushUser(toolGroup)
       toolGroup = null
     }
   }
@@ -259,7 +277,7 @@ function toAnthropicMessages(messages: readonly Message[]): unknown[] {
   for (const m of messages) {
     if (m.role === "user") {
       flushToolGroup()
-      out.push({ role: "user", content: toContent(m.content) })
+      pushUser(toContent(m.content))
     } else if (m.role === "assistant") {
       flushToolGroup()
       const content: unknown[] = []

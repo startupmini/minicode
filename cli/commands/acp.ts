@@ -4,7 +4,7 @@ import { createInterface } from "node:readline"
 import { LIMITS } from "../../src/constants.ts"
 import { scrubSecrets } from "../../src/policy/scrub.ts"
 import { budgetStatus } from "../../src/policy/usage.ts"
-import { getSubmittedResult } from "../../src/tools/submit_result.ts"
+import { clearSubmittedResult, getSubmittedResult } from "../../src/tools/submit_result.ts"
 import { formatError } from "../../src/ui/assistant/simple.ts"
 import { formatUsd } from "../../src/ui/render/money.ts"
 import { createCliSession } from "../setup.ts"
@@ -157,6 +157,9 @@ export async function runAcpSession(
   deps: AcpSessionDeps,
 ): Promise<void> {
   const { write } = deps
+  // Bersihkan state submit_result dari run sebelumnya — tanpa ini, run
+  // ACP berturut-turut bisa membaca hasil run lama.
+  clearSubmittedResult()
   const createSession = deps.createSession ?? createCliSession
   const parsed = parseRunParams(rawParams)
   if (!parsed.ok) {

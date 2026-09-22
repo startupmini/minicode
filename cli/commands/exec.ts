@@ -5,7 +5,7 @@ import { createRateLimiter } from "../../src/policy/ratelimit.ts"
 import { resolveSandbox, sandboxRefusalReason } from "../../src/policy/sandbox-policy.ts"
 import { scrubSecrets } from "../../src/policy/scrub.ts"
 import { budgetStatus } from "../../src/policy/usage.ts"
-import { getSubmittedResult } from "../../src/tools/submit_result.ts"
+import { clearSubmittedResult, getSubmittedResult } from "../../src/tools/submit_result.ts"
 import { formatError } from "../../src/ui/assistant/simple.ts"
 import { formatUsd } from "../../src/ui/render/money.ts"
 import { allowLocalConfig, hasFlag, promptFromArgs, getArg as rawGetArg } from "../args.ts"
@@ -15,7 +15,9 @@ export async function handleExec(
   args: string[],
   getArg: (name: string) => string | undefined,
 ): Promise<never> {
-  // minicode exec "prompt" [--json] [--cwd <dir>] [--model <m>] [--sandbox docker|os] ...
+  // Bersihkan state submit_result dari run sebelumnya — tanpa ini, exec
+  // berturut-turut dalam proses sama bisa membaca hasil run lama.
+  clearSubmittedResult()
   //
   // Prompt diambil lewat promptFromArgs() — satu implementasi yang sama dengan
   // jalur non-exec. Versi sebelumnya menyaring dengan `a !== getArg("--model")`,

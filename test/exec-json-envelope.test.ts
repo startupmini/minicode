@@ -24,6 +24,13 @@ function run(args: string[], cwd: string, home: string) {
       MINICODE_HOME: home,
       HOME: home,
       USERPROFILE: home,
+      // Hapus kunci provider agar subprocess tidak mencoba request jaringan
+      // nyata saat mesin host punya API key terpasang (temuan audit #08).
+      OPENAI_API_KEY: undefined,
+      AGENT_API_KEY: undefined,
+      ANTHROPIC_API_KEY: undefined,
+      TOKENHARBOR_API_KEY: undefined,
+      TH_API_KEY: undefined,
     },
   })
   return { code: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" }

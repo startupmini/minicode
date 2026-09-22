@@ -515,14 +515,15 @@ export async function reconcileUndoRedoPointer(
       return null
     }
     // Turn harus cocok: marker untuk susunan checkpoints yang berbeda
-    // (eviksi/cabang lain) tak boleh diadopsi buta. newIndex -1 = "mundur
-    // sebelum checkpoint pertama": cocokkan dengan checkpoint pertama
-    // (tanpa ini marker basi turn-asing selalu diadopsi — audit #08 §15).
-    const pointed =
-      latest.newIndex === -1 ? manifest.checkpoints[0] : manifest.checkpoints[latest.newIndex]
-    if (latest.targetTurn !== undefined && pointed && pointed.turn !== latest.targetTurn) {
+    // (eviksi/cabang lain) tak boleh diadopsi buta.
+    // Pada undo: targetCp yang dibatalkan berada di indeks newIndex + 1 (newIndex -1 → checkpoint 0).
+    // Pada redo: targetCp yang diaplikasikan kembali berada tepat di latest.newIndex.
+    const targetIdx = latest.kind === "undo" ? latest.newIndex + 1 : latest.newIndex
+    const pointed = manifest.checkpoints[targetIdx]
+    if (!pointed || (latest.targetTurn !== undefined && pointed.turn !== latest.targetTurn)) {
+      const actualTurn = pointed ? ` (turn ${pointed.turn})` : " (absen)"
       process.stderr.write(
-        `[warn] checkpoint: undo/redo marker turn ${latest.targetTurn} tak cocok checkpoint idx ${latest.newIndex} (turn ${pointed.turn}) — diabaikan\n`,
+        `[warn] checkpoint: ${latest.kind} marker turn ${latest.targetTurn} tak cocok checkpoint idx ${targetIdx}${actualTurn} — diabaikan\n`,
       )
       return null
     }

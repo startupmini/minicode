@@ -157,6 +157,10 @@ function pad(text: string, width: number): string {
 function statusLines(ctx: CommandContext): string[] {
   // Kumulatif sesi, bukan turn terakhir — judulnya menjanjikan "biaya sesi".
   const u = ctx.usage.getSession(ctx.currentModel)
+  // F1.1: turn terakhir tampil terpisah — tanpa ini user tak bisa membedakan
+  // "turn ini boros" dari "sesi ini boros". get() = akumulator turn yang
+  // di-reset tiap persistCurrent, bukan recompute.
+  const last = ctx.usage.get(ctx.currentModel)
   // Kontrak control-plane (Phase 6): DUA angka berbeda, dua konsep —
   // Context = ukuran jendela saat ini (kernel, estimateSessionContext);
   // Total = pemakaian kumulatif provider (usage event). Dulu hanya Total
@@ -172,6 +176,7 @@ function statusLines(ctx: CommandContext): string[] {
     t("st.provider", { v: provider }),
     t("st.tools", { v: ctx.toolsCount }),
     t("st.context", { v: ctx.getContextTokens().toLocaleString() }),
+    t("st.turn", { v: last.totalTokens.toLocaleString() }),
     t("st.input", { v: u.inputTokens.toLocaleString() }),
     t("st.output", { v: u.outputTokens.toLocaleString() }),
     t("st.total", { v: u.totalTokens.toLocaleString() }),

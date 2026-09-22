@@ -104,6 +104,7 @@ export const id: Record<MsgKey, string> = {
   "st.provider": "  Penyedia: {v}",
   "st.tools": "  Perkakas: {v}",
   "st.context": "  Konteks:  ~{v} tok (estimasi jendela)",
+  "st.turn": "  Turn:     {v} (turn terakhir saja)",
   "st.input": "  Masukan:  {v} (pemakaian provider)",
   "st.output": "  Keluaran: {v} (pemakaian provider)",
   "st.total": "  Total:    {v} (kumulatif sesi)",

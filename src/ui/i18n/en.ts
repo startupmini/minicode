@@ -103,6 +103,7 @@ export const en = {
   "st.provider": "  Provider: {v}",
   "st.tools": "  Tools:    {v}",
   "st.context": "  Context:  ~{v} tok (window estimate)",
+  "st.turn": "  Turn:     {v} (last turn only)",
   "st.input": "  Input:    {v} (provider usage)",
   "st.output": "  Output:   {v} (provider usage)",
   "st.total": "  Total:    {v} (session cumulative)",

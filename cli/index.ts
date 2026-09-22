@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { resolve as resolvePath } from "node:path"
 import { createMinicodeSession } from "../src/app/session.ts"
+import { parseCompactKeepTurns } from "../src/policy/compaction.ts"
 import { createRateLimiter } from "../src/policy/ratelimit.ts"
 import { resolveSandbox, sandboxRefusalReason } from "../src/policy/sandbox-policy.ts"
 import { budgetStatus } from "../src/policy/usage.ts"
@@ -217,6 +218,15 @@ if (
   )
   contextWindowTokens = undefined
 }
+// F3.2: override keepRecentTurns kompaksi kernel via env (bukan flag: jarang
+// diubah, dan permukaan flag CLI sengaja kecil). Selain bilangan >=1 =
+// diabaikan + warn (fail-open aman: default kernel berlaku).
+const keepTurnsRaw = (process.env.MINICODE_COMPACT_KEEP_TURNS ?? "").trim()
+const keepRecentTurns = parseCompactKeepTurns(keepTurnsRaw || undefined)
+if (keepTurnsRaw && keepRecentTurns === undefined)
+  process.stderr.write(
+    `[warn] MINICODE_COMPACT_KEEP_TURNS requires an integer >= 1, ignoring "${keepTurnsRaw}"\n`,
+  )
 const timeoutRaw = getArg("--timeout")
 let timeoutMs = timeoutRaw ? Number(timeoutRaw) : undefined
 if (timeoutRaw && (!Number.isFinite(timeoutMs) || (timeoutMs as number) < 0)) {
@@ -387,6 +397,7 @@ try {
     toolScope,
     maxSteps,
     contextWindowTokens,
+    ...(keepRecentTurns !== undefined ? { keepRecentTurns } : {}),
     timeoutMs,
     rateLimiter,
     sandboxNotice: requestedSandbox ? sandbox.notice : undefined,

@@ -87,6 +87,11 @@ export interface CliSessionOptions {
   toolScope?: "full" | "explore"
   maxSteps?: number
   contextWindowTokens?: number
+  /** F3.2: override keepRecentTurns kompaksi kernel (berapa turn terakhir
+   * dipertahankan saat kompaksi). Default = kernel (DEFAULT_KEEP_RECENT_TURNS).
+   * Diisi dari env MINICODE_COMPACT_KEEP_TURNS (bilangan >=1, selain itu
+   * diabaikan + warn di composition root). */
+  keepRecentTurns?: number
   timeoutMs?: number
   rateLimiter?: RateLimiter
   concurrency?: number
@@ -147,6 +152,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     allowLocalConfig,
     maxSteps,
     contextWindowTokens,
+    keepRecentTurns,
     timeoutMs,
     rateLimiter,
     sandboxNotice,
@@ -389,6 +395,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       ...(resumeTurnCount !== undefined ? { turnCount: resumeTurnCount } : {}),
       ...(maxSteps ? { maxSteps } : {}),
       ...(contextWindowTokens ? { contextWindowTokens } : {}),
+      ...(keepRecentTurns ? { keepRecentTurns } : {}),
       ...(safeConcurrency ? { concurrency: safeConcurrency } : {}),
       ...(safeWriteConcurrency ? { writeConcurrency: safeWriteConcurrency } : {}),
       timeoutMs: effectiveTimeoutMs === 0 ? Infinity : effectiveTimeoutMs,
@@ -485,6 +492,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         ...(t0 !== undefined ? { durationMs: Date.now() - t0 } : {}),
         args: summarizeArgs(call.args),
         sandbox: process.env.MINICODE_SANDBOX ?? "none",
+        // F1.2: token kumulatif sesi saat tool selesai — bahan kurva token.
+        // `usage` dideklarasikan di bawah, tapi callback ini baru jalan setelah
+        // createCliSession selesai — aman dari TDZ.
+        totalTokens: usage.getSession().totalTokens,
       }).catch(() => {})
     } catch {}
   })
@@ -499,6 +510,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         tools: s.toolCalls.length,
         errors: s.results.filter((r) => r.isError).length,
         sandbox: process.env.MINICODE_SANDBOX ?? "none",
+        // F1.2: sama seperti baris tool — kumulatif sesi saat step selesai.
+        totalTokens: usage.getSession().totalTokens,
       }).catch(() => {})
     } catch {}
   })

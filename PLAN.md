@@ -17,6 +17,8 @@ bun run lint              # harapan: exit 0 (warning boleh ada)
 bun run gate:coverage     # harapan: melewati min 80 funcs / 84 lines
 bun run gate:pack         # harapan: 22 pemeriksaan lulus
 bun run extreme           # harapan: 0 bypass, semua pass
+bun run gate:fast         # gabungan per-commit/CI: tsc+lint+test+coverage+pack+bash+bench smoke+audit harness
+bun run gate:slow         # extreme fuzz+shadow-git+MCP adversarial (nightly/manual, workflow slow.yml)
 ```
 
 Kondisi yang sudah dicapai dan **tidak boleh mundur**:
@@ -31,7 +33,20 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
 
 ---
 
-## Status eksekusi terbaru (update 2026-09-17)
+## Status eksekusi terbaru (update 2026-09-22)
+
+- ✅ INTEGRASI `fix/setup-wizard-spinner` → main (2026-09-22): branch dibubarkan,
+  kerja terbaiknya dipindah selektif ke main 0.10.0 (TUI branch sudah digantikan
+  fullscreen+popup+i18n): fix bash-guard caret/%VAR%/`for` (security), hold
+  layar interaktif + spinner `createSpinner` (wizard tak lagi macet di
+  "Menyiapkan sesi…"), `minicode acp` (JSON-RPC stdio), kontrak exit 0/1/2 +
+  envelope `exec --json`, F1 token (`Turn:` + `totalTokens` per baris trace),
+  F2 bench harness beku + taksonomi gagal, F3 `MINICODE_COMPACT_KEEP_TURNS` +
+  anti-thrash kompaksi, F4.1 skills `disable-model-invocation` + aset sibling,
+  F4.2 `gate:fast`/`gate:slow` + `slow.yml`, vendor shipped hash. Backup
+  ditandai di tag `backup/*`.
+
+## Status eksekusi sebelumnya (2026-09-17)
 
 - ✅ SCRIPT `web:indexnow` + CHECKLIST GSC (2026-09-17): submit indeks tidak
   lagi curl manual di sesi — `bun run web:indexnow` baca site/sitemap.xml,

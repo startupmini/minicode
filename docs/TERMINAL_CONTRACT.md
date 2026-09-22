@@ -166,6 +166,25 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      (tsc mengawal); fallback kunci hilang → en; prioritas sesi > env >
      state.json > locale OS > en (di OS: `LC_ALL` > `LANG`, string kosong
      diabaikan); literal Indonesia hardcode dilarang.
+27. Painter transient stderr (spinner setup/cek-update, garis status turn)
+     DITAHAN selama layar interaktif memegang terminal: `beginInteractiveScreen`
+     (`src/ui/runtime/statusline.ts`) membisukan `paintWrite` (nol byte + baris
+     painter dibersihkan sekali saat layar mengambil alih), nested dihitung,
+     release idempoten. Pemegang: `askLine`/`askSecret`/`runPicker` (raw-mode)
+     dan `openAltScreen` (alt-screen, release di `close()`). Tanpa ini tick
+     `\r\x1b[2K` spinner menghapus baris prompt wizard (laporan "macet di
+     Menyiapkan sesi…").
+28. Kontrak exit code: **0** sukses/help, **1** gagal runtime/lookup, **2**
+     salah pakai (argumen hilang/malformed, subcommand asing). Flag sebagai
+     positional id = salah pakai (exit 2). `exec --json` yang gagal di fase
+     setup (tanpa provider) TETAP memancarkan satu baris `{"type":"summary",
+     "ok":false,…}` (di-scrub) di stdout — pipeline CI tak pernah menerima
+     stream kosong; jalur manusia (stderr + exit 1) tidak berubah. Flag `exec`
+     diparse dari argv SESUDAH token subcommand.
+29. `minicode acp` = server JSON-RPC stdio satu-JSON-per-baris untuk IDE
+     (subset: `initialize`/`run`/`cancel`/`shutdown`; BUKAN klaim ACP penuh):
+     stdout murni mesin (semua di-scrub), diagnostik manusia ke stderr,
+     approval `deny-headless`, satu run dalam satu waktu, shutdown/EOF = exit 0.
 
 ## Grammar (ringkas)
 
@@ -210,7 +229,8 @@ panjang).
   stdout-pipe tanpa sink = deny).
 - `test/footer-render.test.ts` — I13.
 - `test/terminal-contract.test.ts` — I2/I3/I5/I7/I8/I9/I12.
-- `test/transient-arbitration.test.ts` — I3/I9.
+- `test/transient-arbitration.test.ts` — I3/I9/I27 (hold layar interaktif:
+  picker/askLine, nesting, delayMs).
 - `test/statusline-bun-guard.test.ts` — I4/I5.
 - `test/turn-status.test.ts` — I5.
 - `test/tui-format.test.ts` — I2/I7/I8 (preview arg sanitasi satu-baris).
@@ -238,6 +258,12 @@ panjang).
   NO_COLOR menang di cleanUntrusted).
 - `test/width.test.ts` — I2/I7 (tab 8 kolom; truncate/chunk hanya-SGR +
   auto-reset; chunk(0) kosong).
+- `test/exit-codes.test.ts` — I28 (0/1/2 di semua handler; lookup tetap 1;
+  hermetic subprocess).
+- `test/exec-json-envelope.test.ts` — I28 (summary ok:false di stdout saat
+  setup gagal; jalur manusia tak berubah).
+- `test/acp.test.ts` — I29 (parser/framing/params + smoke spawn stdio:
+  initialize→shutdown exit 0, tanpa provider).
 - `test/tui-diff.test.ts` — I2/I7 (path & isi disanitasi).
 - `test/highlight.test.ts` — I2/I8 (CR dibuang; escape dibuang di hulu).
 - `test/tui-theme-highlight.test.ts` — I2 (section satu-baris; markdown

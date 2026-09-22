@@ -16,6 +16,8 @@ Review this diff: {{args}}
 - Nama auto-slug: `My Skill` → `my-skill`.
 - Panggil dari REPL atau prompt one-shot: `/review src/a.ts` atau `minicode "/review src/a.ts"`.
 - Skill tampil di dropdown `/` (grouped bersama slash command) dan `minicode skills list` melihat yang terpasang.
+- **`disable-model-invocation: true`** di frontmatter = skill HANYA via `/nama` eksplisit, tak masuk katalog auto-pick system prompt. Untuk workflow yang tak boleh dipicu model sendiri (deploy/rilis).
+- **Aset sibling** (opsional, gaya Zed): folder `.minicode/skills/<nama>/` berisi `scripts/` dan `references/` — didaftar sebagai petunjuk baca di katalog (`scripts: check.sh; refs: guide.md`), dibaca model via `read_file` bila perlu, TIDAK dieksekusi otomatis.
 
 Perilaku penting:
 

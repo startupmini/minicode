@@ -68,18 +68,18 @@ afterEach(() => {
 })
 
 describe("config in-process: help/usage", () => {
-  test("tanpa sub -> help exit 0; sub asing/flag nyasar -> exit 1 + help", async () => {
+  test("tanpa sub -> help exit 0; sub asing/flag nyasar -> exit 2 + help", async () => {
     let r = await runDispatch(["config"])
     expect(r.code).toBe(0)
     expect(r.out).toContain("minicode config")
     // `--cwd` tanpa sub bukan subcommand: tolak, tapi tampilkan help
     // (bukan diam) dan sebut tokennya agar jelas salahnya di mana.
     r = await runDispatch(["config", "--cwd", tmp])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out).toContain("minicode config")
     expect(r.out).toContain("unknown subcommand: --cwd")
     r = await runDispatch(["config", "bogus", "--cwd", tmp])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out.toLowerCase()).toContain("unknown subcommand")
   })
 
@@ -88,15 +88,15 @@ describe("config in-process: help/usage", () => {
     expect(r.code).toBe(0)
     expect(r.out).toContain("minicode config mcp")
     r = await runDispatch(["config", "mcp", "--cwd", tmp])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.out).toContain("minicode config mcp")
     r = await runDispatch(["config", "mcp", "bogus", "--cwd", tmp])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     r = await runDispatch(["config", "lsp"])
     expect(r.code).toBe(0)
     expect(r.out).toContain("minicode config lsp")
     r = await runDispatch(["config", "lsp", "bogus", "--cwd", tmp])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
   })
 
   test("flag sebagai id/ext ditolak di 5 posisi", async () => {
@@ -108,7 +108,7 @@ describe("config in-process: help/usage", () => {
       ["config", "lsp", "remove", "--cwd", tmp],
     ]) {
       const r = await runDispatch(args)
-      expect(r.code).toBe(1)
+      expect(r.code).toBe(2)
       expect(r.out).toContain("usage:")
     }
   })

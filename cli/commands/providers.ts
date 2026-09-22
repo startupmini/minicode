@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { loadConfig, type MinicodeConfig } from "../../src/config.ts"
 import { refreshProviderModels } from "../../src/providers/provision.ts"
+import { sanitizeAnsiLine } from "../../src/ui/render/sanitize.ts"
 import { renderTable } from "../../src/ui/render/table.ts"
 import { c, glyphs } from "../../src/ui/render/theme.ts"
 
@@ -120,27 +121,31 @@ export async function handleProviders(
     if (pid) {
       const p = cfg.providers.find((x) => x.id === pid)
       if (!p) {
-        console.error(`provider "${pid}" not found - see: minicode providers`)
+        console.error(`provider "${sanitizeAnsiLine(pid)}" not found - see: minicode providers`)
         process.exit(1)
       }
       const list = p.models.filter(match)
-      if (!list.length) console.log(`  (no matches for "${filter}")`)
-      for (const [i, m] of list.entries()) console.log(`  [${i}] ${m}`)
+      if (!list.length) console.log(`  (no matches for "${sanitizeAnsiLine(filter)}")`)
+      for (const [i, m] of list.entries()) console.log(`  [${i}] ${sanitizeAnsiLine(m)}`)
     } else {
       if (cfg.providers.length === 0) console.log("(no providers yet)")
       let shown = 0
       for (const p of cfg.providers) {
         const list = p.models.filter(match)
         if (!list.length) continue
-        console.log(`${p.id} (${p.baseUrl})${filter ? ` - matches "${filter}"` : ""}`)
+        // id/baseUrl dari config (lokal = input repo tak terpercaya); model dari
+        // hasil probe jaringan — sanitasi sebelum masuk scrollback.
+        console.log(
+          `${sanitizeAnsiLine(p.id)} (${sanitizeAnsiLine(p.baseUrl)})${filter ? ` - matches "${sanitizeAnsiLine(filter)}"` : ""}`,
+        )
         shown += list.length
-        for (const m of list.slice(0, 10)) console.log(`  ${m}`)
+        for (const m of list.slice(0, 10)) console.log(`  ${sanitizeAnsiLine(m)}`)
         if (filter && list.length > 10) console.log(`  … +${list.length - 10} more`)
         if (!filter && p.models.length > 10) console.log(`  … +${p.models.length - 10} more`)
       }
       // Header provider hanya bila ada yang cocok — tanpa ini filter kosong
       // mencetak judul lalu "(no matches)", dua baris untuk nol informasi.
-      if (filter && shown === 0) console.log(`  (no matches for "${filter}")`)
+      if (filter && shown === 0) console.log(`  (no matches for "${sanitizeAnsiLine(filter)}")`)
     }
     process.exit(0)
   }
@@ -148,8 +153,13 @@ export async function handleProviders(
     console.log("Syncing model list from providers…")
     const { updated, failed } = await refreshProviderModels({ cwd: cwdArg, allowLocal })
     for (const r of updated)
-      console.log(`  ${c.green(glyphs.check)} ${r.id}: ${r.from} -> ${r.to} model`)
-    for (const f of failed) console.log(`  ${c.red(glyphs.cross)} ${f.id}: ${f.reason}`)
+      console.log(
+        `  ${c.green(glyphs.check)} ${sanitizeAnsiLine(r.id)}: ${r.from} -> ${r.to} model`,
+      )
+    for (const f of failed)
+      console.log(
+        `  ${c.red(glyphs.cross)} ${sanitizeAnsiLine(f.id)}: ${sanitizeAnsiLine(f.reason)}`,
+      )
     if (!updated.length && !failed.length) {
       const cfgHere = await loadConfig(cwdArg, { allowLocal })
       if (cfgHere.providers.length === 0)

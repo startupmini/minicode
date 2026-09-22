@@ -60,10 +60,11 @@ export async function handlePricing(args: string[]): Promise<never> {
   }
 
   if (sub === "show") {
-    const model = args[2]
+    // Flag bukan nama model (`pricing show --json` = lupa argumen).
+    const model = args[2] && !args[2]!.startsWith("-") ? args[2] : undefined
     if (!model) {
       console.error("usage: minicode pricing show <model>")
-      process.exit(1)
+      process.exit(2)
     }
     const overlay = await loadPricingOverlay()
     const p = findPrice(model, overlay)
@@ -93,8 +94,9 @@ export async function handlePricing(args: string[]): Promise<never> {
     process.exit(0)
   }
 
-  // Subcommand asing = salah pakai: exit 1 supaya skrip bisa mendeteksinya.
+  // Subcommand asing = salah pakai: exit 2 supaya skrip bisa mendeteksinya
+  // dan membedakannya dari gagal runtime (exit 1).
   console.error(`unknown pricing subcommand: ${sub}\n`)
   console.log(PRICING_HELP)
-  process.exit(1)
+  process.exit(2)
 }

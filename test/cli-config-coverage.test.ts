@@ -59,9 +59,9 @@ describe("cli config: list/remove/usage tanpa jaringan", () => {
     }
   })
 
-  test("arg hilang / flag sebagai positional -> usage, exit 1", () => {
+  test("arg hilang / flag sebagai positional -> usage, exit 2", () => {
     // Regresi temuan nyata: `config lsp remove --cwd X` menghapus server
-    // bernama "--cwd" (exit 0). Kini: usage + exit 1 di 5 posisi id/ext.
+    // bernama "--cwd" (exit 0). Kini: usage + exit 2 di 5 posisi id/ext.
     const dir = ws()
     try {
       for (const args of [
@@ -74,7 +74,7 @@ describe("cli config: list/remove/usage tanpa jaringan", () => {
         ["config", "lsp", "remove", "--cwd", dir],
       ]) {
         const r = run(args, dir)
-        expect(r.code).toBe(1)
+        expect(r.code).toBe(2)
         expect(r.out).toContain("usage:")
       }
     } finally {
@@ -102,7 +102,7 @@ describe("cli config mcp/lsp: add/list/remove lokal", () => {
       expect(r.code).toBe(0)
       expect(r.out).toContain("no MCP servers")
       r = run(["config", "mcp", "add", "--cwd", dir], dir)
-      expect(r.code).toBe(1)
+      expect(r.code).toBe(2)
       expect(r.out).toContain("usage:")
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -166,7 +166,7 @@ describe("cli config mcp/lsp: add/list/remove lokal", () => {
     const dir = ws()
     try {
       const r = run(["config", "mcp", "add", "srv", "--url", "ftp://x", "--cwd", dir], dir)
-      expect(r.code).toBe(1)
+      expect(r.code).toBe(2)
       expect(r.out).toContain("http/https")
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -180,7 +180,7 @@ describe("cli config mcp/lsp: add/list/remove lokal", () => {
       expect(r.code).toBe(0)
       expect(r.out).toContain("no LSP servers")
       r = run(["config", "lsp", "add", "--cwd", dir], dir)
-      expect(r.code).toBe(1)
+      expect(r.code).toBe(2)
       expect(r.out).toContain("usage:")
       r = run(
         [
@@ -203,7 +203,7 @@ describe("cli config mcp/lsp: add/list/remove lokal", () => {
       expect(r.out).toContain("Configured LSP Language Servers")
       expect(r.out).toContain(".ts")
       r = run(["config", "lsp", "remove", "--cwd", dir], dir)
-      expect(r.code).toBe(1)
+      expect(r.code).toBe(2)
       r = run(["config", "lsp", "remove", "ts", "--local", "--cwd", dir], dir)
       expect(r.code).toBe(0)
       expect(r.out).toContain("Removed LSP server for ts")

@@ -638,11 +638,11 @@ describe("cli: tanpa provider", () => {
     expect(r.out).toContain("no provider configured")
   })
 
-  test("tanpa prompt dan tanpa TTY -> usage, exit 1", async () => {
+  test("tanpa prompt dan tanpa TTY -> usage, exit 2", async () => {
     const ws = makeWorkspace()
     writeFileSync(ws.configPath, JSON.stringify({ providers: [] }), "utf8")
     const r = await run(ws, ["--cwd", ws.dir])
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.stderr).toContain("usage: minicode")
   })
 })

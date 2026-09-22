@@ -57,10 +57,12 @@ export async function handleAuth(args: string[]): Promise<never> {
   }
 
   if (sub === "logout") {
-    const id = args[2]
+    // Tolak flag sebagai id seperti config (positionalArg): `auth logout
+    // --cwd X` adalah lupa argumen, bukan kredensial bernama "--cwd".
+    const id = args[2] && !args[2]!.startsWith("-") ? args[2] : undefined
     if (!id) {
       console.error("usage: minicode auth logout <provider>")
-      process.exit(1)
+      process.exit(2)
     }
     const ok = await removeAuth(id)
     console.log(
@@ -70,9 +72,10 @@ export async function handleAuth(args: string[]): Promise<never> {
   }
 
   if (sub !== "login") {
-    // Subcommand asing = salah pakai, bukan permintaan bantuan: exit 1.
+    // Subcommand asing = salah pakai (exit 2), bukan permintaan bantuan
+    // dan bukan gagal runtime (exit 1).
     console.error(`unknown auth subcommand: ${sub}`)
-    usage(1)
+    usage(2)
   }
 
   // ── login ──

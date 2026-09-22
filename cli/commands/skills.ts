@@ -44,7 +44,7 @@ export async function handleSkills(
     const name = args[2] && !args[2]!.startsWith("-") ? args[2] : undefined
     if (!name) {
       console.error("usage: minicode skills show <name>")
-      process.exit(1)
+      process.exit(2)
     }
     const s = await findSkill(name, cwdArg)
     if (!s) {
@@ -57,5 +57,5 @@ export async function handleSkills(
   const asked = sub === "--help" || sub === "-h"
   if (!asked) console.error(`unknown skills subcommand: ${sub}\n`)
   console.log(SKILLS_HELP)
-  process.exit(asked ? 0 : 1)
+  process.exit(asked ? 0 : 2)
 }

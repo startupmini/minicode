@@ -27,6 +27,14 @@ export async function handleSessions(
   if (sub === "list" || !sub) {
     const cwdArg = getArg("--cwd")
     const rows = listSessions(cwdArg)
+    // resolveDbPath jatuh ke global ~/.minicode bila workspace tanpa
+    // .minicode/ — umumkan scope agar daftar lintas-workspace tak dibaca
+    // sebagai isi workspace ini (temuan F-C audit terminal UI/UX).
+    const base = cwdArg ?? process.cwd()
+    const usesLocal =
+      existsSync(resolve(base, ".minicode", "sessions.db")) ||
+      existsSync(resolve(base, ".minicode"))
+    if (!usesLocal) console.log(c.dim(`(global scope — no local .minicode/sessions.db in ${base})`))
     if (rows.length === 0) console.log(c.dim("(no recorded sessions yet)"))
     else {
       const tableData = rows.map((r) => ({
@@ -55,7 +63,7 @@ export async function handleSessions(
     const asJsonl = args.includes("--jsonl")
     if (!id) {
       console.error("usage: minicode sessions export <id> [--jsonl]")
-      process.exit(1)
+      process.exit(2)
     }
     const sess = loadSession(id, getArg("--cwd"))
     if (!sess) {
@@ -123,6 +131,6 @@ export async function handleSessions(
     const asked = sub === "--help" || sub === "-h"
     if (!asked) console.error(`unknown sessions subcommand: ${sub}\n`)
     console.log(SESSIONS_HELP)
-    process.exit(asked ? 0 : 1)
+    process.exit(asked ? 0 : 2)
   }
 }

@@ -58,7 +58,7 @@ export async function handleMemory(
   }
   if (sub && sub !== "status" && !sub.startsWith("-")) {
     console.error(`unknown memory subcommand "${sub}" — see: minicode memory status`)
-    process.exit(1)
+    process.exit(2)
   }
   const cwdArg = getArg("--cwd")
   const asJson = getArg("--json") !== undefined || args.includes("--json")

@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { resolve as resolvePath } from "node:path"
+import { NoProviderError } from "../src/app/provider-layer.ts"
 import { createMinicodeSession } from "../src/app/session.ts"
 import { parseCompactKeepTurns } from "../src/policy/compaction.ts"
 import { createRateLimiter } from "../src/policy/ratelimit.ts"
@@ -312,7 +313,9 @@ if (enterRepl) {
 }
 if (!prompt && !enterRepl) {
   process.stderr.write('usage: minicode "prompt"  |  minicode (interactive mode)\n')
-  process.exit(1)
+  // Salah pakai (bukan gagal runtime): exit 2 agar skrip bisa membedakan
+  // dari kegagalan provider/budget (exit 1). Lihat TERMINAL_CONTRACT.md.
+  process.exit(2)
 }
 
 // -- skills: expand /name args --
@@ -372,6 +375,15 @@ try {
     rateLimiter,
     sandboxNotice: requestedSandbox ? sandbox.notice : undefined,
   })
+} catch (e) {
+  // Tanpa provider = setup gagal sebelum sesi ada. Pesan + exit(1) sama
+  // persis seperti dulu (provider-layer tak lagi exit sendiri agar
+  // exec --json bisa memasang envelope mesinnya — lihat exec.ts).
+  if (e instanceof NoProviderError) {
+    console.error(e.message)
+    process.exit(1)
+  }
+  throw e
 } finally {
   setupSpin?.stop()
 }

@@ -481,6 +481,63 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
   if (both(NTDSUTIL)) return { denied: true, reason: "directory services tool" }
   if (both(ROOT_SCAN)) return { denied: true, reason: "filesystem-root scan" }
 
+  // Pembuatan link (symlink/junction/hardlink) yang operannya sensitif /
+  // owned-state: link internal ke `.minicode/` dipakai menembus kunci
+  // owned-state tool tulis (temuan audit 2026-09-22 F-CRIT — `ln -s .minicode
+  // linkdir` + `write_file linkdir/config.json` lolos karena cek owned-state
+  // membaca string argumen, bukan target nyata; pola yang sama menembus
+  // perlindungan berkas sensitif). Kunci UTAMA ada di lapisan permission
+  // (isOwnedStateReal — realpath); blok ini lapisan kedua di sisi shell.
+  //
+  // Urutan argumen BEDA antar tool — `ln`: TARGET LINK; `mklink`/`fsutil`:
+  // LINK dulu; `New-Item`: parameter bernama (urutan bebas, `-Target` alias
+  // `-Value`). Alih-alih mempercayai posisi, SEMUA operand non-flag dicek:
+  // link yang kebetulan DINAMAI seperti path sensitif/owned sama
+  // mencurigakannya (shadowing), jadi tanpa false positive berarti. Ini
+  // sekaligus menutup reshuffle flag (`ln --symbolic`, `ln -s --`, fsutil
+  // terbalik) yang lolos dari pencocokan posisi.
+  {
+    const denyLinkOperand = (op: string | undefined): BashVerdict | null => {
+      if (!op) return null
+      const t = op.replace(/^["']+|["']+$/g, "")
+      if (!t || t.startsWith("-")) return null // flag / `--`, bukan path
+      if (isSensitive(t) || isSensitive(resolve(cwd ?? ".", t))) {
+        return { denied: true, reason: "link to sensitive file" }
+      }
+      if (isOwnedState(t) || isOwnedState(resolve(cwd ?? ".", t))) {
+        return { denied: true, reason: "link to owned state" }
+      }
+      return null
+    }
+    // `&`/`<`/`>` mengakhiri segmen operand. Switch cmd `/D` `/J` `/H`
+    // dilewati eksplisit agar path yang kebetulan berawalan `/` tak hilang.
+    const LINK_CMD =
+      /(?:^|[;&|\n]\s*)(?:sudo\s+)?(?:ln|mklink|fsutil\s+hardlink\s+create)\s+([^\n;|&<>]+)/gi
+    const linkSegs = [...norm.matchAll(LINK_CMD)]
+    if (linkSegs.length === 0) linkSegs.push(...raw.matchAll(LINK_CMD))
+    for (const m of linkSegs) {
+      for (const tok of m[1]!.trim().split(/\s+/)) {
+        if (/^\/[djh]$/i.test(tok)) continue
+        const v = denyLinkOperand(tok)
+        if (v) return v
+      }
+    }
+    // New-Item bentuk nilai-menempel (`-Target:.minicode`): token berawalan
+    // `-` luput dari ekstraksi target READER di bawah (bentuk spasi sudah
+    // ditahan di sana — New-Item ∈ READERS). `-Target` alias `-Value`.
+    const NI_CMD = /(?:^|[;&|\n]\s*)New-Item\b([^\n;|]*)/gi
+    const niSegs = [...norm.matchAll(NI_CMD)]
+    if (niSegs.length === 0) niSegs.push(...raw.matchAll(NI_CMD))
+    for (const m of niSegs) {
+      const args = m[1]!
+      if (!/-ItemType:?\s*"?(?:SymbolicLink|HardLink|Junction)"?(?:\s|$)/i.test(args)) continue
+      for (const pm of args.matchAll(/-(?:Path|Target|Value):(\S+)/gi)) {
+        const v = denyLinkOperand(pm[1])
+        if (v) return v
+      }
+    }
+  }
+
   // Redirect keluar workspace (temuan audit eksternal: `echo x > ..\evil`
   // lolos karena allowlist hanya menolak chaining `[;&|]` dan guard tak
   // punya aturan redirect). Target di-resolve terhadap cwd pemanggil agar

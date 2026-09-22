@@ -35,6 +35,24 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
 
 ## Status eksekusi terbaru (update 2026-09-22)
 
+- ✅ AUDIT KEAMANAN 2026-09-22 — F-CRIT (bypass kunci owned-state via link
+  internal) DIPERBAIKI: `write_file linkdir/config.json` menembus `.minicode/`
+  lewat junction/symlink karena cek owned-state membaca STRING argumen, bukan
+  target nyata. Kunci kini ganda: (1) `isOwnedStateReal` di
+  `src/policy/jail.ts` (realpath sinkron ke induk terdekat yang ADA +
+  rekonstruksi ekor) dipakai semua tool tulis di `src/policy/permission.ts`,
+  dengan carve-out string lebih dulu (restore `.trash/`, skrip `hooks/`) dan
+  symlink internal SAH ke berkas biasa tetap bisa ditulis; (2) bash-guard
+  menahan PEMBUATAN link yang operannya sensitif/owned-state — SEMUA operand
+  non-flag dicek (bukan satu slot posisi), sehingga urutan terbalik
+  `fsutil hardlink create LINK TARGET`, reshuffle flag (`ln --symbolic`,
+  `ln -s --`), dan nilai menempel `New-Item ... -Target:.minicode` ikut
+  tertahan. Regresi permanen: `test/deny-reason.test.ts` (tulis via junction
+  deny / link jinak & hooks allow), `test/bash-guard-escaping.test.ts`
+  (14 bentuk serangan + 5 tetangga jinak), korpus gate:bash 62 pola serangan
+  + 24 perintah sah (0 bypass / 0 over-block).
+
+
 - ✅ INTEGRASI `fix/setup-wizard-spinner` → main (2026-09-22): branch dibubarkan,
   kerja terbaiknya dipindah selektif ke main 0.10.0 (TUI branch sudah digantikan
   fullscreen+popup+i18n): fix bash-guard caret/%VAR%/`for` (security), hold

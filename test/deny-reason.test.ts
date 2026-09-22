@@ -4,7 +4,7 @@
 // "permission denied: bash-guard: destructive rm" alih-alih retry buta.
 
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createPermissionHandler } from "../src/policy/permission.ts"
@@ -103,6 +103,89 @@ describe("app handler reasons", () => {
     const owned = await reasoned(h, "write_file", { path: join(root, ".minicode", "x.txt") })
     expect(owned.decision).toBe("deny")
     expect(owned.reason).toBe("jail: owned state")
+  })
+
+  test("jail: owned state via link internal ikut deny (temuan F-CRIT)", async () => {
+    // Gagal-di-kode-lama: junction/symlink → `.minicode/` lolos karena cek
+    // owned-state membaca string argumen, bukan target nyata (`write_file
+    // linkdir/config.json` → allow, lalu tulis mendarat di state). Kunci
+    // ganda: string mentah DAN target realpath dicek (permission.ts), dengan
+    // carve-out hooks/trash yang dipertahankan.
+    const rootDir = mkdtempSync(join(tmpdir(), "mc-ownedlink-"))
+    try {
+      mkdirSync(join(rootDir, ".minicode"), { recursive: true })
+      writeFileSync(join(rootDir, ".minicode", "config.json"), "{}\n")
+      let linked = false
+      try {
+        // Junction bebas-privilege lintas-OS (Windows maupun POSIX).
+        symlinkSync(join(rootDir, ".minicode"), join(rootDir, "linkdir"), "junction")
+        linked = true
+      } catch {
+        linked = false
+      }
+      const h2 = createPermissionHandler({
+        mode: "allow-all",
+        root: rootDir,
+      }) as unknown as PermissionHandler & { describeDenial(c: ToolCall): string | undefined }
+      const g = async (name: string, args: unknown) => {
+        const c = call(name, args)
+        return {
+          decision: (await h2.check(c, {} as never)) as string,
+          reason: await h2.describeDenial(c),
+        }
+      }
+      const direct = await g("write_file", { path: join(rootDir, ".minicode", "config.json") })
+      expect(direct.decision).toBe("deny")
+      expect(direct.reason).toBe("jail: owned state")
+      if (linked) {
+        // Pola serangan: argumen jinak, target nyata = state.
+        const viaLink = await g("write_file", { path: join(rootDir, "linkdir", "config.json") })
+        expect(viaLink.decision).toBe("deny")
+        expect(viaLink.reason).toBe("jail: owned state")
+        // edit/delete/move ikut jalur kunci yang sama.
+        const viaEdit = await g("edit", { path: join(rootDir, "linkdir", "config.json") })
+        expect(viaEdit.decision).toBe("deny")
+        const viaMove = await g("move_file", {
+          from: join(rootDir, "linkdir", "x"),
+          to: join(rootDir, "linkdir", "y"),
+        })
+        expect(viaMove.decision).toBe("deny")
+        // Symlink internal ke target JINAK tidak over-block (kontrak target
+        // di safe-open.ts: hanya `.minicode/` yang dikunci, bukan symlink).
+        // Symlink FILE butuh privilege di Windows → bila gagal, uji via
+        // junction ke direktori JINAK (inti test — blokir link → state —
+        // sudah diuji di atas via junction ke `.minicode/`).
+        writeFileSync(join(rootDir, "ok.txt"), "x\n")
+        let benignPath: string | null = null
+        try {
+          symlinkSync(join(rootDir, "ok.txt"), join(rootDir, "ok-link.txt"))
+          benignPath = join(rootDir, "ok-link.txt")
+        } catch {
+          mkdirSync(join(rootDir, "okdir"), { recursive: true })
+          writeFileSync(join(rootDir, "okdir", "ok.txt"), "x\n")
+          try {
+            symlinkSync(join(rootDir, "okdir"), join(rootDir, "okdir-link"), "junction")
+            benignPath = join(rootDir, "okdir-link", "ok.txt")
+          } catch {
+            benignPath = null
+          }
+        }
+        if (benignPath) {
+          const benign = await g("write_file", { path: benignPath })
+          expect(benign.decision).toBe("allow")
+        }
+        // Carve-out hooks: skrip hooks user tetap boleh ditulis lewat tool.
+        const hook = await g("write_file", {
+          path: join(rootDir, ".minicode", "hooks", "pre-x.js"),
+        })
+        expect(hook.decision).toBe("allow")
+      }
+      // Jalur sah non-link tetap berfungsi (mode check di bawah izin tulis).
+      const normal = await g("write_file", { path: join(rootDir, "notes.txt") })
+      expect(normal.decision).toBe("allow")
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true })
+    }
   })
 
   test("gated headless → alasan approval, bukan deny buta", async () => {

@@ -35,7 +35,7 @@ Lambat/stokastik (fuzz multi-seed, stress, docker) tinggal di `slow.yml` — keg
 Gerbang lain:
 
 ```bash
-bun run gate:bash      # 38 pola serangan + 15 perintah sah → 0 bypass / 0 over-block
+bun run gate:bash      # 62 pola serangan + 24 perintah sah → 0 bypass / 0 over-block
 bun run extreme        # fuzz + shadow-git + MCP jahat
 bun run bench:smoke    # fake, CI-safe
 bun run vendor:check   # vendor/minicore sinkron dengan ../minicore

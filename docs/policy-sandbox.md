@@ -65,7 +65,7 @@ Fuzz membangkitkan varian dari transformasi yang shell anggap setara (quote-spli
 
 ## Lapisan lain
 
-- **Path jail** realpath-based + symlink `realpath` di permission layer; `.env`/`.git/config`/`node_modules`/hive Windows deny; `.minicode/` terkunci penuh untuk tool tulis (kecuali restore `.trash/`); TOCTOU `O_NOFOLLOW` (`src/lib/safe-open.ts`: `resolveSafePath` untuk penulis, `safeOpenRead` untuk pembaca; POSIX-only, Windows pre-check).
+- **Path jail** realpath-based + symlink `realpath` di permission layer; `.env`/`.git/config`/`node_modules`/hive Windows deny; `.minicode/` terkunci penuh untuk tool tulis berdasarkan target NYATA (realpath best-effort `isOwnedStateReal` — junction/symlink internal ke `.minicode/` ikut ditahan; kecuali restore `.trash/` + skrip `hooks/`); bash-guard menahan PEMBUATAN link yang operannya sensitif/owned-state; TOCTOU `O_NOFOLLOW` (`src/lib/safe-open.ts`: `resolveSafePath` untuk penulis, `safeOpenRead` untuk pembaca; POSIX-only, Windows pre-check).
 - **Env scrub** `sanitizeSpawnEnv`: strip kata-kunci kredensial dari merge final; `GITHUB_WORKSPACE`/`REDIS_HOST`/`AWS_REGION` tetap ada, `GITHUB_TOKEN`/`AWS_SECRET_ACCESS_KEY`/`DATABASE_URL` tetap di-strip.
 - **web_fetch/web_search**: redirect manual 5 hop + DNS pinning 30 dtk + body 2 MB.
 - **Secret scrubber**: `sk-`, `ghp_`, `AKIA`, PEM, JWT, Bearer, `api_key=...` di-redact sebelum ke LLM (read_file/bash/grep) — tanpa whitelist kata.

@@ -81,6 +81,31 @@ const CASES: [string, boolean][] = [
   // tak pernah diperiksa, walau `type .env` ditahan.
   ["for /f %i in (.env) do @echo %i", true],
 
+
+  // ── kelas 14: pembuatan link ke target sensitif / owned-state ──
+  // (temuan F-CRIT, audit 2026-09-22). Link internal (junction/symlink) ke
+  // `.minicode/` menembus kunci owned-state tool tulis yang membaca STRING
+  // argumen: `ln -s .minicode linkdir` + `write_file linkdir/config.json`.
+  // Kunci utama kini realpath di lapisan permission (isOwnedStateReal); ini
+  // lapisan kedua di sisi shell. Urutan argumen BEDA antar tool — ln: TARGET
+  // LINK; mklink/fsutil: LINK dulu; New-Item: parameter bernama (urutan
+  // bebas, `-Target` alias `-Value`, nilai bisa menempel `-Target:x`) — maka
+  // semua operand non-flag dicek, bukan satu slot posisi.
+  ["ln -s .minicode linkdir", true],
+  ["ln -s .minicode/config.json lc", true],
+  ["ln -sf .env linkx", true],
+  ["ln --symbolic .env linkx", true],
+  ["ln -s -- .env linkx", true],
+  ["ln .env hardlink-x", true],
+  ["mklink linkx .env", true],
+  ["mklink /D linkdir .minicode", true],
+  ["mklink /J linkdir .minicode", true],
+  ["fsutil hardlink create linkx .env", true],
+  ["New-Item -ItemType Junction -Path linkdir -Target .minicode", true],
+  ["New-Item -ItemType SymbolicLink -Target .env -Path linkx", true],
+  ["New-Item -ItemType HardLink -Path linkx -Value .env", true],
+  ["New-Item -ItemType Junction -Path linkdir -Target:.minicode", true],
+
   // Mode `allowlist` sengaja lebih ketat: operasi tulis lewat shell memang
   // ditahan di sana, jadi mkdir/cp/rm ditandai auto-only.
   ["git status", false],
@@ -110,6 +135,14 @@ const AUTO_ONLY_BENIGN: string[] = [
   "rm -rf node_modules/.cache",
   "touch src/new.ts",
   "for /f %i in (src/list.txt) do @echo %i",
+  // Link ke target JINAK harus tetap lolos (kelas 14 hanya menahan operand
+  // sensitif/owned-state); di mode allowlist perintah tulis ini memang
+  // ditahan by design.
+  "ln -s src linkdir",
+  "ln -s README.md doc-link",
+  "mklink /D linkdir src",
+  "New-Item -ItemType SymbolicLink -Path linkx -Target README.md",
+  "fsutil hardlink create link-ok.txt README.md",
 ]
 
 const h = createPermissionHandler({ mode: modeArg, root: process.cwd() })

@@ -5,7 +5,9 @@ import { loadAllowlist, matchAllowlist, saveAllowlist } from "./allowlist.ts"
 import { inspectBashCommand } from "./bash-guard.ts"
 import {
   isCwdOutsideRoot,
+  isHookScript,
   isOwnedState,
+  isOwnedStateReal,
   isRealPathOutsideRoot,
   isSensitive,
   isTrashRestore,
@@ -418,6 +420,13 @@ export function createPermissionHandler(
       // restore `.minicode/.trash/` → workspace (isTrashRestore) dan skrip
       // hooks `.minicode/hooks/` (HOOKS_RE di jail.ts — registrasi eksekusi
       // tetap dikunci via allowlist.json yang owned).
+      // KUNCI GANDA (audit 2026-09-22 F-CRIT): batas string di atas dilewati
+      // link internal (junction/symlink → `.minicode/`), jadi target NYATA
+      // ikut dicek — pola yang sama dengan proteksi workspace
+      // (isRealPathOutsideRoot) dan TOCTOU pembaca. `resolveOwnedReal`
+      // memakai best-effort realpath agar symlink INTERNAL SAH (mis. tautan
+      // repositori ke berkas biasa di luar `.minicode/`) tetap bisa ditulis,
+      // sesuai kontrak "targetnya yang dicek" di safe-open.ts.
       if (
         call.name === "write_file" ||
         call.name === "edit" ||
@@ -425,19 +434,31 @@ export function createPermissionHandler(
         call.name === "delete_file" ||
         call.name === "move_file"
       ) {
-        // Restore dari trash (.minicode/.trash/ → workspace) adalah satu-
-        // satunya gerak sah menyentuh state — selain itu dua arah deny.
+        const rawTargets =
+          call.name === "move_file"
+            ? ([(earlyArgs?.from as string) ?? "", (earlyArgs?.to as string) ?? ""] as const)
+            : ([(earlyArgs?.path as string) ?? ""] as const)
+        // Carve-out sah (string mentah): restore `.minicode/.trash/` →
+        // workspace dan skrip `.minicode/hooks/` — satu-satunya gerak sah
+        // yang menyentuh state. Cek string dulu supaya jalur sah (yang target
+        // nyatanya justru `.minicode/`) tidak ikut ditahan kunci realpath.
         if (call.name === "move_file") {
-          const f = (earlyArgs?.from as string) ?? ""
-          const t = (earlyArgs?.to as string) ?? ""
+          const f = rawTargets[0] ?? ""
+          const t = rawTargets[1] ?? ""
           if (isTrashRestore(f, t)) {
             // lanjut ke mode check di bawah (ask/auto tetap berlaku)
-          } else if ((f !== "" && isOwnedState(f)) || (t !== "" && isOwnedState(t))) {
+          } else if (
+            (f !== "" && isOwnedState(f)) ||
+            (t !== "" && isOwnedState(t)) ||
+            rawTargets.some((p) => p !== "" && isOwnedStateReal(p, root))
+          ) {
             return deny(call, "jail: owned state")
           }
         } else {
-          const p = (earlyArgs?.path as string) ?? ""
-          if (p !== "" && isOwnedState(p)) return deny(call, "jail: owned state")
+          const p = rawTargets[0] ?? ""
+          if (p !== "" && (isOwnedState(p) || (!isHookScript(p) && isOwnedStateReal(p, root)))) {
+            return deny(call, "jail: owned state")
+          }
         }
       }
 

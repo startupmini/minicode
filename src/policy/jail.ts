@@ -1,5 +1,5 @@
 import { lstatSync, realpathSync } from "node:fs"
-import { isAbsolute, relative, resolve, sep } from "node:path"
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 
 // Satu sumber untuk aturan sandbox path — dipakai permission layer + setiap tool
 // (defense-in-depth). File kredensial / direktori toolchain dianggap sensitif.
@@ -36,8 +36,45 @@ const OWNED_STATE_RE = /(?:^|[/\\])\.minicode(?:[/\\]|$)/i
 // isinya ikut ke konteks (persistensi prompt-injection), user kelola via shell.
 const HOOKS_RE = /(?:^|[/\\])\.minicode[/\\]hooks(?:[/\\]|$)/i
 
+/** true bila jalurargumen tool menunjuk skrip hooks user (carve-out tulis). */
+export function isHookScript(p: string): boolean {
+  return !!p && HOOKS_RE.test(p)
+}
+
 export function isOwnedState(p: string): boolean {
-  return OWNED_STATE_RE.test(p) && !HOOKS_RE.test(p)
+  return !!p && OWNED_STATE_RE.test(p) && !HOOKS_RE.test(p)
+}
+/**
+ * Kunci realpath untuk owned-state (temuan audit 2026-09-22 F-CRIT): cek
+ * string `isOwnedState` dilewati link internal (junction/symlink →
+ * `.minicode/`), jadi TARGET NYATA ikut dicek — pola yang sama dengan
+ * `isRealPathOutsideRoot` dan TOCTOU pembaca. Best-effort & sinkron (dipakai
+ * lapisan permission): kegagalan realpath (mis. target belum ada) jatuh ke
+ * bentuk logis (cek string) agar penulisan file baru tetap presisi dan
+ * carve-out hooks/trash (yang dicek string di pemanggil) tak berubah arti.
+ */
+export function isOwnedStateReal(p: string, root: string): boolean {
+  if (!p) return false
+  // Mundur ke induk terdekat yang ada: realpath penuh bila target ada,
+  // realpath induk + sisa-ekor bila berkasnya baru (`.`/`..` ikut
+  // ternormalisasi oleh resolve — verifikasi logis tanpa mengandalkan
+  // string mentah).
+  let probe = isAbsolute(p) ? resolve(p) : resolve(root, p)
+  let tail = ""
+  for (let i = 0; i < 64; i++) {
+    try {
+      const real = resolve(realpathSync(probe), tail)
+      // Carve-out hooks: skrip hooks sah tetap lewat kunci ini (registrasi
+      // eksekusinya terkunci di allowlist.json yang owned).
+      return isOwnedState(real) && !isHookScript(real)
+    } catch {
+      const parent = dirname(probe)
+      if (parent === probe) break
+      tail = tail ? join(basename(probe), tail) : basename(probe)
+      probe = parent
+    }
+  }
+  return isOwnedState(p)
 }
 
 /**

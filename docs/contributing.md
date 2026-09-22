@@ -21,7 +21,16 @@ Butuh `bun >= 1.0` (`bun:sqlite` tidak jalan di Node).
 bun x tsc --noEmit && bun run lint && bun test && bun run gate:coverage && bun run gate:pack
 ```
 
-Coverage naik → naikkan minimum di `scripts/coverage-gate.ts` (saat ini **80 funcs / 84 lines** — funcs sengaja tidak dikunci 81 karena berayun antar run dan membuat gate flaky).
+Coverage naik → naikkan minimum di `scripts/coverage-gate.ts` (saat ini **80 funcs / 84 lines** — funcs sengaja tidak dikunci 81 karena berayun antar run dan membuat gate flaky). Ambang coverage dikunci ke suite CEPAT (`bun test` di CI); gerbang lambat/stokastik tak boleh menaikkan ambang.
+
+## Gate cepat vs lambat (F4.2)
+
+```bash
+bun run gate:fast   # tsc + lint + test + coverage + pack + bash + bench:smoke + audit:harness (per-commit/CI)
+bun run gate:slow   # extreme fuzz + shadow-git stress + MCP adversarial (nightly slow.yml + manual)
+```
+
+Lambat/stokastik (fuzz multi-seed, stress, docker) tinggal di `slow.yml` — kegagalannya sinyal investigasi, bukan penolakan PR. CI per-commit (`ci.yml`) hanya menjalankan yang deterministik.
 
 Gerbang lain:
 
@@ -38,7 +47,7 @@ bun run vendor:check   # vendor/minicore sinkron dengan ../minicore
 - Lintas-lapisan via DI dari composition root (`cli/index.ts`, `cli/setup.ts`): `ask`, `setupWhenEmpty`, `setSubAgentSessionFactory`. Tanpa injeksi default selalu deny / fail-closed.
 - `providers → config` satu arah (provisioning di `src/providers/provision.ts`, `src/config.ts` murni IO).
 - Layar `src/ui/screens/` = view murni (props + callback), controller di `cli/`.
-- Output shell-first: append-only scrollback, tanpa alternate screen.
+- Jalur non-interaktif shell-first (append-only scrollback); sesi interaktif SELALU TUI alternate-screen (kontrak I16, tanpa opsi linear).
 - Ubah struktur/dependensi antarlapisan → wajib update `docs/ARCHITECTURE.html`.
 
 ## Aturan kode

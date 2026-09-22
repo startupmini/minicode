@@ -23,7 +23,8 @@ Coverage naik → naikkan juga minimum di `scripts/coverage-gate.ts`.
   selalu deny / fail-closed. `providers → config` satu arah (provisioning di
   `src/providers/provision.ts`, `src/config.ts` murni IO).
 - Layar `src/ui/screens/` = view murni (props + callback), controller di `cli/`.
-- Output shell-first: append-only ke scrollback, tanpa alternate screen.
+- Jalur non-interaktif shell-first (append-only ke scrollback); sesi
+  interaktif SELALU TUI alternate-screen (kontrak I16, tanpa opsi linear).
 - Ubah struktur/dependensi antarlapisan → wajib update `docs/ARCHITECTURE.html`.
 
 ## Jebakan (semua pernah jadi bug nyata)
@@ -33,7 +34,11 @@ Coverage naik → naikkan juga minimum di `scripts/coverage-gate.ts`.
 - Lebar terminal = **kolom**, bukan karakter: pakai `displayWidth` dkk. dari
   `src/ui/render/width.ts` (CJK/emoji = 2 kolom).
 - Teks model/tool/berkas = input tak terpercaya: lewatkan `sanitizeAnsi`
-  (`src/ui/render/sanitize.ts`) sebelum tampil.
+  (`src/ui/render/sanitize.ts`) sebelum tampil — termasuk label picker &
+  daftar manager (nama model/provider dari jaringan/config lokal repo), dan
+  gema dialognya. Sanitasi adalah satu-satunya gerbangnya: modul geometri
+  (`width.ts`) SENGAJA mempertahankan sekuens utuh karena footer memakai CHA
+  non-SGR untuk merapatkan konteks.
 - `cwd` tool file **wajib** dari `ToolContext.cwd`, bukan `process.cwd()`.
 - Jangan edit `vendor/minicore/**` kecuali seam aditif eksplisit.
 - Komentar Indonesia, jelaskan **mengapa**. Encoding UTF-8 tanpa BOM.

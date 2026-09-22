@@ -81,24 +81,10 @@ jobs:
         working-directory: minicode
         run: bun experiments/bash-bypass-probe.ts --mode allowlist
 
-      # Eksperimen ekstrem: fuzz kombinatorial + stress + adversarial server.
-      # Probe di atas menguji korpus yang ditulis manusia; ini membangkitkan
-      # varian sendiri dan menemukan kelas bypass yang belum terpikirkan.
-      - name: Extreme — bash fuzz (multi-seed)
-        working-directory: minicode
-        run: |
-          for s in 1 42 999 123456 7777777; do
-            bun experiments/extreme-bash-fuzz.ts --seed $s --rounds 3
-          done
-
-      - name: Extreme — shadow-git stress
-        working-directory: minicode
-        run: bun experiments/extreme-shadow-git.ts --files 1500 --sessions 8
-
-      - name: Extreme — MCP adversarial
-        working-directory: minicode
-        run: bun experiments/extreme-mcp-adversarial.ts
-
+      # Eksperimen ekstrem (fuzz multi-seed + stress + adversarial + docker)
+      # PINDAH ke slow.yml (nightly + manual): stokastik/fluktuatif antar run,
+      # kegagalannya sinyal investigasi bukan penolakan PR. Di sini cukup
+      # korpus deterministik di atas + smoke + audit harness.
       # Gate distribusi: tarball harus memuat semua yang dibutuhkan runtime dan
       # tidak memuat rahasia. Kegagalan `files` hanya terlihat setelah publish
       # kalau tidak diperiksa di sini.
@@ -106,15 +92,14 @@ jobs:
         working-directory: minicode
         run: bun run gate:pack
 
-      - name: Test with docker sandbox (experimental)
-        working-directory: minicode
-        continue-on-error: true
-        run: |
-          MINICODE_SANDBOX=docker bun test
-
       - name: Benchmark smoke (fake provider)
         working-directory: minicode
         run: bun run bench:smoke
+
+      # Audit harness deterministik (tanpa API key): safety/guard/jail/budget.
+      - name: Harness audit (60 checks)
+        working-directory: minicode
+        run: bun run audit:harness
 
       - name: Telemetry gate (resolve rate target)
         working-directory: minicode

@@ -105,8 +105,31 @@ describe("audit #11: permukaan pack tepat", () => {
   })
 
   test("fixture test vendor SENGAJA tak ikut (aturan forbidden gate:pack)", () => {
-    expect(existsSync(join(repoRoot, "vendor", "minicore", "test", "fakes.ts"))).toBe(true)
+    const vendorDir = join(repoRoot, "vendor", "minicore")
+    expect(existsSync(join(vendorDir, "test", "fakes.ts"))).toBe(true)
     expect(coveredByFiles("vendor/minicore/test/fakes.ts")).toBe(false)
+  })
+
+  test("shipped hash VENDOR.md = fingerprint file vendor yang ikut paket (provenance tarball)", () => {
+    // Hash 19-file tidak bisa direproduksi dari paket terbit karena fakes.ts
+    // sengaja tak ikut. Angka kedua (shipped hash) menghitung HANYA file yang
+    // ikut `files` — verifikator cukup vendor/minicore di dalam tarball.
+    const vendorDir = join(repoRoot, "vendor", "minicore")
+    const md = readFileSync(join(vendorDir, "VENDOR.md"), "utf8")
+    const shipped = /^- shipped hash: `([0-9a-f]+)`/m.exec(md)?.[1]
+    if (!shipped) throw new Error("VENDOR.md shipped hash tak terbaca")
+    const all = [...listFiles(join(vendorDir, "src"), vendorDir), "package.json"]
+      .filter((f) => f !== "test/fakes.ts")
+      .sort()
+    expect(all.length).toBeGreaterThan(0)
+    const h = createHash("sha256")
+    for (const f of all) {
+      h.update(f)
+      h.update("\0")
+      h.update(readFileSync(join(vendorDir, f)))
+      h.update("\0")
+    }
+    expect(h.digest("hex").slice(0, 16)).toBe(shipped)
   })
 
   test("pola files tak melebar ke test/bench/experiments", () => {

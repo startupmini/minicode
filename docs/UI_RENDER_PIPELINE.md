@@ -45,10 +45,11 @@ Tahap F — arbitrator `src/ui/runtime/statusline.ts`: satu pemilik transient
 (clear → tulis → repaint) sehingga diagnostik tak hilang; overlap = signal,
 bukan crash. `paintWrite` tak pernah melempar (fail-closed Bun Windows).
 
-Tahap G — chrome + footer `src/ui/runtime/chrome.ts`, `src/ui/footer.ts`:
-satu-satunya chrome permanen (DECSTBM 2 baris dasar), reset region di semua
-jalur keluar, nol byte di non-TTY. Footer baca `session.contextTokens`
-kernel (bukan spend kumulatif).
+Tahap G — status bar `src/ui/footer.ts` dirender `src/ui/tui/app.ts` sebagai
+baris dasar frame fullscreen. Footer/chrome lama (`src/ui/runtime/chrome.ts`,
+DECSTBM scroll-region, `MINICODE_FOOTER`) DIHAPUS bersama lapisan TUI lama —
+alternate screen menggantikannya; nol byte di non-TTY. Footer baca
+`session.contextTokens` kernel (bukan spend kumulatif).
 
 Tahap H — primitif render `src/ui/render/`: `sanitize.ts` (hanya SGR lolos),
 `markdown.ts` + `highlight.ts` (fence-state per baris, konten utuh),
@@ -130,11 +131,17 @@ Status hardening (sesudah audit): F1 diperbaiki via `createStreamSanitizer`
 model/reasoning/bash di `simple.ts`, flush deterministik saat
 completed/detach); F2 via kebijakan `stripSgr` non-TTY di `wOut`/`wErr` +
 `rememberTurn` (cerminan `colorLevel` → `stdout.isTTY`); F3 via marker
-`… (earlier thinking truncated)`; O1 didokumentasikan di `cli/repl.ts`
-(tanpa refactor). Dijaga `test/ansi-fragmentation.test.ts`
+`… (earlier thinking truncated)`; O1 didokumentasikan di `src/ui/tui/app.ts`
+(busy-freeze + abort, tanpa refactor). Snap kiri/kanan: render pertama sesudah
+geometri berubah
+me-reset jangkar relatif askLine (`lastGeoCols/Rows` di `input.ts`) —
+geometri lebar tak dilacak footer karena erase baris-absolut tak sound
+pasca-reflow (terbukti model + ConPTY: reflow milik konsumen).
+Dijaga `test/ansi-fragmentation.test.ts`
 (termasuk properti semua-titik-belah ≡ whole-string),
 `test/non-tty-output.test.ts`, `test/thinking-truncation.test.ts`,
-`test/ui-combined.test.ts` (satu sistem: stream + tool + resize + footer).
+`test/ui-combined.test.ts` (satu sistem: stream + tool + resize + footer),
+`test/input-resize.test.ts` (gagal di kode lama: CUP ke anchor basi).
 
 Batas yang TERVERIFIKASI BENAR (bukti harness + 178 test UI hijau):
 token-by-token tepat-1x (E1), chunk 50KB utuh (E2), fence terbelah benar

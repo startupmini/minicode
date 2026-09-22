@@ -1,4 +1,4 @@
-# Kontrak Terminal MiniCode (TUI fullscreen — v6, 2026-09-21)
+# Kontrak Terminal MiniCode (TUI fullscreen — v6, 2026-09-22)
 
 Satu-satunya tampilan interaktif adalah **TUI fullscreen**: transkrip ala
 shell + status bar + popup komposit. REPL linier, footer lengket (chrome),
@@ -185,6 +185,16 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      (subset: `initialize`/`run`/`cancel`/`shutdown`; BUKAN klaim ACP penuh):
      stdout murni mesin (semua di-scrub), diagnostik manusia ke stderr,
      approval `deny-headless`, satu run dalam satu waktu, shutdown/EOF = exit 0.
+30. `askLine` (input inline: dropdown `/`, prompt wizard/`ask_user`)
+     menginvalidasi jangkar relatifnya saat geometri terminal berubah: render
+     pertama sesudah `columns`/`rows` berbeda dari geometri render TERAKHIR
+     me-reset `prevRows`/`prevInputRows`/`prevCursorRow` lalu menggambar dari
+     kursor saat ini (`lastGeoCols/Rows` di `src/ui/input/input.ts`). Jangkar
+     basi pasca-reflow mendarat di baris salah — menimpa area output dan
+     menghapus baris yang salah (temuan snap kiri/kanan). SENGAJA tanpa
+     listener `resize` baru (frame basi cukup ditimpa render berikutnya), dan
+     `printedW` tidak ikut di-reset — nilainya konservatif; dikosongkan justru
+     membiarkan ekor lama.
 
 ## Grammar (ringkas)
 
@@ -264,6 +274,9 @@ panjang).
   setup gagal; jalur manusia tak berubah).
 - `test/acp.test.ts` — I29 (parser/framing/params + smoke spawn stdio:
   initialize→shutdown exit 0, tanpa provider).
+- `test/input-resize.test.ts` — I30 (gagal di kode lama: CUP `\x1b[1A` ke
+  jangkar basi sesudah resize; multiline, dropdown terbuka, resize ganda,
+  resize cepat ×10 → nilai submit utuh).
 - `test/tui-diff.test.ts` — I2/I7 (path & isi disanitasi).
 - `test/highlight.test.ts` — I2/I8 (CR dibuang; escape dibuang di hulu).
 - `test/tui-theme-highlight.test.ts` — I2 (section satu-baris; markdown

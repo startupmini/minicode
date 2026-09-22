@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-09-22 — Integrasi pasca-branch: ACP + token first-class + gate cepat/lambat + fix keamanan F-CRIT
+
+
 ### Added
 - **`minicode acp` — server JSON-RPC stdio untuk IDE (F5)**: subset minimal (BUKAN klaim ACP penuh) — `initialize` (capabilities + `approval:"deny-headless"`), `run` (sesi baru per run via `createCliSession` headless: prompt/cwd/model/maxSteps/timeoutMs/budget/mode auto|plan; notifikasi `text`+`tool` live; hasil `{ok,tokens,steps,turns,text}` + `submitted` verbatim), `cancel` (gugurkan via signal), `shutdown`. stdout murni mesin (semua di-scrub), diagnostik ke stderr. Guard: `test/acp.test.ts` (parser/framing/params + smoke spawn initialize→shutdown exit 0, tanpa provider); kontrak I29; docs: `docs/exec.md` + `docs/cli.md` + help CLI.
 - **Gate cepat vs lambat (F4.2)**: `bun run gate:fast` (tsc+lint+test+coverage+pack+bash+bench smoke+audit harness, per-commit/CI) vs `bun run gate:slow` (extreme fuzz+shadow-git+MCP adversarial, `slow.yml` nightly+manual); `ci.yml` melepas extreme+docker; ambang coverage dikunci ke suite cepat. `docs/contributing.md` mendokumentasikan split.

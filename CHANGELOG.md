@@ -36,6 +36,14 @@
   thinking minimized/expanded, live repaint coalesce 30ms + indikator
   `↓ N`, busy-freeze kecuali abort+scroll, watchdog 60 detik, approval
   tercatat di transkrip.
+- **Satu fokus di `main`: seluruh branch pengembangan dibubarkan**: 12 branch
+  remote sisa (blog/docs/feat/release/freebuff) diverifikasi lebih dulu
+  (`git merge-base --is-ancestor` → semua sudah bagian main; satu-satunya yang
+  ber-commit unik, `fix/input-resize-invalidation`, diadopsi sebagai `d4133ef`)
+  lalu dihapus bersama `fix/setup-wizard-spinner`, `fix/uiux-audit-findings`,
+  dan tag `backup/*`. `git ls-remote --heads origin` kini hanya
+  `refs/heads/main`; tag rilis (`v0.1.3`…`v0.10.0`) sengaja dipertahankan
+  sebagai penanda rilis.
 - **Dokumentasi publik disinkronkan ke kontrak v6 (I1–I30)**: `docs/terminal.md` (masih mengklaim "shell-native, bukan TUI" + footer chrome yang sudah dihapus), `docs/architecture.md`, `docs/concepts.md`, `docs/glossary.md`, `docs/README.md`, `docs/SUMMARY.md`, `docs/ARCHITECTURE.html`, dan deskripsi nav web (`scripts/web/nav.ts`, termasuk `src` `cli/repl.ts` yang tak ada lagi) kini menggambarkan satu tampilan interaktif TUI fullscreen + jalur non-interaktif shell-first; klaim "tanpa TUI" di footer web (`web/layout.html`) serta tagline `llms.txt`/`llms-full.txt` diganti. Halaman changelog web kini membaca SEMUA section `Status eksekusi` PLAN.md (`scripts/web/docs.ts`) — sebelumnya hanya section pertama, sehingga marker guard `GUARD-CHLOG-SATU` hilang begitu maintainer menambah section status baru di atasnya (guard `test/web-build.test.ts` merah tiap kali `site/` dibangun).
 - Kontrak terminal v6 (I1–I30) + peta proteksi diselaraskan, termasuk test
   anti-hardcode (lexer sadar-state: literal Indonesia di luar kamus dilarang).

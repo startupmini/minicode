@@ -52,8 +52,16 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   `fix/input-resize-invalidation` (adopsi terakhir: `7ec12b3`), dan
   `fix/uiux-audit-findings` (sudah jadi bagian main 0.10.0) dihapus di lokal
   DAN origin; tag `backup/*` dihapus setelah tiap perubahan terverifikasi ada
-  di main. Sekarang `git branch -a` hanya `main` + `origin/main`: tak ada
-  branch paralel yang bisa saling tindih lagi.
+  di main. Pembersihan lanjutan: 12 branch remote sisa
+  (`blog/query-gratis`, `docs-sync`, `docs/sitemap-attributes-review`,
+  `docs/solution-explorer-decisions`, `feat/indexnow-weekly`,
+  `feat/seo-audit-fixes`, `feat/sitemap-lastmod`,
+  `feat/url-integrity-guard`, `release/0.9.29`, `release/0.10.0`,
+  `freebuff/…`, `fix/input-resize-invalidation`) diverifikasi dulu
+  (`git merge-base --is-ancestor` → semuanya bagian main; satu-satunya branch
+  ber-commit unik sudah diadopsi sebagai `d4133ef`) lalu dihapus. Sekarang
+  `git ls-remote --heads origin` hanya `refs/heads/main` dan lokal hanya
+  `main` + `origin/main`: tak ada branch paralel yang bisa saling tindih lagi.
 
 ## Status eksekusi sebelumnya (2026-09-17)
 

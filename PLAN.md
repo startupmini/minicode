@@ -43,8 +43,17 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   envelope `exec --json`, F1 token (`Turn:` + `totalTokens` per baris trace),
   F2 bench harness beku + taksonomi gagal, F3 `MINICODE_COMPACT_KEEP_TURNS` +
   anti-thrash kompaksi, F4.1 skills `disable-model-invocation` + aset sibling,
-  F4.2 `gate:fast`/`gate:slow` + `slow.yml`, vendor shipped hash. Backup
-  ditandai di tag `backup/*`.
+  F4.2 `gate:fast`/`gate:slow` + `slow.yml`, vendor shipped hash, dan
+  invalidasi jangkar render `askLine` saat geometri berubah (I30,
+  `test/input-resize.test.ts`).
+
+- ✅ SATU FOKUS DI `main` (2026-09-22): seluruh branch pengembangan
+  dibubarkan setelah kerja terbaiknya diadopsi — `fix/setup-wizard-spinner`,
+  `fix/input-resize-invalidation` (adopsi terakhir: `7ec12b3`), dan
+  `fix/uiux-audit-findings` (sudah jadi bagian main 0.10.0) dihapus di lokal
+  DAN origin; tag `backup/*` dihapus setelah tiap perubahan terverifikasi ada
+  di main. Sekarang `git branch -a` hanya `main` + `origin/main`: tak ada
+  branch paralel yang bisa saling tindih lagi.
 
 ## Status eksekusi sebelumnya (2026-09-17)
 

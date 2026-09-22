@@ -134,9 +134,15 @@ export function buildChangelog(
   write: (rel: string, html: string) => void,
 ): string {
   const plan = readFileSync(join(repoRoot, "PLAN.md"), "utf8")
-  const section = plan.split("## Status eksekusi")[1]
-  if (!section) throw new Error("[web-build] PLAN.md: section 'Status eksekusi' hilang")
-  const sectionBody = section.split(/^## /m)[0]!
+  // SEMUA section "Status eksekusi …" — bukan hanya yang pertama. Halaman ini
+  // adalah RIWAYAT: entri lama (mis. marker guard `GUARD-CHLOG-SATU`) harus
+  // tetap tampil walau maintainer menambah section status baru di atasnya;
+  // mengambil section pertama saja membuat guard test changelog jadi bohong
+  // begitu section kedua lahir.
+  const sections = plan.split(/^## Status eksekusi.*$/m).slice(1)
+  if (sections.length === 0)
+    throw new Error("[web-build] PLAN.md: section 'Status eksekusi' hilang")
+  const sectionBody = sections.map((s) => s.split(/^## /m)[0]!).join("\n")
   const entriesHtml = changelogPageHtml(parsePlanStatus(sectionBody))
   const canon = `${base}/docs/changelog.html`
   const body =

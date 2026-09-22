@@ -10,7 +10,7 @@ export function buildLlmsTxt(repoRoot: string, base: string, version: string): s
   const lines: string[] = [
     "# Minicode",
     "",
-    `> Coding agent CLI shell-native: semua kerja terlihat di scrollback, tiap aksi sensitif lewat izin Anda. MIT, zero-dep, di atas kernel MiniCore. v${version}.`,
+    `> Coding agent CLI: jalur non-interaktif shell-first (kerja terlihat di scrollback), interaktif TUI fullscreen; tiap aksi sensitif lewat izin Anda. MIT, zero-dep, di atas kernel MiniCore. v${version}.`,
     "",
     "## Docs",
     "",

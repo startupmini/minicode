@@ -45,7 +45,7 @@
 
 ## Internal & Arsitektur (untuk kontributor)
 
-* [Terminal Contract (FROZEN) — 14 invariant](TERMINAL_CONTRACT.md)
+* [Terminal Contract (FROZEN) — 30 invariant](TERMINAL_CONTRACT.md)
 * [Control Plane — kontrak context/budget/compaction](CONTROL-PLANE-MAP.md)
 * [UI Render Pipeline — jalur stream ke terminal](UI_RENDER_PIPELINE.md)
 * [Harness Agent — riset fondasi](HARNESS.md)

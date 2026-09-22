@@ -96,7 +96,7 @@ Habis itu, baca sesuai kebutuhan lewat tabel Navigasi di bawah — tak perlu ber
 | Threat model, prompt injection, supply chain | [Keamanan](security.md) |
 | Error umum + `doctor` | [Troubleshooting](troubleshooting.md) |
 | Peta lapisan, alur satu prompt | [Arsitektur](architecture.md) |
-| Kontrak stdout/stderr FROZEN, 14 invariant | [Kontrak Terminal](terminal.md) |
+| Kontrak stdout/stderr FROZEN, invariant I1–I30 | [Kontrak Terminal](terminal.md) |
 | Kontrak internal kontributor: terminal FROZEN, control-plane, pipeline render | [Internal & Arsitektur](TERMINAL_CONTRACT.md) (grup di sidebar) |
 | Ikut kontribusi, gate, batas lapisan | [Contributing](contributing.md) |
 | Perubahan per versi | [Changelog](changelog.md) |

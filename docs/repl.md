@@ -9,9 +9,6 @@ Bahasa UI: `MINICODE_LANG=en|id` > `/lang` (disimpan state.json) > locale OS >
 en. `/lang` tanpa argumen = tampilkan aktif. Semua string lewat kamus i18n
 (`src/ui/i18n/`); literal Indonesia hardcode di luar kamus dilarang test.
 
-Bahasa UI: `MINICODE_LANG=en|id` > `/lang` (disimpan state.json) > locale OS >
-en. `/lang` tanpa argumen = tampilkan aktif.
-
 ## Slash commands
 
 | Command | Fungsi |
@@ -26,7 +23,6 @@ en. `/lang` tanpa argumen = tampilkan aktif.
 | `/sessions` | Tanpa argumen = popup picker resume; `/sessions <id>` = langsung resume |
 | `/status` | Runtime + pemakaian & biaya **kumulatif sesi** |
 | `/mode [nama]` | Ganti permission (`auto`, `ask`, `plan`, `allowlist`); tanpa argumen = putar |
-| `/lang [en|id]` | Bahasa UI; tanpa argumen = tampilkan aktif |
 | `/lang [en|id]` | Bahasa UI; tanpa argumen = tampilkan aktif |
 | `/init` | Buat `AGENTS.md` proyek ini |
 | `/copy` | Salin output turn terakhir via OSC 52 |

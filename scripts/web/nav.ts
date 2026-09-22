@@ -59,7 +59,7 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
     src: "src/policy/permission.ts",
   },
   terminal: {
-    desc: "Kontrak terminal FROZEN: stdout/stderr, 14 invariant, scrollback.",
+    desc: "Kontrak terminal FROZEN: TUI fullscreen, stdout/stderr, invariant I1–I30, dan peta test proteksinya.",
     src: "docs/TERMINAL_CONTRACT.md",
   },
   quickstart: {
@@ -74,7 +74,10 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
     desc: "Pilih permission mode dari tujuan: baca, ubah, approve, plan, CI, otonom.",
     src: "src/policy/permission.ts",
   },
-  repl: { desc: "Slash command dan pintasan keyboard REPL Minicode.", src: "cli/repl.ts" },
+  repl: {
+    desc: "Slash command dan pintasan keyboard TUI fullscreen Minicode.",
+    src: "src/ui/tui/app.ts",
+  },
   "config-providers": {
     desc: "14 preset gateway, OAuth device-code, model dan effort.",
     src: "src/providers/build.ts",
@@ -122,7 +125,7 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
   // Dokumen internal kontributor (SUMMARY grup "Internal & Arsitektur",
   // audit docs 2026-09-18: sebelumnya orphan dari nav web/llms).
   terminal_contract: {
-    desc: "Kontrak terminal FROZEN: 14 invariant dan test proteksinya.",
+    desc: "Kontrak terminal FROZEN untuk kontributor: 30 invariant dan peta test proteksinya.",
     src: "docs/TERMINAL_CONTRACT.md",
   },
   "control-plane-map": {

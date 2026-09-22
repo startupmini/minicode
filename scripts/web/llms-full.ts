@@ -17,7 +17,7 @@ export function buildLlmsFullTxt(repoRoot: string, base: string, version: string
   const out: string[] = [
     "# Minicode",
     "",
-    `> Coding agent CLI shell-native: semua kerja terlihat di scrollback, tiap aksi sensitif lewat izin Anda. MIT, zero-dep, di atas kernel MiniCore. v${version}.`,
+    `> Coding agent CLI: jalur non-interaktif shell-first (kerja terlihat di scrollback), interaktif TUI fullscreen; tiap aksi sensitif lewat izin Anda. MIT, zero-dep, di atas kernel MiniCore. v${version}.`,
     "",
     `Install: npm install -g minicode-ai · Repo: https://github.com/startupmini/minicode · Situs: ${base}/`,
     "",

@@ -23,7 +23,7 @@ L3 vendor/minicore  → kernel STATE/MODEL/ACTION/LOOP (freeze, zero-dep, via #m
 
 ## UI/UX terminal (kontrak FROZEN)
 
-Minicode **shell-native CLI, bukan TUI**. Tanpa alternate screen/panel/header permanen. Output append-only scrollback; picker/manager transient dan menghapus diri sendiri.
+Sesi interaktif (`minicode` di TTY mampu) SELALU membuka TUI **fullscreen alternate screen**: transkrip ala shell + status bar satu baris + popup komposit di atas transkrip yang tetap terlihat (redup). Jalur non-interaktif (one-shot prompt, `exec`, pipe/redirect/CI, `TERM=dumb`, layar < 10 baris) tetap shell-first: cetak polos append-only ke scrollback tanpa cursor control.
 
 | Stream | Isi |
 |---|---|
@@ -31,9 +31,9 @@ Minicode **shell-native CLI, bukan TUI**. Tanpa alternate screen/panel/header pe
 | stderr | Progress/diagnostik: ledger tool (`› …` hijau/merah), reasoning (verbose), warning, error. Boleh transient bila TTY |
 | Keduanya | Warna hanya bila TTY (`stdout.isTTY`); `NO_COLOR` menang; `TERM`/`COLORTERM` tidak menyalakan warna di pipe |
 
-Satu-satunya arbitrator transient: `src/ui/runtime/statusline.ts` (`acquireTransientPaint` + `paintWrite`). Painter aktif (garis status turn vs spinner wizard) mutually exclusive; overlap = signal `[transient-paint]`, bukan crash. Foreign stderr writer (non-UI) boleh mentah — arbitrator mengkomitnya sebagai baris permanen bersih. 14 invariant + peta test (`terminal-contract`, `transient-arbitration`, `turn-status`, `tui-format`, `theme`, `repl-linear`, `ui-boundary`, `footer-render`, `footer-chrome`) ada di `TERMINAL_CONTRACT.md`.
+Satu-satunya arbitrator transient: `src/ui/runtime/statusline.ts` (`acquireTransientPaint` + `paintWrite`). Painter aktif (garis status turn vs spinner wizard) mutually exclusive; overlap = signal `[transient-paint]`, bukan crash. Foreign stderr writer (non-UI) boleh mentah — arbitrator mengkomitnya sebagai baris permanen bersih. `beginInteractiveScreen` menahan semua painter itu selama layar interaktif memegang terminal. 30 invariant (I1–I30) + peta test (`tui-app`, `screen-buffer`, `tui-popup`, `transient-arbitration`, `input-resize`, `exit-codes`, `acp`, `ui-boundary`) ada di `TERMINAL_CONTRACT.md`.
 
-Lima primitif tampilan: prompt `minicode ›` (steril — status pindah ke footer), footer status lengket `✦ mode • model • cwd … 14.2k` (spark pulse saat busy/redup saat idle; mode pad anti-geser; konteks rata kanan `14.2k`; garis `faint`; `src/ui/footer.ts` render + `src/ui/runtime/chrome.ts` DECSTBM `setBusy()`; `MINICODE_FOOTER=off|print|sticky|auto`, non-TTY nol byte), activity (garis transient stderr `···` tanpa spark), ledger `  › name target` hijau / `  › name: …` merah (stderr, indent 2), teks model (stdout, wrapped, fence 2-spasi), error `✗ pesan actionable` sekali per kegagalan (`takePendingError`). `✓`/`✗` tetap untuk status/konfirmasi perintah (sync, auth, config, spinner).
+Enam primitif tampilan (semuanya di dalam TUI fullscreen saat interaktif): transkrip `minicode ›` + jawaban model + ledger `  › name target` hijau / `  › name: …` merah; status bar satu baris `✦ mode • model • cwd … ctx` (spark pulse saat busy, redup saat idle, konteks rata kanan; `src/ui/tui/app.ts` render per frame); popup komposit satu kotak (`/model`, `/provider`, `/sessions`, form, approval) via `openAltScreen`/`paintRegion`; thinking redup + penanda `… thinking` (isi via `/expand`); error `✗ pesan actionable` sekali per kegagalan (`takePendingError`). `✓`/`✗` tetap untuk status/konfirmasi perintah (sync, auth, config, spinner).
 
 ## Modul kunci
 

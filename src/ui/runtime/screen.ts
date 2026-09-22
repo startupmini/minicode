@@ -9,6 +9,8 @@
 //   try { ... screen.paint(frame) ... } finally { screen.close() }
 // Refcount menutup modal nested (effort-picker di dalam manager): tulis
 // enter/exit fisik hanya di lapis terluar; handle dalam = no-op paint-through.
+import { __resetTransientForTest, beginInteractiveScreen } from "./statusline.ts"
+
 const ENTER = "\x1b[?1049h"
 const EXIT = "\x1b[?1049l"
 const HOME = "\x1b[H"
@@ -97,6 +99,13 @@ export function openAltScreen(): AltScreen {
     }
   }
   depth++
+  // Layar memegang terminal: tahan SEMUA painter transient stderr (spinner
+  // "Menyiapkan sesi…", garis status turn) selama alt-screen hidup — satu tick
+  // `\r\x1b[2K` dari stderr menghapus baris prompt wizard sehingga user baru
+  // melihat CLI "macet". Release idempoten per handle (nested dihitung);
+  // ditahan juga untuk lapisan nested supaya close dalam tak membocorkan
+  // painter ke tengah dialog luar.
+  const releaseHold = beginInteractiveScreen()
   // Region terakhir handle ini (siklus hidup popup komposit) — per-handle
   // (closure), bukan global: popup nested (effort di dalam manager) melacak
   // areanya masing-masing.
@@ -169,6 +178,9 @@ export function openAltScreen(): AltScreen {
       if (closed) return
       closed = true
       lastRegion = null
+      try {
+        releaseHold()
+      } catch {}
       depth = Math.max(0, depth - 1)
       if (depth === 0) {
         try {
@@ -194,4 +206,15 @@ export function altScreenDepth(): number {
  */
 export function resetAltScreenDepth(): void {
   depth = 0
+  resetInteractiveScreenHoldForTest()
+}
+
+/**
+ * Reset hold transient alternatif (HANYA untuk isolasi test antar-file):
+ * view yang gagal sebelum `close()` bisa meninggalkan
+ * `beginInteractiveScreen` > 0 sehingga painter file test berikutnya tetap
+ * dibisukan.
+ */
+function resetInteractiveScreenHoldForTest(): void {
+  __resetTransientForTest()
 }

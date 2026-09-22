@@ -5,10 +5,12 @@
 
 import { afterEach, describe, expect, test } from "bun:test"
 import { attachTurnStatus, type TurnStatusHandle } from "../src/ui/assistant/turn-status.ts"
+import { askLine } from "../src/ui/input/input.ts"
 import { stripAnsi } from "../src/ui/render/theme.ts"
 import { createSpinner } from "../src/ui/runtime/spinner.ts"
-import { isTransientPainting } from "../src/ui/runtime/statusline.ts"
-import { createFakeBus, type FakeTty, installFakeTty } from "./helpers/tui-harness.ts"
+import { beginInteractiveScreen, isTransientPainting } from "../src/ui/runtime/statusline.ts"
+import { runPicker } from "../src/ui/screens/picker.ts"
+import { createFakeBus, type FakeTty, installFakeTty, KEY } from "./helpers/tui-harness.ts"
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const ESC = String.fromCharCode(27)
@@ -72,6 +74,105 @@ describe("transient arbitration", () => {
     expect(tail).not.toContain("\r·")
     status.detach()
   }, 4000)
+
+  test("layar interaktif: painter stderr berhenti selama picker hidup", async () => {
+    tty = installFakeTty({ columns: 80, rows: 24 })
+    const spin = createSpinner("Menyiapkan sesi…")
+    await sleep(60)
+    expect(tty.allErr()).toContain("Menyiapkan sesi")
+    tty.clear()
+    // Objek (bukan `let`) agar narrowing TS tak mengunci nilai ke null saat
+    // callback dipanggil.
+    const picked: { value: string | null } = { value: null }
+    const p = runPicker({
+      title: "Select gateway",
+      items: [{ name: "DeepSeek", provider: "", value: "https://api.deepseek.com" }],
+      onPick: (v) => {
+        picked.value = v
+      },
+      onCancel: () => {
+        picked.value = null
+      },
+    })
+    await tty.ready()
+    // >2 interval spinner: tanpa guard, stderr penuh frame `\r\x1b[2K` yang
+    // menghapus baris picker — keluhan asli: prompt wizard tak terlihat dan
+    // CLI tampak macet di "Menyiapkan sesi…".
+    await sleep(400)
+    expect(tty.allErr()).not.toContain("Menyiapkan sesi")
+    // Isi layar tetap utuh di stdout pada periode yang sama.
+    expect(stripAnsi(tty.all())).toContain("Select gateway")
+    await tty.send(KEY.enter, 40)
+    await p
+    expect(picked.value).toBe("https://api.deepseek.com")
+    // Layar lepas → painter hidup lagi (interval-nya tidak pernah dimatikan).
+    await sleep(250)
+    expect(tty.allErr()).toContain("Menyiapkan sesi")
+    spin.stop()
+  }, 5000)
+
+  test("layar interaktif: prompt askLine terlihat, spinner tak menimpanya", async () => {
+    tty = installFakeTty({ columns: 80, rows: 24 })
+    const spin = createSpinner("Menyiapkan sesi…")
+    await sleep(60)
+    tty.clear()
+    const p = askLine({ prompt: "Base URL: ", history: [], idleMs: 0 })
+    await tty.ready()
+    await sleep(300)
+    expect(tty.allErr()).not.toContain("Menyiapkan sesi")
+    expect(stripAnsi(tty.all())).toContain("Base URL")
+    await tty.send("https://x.test\r", 40)
+    await expect(p).resolves.toBe("https://x.test")
+    await sleep(250)
+    expect(tty.allErr()).toContain("Menyiapkan sesi")
+    spin.stop()
+  }, 5000)
+
+  test("layar bertumpuk: painter hidup hanya setelah release terakhir", async () => {
+    tty = installFakeTty({ columns: 80, rows: 24 })
+    const spin = createSpinner("Menyiapkan sesi…")
+    await sleep(60)
+    tty.clear()
+    const outer = beginInteractiveScreen()
+    const inner = beginInteractiveScreen()
+    // Release idempoten: dobel-release (cleanup + finally) tak boleh membuat
+    // depth negatif — kalau iya, layar berikutnya tak lagi menahan painter.
+    outer()
+    outer()
+    await sleep(300)
+    expect(tty.allErr()).not.toContain("Menyiapkan sesi")
+    inner()
+    await sleep(250)
+    expect(tty.allErr()).toContain("Menyiapkan sesi")
+    spin.stop()
+  }, 5000)
+
+  test("garis status turn ikut diam selama layar interaktif aktif", async () => {
+    const { status } = startTurnPainter()
+    await sleep(60)
+    tty!.clear()
+    const end = beginInteractiveScreen()
+    await sleep(400)
+    expect(tty!.allErr()).not.toContain("bash npm test")
+    end()
+    await sleep(300)
+    expect(tty!.allErr()).toContain("bash npm test")
+    status.detach()
+  }, 5000)
+
+  test("delayMs: nol byte sebelum delay, frame setelahnya, stop idempoten", async () => {
+    tty = installFakeTty({ columns: 80, rows: 24 })
+    const spin = createSpinner("Checking for updates…", { delayMs: 120, intervalMs: 40 })
+    await sleep(60)
+    expect(tty.allErr()).not.toContain("Checking")
+    await sleep(220)
+    expect(tty.allErr()).toContain("Checking")
+    spin.stop()
+    spin.stop()
+    const frames = tty.allErr().split("Checking").length
+    await sleep(150)
+    expect(tty.allErr().split("Checking").length).toBe(frames)
+  }, 5000)
 
   test("non-TTY: attach & spinner tidak menghasilkan byte kontrol apa pun", async () => {
     tty = installFakeTty({ isTTY: false })

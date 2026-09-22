@@ -12,6 +12,7 @@ import { sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, stripAnsi } from "../render/theme.ts"
 import { displayWidth, truncateToWidth } from "../render/width.ts"
 import { type AltScreen, openAltScreen } from "../runtime/screen.ts"
+import { beginInteractiveScreen } from "../runtime/statusline.ts"
 import { boxLeftPad, dialogBox } from "./dialog.ts"
 
 export interface PickerItem {
@@ -235,6 +236,12 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       resolve()
       return
     }
+    // Raw mode (sama seperti askLine/askSecret): picker juga menghalangi
+    // painter transient stderr melukis di baris yang sama. Jalur ini aktif
+    // bahkan saat runPicker dipanggil langsung (bukan lewat wizard), misalnya
+    // di bawah alt-screen App yang painter-nya sudah ditahan — hold nested dan
+    // release-nya idempoten.
+    const endScreen = beginInteractiveScreen()
     const cleanup = () => {
       if (done) return
       done = true
@@ -245,6 +252,9 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
         process.stdin.setMaxListeners(prevMaxListeners)
       } catch {}
       if (idleTimer) clearTimeout(idleTimer)
+      // Lepas kepemilikan layar: painter boleh melukis lagi setelah ini
+      // (kursor sudah kembali ke anchor, overlay sudah dibersihkan).
+      endScreen()
       // Hapus region popup sendiri; pemilik layar (App.resume) repaint penuh,
       // standalone (wizard) membuang alt-buffer utuh via close.
       try {

@@ -39,6 +39,7 @@ Usage:
   minicode                        # interactive chat
   minicode "prompt" [options]     # one-shot run
   minicode exec "prompt" [--json] # headless CI mode (JSON stream)
+  minicode acp                  # JSON-RPC stdio server for IDEs (minimal subset)
   echo "prompt" | minicode        # via pipe
   minicode sync                   # refresh models from all providers
 Options:
@@ -138,6 +139,7 @@ if (args.includes("-h") || args.includes("--help")) {
           "minicode",
           'minicode "prompt" [options]',
           'minicode exec "prompt" [--json]',
+          "minicode acp",
           "minicode providers|models|sync|config|mcp|skills|sessions|stats|memory",
         ],
         options: [

@@ -8,7 +8,24 @@
 | `echo "prompt" \| minicode` | Prompt datang dari pipeline/another tool |
 | `minicode exec "prompt" --json` | CI: event JSONL di stdout + baris terakhir `{"type":"summary"}` |
 
-`exec --json` memancarkan satu JSON per event (langkah tool, output, error) dan **summary** terstruktur di akhir — cukup untuk diparse pipeline tanpa screen-scraping.
+`exec --json` memancarkan satu JSON per event (langkah tool, output, error) dan **summary** terstruktur di akhir — cukup untuk diparse pipeline tanpa screen-scraping. Kegagalan *setup* (mis. tanpa provider) pun membawa satu baris `{"type":"summary","ok":false,…}` di stdout — stream tak pernah kosong; pesan manusia tetap di stderr, exit `1`.
+
+## Server JSON-RPC untuk IDE: `minicode acp`
+
+`minicode acp` membaca satu JSON per baris di stdin dan menulis respons/notifikasi satu JSON per baris di stdout (stderr murni diagnostik manusia). Subset minimal Fase 5 — **bukan klaim kompatibel ACP penuh**:
+
+| Method | Params | Balasan |
+|---|---|---|
+| `initialize` | `{client}` | `{server:"minicode-acp", capabilities:{run, streamText, cancel, approval:"deny-headless"}}` |
+| `run` | `{prompt*, cwd?, model?, maxSteps?, timeoutMs?, budget?, mode:"auto"\|"plan"}` | notifikasi `{type:"text",delta}` + `{type:"tool",name}`, lalu `{ok,tokens,steps,turns,text}` atau `{error}` |
+| `cancel` | — | `{cancelled:true/false}` (menggugurkan run berjalan) |
+| `shutdown` | — | keluar 0 |
+
+Batasan v1 yang jujur: tiap `run` = sesi BARU (tanpa thread/resume); SATU run dalam terbang (run kedua ditolak, bukan antre); tool gated DITOLAK tanpa TTY (fail-closed, sama seperti CI) — IDE yang butuh tulis/eksekusi memakai mode auto dengan allowlist atau prompt yang self-contained.
+
+```bash
+printf '%s\n' '{"id":1,"method":"initialize"}' '{"id":2,"method":"shutdown"}' | minicode acp
+```
 
 ## Hasil terstruktur: `submit_result`
 

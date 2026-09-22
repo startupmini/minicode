@@ -10,6 +10,7 @@ Semua cara menjalankan Minicode: interaktif, sekali jalan, pipe, dan otomasi CI 
 | `minicode "prompt"` | Sekali jalan (headless) |
 | `echo "prompt" \| minicode` | Via pipe |
 | `minicode exec "prompt" [--json]` | Headless CI — event JSONL + baris `{"type":"summary"}` di stdout |
+| `minicode acp` | Server JSON-RPC stdio untuk IDE (subset minimal: initialize/run/cancel/shutdown) |
 | `minicode --interactive` | Paksa REPL |
 | `minicode --provider <id> "prompt"` | Paksa provider agnostik tanpa ubah config (atau `provider::model`) |
 | `minicode config add --baseUrl <url> --apiKey <key>` | Tambah provider LLM |
@@ -25,7 +26,7 @@ Semua cara menjalankan Minicode: interaktif, sekali jalan, pipe, dan otomasi CI 
 | `minicode doctor [--json]` | Diagnosis lokal |
 | `minicode mcp serve` | Ekspos minicode sebagai MCP server |
 
-Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `skills`, `providers`, `auth`, `pricing`, `exec`, `memory`, `doctor`).
+Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `skills`, `providers`, `auth`, `pricing`, `exec`, `memory`, `doctor`, `acp`).
 
 ## Flags
 
@@ -117,3 +118,13 @@ itu MCP server lokal tidak di-spawn, endpoint provider lokal tidak dipakai,
 ## Anti-injeksi flag
 
 `cli/args.ts:53` berhenti di prompt word pertama: prompt `"review --allow-all"` tidak mengaktifkan flag. `--cwd`/value-flag setelah nama subcommand diparse per-subcommand agar tidak menembus boundary prompt.
+
+## Exit codes
+
+| Kode | Arti |
+|---|---|
+| `0` | Sukses, atau help yang memang diminta |
+| `1` | Gagal runtime: provider error, budget lewat, turn gagal, setup gagal |
+| `2` | Salah pakai: argumen hilang/malformed, subcommand asing |
+
+Lookup yang gagal (provider/skill/sesi tak dikenal) = `1`: itu kegagalan operasi, bukan pemakaian. Skrip cukup cek `!= 0` untuk gagal; cek `== 2` untuk spesifik salah pakai.

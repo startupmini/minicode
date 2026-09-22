@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs"
 import { resolve as resolvePath } from "node:path"
 import { NoProviderError } from "../src/app/provider-layer.ts"
 import { createMinicodeSession } from "../src/app/session.ts"
+import { parseCompactKeepTurns } from "../src/policy/compaction.ts"
 import { createRateLimiter } from "../src/policy/ratelimit.ts"
 import { resolveSandbox, sandboxRefusalReason } from "../src/policy/sandbox-policy.ts"
 import { budgetStatus } from "../src/policy/usage.ts"
@@ -40,6 +41,7 @@ Usage:
   minicode                        # interactive chat
   minicode "prompt" [options]     # one-shot run
   minicode exec "prompt" [--json] # headless CI mode (JSON stream)
+  minicode acp                  # JSON-RPC stdio server for IDEs (minimal subset)
   echo "prompt" | minicode        # via pipe
   minicode sync                   # refresh models from all providers
 Options:
@@ -68,7 +70,7 @@ Options:
   --tool-scope <s>    full (default) | explore (read-only subset)
 
 REPL: /help /provider /model /sync /status /sessions /init /exit /mode /undo /redo /clear /copy /history /compact /thinking /expand /minimize
-Keys: Enter submit · Tab complete (empty: cycle mode) · Up/Down history · Shift+Tab mode · Ctrl+R search · Ctrl+C stop (2x exit) · + / - expand (busy)
+Keys: Enter submit · Tab complete (empty: cycle mode) · Up/Down history · PgUp/PgDn scroll · Shift+Tab mode · Ctrl+R search · Ctrl+C stop (2x exit) · + / - expand (busy)
 `
 
 const args = process.argv.slice(2)
@@ -139,6 +141,7 @@ if (args.includes("-h") || args.includes("--help")) {
           "minicode",
           'minicode "prompt" [options]',
           'minicode exec "prompt" [--json]',
+          "minicode acp",
           "minicode providers|models|sync|config|mcp|skills|sessions|stats|memory",
         ],
         options: [
@@ -227,6 +230,15 @@ if (timeoutRaw && (!Number.isFinite(timeoutMs) || (timeoutMs as number) < 0)) {
   )
   timeoutMs = undefined
 }
+// F3.2: override keepRecentTurns kompaksi kernel via env (bukan flag: jarang
+// diubah, dan permukaan flag CLI sengaja kecil). Selain bilangan ≥1 =
+// diabaikan + warn (fail-open aman: default kernel berlaku).
+const keepTurnsRaw = (process.env.MINICODE_COMPACT_KEEP_TURNS ?? "").trim()
+const keepRecentTurns = parseCompactKeepTurns(keepTurnsRaw || undefined)
+if (keepTurnsRaw && keepRecentTurns === undefined)
+  process.stderr.write(
+    `[warn] MINICODE_COMPACT_KEEP_TURNS requires an integer >= 1, ignoring "${keepTurnsRaw}"\n`,
+  )
 
 // Sandbox: OS-native dipakai otomatis bila tersedia. Bila tidak ada isolasi
 // nyata dan user belum memilih mode permission sendiri, default diturunkan ke
@@ -370,6 +382,7 @@ try {
     toolScope,
     maxSteps,
     contextWindowTokens,
+    ...(keepRecentTurns !== undefined ? { keepRecentTurns } : {}),
     timeoutMs,
     rateLimiter,
     sandboxNotice: requestedSandbox ? sandbox.notice : undefined,

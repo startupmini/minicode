@@ -16,7 +16,6 @@ import {
   formatArgsPreview,
   formatCost,
   formatProviderError,
-  formatStepCalls,
   formatUsage,
 } from "../src/ui/render/format.ts"
 import { decorateMarkdown, renderInline } from "../src/ui/render/markdown.ts"
@@ -269,15 +268,6 @@ describe("format: usage, cost, error, step", () => {
     expect(out).toContain("rate-limited upstream")
     expect(out).not.toContain("metadata")
     expect(out.length).toBeLessThanOrEqual(220)
-  })
-
-  test("formatStepCalls meringkas nama + argumen", () => {
-    const out = formatStepCalls([
-      { id: "1", name: "bash", args: { cmd: "ls" } },
-      { id: "2", name: "read_file", args: { path: "a.ts" } },
-    ] as never)
-    expect(out).toContain("bash(")
-    expect(out).toContain("read_file(")
   })
 })
 

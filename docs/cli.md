@@ -10,6 +10,7 @@ Semua cara menjalankan Minicode: interaktif, sekali jalan, pipe, dan otomasi CI 
 | `minicode "prompt"` | Sekali jalan (headless) |
 | `echo "prompt" \| minicode` | Via pipe |
 | `minicode exec "prompt" [--json]` | Headless CI — event JSONL + baris `{"type":"summary"}` di stdout |
+| `minicode acp` | Server JSON-RPC stdio untuk IDE (subset minimal: initialize/run/cancel/shutdown) |
 | `minicode --interactive` | Paksa REPL |
 | `minicode --provider <id> "prompt"` | Paksa provider agnostik tanpa ubah config (atau `provider::model`) |
 | `minicode config add --baseUrl <url> --apiKey <key>` | Tambah provider LLM |
@@ -25,7 +26,7 @@ Semua cara menjalankan Minicode: interaktif, sekali jalan, pipe, dan otomasi CI 
 | `minicode doctor [--json]` | Diagnosis lokal |
 | `minicode mcp serve` | Ekspos minicode sebagai MCP server |
 
-Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `skills`, `providers`, `auth`, `pricing`, `exec`, `memory`, `doctor`).
+Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `skills`, `providers`, `auth`, `pricing`, `exec`, `memory`, `doctor`, `acp`).
 
 ## Flags
 
@@ -53,7 +54,6 @@ Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `s
 | `--max-steps <n>` | Batas langkah tool (default 50) |
 | `--context-window <n>` | Ukuran jendela konteks (token) |
 | `--session <id>` | ID sesi (default random, disanitasi) |
-| `--no-tui` | Paksa REPL linier (tanpa alternate screen; pasangan `MINICODE_TUI=never`) |
 
 Di REPL, **Shift+Tab** memutar permission (`auto` → `ask` → `plan` → `allowlist`) dan benar-benar mengubah keputusan, bukan label. Di baris kosong, **Tab** juga memutar mode (`auto` → `ask` → `plan` → `allowlist`).
 

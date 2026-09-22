@@ -395,6 +395,8 @@ test("decodeKey: home/end/delete dalam bentuk CSI dan VT", () => {
     ["\x1b[4~", "end"],
     ["\x1b[8~", "end"],
     ["\x1b[3~", "delete"],
+    ["\x1b[5~", "pageup"],
+    ["\x1b[6~", "pagedown"],
     ["\x01", "home"],
     ["\x05", "end"],
   ]
@@ -423,6 +425,17 @@ test("applyKey: ignore tidak mengubah state", () => {
   const r = applyKey(s, { type: "ignore" }, hints)
   expect(r.action).toBe("none")
   expect(r.state).toEqual(s)
+})
+
+test("applyKey: pageup/pagedown diabaikan engine (milik driver TUI)", () => {
+  // Tanpa cabang ini applyKey me-return undefined → `r.state` melempar di
+  // pemanggil. Linier: abaikan; TUI box mengintersepsi sebelum applyKey.
+  const s = typeAll("teks")
+  for (const t of ["pageup", "pagedown"] as const) {
+    const r = applyKey(s, { type: t }, hints)
+    expect(r.action).toBe("none")
+    expect(r.state).toEqual(s)
+  }
 })
 
 // ── Temuan bug-hunter UI: byte kontrol & newline dari paste ─────────────────

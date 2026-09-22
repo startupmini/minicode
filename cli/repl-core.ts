@@ -144,12 +144,25 @@ export interface ReplUi {
   /** Baca satu baris teks in-flow (follow-up pickSession): linier askLine,
    * TUI mini-reader (box sementara, tanpa history/dropdown). */
   promptLine(prompt: string): Promise<string | null>
+  /** Buka modal popup pilihan (I17): daftar + filter live + pilih.
+   * Resolve indeks item asli (bukan posisi tampilan — stabil walau filter
+   * berubah) atau null bila batal. Tumpuk aman (modal di atas modal). */
+  pickFromList(opts: {
+    title: string
+    items: string[]
+    footer?: string
+    emptyText?: string
+    initialFilter?: string
+    initialSelected?: number
+    filterable?: boolean
+  }): Promise<number | null>
   /** Lepas chrome/region (respawn path). */
   detachUi(): void
   /** Pompa input driver aktif/nonaktif selama turn (linier: noop — askLine
    * mengelola listener sendiri; TUI: lepas/pasang listener box). */
   setInputActive(on: boolean): void
-  /** Suntik batal saat idle (linier: byte Ctrl+C ke stdin; TUI: ke box). */
+  /** Suntik batal saat idle (ke box bila pompa hidup; teruskan ke stdin
+   * bila dialog yang memegangnya). */
   injectCancel(): void
   /** Bersihkan transkrip (linier: penanda scrollback; TUI: reset dokumen). */
   clearTranscript(): void
@@ -276,17 +289,6 @@ function buildCommandCtx(ctx: CliSession, setModelOverride: (m: string) => void)
   }
 }
 
-/** Pilih id sesi dari input pengguna (nomor = indeks daftar, selain itu id
- * verbatim; kosong = batal → null). Murni agar teruji tanpa DB/proses. */
-export function parseSessionPick(pick: string, ids: (string | undefined)[]): string | null {
-  const t = pick.trim()
-  if (!t) return null
-  const asNum = Number(t)
-  if (Number.isInteger(asNum) && asNum >= 0 && asNum < ids.length)
-    return (ids[asNum] ?? t).trim() || t
-  return t
-}
-
 export async function runReplLoop(
   ctx: CliSession,
   createUi: (shared: ReplShared) => ReplUi,
@@ -365,23 +367,147 @@ export async function runReplLoop(
     process.stdin.resume()
   }
 
-  // `/sessions` tanpa argumen: builtin mencetak daftar bernomor, lalu satu
-  // prompt meminta pilihan — pengganti picker modal lama.
+  // `/sessions` tanpa argumen: modal popup bernomor + filter live (I17) —
+  // TANPA daftar cetak + prompt mini. Filter substring cocok id/tanggal/cwd,
+  // jadi id mentah tetap bisa diketik lalu Enter (paritas parseSessionPick).
   async function pickSession(): Promise<void> {
-    await ui.suspend(() => handleBuiltinCommand("/sessions", commandCtx))
     const rows = listSessions(cwd).slice(0, 25)
-    if (rows.length === 0) return
-    const id = parseSessionPick(
-      (await ui.promptLine("resume (number/id, empty = cancel) › ")) ?? "",
-      rows.map((r) => r.id),
-    )
-    if (!id) return
-    const sess = loadSession(id, cwd)
-    if (!sess?.messages.length) {
-      ui.printOut(`Session "${id}" not found or empty.`)
+    if (rows.length === 0) {
+      ui.printOut(c.dim("(no sessions yet — run a prompt first)"))
       return
     }
-    await respawnWithResume(id)
+    const n = await ui.pickFromList({
+      title: "Sessions",
+      items: rows.map((r) => {
+        const ts = new Date(r.updated_at ?? r.created_at)
+          .toISOString()
+          .slice(0, 16)
+          .replace("T", " ")
+        return `${r.id}  ${ts}  ${r.cwd}`
+      }),
+      footer: "↑↓ pilih · Enter resume · Esc batal · ketik filter",
+      emptyText: "(no sessions match)",
+    })
+    const picked = n == null ? undefined : rows[n]
+    if (!picked) return
+    const sess = loadSession(picked.id, cwd)
+    if (!sess?.messages.length) {
+      const { sanitizeAnsiLine } = await import("../src/ui/render/sanitize.ts")
+      ui.printOut(`Session "${sanitizeAnsiLine(picked.id)}" not found or empty.`)
+      return
+    }
+    await respawnWithResume(picked.id)
+  }
+
+  // `/model` & `/provider` TUI-native: modal popup bernomor + filter live
+  // (I17) — TANPA overlay manager. Overlay (runModelManagerView/runPicker)
+  // menulis stdout mentah + membaca stdin mentah: di dalam suspend TUI
+  // frame-nya ditangkap lalu disuntik ke dokumen sebagai sampah kontrol,
+  // dan layar beku selama manager hidup. CRUD provider tetap lewat
+  // `minicode config` (diumumkan di daftar).
+  async function pickModelNative(filter: string): Promise<boolean> {
+    const { loadConfig } = await import("../src/config.ts")
+    const { sanitizeAnsiLine } = await import("../src/ui/render/sanitize.ts")
+    const { effortOptionsForModel } = await import("../src/providers/effort.ts")
+    const { saveModelEffort } = await import("./model-manager.ts")
+    const cfg = await loadConfig(cwd, { allowLocal: ctx.allowLocalConfig })
+    const q = filter.trim().toLowerCase()
+    const rows = cfg.providers
+      .flatMap((p) =>
+        p.models.map((m) => ({
+          id: `${p.id}::${m}`,
+          active: `${p.id}::${m}` === commandCtx.currentModel,
+        })),
+      )
+      .filter((r) => !q || r.id.toLowerCase().includes(q))
+    if (!rows.length) {
+      ui.printOut(c.dim(q ? "(no models match)" : "(no models configured)"))
+      return false
+    }
+    const n = await ui.pickFromList({
+      title: "Model",
+      items: rows.map((r) => `${r.id}${r.active ? "  active" : ""}`),
+      footer: "↑↓ pilih · Enter ✓ · Esc batal · ketik filter",
+      emptyText: q ? "(no models match)" : "(no models configured)",
+      initialFilter: filter.trim(),
+    })
+    const row = n == null ? undefined : rows[n]
+    if (n == null) return false
+    if (!row) {
+      ui.printOut(c.yellow("unknown selection — daftar berubah saat memilih, coba lagi"))
+      return false
+    }
+    // Paritas onSelect overlay: reload agar router kenal provider tanpa restart.
+    const { reloadProviders } = await import("../src/app/provider-layer.ts")
+    await reloadProviders(cwd, { allowLocal: ctx.allowLocalConfig }).catch(() =>
+      ui.printOut("[warn] provider reload failed — restart to apply changes"),
+    )
+    commandCtx.setModelOverride(row.id)
+    ui.printOut(c.muted(`model: ${sanitizeAnsiLine(row.id)}`))
+    // Paritas picker effort overlay: hanya keluarga thinking; batal = keep.
+    // Dibuka SETELAH modal model tutup (berurutan; modal bertumpuk didukung
+    // stack driver bila alur masa depan membutuhkannya).
+    const mName = row.id.includes("::") ? row.id.slice(row.id.indexOf("::") + 2) : row.id
+    const options = effortOptionsForModel(mName)
+    if (options.length > 1) {
+      const cur =
+        cfg.providers
+          .flatMap((p) =>
+            p.id === row.id.slice(0, row.id.indexOf("::")) ? [p.reasoningEffort ?? "default"] : [],
+          )
+          .at(0) ?? "default"
+      const en = await ui.pickFromList({
+        title: "Thinking effort",
+        items: options.map((o) => `${o}${o === cur ? " (current)" : ""}`),
+        footer: "↑↓ pilih · Enter ✓ · Esc keep",
+        emptyText: "(no options)",
+        filterable: false,
+      })
+      const effort = en == null ? undefined : options[en]
+      if (effort !== undefined) {
+        await saveModelEffort(cwd, row.id, effort).catch((e: unknown) =>
+          ui.printOut(`${c.red(glyphs.cross)} ${sanitizeAnsiLine((e as Error).message)}`),
+        )
+      }
+    }
+    return false
+  }
+
+  async function pickProviderNative(): Promise<boolean> {
+    const { loadConfig } = await import("../src/config.ts")
+    const { sanitizeAnsiLine } = await import("../src/ui/render/sanitize.ts")
+    const cfg = await loadConfig(cwd, { allowLocal: ctx.allowLocalConfig })
+    if (!cfg.providers.length) {
+      ui.printOut(c.dim("(no providers configured)"))
+      return false
+    }
+    ui.printOut(c.dim("add/edit/delete via minicode config (outside session)"))
+    const n = await ui.pickFromList({
+      title: "Provider",
+      items: cfg.providers.map((p) => {
+        const active = commandCtx.currentModel?.startsWith(`${p.id}::`) ? "  active" : ""
+        return `${p.id} (${p.models.length} models)  ${p.baseUrl}${active}`
+      }),
+      footer: "↑↓ pilih · Enter ✓ · Esc batal · ketik filter",
+      emptyText: "(no providers configured)",
+    })
+    const p = n == null ? undefined : cfg.providers[n]
+    if (n == null) return false
+    if (!p) {
+      ui.printOut(c.yellow("unknown selection — daftar berubah saat memilih, coba lagi"))
+      return false
+    }
+    const first = p.models[0]
+    if (!first) {
+      const { sanitizeAnsiLine } = await import("../src/ui/render/sanitize.ts")
+      ui.printOut(c.dim(`(${sanitizeAnsiLine(p.id)} has no models — add via minicode config)`))
+      return false
+    }
+    // Paritas onSelect overlay provider: pakai model pertama provider itu
+    // (tanpa reload — sama seperti overlay).
+    commandCtx.setModelOverride(`${p.id}::${first}`)
+    ui.printOut(c.muted(`model: ${sanitizeAnsiLine(p.id)}::${sanitizeAnsiLine(first)}`))
+    return false
   }
 
   // Salin teks turn terakhir ke clipboard (OSC 52). Dipakai /copy DAN Ctrl+C
@@ -681,22 +807,17 @@ export async function runReplLoop(
         ui.printOut((await loadHistory()).slice(-20).join("\n"))
         return false
       }
-      if (name === "models")
-        return ui
-          .suspend(() => handleBuiltinCommand("/model", commandCtx))
-          .then((r) => !!r.shouldExit)
-      if (name === "providers")
-        return ui
-          .suspend(() => handleBuiltinCommand("/provider", commandCtx))
-          .then((r) => !!r.shouldExit)
+      if (name === "models" || name === "model") return pickModelNative(args)
+      if (name === "providers" || name === "provider") return pickProviderNative()
       if (name === "sessions" && !args) {
         await pickSession()
         return false
       }
 
-      // Builtin mengalir langsung ke scrollback (console.log) — tanpa
-      // penangkap output/overlay. Manajer /model & /provider transient:
-      // menghapus diri sendiri dan tidak menyentuh scrollback.
+      // Builtin cetak-di-tempat mengalir langsung (console.log) — tanpa
+      // penangkap output/overlay. /model & /provider TIDAK lewat sini: alur
+      // TUI-native (pickModelNative/pickProviderNative) di atas, karena
+      // overlay manager menulis stdout mentah yang tak boleh masuk capture.
       const builtin = await ui.suspend(() => handleBuiltinCommand(q, commandCtx))
       if (builtin.handled) return !!builtin.shouldExit
 
@@ -718,7 +839,11 @@ export async function runReplLoop(
         )
         return false
       }
-      await ui.suspend(async () => runTurn(await renderSkill(skill, args), q))
+      // Turn skill: TANPA suspend. suspend menangkap stdout/stderr — dan
+      // selama turn, driver TUI melukis setiap render ke stdout yang sama,
+      // sehingga seluruh frame layar tertimbun ke dokumen sebagai sampah
+      // kontrol sementara layar beku. Turn biasa tak pernah di-suspend.
+      await runTurn(await renderSkill(skill, args), q)
       return false
     }
     await runTurn(q, q)

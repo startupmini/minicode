@@ -25,7 +25,7 @@ Istilah Minicode yang punya makna spesifik. Dokumentasi berbahasa Indonesia deng
 | **Env scrub** | `sanitizeSpawnEnv` menghapus kata-kunci kredensial dari env subprocess |
 | **Secret scrubber** | Redaksi `sk-`/`ghp_`/`AKIA`/PEM/JWT/Bearer sebelum teks ke LLM |
 | **Ledger** | Baris `  › name target` / `  › name: …` di stderr — jejak aksi agent |
-| **Scrollback** | Riwayat layar terminal; output minicode append-only di sana (bukan alternate screen) |
+| **Scrollback** | Riwayat layar terminal; jalur non-interaktif append-only di sana. Sesi interaktif TIDAK memakai scrollback — transkrip milik app di dalam TUI (kontrak I16) |
 | **Transient** | UI muncul-sekali yang menghapus dirinya (picker/wizard/statusline) — vs scrollback yang menetap |
 | **Composition root** | `cli/index.ts` + `cli/setup.ts`: satu tempat wiring DI (provider, RAG, session, tools) |
 | **Seam aditif** | Satu-satunya patch yang dibolehkan ke kernel beku: `compactAsync`, `initialMessages`, `cwd` |

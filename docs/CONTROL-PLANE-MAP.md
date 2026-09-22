@@ -133,6 +133,7 @@ Operator harus bisa membedakan (tanpa ambigu):
 - `test/control-plane.test.ts` — compaction budget≠recovery (F-10), anti-loop,
   contextTokens getter + konsistensi estimator, termination reason.
 - `test/cli-help-language.test.ts` — /status membedakan Context/Usage/Budget.
-- `test/repl-linear.test.ts` — footer membaca kernel contextTokens.
+- `test/control-plane.test.ts` — getter contextTokens kernel (satu sumber
+  kebenaran + mencakup tool schema).
 - `test/usage-session.test.ts` / `budget-unknown.test.ts` — budget contract.
 - `test/pack-integrity.test.ts` — vendor hash + VENDOR.md sinkron.

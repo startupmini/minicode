@@ -2,6 +2,7 @@
 // provider-manager. Tetap shell-like: overlay sementara, hasil aksi tetap inline.
 import { askLine } from "../input/input.ts"
 import { createDecoderState, type DecoderState, decodeKeysStream } from "../input/prompt-engine.ts"
+import { sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, glyphs } from "../render/theme.ts"
 import { padToWidth, truncateToWidth } from "../render/width.ts"
 import { clearTransientOverlay, renderTransientOverlay } from "./overlay.ts"
@@ -103,8 +104,11 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
           // Badge effort hanya bila non-default — default adalah kondisi normal
           // yang tak perlu diumumkan tiap baris (minimalis).
           const badge = row.effort && row.effort !== "default" ? ` [${row.effort}]` : ""
+          // row.id (provider::model) BISA datang dari jaringan (hasil probe
+          // GET /models) — sanitasi sebelum tampil, seperti label picker.
+          const cleanId = sanitizeAnsiLine(row.id)
           const label = truncateToWidth(
-            `${padToWidth(`${row.id}${badge}`, w - 14)}${row.active ? "  active" : ""}`,
+            `${padToWidth(`${cleanId}${badge}`, w - 14)}${row.active ? "  active" : ""}`,
             w - 4,
           )
           if (picked) lines.push(`  ${c.accent("›")} ${c.accent(c.bold(label))}${RESTORE}`)
@@ -213,7 +217,8 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
         try {
           await fn()
         } catch (e) {
-          console.log(`${glyphs.cross} ${(e as Error).message}`)
+          // Pesan error BISA menggema isi jaringan (URL/body probe) — sanitasi.
+          console.log(`${glyphs.cross} ${sanitizeAnsiLine((e as Error).message)}`)
         } finally {
           busy = false
           await loadRowsSafe()
@@ -250,11 +255,13 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
         }
         const prevCount = rows.length
         rows = await opts.onAdd(providerId.trim(), model.trim())
+        // Gema input user disanitasi juga: sekali diketik `\x1b[2J` sebagai
+        // nama model, baris hasil tak boleh mengeksekusinya kembali.
+        const echoName = sanitizeAnsiLine(`${providerId.trim()}::${model.trim()}`)
         // Panjang tak berubah = model sudah ada (bukan error — provider
         // ditemukan, onAdd tak lempar). Laporkan jujur, bukan "added".
-        if (rows.length === prevCount)
-          console.log(`${glyphs.dot} ${providerId.trim()}::${model.trim()} already exists`)
-        else console.log(`${glyphs.check} added ${providerId.trim()}::${model.trim()}`)
+        if (rows.length === prevCount) console.log(`${glyphs.dot} ${echoName} already exists`)
+        else console.log(`${glyphs.check} added ${echoName}`)
         clampSel()
       })
 
@@ -265,10 +272,10 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
         // Model AKTIF yang dihapus membuat prompt berikutnya kehilangan model
         // tanpa sebab yang terlihat — sebutkan seperti provider-manager.
         const prefix = row.active ? "Delete ACTIVE model" : "Delete model"
-        const answer = await askLine({ prompt: `${prefix} ${row.id}? [y/N] ` })
+        const answer = await askLine({ prompt: `${prefix} ${sanitizeAnsiLine(row.id)}? [y/N] ` })
         if (answer?.trim().toLowerCase() === "y") {
           rows = await opts.onDelete(row.id)
-          console.log(`${glyphs.check} deleted ${row.id}`)
+          console.log(`${glyphs.check} deleted ${sanitizeAnsiLine(row.id)}`)
         } else {
           console.log("Canceled")
           rows = await opts.loadRows()
@@ -384,7 +391,7 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
                 } catch (e) {
                   // Jangan tutup diam-diam: pilih model yang gagal harus
                   // terlihat, bukan dianggap sukses (manager lalu hilang).
-                  console.log(`${glyphs.cross} ${(e as Error).message}`)
+                  console.log(`${glyphs.cross} ${sanitizeAnsiLine((e as Error).message)}`)
                 } finally {
                   finish()
                 }

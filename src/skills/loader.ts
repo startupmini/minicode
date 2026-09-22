@@ -1,6 +1,7 @@
-import { readdir, readFile } from "node:fs/promises"
+import type { Dirent } from "node:fs"
+import { readdir, readFile, stat } from "node:fs/promises"
 import { homedir } from "node:os"
-import { join, resolve } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import { isRealPathOutsideRoot } from "../policy/jail.ts"
 
 export interface Skill {
@@ -8,6 +9,14 @@ export interface Skill {
   description: string
   body: string // prompt template
   path: string
+  /** F4.1: frontmatter `disable-model-invocation: true` — skill HANYA via
+   * `/nama` eksplisit, tak masuk katalog auto-pick system prompt. Untuk
+   * workflow yang tak boleh dipicu model sendiri (deploy/rilis). */
+  manualOnly: boolean
+  /** F4.1: aset opsional gaya Zed — folder sibling `<nama>/` berisi
+   * `scripts/` dan `references/` (daftar nama berkas, hanya info agar model
+   * bisa membacanya via read_file; TIDAK dieksekusi otomatis). */
+  assets: { scripts: string[]; references: string[] }
 }
 
 const GLOBAL_SKILLS = join(homedir(), ".minicode", "skills")
@@ -54,6 +63,10 @@ async function loadDir(dir: string, out: Skill[], root: string = dir) {
     // realpath-nya di luar root kepercayaannya (global vs proyek).
     if (isRealPathOutsideRoot(full, root)) continue
     if (e.isDirectory()) {
+      // F4.1: folder aset sibling (<skill>/scripts|references) BUKAN wadah
+      // skill — tanpa ini references/guide.md ikut dimuat sebagai skill
+      // "guide" dan mengotori katalog. Terdeteksi via <skill>.md di parent.
+      if ((e.name === "scripts" || e.name === "references") && (await isAssetDir(dir))) continue
       // recursive 1-level deep for nested skills
       await loadDir(full, out, root)
       continue
@@ -69,13 +82,63 @@ async function loadDir(dir: string, out: Skill[], root: string = dir) {
       .replace(/[^a-z0-9-]/g, "-")
       .replace(/-+/g, "-")
       .replace(/^-|-$/g, "")
+    // F4.1: nilai truthy longgar ("true"/"1"/"yes", case-insensitive) —
+    // frontmatter YAML-ish ditulis manusia, bukan mesin.
+    const manualOnly = /^(true|1|yes)$/i.test((meta["disable-model-invocation"] ?? "").trim())
     out.push({
       name: name || rawName,
       description: meta.description ?? body.split("\n")[0]?.slice(0, 100) ?? "",
       body,
       path: full,
+      manualOnly,
+      assets: await loadSkillAssets(dir, e.name.replace(/\.md$/, ""), root),
     })
   }
+}
+
+/** F4.1: true bila `dir` adalah folder aset skill — yaitu `<base>/scripts`
+ * atau `<base>/references` dengan `<base>.md` di parent-nya. Hanya dua nama
+ * itu yang istimewa; folder skill biasa (mis. `deploy/`) tetap direkursi. */
+async function isAssetDir(dir: string): Promise<boolean> {
+  const base = basename(dir)
+  try {
+    await stat(join(dirname(dir), `${base}.md`))
+    return true
+  } catch {
+    return false
+  }
+}
+async function loadSkillAssets(
+  dir: string,
+  base: string,
+  root: string,
+): Promise<{ scripts: string[]; references: string[] }> {
+  const empty = { scripts: [], references: [] }
+  // base dari nama berkas .md sendiri (sudah lewat slug) — tanpa separator
+  // path, jadi join aman; tetap lewat guard realpath per entri di bawah.
+  if (base.includes("/") || base.includes("\\") || base === "" || base === "." || base === "..")
+    return empty
+  const out: { scripts: string[]; references: string[] } = { scripts: [], references: [] }
+  for (const [key, sub] of [
+    ["scripts", "scripts"],
+    ["references", "references"],
+  ] as const) {
+    const subdir = join(dir, base, sub)
+    let entries: Dirent[]
+    try {
+      entries = await readdir(subdir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const en of entries) {
+      if (out[key].length >= 20) break
+      if (!en.isFile() || en.name.startsWith(".")) continue
+      const full = join(subdir, en.name)
+      if (isRealPathOutsideRoot(full, root)) continue
+      out[key].push(en.name)
+    }
+  }
+  return out
 }
 
 let skillsCache: { cwd: string; at: number; skills: Skill[] } | undefined
@@ -112,6 +175,17 @@ export async function findSkill(name: string, cwd = process.cwd()): Promise<Skil
 }
 
 export function skillsToSystemPrompt(skills: Skill[]): string {
-  if (skills.length === 0) return ""
-  return `\n# Available skills (use via /name or ask)\n${skills.map((s) => `- /${s.name}: ${s.description}`).join("\n")}`
+  // F4.1: manualOnly TAK masuk katalog auto-pick — model tak boleh memicu
+  // workflow berbahaya sendiri; user memanggil eksplisit via /nama (findSkill
+  // tetap menemukannya). Aset dicantumkan sebagai petunjuk baca, bukan
+  // eksekusi: model memakai read_file bila perlu.
+  const auto = skills.filter((s) => !s.manualOnly)
+  if (auto.length === 0) return ""
+  const line = (s: Skill): string => {
+    const hints: string[] = []
+    if (s.assets.scripts.length > 0) hints.push(`scripts: ${s.assets.scripts.join(", ")}`)
+    if (s.assets.references.length > 0) hints.push(`refs: ${s.assets.references.join(", ")}`)
+    return `- /${s.name}: ${s.description}${hints.length ? ` (${hints.join("; ")})` : ""}`
+  }
+  return `\n# Available skills (use via /name or ask)\n${auto.map(line).join("\n")}`
 }

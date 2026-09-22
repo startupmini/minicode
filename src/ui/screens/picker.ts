@@ -48,7 +48,10 @@ function highlightMatch(label: string, query: string): string {
 export async function runPicker(opts: PickerOptions): Promise<void> {
   if (!process.stdin.isTTY) {
     console.log(`\n${opts.title}`)
-    for (const [i, it] of opts.items.entries()) console.log(`  [${i}] ${it.provider}::${it.name}`)
+    // Nama provider/model BISA datang dari jaringan (hasil probe GET /models)
+    // — sanitasi seperti jalur TTY di bawah, bukan console.log mentah.
+    for (const [i, it] of opts.items.entries())
+      console.log(`  [${i}] ${sanitizeAnsiLine(it.provider)}::${sanitizeAnsiLine(it.name)}`)
     console.log("")
     // Fail-closed: pemanggil nested (mis. pickEffort di /model) menunggu
     // onPick/onCancel — tanpa ini await-nya gantung selamanya (busy=true)
@@ -123,7 +126,11 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
         const picked = i === sel - scroll
         // Potong label ke KOLOM (CJK 2 kolom), sisakan ruang untuk penanda "› ".
         // Highlight query DITERAPKAN sebelum truncate agar posisi kolom tepat.
-        const rawLabel = `${it.provider ? `${it.provider} › ` : ""}${it.name}`
+        // Nama provider/model dari jaringan (probe) = tak terpercaya: sanitasi
+        // DULU agar `\x1b[2J` tak membersihkan layar saat picker tampil.
+        const prov = sanitizeAnsiLine(it.provider)
+        const name = sanitizeAnsiLine(it.name)
+        const rawLabel = `${prov ? `${prov} › ` : ""}${name}`
         const label = highlightMatch(truncateToWidth(rawLabel, w - 4), filter)
         if (picked) lines.push(`  ${c.accent("›")} ${c.accent(c.bold(label))}${RESTORE}`)
         else lines.push(`   ${DIM}${label}${RESTORE}`)

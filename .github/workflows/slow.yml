@@ -1,0 +1,47 @@
+name: Slow gates (nightly)
+
+# F4.2: gerbang lambat/stokastik terpisah dari CI per-commit. Fuzz
+# multi-seed + stress + docker fluktuatif antar run — kegagalannya sinyal
+# investigasi, bukan penolakan PR. Ambang coverage dikunci ke suite cepat
+# (`bun test` di ci.yml), bukan ke sini.
+on:
+  schedule:
+    - cron: "0 18 * * *" # 01:00 WIB
+  workflow_dispatch:
+
+jobs:
+  slow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: minicode
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: minicode
+        run: bun install
+
+      - name: Extreme — bash fuzz (multi-seed, long rounds)
+        working-directory: minicode
+        run: |
+          for s in 1 42 999 123456 7777777; do
+            bun experiments/extreme-bash-fuzz.ts --seed $s --rounds 3
+          done
+
+      - name: Extreme — shadow-git stress
+        working-directory: minicode
+        run: bun experiments/extreme-shadow-git.ts --files 1500 --sessions 8
+
+      - name: Extreme — MCP adversarial
+        working-directory: minicode
+        run: bun experiments/extreme-mcp-adversarial.ts
+
+      - name: Test with docker sandbox (experimental)
+        working-directory: minicode
+        continue-on-error: true
+        run: |
+          MINICODE_SANDBOX=docker bun test

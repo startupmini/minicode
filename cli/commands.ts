@@ -5,6 +5,7 @@ import { refreshProviderModels } from "../src/providers/provision.ts"
 import { listSessions, loadSession } from "../src/session/persistence.ts"
 import type { Skill } from "../src/skills/loader.ts"
 import { formatUsd } from "../src/ui/render/money.ts"
+import { sanitizeAnsiLine } from "../src/ui/render/sanitize.ts"
 import { glyphs } from "../src/ui/render/theme.ts"
 import { padToWidth } from "../src/ui/render/width.ts"
 
@@ -85,6 +86,7 @@ const KEYBOARD_HELP: [string, string][] = [
   ["tab", "complete command (empty line: cycle mode)"],
   ["shift+tab", "cycle permission mode"],
   ["up / down", "history or picker navigation"],
+  ["pageup / pagedown", "scroll transcript (pagedown at bottom = follow)"],
   ["left / right", "move cursor"],
   ["home / end", "jump to line start / end"],
   ["delete", "delete character at cursor"],
@@ -193,6 +195,10 @@ export async function handleBuiltinCommand(
 
     case "model": {
       const { runModelManager } = await import("./model-manager.ts")
+      // BUKAN jalur sesi TUI: dispatch repl-core mencegat /model & /provider
+      // LEBIH DULU (modal I17). Overlay mentah (stdout/stdin langsung) hanya
+      // valid di luar alt-screen — pemanggil langsung handleBuiltinCommand
+      // (non-TUI/test). Jangan panggil dari dalam sesi TUI.
       // `/model mimo` = buka manager dengan filter awal (tanpa ini query
       // diabaikan diam-diam).
       await runModelManager({
@@ -207,6 +213,8 @@ export async function handleBuiltinCommand(
 
     case "provider": {
       const { runProviderManager } = await import("./provider-manager.ts")
+      // Sama seperti "model" di atas: bukan jalur sesi TUI (modal I17
+      // mencegat di dispatch). Overlay mentah hanya di luar alt-screen.
       await runProviderManager({
         cwd: ctx.cwd,
         currentModel: ctx.currentModel,
@@ -218,6 +226,10 @@ export async function handleBuiltinCommand(
     case "status": {
       // Kumulatif sesi, bukan turn terakhir — judulnya menjanjikan "biaya sesi".
       const u = ctx.usage.getSession(ctx.currentModel)
+      // Turn terakhir tampil terpisah (F1.1): tanpa ini user tak bisa
+      // membedakan "turn ini boros" dari "sesi ini boros". get() = akumulator
+      // turn yang di-reset tiap persistCurrent — bukan recompute.
+      const t = ctx.usage.get(ctx.currentModel)
       // Kontrak control-plane (Phase 6): DUA angka berbeda, dua konsep —
       // Context = ukuran jendela saat ini (kernel, estimateSessionContext);
       // Total = pemakaian kumulatif provider (usage event). Dulu hanya Total
@@ -227,11 +239,15 @@ export async function handleBuiltinCommand(
         ? ctx.currentModel.slice(0, ctx.currentModel.indexOf("::"))
         : undefined
       const provider = ctx.usage.modelUsed().provider ?? pinned ?? ctx.providerHint ?? "-"
-      console.log(`\nSession ${ctx.sessionId}`)
-      console.log(`  Model:    ${ctx.currentModel ?? "default"}`)
-      console.log(`  Provider: ${provider}`)
+      console.log(`\nSession ${sanitizeAnsiLine(ctx.sessionId)}`)
+      // Model/provider dari config/probe jaringan = tak terpercaya (escape
+      // di id bisa membersihkan layar — di TUI baris ini masuk dokumen lalu
+      // dilukis ulang oleh screen).
+      console.log(`  Model:    ${sanitizeAnsiLine(ctx.currentModel ?? "default")}`)
+      console.log(`  Provider: ${sanitizeAnsiLine(provider)}`)
       console.log(`  Tools:    ${ctx.toolsCount}`)
       console.log(`  Context:  ~${ctx.getContextTokens().toLocaleString()} tok (window estimate)`)
+      console.log(`  Turn:     ${t.totalTokens.toLocaleString()} (last turn only)`)
       console.log(`  Input:    ${u.inputTokens.toLocaleString()} (provider usage)`)
       console.log(`  Output:   ${u.outputTokens.toLocaleString()} (provider usage)`)
       console.log(`  Total:    ${u.totalTokens.toLocaleString()} (session cumulative)`)
@@ -262,10 +278,10 @@ export async function handleBuiltinCommand(
         else console.log("  No changes — check API key and network, then retry.")
       } else {
         for (const r of updated) {
-          console.log(`  ${glyphs.check} ${r.id}: ${r.from} -> ${r.to} models`)
+          console.log(`  ${glyphs.check} ${sanitizeAnsiLine(r.id)}: ${r.from} -> ${r.to} models`)
         }
         for (const f of failed) {
-          console.log(`  ${glyphs.cross} ${f.id}: ${f.reason}`)
+          console.log(`  ${glyphs.cross} ${sanitizeAnsiLine(f.id)}: ${sanitizeAnsiLine(f.reason)}`)
         }
         // "Restart" hanya jujur bila ADA model baru — tanpa updated, restart
         // tak mengubah apa pun (sebelumnya selalu dicetak, menyesatkan saat
@@ -283,8 +299,10 @@ export async function handleBuiltinCommand(
       } else if (!args) {
         console.log("\nSessions")
         rows.forEach((r, i) => {
+          // id + cwd dari disk (nama direktori repo asing bisa membawa
+          // escape) — sanitasi sebelum cetak.
           console.log(
-            `  [${i}] ${r.id.padEnd(14)} ${new Date(r.created_at).toLocaleString().padEnd(24)} ${r.cwd || "(cwd)"}`,
+            `  [${i}] ${sanitizeAnsiLine(r.id).padEnd(14)} ${new Date(r.created_at).toLocaleString().padEnd(24)} ${sanitizeAnsiLine(r.cwd || "(cwd)")}`,
           )
         })
         console.log("  Select a session to resume.")
@@ -293,7 +311,7 @@ export async function handleBuiltinCommand(
         const target = args
         const sess = loadSession(target, ctx.cwd)
         if (!sess?.messages.length) {
-          console.log(`Session "${target}" not found or empty.`)
+          console.log(`Session "${sanitizeAnsiLine(target)}" not found or empty.`)
           return { handled: true }
         }
         const { spawn } = await import("node:child_process")

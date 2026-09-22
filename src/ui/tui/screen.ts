@@ -29,8 +29,11 @@
 // - collapse priority: transcript only (status+input never collapse)
 // - narrow (≥20 cols) → primary only, no truncation silent (ellipsis)
 // - tiny (<40 cols) still renders 1 col without panic (clamp + truncate)
+
+import { sanitizeAnsi } from "../render/sanitize.ts"
 import { c } from "../render/theme.ts"
-import { truncateToWidth } from "../render/width.ts"
+import { expandTabs, truncateToWidth } from "../render/width.ts"
+import { compositeModal, renderModalBox, type TuiModalContent } from "./modal.ts"
 
 export interface TuiCursor {
   /** Indeks baris DALAM blok input (0-based, blok = array `input` apa adanya).
@@ -50,6 +53,10 @@ export interface TuiPresentOptions {
   cursor: TuiCursor
   /** Kursor terlihat (idle) vs sembunyi (busy/redraw). */
   showCursor: boolean
+  /** Modal popup terpusat (I17): dilukis DI ATAS frame oleh screen —
+   * satu-satunya penulis piksel. Bila ada, kursor diambil dari konten
+   * modal (bukan p.cursor). */
+  modal?: TuiModalContent
 }
 
 export interface TuiScreen {
@@ -70,6 +77,10 @@ export interface TuiScreen {
   setFollow(follow: boolean): void
   /** Geser viewport relatif (negatif = ke atas); mematikan follow. */
   scrollBy(n: number): void
+  /** Geser satu halaman transkrip; PageDown di dasar = kembali follow. */
+  scrollPage(up: boolean): void
+  /** Baris di atas viewport saat pin (0 = follow). Untuk indikator driver. */
+  pinnedAbove(): number
   /** Kembali menempel ekor. */
   scrollToEnd(): void
   /** Lukis frame penuh (dirty diff per baris). Tak pernah melempar. */
@@ -122,6 +133,11 @@ export function createTuiScreen(): TuiScreen {
     inputRows: number
   } {
     const r = rowsOf()
+    // Terminal sangat pendek: status SELALU dapat baris (invarian "status
+    // tak pernah collapse"); yang dikorbankan = transkrip, lalu input.
+    // (r<=2 dulu: out.slice(0, r) membuang baris status.)
+    if (r <= 1) return { transcriptRows: 0, statusRow: 1, inputRows: 0 }
+    if (r === 2) return { transcriptRows: 0, statusRow: 2, inputRows: 1 }
     const nIn = Math.max(1, Math.min(inputLen, Math.max(1, r - 2)))
     return { transcriptRows: Math.max(1, r - nIn - 1), statusRow: r, inputRows: nIn }
   }
@@ -146,12 +162,14 @@ export function createTuiScreen(): TuiScreen {
     statusRow: number
     inputRow: number
     cursorRow: number
+    cursorCol: number
   } {
     const r = rowsOf()
     const cols = colsOf()
     const lay = layout(p.input.length)
     lastTRows = lay.transcriptRows
-    const input = p.input.slice(-lay.inputRows)
+    // slice(-0) = seluruh array: jaga inputRows 0 (terminal 1 baris).
+    const input = lay.inputRows <= 0 ? [] : p.input.slice(-lay.inputRows)
     // Baris blok yang terpotong dari kepala (blok > area): kursor ikut geser.
     const cut = Math.max(0, p.input.length - input.length)
     const top = viewTop(lay.transcriptRows)
@@ -172,26 +190,52 @@ export function createTuiScreen(): TuiScreen {
       let line = i < padTop ? "" : (visible[i - padTop] ?? "")
       // Center hint vertically when empty: place on last transcript row (just above input).
       if (emptyHint && i === lay.transcriptRows - 1 && !line) line = emptyHint
-      out.push(truncateToWidth(line, cols))
+      // Jaring terakhir: baris dokumen/input bisa membawa sisa kontrol dari
+      // alur capture (builtin) bila ada regresi writer — sanitasi di sini
+      // (SGR dipertahankan). STATUS dikecualikan: footer tepercaya memakai
+      // CHA non-SGR untuk merapatkan konteks (kontrak I13).
+      // Tab diekspansi DULU: displayWidth menghitung tab 0 kolom sementara
+      // terminal mengekspansinya ke tab-stop — tanpa ini baris ber-tab
+      // (output kode) meluap dan membungkus liar di alt-screen.
+      out.push(truncateToWidth(sanitizeAnsi(expandTabs(line)), cols))
     }
     // Input di atas status (status SELALU baris terakhir — jangkar visual).
-    for (const line of input) out.push(truncateToWidth(line, cols))
+    for (const line of input) out.push(truncateToWidth(sanitizeAnsi(expandTabs(line)), cols))
     out.push(truncateToWidth(p.status, cols))
     // Selalu tepat R baris: tanpa ini baris viewport lama yang menyusut
     // (mis. input memendek) tertinggal sebagai fosil.
     while (out.length < r) out.push("")
     // Kursor blok-relatif → absolut layar. Baris input pertama = tepat di
     // atas status; potongan kepala menggeser; clamp ke area input (tak pernah
-    // ke baris status / luar layar — degradasi aman).
+    // ke baris status / luar layar — degradasi aman). Tanpa input terlihat
+    // (r<=2): kursor parkir di baris status.
     const shownInput = input.length
     const cursorRow =
-      lay.transcriptRows + 1 + Math.max(0, Math.min(p.cursor.line - cut, shownInput - 1))
+      shownInput === 0
+        ? lay.statusRow
+        : lay.transcriptRows + 1 + Math.max(0, Math.min(p.cursor.line - cut, shownInput - 1))
+    // cursorCol default = kolom driver (input); modal menimpanya di bawah.
+    let lines = out.slice(0, r)
+    let finalCursorRow = cursorRow
+    let finalCursorCol = p.cursor.col
+    // Modal I17: komposit terpusat DI ATAS frame oleh satu-satunya penulis
+    // piksel. Kursor diambil dari box (geometri tunggal di modal.ts),
+    // bukan p.cursor (input yang sedang disembunyikan di belakang modal).
+    if (p.modal != null) {
+      const box = renderModalBox(p.modal, cols, r)
+      lines = compositeModal(lines, r, cols, box)
+      const top = Math.max(0, Math.floor((r - box.height) / 2))
+      const left = Math.max(0, Math.floor((cols - box.width) / 2))
+      finalCursorRow = top + box.cursorRow + 1
+      finalCursorCol = left + box.cursorCol + 1
+    }
     return {
-      lines: out.slice(0, r),
+      lines,
       cut,
       statusRow: lay.statusRow,
       inputRow: lay.transcriptRows + 1,
-      cursorRow,
+      cursorRow: finalCursorRow,
+      cursorCol: finalCursorCol,
     }
   }
 
@@ -279,6 +323,23 @@ export function createTuiScreen(): TuiScreen {
       // dari ekor selalu di-clamp kembali ke ekor oleh viewTop.
       scrollTop = Math.max(0, effTop() + n)
     },
+    scrollPage(up: boolean) {
+      // Satu halaman = tinggi transkrip kini. PageDown di dasar = kembali
+      // follow (tak ada kondisi "mentok tapi pin" yang membingungkan).
+      const tRows = lastTRows > 0 ? lastTRows : Math.max(1, rowsOf() - 2)
+      const maxTop = Math.max(0, doc.length - tRows)
+      if (!up && effTop() >= maxTop) {
+        follow = true
+        return
+      }
+      follow = false
+      scrollTop = Math.max(0, Math.min(maxTop, effTop() + (up ? -tRows : tRows)))
+    },
+    pinnedAbove(): number {
+      if (follow) return 0
+      const tRows = lastTRows > 0 ? lastTRows : Math.max(1, rowsOf() - 2)
+      return Math.max(0, doc.length - (effTop() + tRows))
+    },
     scrollToEnd() {
       follow = true
     },
@@ -286,7 +347,7 @@ export function createTuiScreen(): TuiScreen {
       if (disposed || !altActive) return
       try {
         const f = frameLines(p)
-        paint(f.lines, { row: f.cursorRow, col: p.cursor.col }, p.showCursor)
+        paint(f.lines, { row: f.cursorRow, col: f.cursorCol }, p.showCursor)
       } catch {}
     },
     invalidate() {

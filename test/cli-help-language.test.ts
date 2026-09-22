@@ -136,6 +136,25 @@ describe("konsistensi bahasa keluaran", () => {
     expect(teks).toContain("Budget:")
   })
 
+  test("/status membedakan Turn vs Total sesi (F1.1)", async () => {
+    // Regresi: /status hanya menampilkan kumulatif sesi, sehingga turn boros
+    // tak terbedakan dari sesi boros. Turn dan sesi WAJIB dua angka berbeda.
+    const ctx2 = {
+      ...ctx,
+      usage: {
+        ...ctx.usage,
+        get: () => ({ inputTokens: 2, outputTokens: 3, totalTokens: 5 }),
+        getSession: () => ({ inputTokens: 40, outputTokens: 60, totalTokens: 100 }),
+      },
+    } as unknown as Parameters<typeof handleBuiltinCommand>[1]
+    const { lines } = await captureOutput(() => handleBuiltinCommand("/status", ctx2))
+    const turnLine = lines.find((l) => stripAnsi(l).startsWith("Turn:")) ?? ""
+    const totalLine = lines.find((l) => stripAnsi(l).startsWith("Total:")) ?? ""
+    expect(turnLine).toContain("5")
+    expect(turnLine).not.toContain("100")
+    expect(totalLine).toContain("100")
+  })
+
   test("/status Provider = efektif, lalu pin, terakhir hint wire", async () => {
     // Regresi: sesi opencode-zen selalu tampil "Provider: openai" karena
     // yang dicetak hint wire, bukan provider yang dipakai.

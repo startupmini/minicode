@@ -10,6 +10,7 @@ import {
   chunkByWidth,
   displayWidth,
   escapeLength,
+  expandTabs,
   padToWidth,
   truncateToWidth,
 } from "../src/ui/render/width.ts"
@@ -148,6 +149,19 @@ describe("truncateToWidth", () => {
     expect(truncateToWidth("apa saja", 0)).toBe("")
   })
 
+  test("sekuens layout terpercaya (CHA + SGR) bertahan melewati truncate", () => {
+    // Kontrak I13/I16: footer merapatkan konteks via CHA `ESC[nG` (bukan
+    // space-fill) dan TUI screen men-truncate baris status — CHA WAJIB
+    // selamat, kalau tidak konteks kehilangan posisi rata kanannya.
+    // (Sanitasi input tak terpercaya adalah tugas sanitize.ts di batasnya;
+    // modul width hanya mengurus geometri dan mempertahankan sekuens.)
+    const line = `abc\x1b[20G4.5k`
+    const out = truncateToWidth(line, 30)
+    expect(out).toBe(line)
+    const cut = truncateToWidth(`\x1b[32m${"x".repeat(50)}\x1b[39m`, 10)
+    expect(cut).toContain("\x1b[32m")
+  })
+
   test("width lebih kecil dari elipsis tidak menambah elipsis", () => {
     const out = truncateToWidth("abcdef", 2)
     expect(displayWidth(out)).toBeLessThanOrEqual(2)
@@ -200,5 +214,23 @@ describe("chunkByWidth", () => {
       expect(ch).not.toContain("\ufffd")
       expect(Buffer.from(ch, "utf8").toString("utf8")).toBe(ch)
     }
+  })
+})
+
+describe("expandTabs", () => {
+  test("tab mengembang ke tab-stop 8 ala terminal", () => {
+    // displayWidth menghitung tab 0 kolom sementara terminal mengekspansi —
+    // tanpa ini baris ber-tab (output kode) meluap di grid TUI.
+    expect(expandTabs("\tx")).toBe("        x")
+    expect(expandTabs("ab\tcd")).toBe("ab      cd")
+    expect(displayWidth(expandTabs("a\tb\tc"))).toBe(17)
+  })
+  test("tanpa tab: string kembali identik", () => {
+    expect(expandTabs("abc")).toBe("abc")
+  })
+  test("SGR tidak diganggu; tab dihitung dari kolom tampak", () => {
+    const out = expandTabs("\x1b[32mab\x1b[39m\tcd")
+    expect(out).toContain("\x1b[32m")
+    expect(displayWidth(out)).toBe(displayWidth("ab      cd"))
   })
 })

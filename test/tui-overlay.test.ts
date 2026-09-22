@@ -108,6 +108,28 @@ describe("picker: menghormati ukuran terminal", () => {
     await p
     expect(hasil).toBeNull()
   })
+
+  test("label dari jaringan (nama model) disanitasi sebelum tampil", async () => {
+    // Nama model hasil probe GET /models adalah input tak terpercaya: satu
+    // `\x1b[2J` di nama akan membersihkan layar saat picker tampil. Label
+    // pendek TIDAK lewat truncate, jadi sanitasi wajib di pemanggil.
+    tty = installFakeTty({ rows: 20 })
+    const p = runPicker({
+      title: "Model",
+      items: [{ name: "evil\x1b[2J\x1b[?1049hnama", provider: "prov\x1b]0;bajak\x07", value: "a" }],
+      onPick: () => {},
+      onCancel: () => {},
+    })
+    await tty.ready()
+    const out = tty.all()
+    expect(out).not.toContain("\x1b[2J")
+    expect(out).not.toContain("\x1b[?1049h")
+    expect(out).not.toContain("\x1b]0;")
+    expect(stripAnsi(out)).toContain("prov")
+    expect(stripAnsi(out)).toContain("nama")
+    await tty.send(KEY.esc, 30)
+    await p
+  })
 })
 
 // Printer linier menggantikan fullscreen: teks model & hasil tool adalah masukan

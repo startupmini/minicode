@@ -25,6 +25,11 @@
 import { setUiWriters } from "../src/ui/assistant/simple.ts"
 import { renderFooter } from "../src/ui/footer.ts"
 import { loadHistory } from "../src/ui/input/input.ts"
+import {
+  createDecoderState,
+  type DecoderState,
+  decodeKeysStream,
+} from "../src/ui/input/prompt-engine.ts"
 import { wordWrap } from "../src/ui/render/wrap.ts"
 import { runCaptured } from "../src/ui/tui/capture.ts"
 import { createTuiInput, type TuiInputBox } from "../src/ui/tui/input.ts"
@@ -33,6 +38,7 @@ import { setTuiSessionUi } from "../src/ui/tui/session.ts"
 import {
   buildGroupOf,
   buildSuggestions,
+  contPrompt,
   formatContextCount,
   handlePromptKey,
   promptPrefix,
@@ -42,6 +48,7 @@ import {
 } from "./repl-core.ts"
 import type { CliSession } from "./setup.ts"
 import { readMiniLine, runTuiApproval, runTuiAskText } from "./tui-dialog.ts"
+import { createModalList, type ModalList, type ModalListOptions } from "./tui-modal.ts"
 
 export async function runTuiRepl(ctx: CliSession): Promise<void> {
   const { cfg, cwd, sessionId, modelRef } = ctx
@@ -65,10 +72,22 @@ export async function runTuiRepl(ctx: CliSession): Promise<void> {
   let spark = 0
   let disposed = false
   let pulseTimer: ReturnType<typeof setInterval> | undefined
+  let resizeTimer: ReturnType<typeof setTimeout> | undefined
+  // Telemetri kegagalan render: paint/present menelan error (fail-safe) —
+  // tanpa hitungan, layar basi diam-diam tanpa sinyal. Sekali saja.
+  let renderFails = 0
+  let warnedRenderFail = false
   // Box input overlay (mini reader pickSession/ask): menggantikan box utama
   // saat render selama terpasang. Tanpa ini prompt susulan tak punya tempat
   // mengetik yang terlihat.
   let overlayBox: TuiInputBox | null = null
+  // Stack modal popup (I17): teratas menerima kunci, box utama diam.
+  // Mendukung nesting (effort di atas model): resolve pop satu tingkat.
+  // Hidup hanya saat idle (dispatch); turn tak pernah membuka modal.
+  const modalStack: Array<{ list: ModalList; resolve: (v: number | null) => void }> = []
+  // Decoder stdin khusus modal (terpisah dari decoder internal box): chunk
+  // yang sama tak boleh dimakan dua konsumen.
+  const modalDecoder: DecoderState = createDecoderState()
 
   const stopPulse = (): void => {
     if (pulseTimer) {
@@ -80,12 +99,17 @@ export async function runTuiRepl(ctx: CliSession): Promise<void> {
   const render = (): void => {
     if (disposed || !screen.altActive) return
     try {
+      // Indikator pin: saat user menggulir (PageUp), baris di atas viewport
+      // ditampilkan di status agar tak ada kebingungan "output berhenti".
+      const baseCtx = formatContextCount(session.contextTokens)
+      const pinned = screen.pinnedAbove()
+      const context = pinned > 0 ? (baseCtx ? `${baseCtx} · ↑${pinned}` : `↑${pinned}`) : baseCtx
       const [statusLine] = renderFooter(
         {
           mode: sharedRef.api.getMode(),
           model: modelRef.current ?? cfg.providers[0]?.models[0] ?? "no model",
           cwd: cwd ?? process.cwd(),
-          context: formatContextCount(session.contextTokens),
+          context,
           sparkFrame: busy ? spark : 0,
         },
         screen.cols,
@@ -98,8 +122,23 @@ export async function runTuiRepl(ctx: CliSession): Promise<void> {
         input: b.lines,
         cursor: { line: b.cursorLine, col: b.cursorCol },
         showCursor: !busy,
+        // Modal teratas (bila ada): screen mengomposit + mengambil kursor
+        // darinya. Box utama tetap dirender di belakang (tertutup modal).
+        ...(modalStack.length > 0 ? { modal: modalStack[modalStack.length - 1]!.list.spec() } : {}),
       })
-    } catch {}
+    } catch {
+      // Jangan biarkan satu frame rusak mematikan sesi; hitung + peringatkan
+      // sekali (diagnostik cat-3) agar basi-yang-diam tak terjadi.
+      renderFails += 1
+      if (renderFails >= 3 && !warnedRenderFail) {
+        warnedRenderFail = true
+        try {
+          process.stderr.write(
+            "[warn] TUI render gagal 3× beruntun — layar mungkin basi; tekan tombol/resize untuk repaint.\n",
+          )
+        } catch {}
+      }
+    }
   }
 
   // Tulis mesin → dokumen (dipasang via setUiWriters selama turn; pecah per
@@ -113,10 +152,23 @@ export async function runTuiRepl(ctx: CliSession): Promise<void> {
     }
     render()
   }
-  const flushPending = (): void => {
-    if (pending) {
-      doc.push(pending)
+
+  // Invarian dokumen: satu entri = satu baris visual (TANPA \n). \n mentah
+  // di baris dokumen akan mengeksekusi linefeed saat paint (screen menulis
+  // baris apa adanya) dan menggeser grid — corrupt. Semua jalur push ke doc
+  // yang menerima teks bebas (jejak submit multiline, teks dialog) lewat sini.
+  const pushDocLines = (firstPrefix: string, text: string): void => {
+    const parts = text.replace(/\r\n?/g, "\n").split("\n")
+    parts.forEach((part, i) => {
+      doc.push(`${i === 0 ? firstPrefix : contPrompt()}${part}`)
       if (doc.length > TUI_DOC_MAX_LINES) doc.splice(0, doc.length - TUI_DOC_MAX_LINES)
+    })
+  }
+  const flushPending = (): void => {
+    // Baris parsial akhir (mis. abort di tengah baris) di-wrap seperti
+    // appendWrapped — bukan mentah (yang akan dipotong ellipsis di layar).
+    if (pending) {
+      appendWrapped(pending)
       pending = ""
     }
   }
@@ -136,10 +188,12 @@ export async function runTuiRepl(ctx: CliSession): Promise<void> {
         // Reset sinkron SEBELUM render: tanpa ini teks yang sama tampil dua
         // kali (jejak di doc + baris input yang belum dibersihkan).
         if (ev.line.trim()) {
-          doc.push(`${currentPrompt}${ev.line}`)
-          if (doc.length > TUI_DOC_MAX_LINES) doc.splice(0, doc.length - TUI_DOC_MAX_LINES)
+          pushDocLines(currentPrompt, ev.line)
         }
         box.reset()
+        // Turn baru = konten baru di ekor: kembali follow agar output turn
+        // terlihat (user yang pin lalu submit tak terjebak di pin).
+        screen.scrollToEnd()
         render()
         const done = pumpResolver
         pumpResolver = null
@@ -155,6 +209,13 @@ export async function runTuiRepl(ctx: CliSession): Promise<void> {
         return
       }
       if (ev.type === "render") {
+        paint = true
+        continue
+      }
+      // Gulir transkrip (PageUp/PageDown): state input utuh, hanya viewport.
+      // PageDown di dasar = kembali follow (tanpa kondisi pin-yang-mentok).
+      if (ev.type === "scroll") {
+        screen.scrollPage(ev.dir === -1)
         paint = true
         continue
       }
@@ -187,6 +248,56 @@ export async function runTuiRepl(ctx: CliSession): Promise<void> {
     } catch {}
   }
 
+  // Pompa modal: listener stdin khusus saat modal terbuka. Pompa utama
+  // (readPrompt) sudah dilepas setelah submit — tanpa ini ketikan tak
+  // pernah sampai ke controller modal. Sisa chunk setelah pick/cancel
+  // dibuang: ketikan buta milik modal yang sudah tutup.
+  let modalPumpOn = false
+  const onModalData = (chunk: Buffer): void => {
+    if (modalStack.length === 0) return
+    const top = modalStack[modalStack.length - 1]!
+    let paint = false
+    for (const d of decodeKeysStream(chunk, modalDecoder)) {
+      const r = top.list.feed(d.key)
+      if (r === "pick") {
+        const idx = top.list.picked()
+        modalStack.pop()
+        if (modalStack.length === 0) detachModalPump()
+        top.resolve(idx)
+        paint = true
+        break
+      }
+      if (r === "cancel") {
+        modalStack.pop()
+        if (modalStack.length === 0) detachModalPump()
+        top.resolve(null)
+        paint = true
+        break
+      }
+      if (r === "render") paint = true
+    }
+    if (paint) render()
+  }
+  const attachModalPump = (): void => {
+    if (modalPumpOn || disposed) return
+    modalPumpOn = true
+    try {
+      process.stdin.setRawMode(true)
+    } catch {}
+    process.stdin.resume()
+    process.stdin.on("data", onModalData)
+  }
+  const detachModalPump = (): void => {
+    if (!modalPumpOn) return
+    modalPumpOn = false
+    try {
+      process.stdin.removeListener("data", onModalData)
+    } catch {}
+    try {
+      process.stdin.setRawMode(false)
+    } catch {}
+  }
+
   // Handle loop inti (mode live) — diisi factory sebelum loop jalan.
   // Status/footer selalu baca via api.getMode() agar tak pernah basi.
   let sharedRef: { api: ReplShared } = {
@@ -201,7 +312,10 @@ export async function runTuiRepl(ctx: CliSession): Promise<void> {
   // baris kosong interior dipertahankan, satu trailing kosong dibuang).
   const appendWrapped = (text: string): void => {
     if (!text) return
-    const lines = text.split("\n")
+    // \r (mis. output CRLF dari capture) dihapus dulu: ia mengeksekusi
+    // carriage-return saat paint dan menggeser grid — tak terlihat di ukuran
+    // kolom tapi merusak baris.
+    const lines = text.replace(/\r\n?/g, "\n").split("\n")
     if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop()
     for (const line of lines) {
       for (const w of wordWrap(line, Math.max(10, screen.cols)).split("\n")) {
@@ -216,10 +330,9 @@ export async function runTuiRepl(ctx: CliSession): Promise<void> {
   // `ask` komposisi (setup.ts) menemukannya mid-turn; fail-closed bila absen.
   const dialogDeps = {
     append: (lines: string[]): void => {
-      for (const line of lines) {
-        doc.push(line)
-        if (doc.length > TUI_DOC_MAX_LINES) doc.splice(0, doc.length - TUI_DOC_MAX_LINES)
-      }
+      // Baris dialog (pertanyaan ask_user, ringkasan approval) bisa multiline
+      // (teks model) — pecah seperti jejak submit agar invarian terjaga.
+      for (const line of lines) pushDocLines("", line)
     },
     render: () => render(),
     ensureRaw: (): void => {
@@ -291,6 +404,14 @@ export async function runTuiRepl(ctx: CliSession): Promise<void> {
       return r.value
     },
     promptLine: (prompt) => readMiniLine(dialogDeps, prompt),
+    // Buka modal popup pilihan di atas frame (I17): resolve indeks item
+    // asli atau null bila batal. Tumpuk aman (effort di atas model).
+    pickFromList: (opts: ModalListOptions) =>
+      new Promise<number | null>((resolve) => {
+        if (modalStack.length === 0) attachModalPump()
+        modalStack.push({ list: createModalList(opts), resolve })
+        render()
+      }),
     detachUi: () => screen.leave(),
     setInputActive: () => {
       // Pompa dimiliki readPrompt (pasang saat mulai, lepas saat selesai):
@@ -311,6 +432,9 @@ export async function runTuiRepl(ctx: CliSession): Promise<void> {
       doc = []
       pending = ""
       screen.setDocument([])
+      // Transkrip kosong tak punya apa-apa untuk di-pin: kembali follow agar
+      // output berikutnya langsung terlihat (bukan pin hantu tanpa indikator).
+      screen.scrollToEnd()
       render()
     },
     finish: () => {
@@ -337,8 +461,24 @@ export async function runTuiRepl(ctx: CliSession): Promise<void> {
     } catch {}
   })
 
+  // Resize saat idle: tanpa ini frame basi sampai keypress berikutnya
+  // (screen membaca geometri live, tapi tak ada yang memicu present).
+  // Debounce: drag-resize mengirim badai event; satu repaint cukup.
+  const onResize = (): void => {
+    if (resizeTimer) clearTimeout(resizeTimer)
+    resizeTimer = setTimeout(() => {
+      resizeTimer = undefined
+      if (disposed) return
+      try {
+        screen.invalidate()
+        render()
+      } catch {}
+    }, 50)
+  }
+
   try {
     screen.enter()
+    process.stdout.on("resize", onResize)
     await runReplLoop(ctx, (shared) => {
       sharedRef = { api: shared }
       return ui
@@ -348,6 +488,14 @@ export async function runTuiRepl(ctx: CliSession): Promise<void> {
     setUiWriters(null)
     setTuiSessionUi(null)
     detachPump()
+    detachModalPump()
+    if (resizeTimer) {
+      clearTimeout(resizeTimer)
+      resizeTimer = undefined
+    }
+    try {
+      process.stdout.removeListener("resize", onResize)
+    } catch {}
     disposed = true
     try {
       screen.dispose()

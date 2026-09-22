@@ -95,8 +95,12 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
           // Tandai provider yang sedang aktif supaya user tahu apa yang akan
           // hilang bila ia menekan d.
           const aktif = opts.currentModel?.startsWith(`${it.id}::`) ? " (active)" : ""
+          // id/baseUrl dari config (bisa lokal repo tak terpercaya) —
+          // sanitasi sebelum tampil; defense truncate tak cukup untuk string pendek.
+          const cleanId = sanitizeAnsiLine(it.id)
+          const cleanUrl = sanitizeAnsiLine(it.baseUrl)
           const label = truncateToWidth(
-            `${padToWidth(it.id, 18)} ${padToWidth(String(it.models), 3, "right")} models  ${it.baseUrl}${aktif}`,
+            `${padToWidth(cleanId, 18)} ${padToWidth(String(it.models), 3, "right")} models  ${cleanUrl}${aktif}`,
             w - 4,
           )
           if (picked) lines.push(`  ${c.accent("›")} ${c.accent(c.bold(label))}${RESTORE}`)
@@ -213,7 +217,8 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
         try {
           await fn()
         } catch (e) {
-          console.log(`${glyphs.cross} ${(e as Error).message}`)
+          // Pesan error bisa menggema isi jaringan (URL/body probe) — sanitasi.
+          console.log(`${glyphs.cross} ${sanitizeAnsiLine((e as Error).message)}`)
         } finally {
           busy = false
           await reload().catch(() => {})
@@ -264,7 +269,7 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
         // saja butuh konfirmasi.
         if (preset && providers.some((r) => r.id === preset.id)) {
           const ok = await askLine({
-            prompt: `Provider "${preset.id}" exists — overwrite its key and models? [y/N] `,
+            prompt: `Provider "${sanitizeAnsiLine(preset.id)}" exists — overwrite its key and models? [y/N] `,
           })
           if (ok?.trim().toLowerCase() !== "y") {
             console.log("Canceled")
@@ -305,9 +310,13 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
         // dan apakah provider ini yang sedang dipakai. Tanpa itu user menekan "y"
         // tanpa tahu prompt berikutnya akan gagal.
         const active = opts.currentModel?.startsWith(`${target.id}::`)
-        console.log(`\nDelete provider "${target.id}" and ${target.models} models?`)
+        console.log(
+          `\nDelete provider "${sanitizeAnsiLine(target.id)}" and ${target.models} models?`,
+        )
         if (active) {
-          console.log(`${glyphs.cross} Provider is active (${opts.currentModel}).`)
+          console.log(
+            `${glyphs.cross} Provider is active (${sanitizeAnsiLine(opts.currentModel ?? "")}).`,
+          )
         }
         const ans = await askLine({ prompt: "Delete? [y/N] " })
         if (ans == null) {
@@ -334,11 +343,13 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
           console.log("Provider not found")
           return
         }
-        console.log(`\nEdit provider "${target.id}"\n`)
+        console.log(`\nEdit provider "${sanitizeAnsiLine(target.id)}"\n`)
         // Batal di prompt pertama/kedua harus benar-benar batal — dulu
         // Ctrl+C jatuh ke "pertahankan nilai lama" lalu "No changes", tanpa
-        // jalan keluar dari dialog edit.
-        const newUrl = await askLine({ prompt: `Base URL [${defaults.baseUrl}]: ` })
+        // jalan keluar dari dialog edit. Default baseUrl dari config (bisa
+        // lokal tak terpercaya): sanitasi + potong sebelum masuk prompt.
+        const defaultUrlShown = truncateToWidth(sanitizeAnsiLine(defaults.baseUrl), 60)
+        const newUrl = await askLine({ prompt: `Base URL [${defaultUrlShown}]: ` })
         if (newUrl == null) {
           console.log("Canceled")
           return

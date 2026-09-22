@@ -110,6 +110,12 @@ export async function dispatch(
     await handleExec(args, subGetArg)
     return true
   }
+  if (cmd === "acp") {
+    // Fase 5: server JSON-RPC stdio minimal untuk IDE (subset, bukan ACP penuh).
+    const { handleAcp } = await import("./commands/acp.ts")
+    await handleAcp()
+    return true
+  }
   if (cmd === "memory") {
     const { handleMemory } = await import("./commands/memory.ts")
     await handleMemory(args, subGetArg)

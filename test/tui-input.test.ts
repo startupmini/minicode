@@ -22,6 +22,18 @@ function text(b: ReturnType<typeof box>, maxCols = 80) {
   return b.render(maxCols)
 }
 
+describe("tui input: scroll transkrip", () => {
+  test("PageUp/PageDown jadi event scroll, state input utuh", () => {
+    // Gagal di kode lama: PgUp jatuh ke catch-all "esc" (batal pada baris
+    // kosong!) atau applyKey me-return undefined → crash `r.state`.
+    const b = box()
+    b.feed(enc.encode("draf"))
+    expect(b.feed(enc.encode("\x1b[5~"))).toEqual([{ type: "scroll", dir: -1 }])
+    expect(b.feed(enc.encode("\x1b[6~"))).toEqual([{ type: "scroll", dir: 1 }])
+    expect(b.line).toBe("draf")
+  })
+})
+
 describe("tui input: ketik + submit + cancel", () => {
   test("ketik lalu Enter = submit ter-trim", () => {
     const b = box()

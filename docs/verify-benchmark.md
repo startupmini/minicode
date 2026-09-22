@@ -26,9 +26,10 @@ bun bench/runner.ts --provider vyceai-com --model 'vyceai-com::deepseek-v4-flash
 bun bench/runner.ts --judge-model 'vyceai-com::deepseek-v4-flash-lr'  # nilai penjelasan (model HARUS beda dari aktor)
 bun run gate:eval                        # kunci ambang baterai (min resolve-rate, max median token)
 bun run gate:eval --results bench/live.json --min-rate 0.8 --max-median-tokens 8000 --allow-partial
+bun bench/eval-gate.ts --results bench/results.json --min-rate 1 --max-median-tokens 5000 --observe-tokens  # observasi: token tak menggagalkan (2–3 run pertama sebelum ambang dikunci)
 ```
 
-Metrik: resolve rate, steps, token, cost, durasi, memoryHits + delta vs run sebelumnya. Hasil `bench/results.json` (`--out` untuk path lain).
+Metrik: resolve rate, steps, token, cost, durasi, memoryHits + delta vs run sebelumnya. Hasil `bench/results.json` (`--out` untuk path lain). Tiap run gagal membawa kelas (`VERIFY_FAIL`/`MAX_STEPS`/`NO_PROGRESS`/`ABORT`) + distribusi global di akhir run; kartu metodologi + log observasi di `bench/HARNESS-CARD.md`.
 
 Setiap run memakai `MINICODE_HOME` hermetic sendiri (DB/memory/sesi global tak bocor antar run dan tak menyentuh `~/.minicode` operator). Task boleh membawa `seedMemory`: fakta yang di-seed ke memory run itu — task `follow-convention` hanya lolos bila agen membaca fakta tersebut, sehingga `bun bench/runner.ts --memory on` vs `--memory off` mengukur nilai memory secara diferensial (bukan klaim).
 

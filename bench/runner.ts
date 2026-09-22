@@ -24,6 +24,35 @@ import { createRouterProvider } from "../src/providers/router.ts"
 import { allTools } from "../src/tools/index.ts"
 import { BENCH_TASKS, loadExternalTasks } from "./tasks.ts"
 
+// F2.3 — taksonomi kegagalan run (pure + diekspor agar bisa diuji).
+// Sidik kegagalan adalah properti harness, bukan model: tanpa klasifikasi,
+// semua FAIL terlihat sama dan perbaikan loop = buta.
+export type BenchFailClass = "VERIFY_FAIL" | "MAX_STEPS" | "NO_PROGRESS" | "ABORT"
+
+/** Klasifikasikan SATU run yang selesai (bukan setup ERROR).
+ * - error → ABORT (eksepsi/timeout/budget menggugurkan run)
+ * - verify lolos → null (bukan gagal)
+ * - steps ≤ 1 → NO_PROGRESS (loop tak pernah jalan bermakna)
+ * - steps ≥ batas → MAX_STEPS (loop sampai rem)
+ * - selain itu → VERIFY_FAIL (berhenti sendiri tapi verify gagal) */
+export function classifyBenchFailure(opts: {
+  error?: string
+  verifyPassed: boolean
+  steps: number
+  maxSteps: number
+}): BenchFailClass | null {
+  if (opts.error) return "ABORT"
+  if (opts.verifyPassed) return null
+  if (opts.steps <= 1) return "NO_PROGRESS"
+  if (opts.steps >= opts.maxSteps) return "MAX_STEPS"
+  return "VERIFY_FAIL"
+}
+
+// Batas langkah efektif run ini: flag bila ada, kalau tidak default kernel
+// (vendor/minicore DEFAULT_MAX_STEPS = 50 — kernel beku, jangan duplikasi
+// angka tanpa rujukan ini).
+export const EFFECTIVE_MAX_STEPS_FALLBACK = 50
+
 const fake = process.argv.includes("--fake")
 const runsArgIdx = process.argv.indexOf("--runs")
 const runs =
@@ -95,6 +124,15 @@ async function main(): Promise<void> {
 
   // aggregator per task: median dari n run agar outlier provider tidak menyesatkan
   const results: Record<string, unknown>[] = []
+  const emptyFailClasses = (): Record<BenchFailClass, number> => ({
+    VERIFY_FAIL: 0,
+    MAX_STEPS: 0,
+    NO_PROGRESS: 0,
+    ABORT: 0,
+  })
+  // Distribusi global antar semua task — jawaban "harness ini matinya bagaimana".
+  const globalFail: Record<BenchFailClass, number> = emptyFailClasses()
+  let globalErrors = 0
   const perTask = new Map<
     string,
     {
@@ -103,6 +141,7 @@ async function main(): Promise<void> {
       tokens: number[]
       memoryHits: number[]
       judgeScores: number[]
+      failClasses: Record<BenchFailClass, number>
     }
   >()
   // HOME hermetic per run: DB/memory/sesi global tak bocor antar run dan tak
@@ -117,7 +156,10 @@ async function main(): Promise<void> {
       tokens: [] as number[],
       memoryHits: [] as number[],
       judgeScores: [] as number[],
+      failClasses: emptyFailClasses(),
     }
+    // Batas langkah yang membatasi run ini (untuk kelas MAX_STEPS).
+    const runMaxSteps = benchMaxSteps ?? EFFECTIVE_MAX_STEPS_FALLBACK
     for (let r = 0; r < runs; r++) {
       const dir = await task.setup()
       const homeTmp = await mkdtemp(join(tmpdir(), "minicode-bench-home-"))
@@ -190,16 +232,31 @@ async function main(): Promise<void> {
         await task.cleanup(dir)
         const passed = verify.passed && !error
         stats.passed += passed ? 1 : 0
+        // F2.3: run gagal selalu membawa kelasnya — FAIL tanpa kelas = buta.
+        const failClass = classifyBenchFailure({
+          ...(error ? { error } : {}),
+          verifyPassed: verify.passed,
+          steps,
+          maxSteps: runMaxSteps,
+        })
+        if (failClass) {
+          stats.failClasses[failClass]++
+          globalFail[failClass]++
+        }
         stats.durations.push(durationMs)
         stats.tokens.push(u.totalTokens)
         stats.memoryHits.push(memoryHits)
         process.stdout.write(
-          `${passed ? "PASS" : "FAIL"} ${task.id} run=${r + 1}/${runs} steps=${steps} tokens=${u.totalTokens} memHits=${memoryHits} ${durationMs}ms${error ? ` error=${error.slice(0, 80)}` : ""}\n`,
+          `${passed ? "PASS" : "FAIL"} ${task.id} run=${r + 1}/${runs} steps=${steps} tokens=${u.totalTokens} memHits=${memoryHits} ${durationMs}ms${failClass ? ` class=${failClass}` : ""}${error ? ` error=${error.slice(0, 80)}` : ""}\n`,
         )
         // jeda antar task untuk hindari rate limit (provider gratis/quota)
         if (!fake && error?.includes("429")) await new Promise((r) => setTimeout(r, 10000))
       } catch (e) {
         // Setup/session gagal total (bukan model error): catat, bersih, lanjut.
+        // Diambil sebagai ABORT global (bukan per-task: tanpa token/steps,
+        // median tak boleh tercemar angka 0).
+        globalErrors++
+        globalFail.ABORT++
         process.stdout.write(
           `ERROR ${task.id} run=${r + 1}/${runs} ${(e as Error).message.slice(0, 80)}\n`,
         )
@@ -219,6 +276,7 @@ async function main(): Promise<void> {
       medianTokens: median(stats.tokens),
       medianMemoryHits: median(stats.memoryHits),
       medianJudge: stats.judgeScores.length > 0 ? median(stats.judgeScores) : null,
+      failClasses: stats.failClasses,
     })
   }
   if (prevHome === undefined) delete process.env.MINICODE_HOME
@@ -262,12 +320,21 @@ async function main(): Promise<void> {
     }
   } catch {}
   writeFileSync(outPath, JSON.stringify({ ...summary, results }, null, 2))
+  // F2.3: distribusi kegagalan global — satu baris jawaban "matinya bagaimana".
+  const failParts = (Object.entries(globalFail) as [BenchFailClass, number][])
+    .filter(([, n]) => n > 0)
+    .map(([k, n]) => `${k}=${n}`)
   process.stdout.write(
     `\nresolve rate: ${resolved}/${results.length} (${summary.resolveRate})${partial ? ` (${partial} partial)` : ""}\n${deltaLine}`,
   )
+  process.stdout.write(
+    `fail distribution: ${failParts.length ? failParts.join(" ") : "(none)"}${globalErrors ? ` (+${globalErrors} setup ERROR)` : ""}\n`,
+  )
 }
 
-main().catch((e) => {
-  console.error(`[bench] ${(e as Error).message}`)
-  process.exit(1)
-})
+if (import.meta.main) {
+  main().catch((e) => {
+    console.error(`[bench] ${(e as Error).message}`)
+    process.exit(1)
+  })
+}

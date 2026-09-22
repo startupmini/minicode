@@ -1,6 +1,5 @@
 // Formatter pesan event yang dipakai printer linier (simple.ts), sehingga
 // "apa yang ditampilkan" konsisten antar konsumen (tidak dobel logika).
-import type { UiToolCallRef } from "../contract.ts"
 import { formatFriendly, friendlyFromCategory } from "./errors.ts"
 import { formatUsd } from "./money.ts"
 
@@ -17,10 +16,6 @@ export function formatArgsPreview(args: unknown): string {
   } catch {
     return "[args]"
   }
-}
-
-export function formatStepCalls(calls: readonly UiToolCallRef[], argCap = 35): string {
-  return calls.map((tc) => `${tc.name}(${JSON.stringify(tc.args).slice(0, argCap)})`).join(", ")
 }
 
 export function formatUsage(parts: {

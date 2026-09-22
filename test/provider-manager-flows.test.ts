@@ -505,6 +505,29 @@ describe.serial("provider-manager: navigasi", () => {
     expect(picked).toBe("satu::a1")
   })
 
+  test("provider id/baseUrl dari config tak terpercaya disanitasi di layar", async () => {
+    // Config lokal (repo) adalah input tak terpercaya: satu `\x1b[2J` di id
+    // atau baseUrl akan membersihkan layar saat manager dibuka. Label pendek
+    // TIDAK lewat truncate, jadi sanitasi wajib di pemanggil.
+    await writeLocalProviders([
+      {
+        id: "jahat\x1b[2J\x1b[?1049h",
+        baseUrl: "https://x.example/v1\x1b]0;bajak\x07",
+        apiKey: "k",
+        models: ["m1"],
+      },
+    ])
+    tty = installFakeTty({ rows: 24 })
+    const mgr = await openManager()
+    const t = tty
+    await waitFor(() => visible(t).includes("jahat"))
+    const out = t.all()
+    expect(out).not.toContain("\x1b[2J")
+    expect(out).not.toContain("\x1b[?1049h")
+    expect(out).not.toContain("\x1b]0;")
+    await mgr.close()
+  })
+
   test("Ctrl+C and Ctrl+D close manager like Esc", async () => {
     for (const key of [KEY.ctrlC, KEY.ctrlD]) {
       tty?.restore()
@@ -564,6 +587,18 @@ describe.serial("provider-manager: non-TTY", () => {
     const out = visible(tty)
     expect(out).toContain("gw")
     expect(out).toContain("2 models")
+  })
+
+  test("id/baseUrl tak terpercaya disanitasi sebelum cetak", async () => {
+    await writeLocalProviders([
+      { id: "jahat", baseUrl: "https://x/v1\x1b[2J", apiKey: "k", models: ["m1"] },
+    ])
+    tty = installFakeTty({ isTTY: false })
+    await runProviderManager({ cwd: workspace, allowLocalConfig: true })
+    const raw = tty.all()
+    expect(raw).not.toContain("\x1b[2J")
+    expect(stripAnsi(raw)).toContain("jahat")
+    expect(stripAnsi(raw)).toContain("https://x/v1")
   })
 })
 

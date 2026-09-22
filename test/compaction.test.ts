@@ -3,7 +3,11 @@
 
 import { describe, expect, test } from "bun:test"
 import type { Message } from "#minicore/core/types.ts"
-import { compactWithLlm, createLlmCompaction } from "../src/policy/compaction.ts"
+import {
+  compactWithLlm,
+  createLlmCompaction,
+  parseCompactKeepTurns,
+} from "../src/policy/compaction.ts"
 
 /** ContextStore tiruan: hanya `messages` yang dibaca kompaksi. */
 const storeOf = (messages: Message[]) => ({ messages }) as never
@@ -234,5 +238,53 @@ describe("createLlmCompaction", () => {
     await expect(
       s.compactAsync!(storeOf(convo(6)), { keepRecentTurns: 2 }, ac.signal),
     ).rejects.toThrow()
+  })
+})
+
+describe("F3.1 anti-thrash kompaksi LLM", () => {
+  // convo(10) + keep 9 = prefix 2 pesan → ringkasan mengganti 2 jadi 1:
+  // progres 1/20 = 5% < 10% = tak berprogres, dua kali = thrash.
+  const narrow = () => storeOf(convo(10))
+  const sig = () => new AbortController().signal
+  test("2× tak berprogres beruntun → jalur LLM mati sesi-ini (lempar ke mekanikal)", async () => {
+    // Gagal di kode lama: panggilan ketiga tetap memanggil provider (sukses).
+    const s = createLlmCompaction({ provider: fakeProvider("RINGKASAN") })
+    await s.compactAsync!(narrow(), { keepRecentTurns: 9 }, sig())
+    await s.compactAsync!(narrow(), { keepRecentTurns: 9 }, sig())
+    await expect(s.compactAsync!(narrow(), { keepRecentTurns: 9 }, sig())).rejects.toThrow(
+      /disabled after thrash/,
+    )
+  })
+  test("kompaksi berprogres me-reset streak (tak pernah dimatikan)", async () => {
+    const s = createLlmCompaction({ provider: fakeProvider("RINGKASAN PADAT") })
+    const wide = () => storeOf(convo(6))
+    // progres 6/12 = 50% tiap kali → streak tak pernah mencapai 2.
+    for (let i = 0; i < 4; i++) {
+      const out = await s.compactAsync!(wide(), { keepRecentTurns: 2 }, sig())
+      expect(String(out[0]!.content)).toContain("RINGKASAN PADAT")
+    }
+  })
+  test("no-op (tak ada yang bisa dibuang) bukan thrash", async () => {
+    const s = createLlmCompaction({ provider: fakeProvider("TAK DIPAKAI") })
+    // keep ≥ isi → early-return tanpa panggilan LLM, berulang-ulang aman.
+    for (let i = 0; i < 4; i++) {
+      const out = await s.compactAsync!(storeOf(convo(1)), { keepRecentTurns: 5 }, sig())
+      expect(out.length).toBe(2)
+    }
+  })
+})
+
+describe("F3.2 parseCompactKeepTurns", () => {
+  test("bilangan ≥1 dipakai; kosong/invalid → undefined (default kernel)", () => {
+    expect(parseCompactKeepTurns(undefined)).toBeUndefined()
+    expect(parseCompactKeepTurns("")).toBeUndefined()
+    expect(parseCompactKeepTurns("  ")).toBeUndefined()
+    expect(parseCompactKeepTurns("4")).toBe(4)
+    expect(parseCompactKeepTurns(" 7 ")).toBe(7)
+    expect(parseCompactKeepTurns("0")).toBeUndefined()
+    expect(parseCompactKeepTurns("-2")).toBeUndefined()
+    expect(parseCompactKeepTurns("2.5")).toBeUndefined()
+    expect(parseCompactKeepTurns("banyak")).toBeUndefined()
+    expect(parseCompactKeepTurns("Infinity")).toBeUndefined()
   })
 })

@@ -340,6 +340,18 @@ test("audit: system prompt menandai data tak-terpercaya", async () => {
   }
 })
 
+test("F3.3: system prompt memuat kontrak verify-before-done", async () => {
+  // Gagal di kode lama: baris kontrak tak ada. Kontrak murah (satu baris
+  // instruksi) yang diukur via kelas VERIFY_FAIL di bench — bukan gate kode.
+  const dir = tmpRoot()
+  try {
+    const sys = await buildSystemPrompt({ cwd: dir })
+    expect(sys).toContain("Verify before claiming done")
+  } finally {
+    await cleanup(dir)
+  }
+})
+
 test("audit: environment menyebut shell per platform (anti tebak ls/pwd)", async () => {
   // Regresi live: di win32 model mencoba `pwd`/`ls -la` (Unix) karena prompt
   // hanya bilang Platform tanpa shell-nya (padahal bash tool = cmd.exe).

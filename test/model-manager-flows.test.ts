@@ -80,6 +80,27 @@ describe("model-manager: non-TTY", () => {
     expect(out).toContain("prov::m1")
     expect(out).toContain("prov::m2")
   })
+
+  test("id/model tak terpercaya disanitasi sebelum cetak", async () => {
+    // Config lokal (repo tak terpercaya) / hasil probe jaringan bisa memuat
+    // escape: `\x1b[2J` di nama model tak boleh membersihkan layar pemanggil.
+    await writeFile(
+      localConfigPath(),
+      JSON.stringify({
+        providers: [
+          { id: "jahat\x1b[2J", baseUrl: "https://x/v1", apiKey: "k", models: ["m\x1b[?1049h1"] },
+        ],
+      }),
+      "utf8",
+    )
+    tty = installFakeTty({ isTTY: false })
+    await runModelManager({ cwd: workspace, allowLocalConfig: true })
+    const raw = tty.all()
+    expect(raw).not.toContain("\x1b[2J")
+    expect(raw).not.toContain("\x1b[?1049h")
+    expect(stripAnsi(raw)).toContain("jahat")
+    expect(stripAnsi(raw)).toContain("m")
+  })
 })
 
 describe("model-manager: alur interactive", () => {

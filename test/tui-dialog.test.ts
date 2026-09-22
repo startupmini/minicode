@@ -1,9 +1,8 @@
 // Test dialog in-flow TUI (cli/tui-dialog.ts): approval, tanya teks,
-// mini line reader, parse pilihan sesi. Tanpa alt-screen sungguhan —
-// deps palsu (append/render) + fake TTY untuk byte stdin.
+// mini line reader. Tanpa alt-screen sungguhan — deps palsu
+// (append/render) + fake TTY untuk byte stdin.
 
 import { afterEach, describe, expect, test } from "bun:test"
-import { parseSessionPick } from "../cli/repl-core.ts"
 import { approvalSummary, readMiniLine, runTuiApproval, runTuiAskText } from "../cli/tui-dialog.ts"
 import type { TuiInputBox } from "../src/ui/tui/input.ts"
 import { type FakeTty, installFakeTty } from "./helpers/tui-harness.ts"
@@ -144,18 +143,5 @@ describe("runTuiAskText", () => {
     const p2 = runTuiAskText(d2.deps, "Lanjut?")
     await tty.send("\r")
     await expect(p2).resolves.toBeNull()
-  })
-})
-
-describe("parseSessionPick", () => {
-  test("nomor/id/kosong", () => {
-    const ids = ["s1", "s2", "s3"]
-    expect(parseSessionPick("0", ids)).toBe("s1")
-    expect(parseSessionPick("2", ids)).toBe("s3")
-    expect(parseSessionPick("9", ids)).toBe("9")
-    expect(parseSessionPick("abc", ids)).toBe("abc")
-    expect(parseSessionPick("", ids)).toBeNull()
-    expect(parseSessionPick("  ", ids)).toBeNull()
-    expect(parseSessionPick(" 1 ", ids)).toBe("s2")
   })
 })

@@ -43,6 +43,8 @@ export type PromptKey =
   | { type: "end" }
   | { type: "up" }
   | { type: "down" }
+  | { type: "pageup" } // gulir transkrip ke atas (TUI; linier: abaikan)
+  | { type: "pagedown" } // gulir transkrip ke bawah (TUI; linier: abaikan)
   | { type: "tab" }
   | { type: "enter" }
   | { type: "esc" }
@@ -271,6 +273,11 @@ export function applyKey(
       const line = trimmed + state.line.slice(at)
       return { state: withLine(line, pointLength(trimmed)), action: "render" }
     }
+    default:
+      // Key asing di masa depan (atau yang hanya milik driver) tak boleh
+      // meledakkan input: abaikan. Tanpa ini `r.state` di pemanggil melempar
+      // TypeError karena applyKey me-return undefined.
+      return { state, action: "none" }
   }
 }
 
@@ -558,6 +565,12 @@ export function decodeKey(s: string, i: number): DecodedKey | null {
       if (kind === "4" && s[i + 3] === "~") return { key: { type: "end" }, width: 4 }
       if (kind === "8" && s[i + 3] === "~") return { key: { type: "end" }, width: 4 }
       if (kind === "3" && s[i + 3] === "~") return { key: { type: "delete" }, width: 4 }
+      // PageUp/PageDown (ESC[5~/[6~): SEBELUMnya jatuh ke catch-all "esc"
+      // sehingga di TUI menekan PgUp pada baris kosong = cancel prompt
+      // (resolve null → streak logic)! Kini tipe sendiri agar driver bisa
+      // mengaitkannya ke scroll transkrip.
+      if (kind === "5" && s[i + 3] === "~") return { key: { type: "pageup" }, width: 4 }
+      if (kind === "6" && s[i + 3] === "~") return { key: { type: "pagedown" }, width: 4 }
       // Shift+Tab (backtab) ESC [ Z — dipakai REPL linier untuk cycle mode.
       // Tanpa cabang eksplisit ini ia jatuh ke catch-all "esc" di bawah,
       // sehingga tipe "shift-tab" tidak pernah dihasilkan decodeKeys.

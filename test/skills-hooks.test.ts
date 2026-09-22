@@ -6,7 +6,13 @@ import { loadAllowlist, matchAllowlist } from "../src/policy/allowlist.ts"
 import { compactWithLlm, createLlmCompaction } from "../src/policy/compaction.ts"
 import { estimateImageTokens, minicodeEstimator } from "../src/policy/context.ts"
 import { createPermissionHandler } from "../src/policy/permission.ts"
-import { findSkill, loadSkills, renderSkill, skillsToSystemPrompt } from "../src/skills/loader.ts"
+import {
+  findSkill,
+  invalidateSkillCache,
+  loadSkills,
+  renderSkill,
+  skillsToSystemPrompt,
+} from "../src/skills/loader.ts"
 
 const tmp = ".tmp-skills-test"
 
@@ -232,4 +238,64 @@ test("createLlmCompaction compactAsync rejects without provider (loop falls back
   await expect(
     strategy.compactAsync?.(store, { keepRecentTurns: 1 }, new AbortController().signal),
   ).rejects.toThrow()
+})
+
+test("F4.1: disable-model-invocation keluar katalog tapi tetap via /nama", async () => {
+  // Gagal di kode lama: skill manual ikut katalog (manualOnly tak ada).
+  const dir = ".tmp-skills-manual"
+  await mkdir(`${dir}/.minicode/skills`, { recursive: true })
+  await writeFile(
+    `${dir}/.minicode/skills/deploy.md`,
+    `---\nname: deploy\ndescription: Deploy ke produksi\ndisable-model-invocation: true\n---\nJalankan deploy.`,
+  )
+  await writeFile(
+    `${dir}/.minicode/skills/lint.md`,
+    `---\nname: lint\ndescription: Lint kode\n---\nLint.`,
+  )
+  try {
+    invalidateSkillCache()
+    const all = await loadSkills(dir)
+    const deploy = all.find((s) => s.name === "deploy")!
+    expect(deploy.manualOnly).toBe(true)
+    const prompt = skillsToSystemPrompt(all)
+    expect(prompt).toContain("/lint")
+    expect(prompt).not.toContain("/deploy")
+    // ...tapi pemanggilan eksplisit tetap jalan (fail-open untuk user).
+    expect((await findSkill("/deploy", dir))?.name).toBe("deploy")
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test("F4.1: aset scripts/references sibling terdaftar sebagai petunjuk baca", async () => {
+  const dir = ".tmp-skills-assets"
+  await mkdir(`${dir}/.minicode/skills/review/scripts`, { recursive: true })
+  await mkdir(`${dir}/.minicode/skills/review/references`, { recursive: true })
+  await writeFile(
+    `${dir}/.minicode/skills/review.md`,
+    `---\nname: review\ndescription: Review kode\n---\nReview.`,
+  )
+  await writeFile(`${dir}/.minicode/skills/review/scripts/check.sh`, "echo hi")
+  await writeFile(`${dir}/.minicode/skills/review/references/guide.md`, "# panduan")
+  try {
+    invalidateSkillCache()
+    const all = await loadSkills(dir)
+    const review = all.find((s) => s.name === "review")!
+    expect(review.assets.scripts).toEqual(["check.sh"])
+    expect(review.assets.references).toEqual(["guide.md"])
+    // Aset hanya petunjuk (bukan eksekusi): muncul di katalog sebagai teks.
+    expect(skillsToSystemPrompt(all)).toContain("scripts: check.sh")
+    // references/guide.md TIDAK boleh menjadi skill "guide" (polusi katalog).
+    // Difilter ke skill proyek ini: ~/.minicode/skills global milik operator
+    // bisa berisi apa saja dan tak boleh membuat test flaky.
+    const local = all.filter((s) => s.path.includes(".tmp-skills-assets"))
+    expect(local.some((s) => s.name === "guide")).toBe(false)
+    // Tanpa folder sibling = kosong, bukan error.
+    await writeFile(`${dir}/.minicode/skills/plain.md`, `---\nname: plain\n---\nBiasa.`)
+    invalidateSkillCache()
+    const plain = (await loadSkills(dir)).find((s) => s.name === "plain")!
+    expect(plain.assets).toEqual({ scripts: [], references: [] })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })

@@ -37,6 +37,59 @@ const input1 = ["minicode › halo"]
 const cursorEnd = { line: 0, col: 16 }
 
 describe("tui screen: enter/leave", () => {
+  test("status CHA (rata kanan footer) bertahan melewati truncate screen", () => {
+    // Kontrak I13/I16: footer merapatkan konteks via CHA `ESC[nG`; screen
+    // men-truncate tiap baris — CHA wajib selamat, kalau tidak konteks
+    // kehilangan posisi rata kanannya (regresi senyap).
+    const r = rig(8, 40)
+    const s = createTuiScreen()
+    s.enter()
+    r.feedFresh()
+    s.present({
+      status: "abc\x1b[11G14.2k",
+      input: input1,
+      cursor: cursorEnd,
+      showCursor: true,
+    })
+    r.feedFresh()
+    // Baris status = baris terakhir (8); konteks mendarat di kolom 11 (CHA).
+    expect(r.grid.text(8).indexOf("14.2k")).toBe(10)
+    s.dispose()
+  })
+
+  test("baris dokumen/input disanitasi (SGR lewat, kontrol dibuang)", () => {
+    // Jaring terakhir screen: sisa kontrol dari regresi writer (mis. alur
+    // capture) tak boleh sampai ke terminal. Status dikecualikan (CHA).
+    const r = rig(8, 40)
+    const s = createTuiScreen()
+    s.enter()
+    r.feedFresh()
+    s.setDocument(["aman\x1b[2J\x1b[?1049hJAHAT", "\x1b[32mhijau\x1b[39m"])
+    s.present({ status: "S", input: input1, cursor: cursorEnd, showCursor: true })
+    const out = r.feedFresh()
+    expect(out).not.toContain("\x1b[2J")
+    expect(out).not.toContain("\x1b[?1049h")
+    expect(out).toContain("\x1b[32m")
+    expect(r.grid.text(5)).toContain("amanJAHAT")
+    expect(r.grid.text(6)).toContain("hijau")
+    s.dispose()
+  })
+
+  test("baris ber-tab diekspan agar tak meluap viewport", () => {
+    // Terminal mengekspan tab ke tab-stop; displayWidth menghitung 0 — tanpa
+    // ekspansi, baris kode ber-tab membungkus liar dan merusak grid.
+    const r = rig(8, 20)
+    const s = createTuiScreen()
+    s.enter()
+    r.feedFresh()
+    s.setDocument(["\tindented", "a\tb"])
+    s.present({ status: "S", input: input1, cursor: cursorEnd, showCursor: true })
+    r.feedFresh()
+    expect(r.grid.text(5)).toBe("        indented")
+    expect(r.grid.text(6)).toBe("a       b")
+    s.dispose()
+  })
+
   test("enter: ?1049h sekali, grid bersih, idempoten", () => {
     const r = rig(10, 40)
     const s = createTuiScreen()
@@ -231,6 +284,48 @@ describe("tui screen: scroll + cap dokumen", () => {
     r.feedFresh()
     expect(r.grid.text(1)).toBe("L1000")
     s.dispose()
+  })
+
+  test("scrollPage satu halaman; PageDown di dasar kembali follow", () => {
+    const r = rig(10, 40)
+    const s = createTuiScreen()
+    s.enter()
+    s.setDocument(Array.from({ length: 20 }, (_, i) => `L${i}`))
+    expect(s.pinnedAbove()).toBe(0)
+    // Transkrip 8 baris (L12..L19); satu halaman = 8.
+    s.scrollPage(true)
+    expect(s.pinnedAbove()).toBe(8)
+    s.present({ status: "S", input: input1, cursor: cursorEnd, showCursor: true })
+    r.feedFresh()
+    expect(r.grid.text(1)).toBe("L4")
+    // PageDown: 4+8 >= maxTop(12) → kembali follow, pin 0.
+    s.scrollPage(false)
+    expect(s.pinnedAbove()).toBe(0)
+    s.present({ status: "S", input: input1, cursor: cursorEnd, showCursor: true })
+    r.feedFresh()
+    expect(r.grid.text(8)).toBe("L19")
+    s.dispose()
+  })
+
+  test("terminal 1-2 baris: status selalu dapat baris", () => {
+    // Gagal di kode lama: out.slice(0, r) membuang baris status.
+    const r2 = rig(2, 40)
+    const s2 = createTuiScreen()
+    s2.enter()
+    r2.feedFresh()
+    s2.setDocument(["a", "b", "c"])
+    s2.present({ status: "S", input: input1, cursor: cursorEnd, showCursor: true })
+    r2.feedFresh()
+    expect(r2.grid.text(2)).toBe("S")
+    s2.dispose()
+    const r1 = rig(1, 40)
+    const s1 = createTuiScreen()
+    s1.enter()
+    r1.feedFresh()
+    s1.present({ status: "S", input: input1, cursor: cursorEnd, showCursor: true })
+    r1.feedFresh()
+    expect(r1.grid.text(1)).toBe("S")
+    s1.dispose()
   })
 
   test("kursor + visibilitas mengikuti present", () => {

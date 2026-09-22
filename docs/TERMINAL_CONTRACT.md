@@ -73,7 +73,9 @@ operasi, bukan pemakaian.
      `?1049l`+`?25h` dijamin pada detach/exit (normal, SIGINT,
      `process.on("exit")`); repaint memakai lebar/tinggi SAAT paint;
      resize = re-layout + redraw penuh dari state (tak ada lukisan absolut
-     yang bisa basi); repaint identik menulis NOL byte (dirty-check);
+     yang bisa basi) — dipicu listener `resize` driver (debounce 50ms +
+     `invalidate()`), BUKAN menunggu keypress; repaint identik menulis NOL
+     byte (dirty-check);
      larangan space-fill selebar terminal (reflow ghost — konteks rata kanan
      via CHA); mode di-repaint saat berubah (Tab/Shift-Tab) tanpa memindahkan
      kursor; `Esc` saat turn = abort (lone-ESC 50ms) tanpa teks, `Ctrl+C 1x`
@@ -112,12 +114,39 @@ operasi, bukan pemakaian.
     terdampar. Resize = re-layout + redraw penuh dari state; repaint identik
     NOL byte; larangan space-fill selebar terminal (reflow ghost — CHA);
     transcript milik app (cap 5000, follow-mode) berisi **jejak prompt**
-    `minicode › <teks>` + output model/ledger seperti PowerShell; keluar
-    mencetak info sesi (`sesi <id> • <N> turn • lanjut: minicode --resume
-    <id>`), riwayat layar dibuang. Lapisan: `src/ui/tui/` hanya impor
-    `src/ui/*` + node builtin (dijaga `test/ui-boundary`). Fallback linear
-    **dihapus** — terminal tak mampu = `exit 1` + pesan actionable (bukan
-    diam); jalur non-interaktif tak tersentuh.
+     `minicode › <teks>` + output model/ledger seperti PowerShell; keluar
+     mencetak info sesi (`sesi <id> • <N> turn • lanjut: minicode --resume
+     <id>`), riwayat layar dibuang. Lapisan: `src/ui/tui/` hanya impor
+     `src/ui/*` + node builtin (dijaga `test/ui-boundary`). Fallback linear
+     **dihapus** — terminal tak mampu = `exit 1` + pesan actionable (bukan
+     diam); jalur non-interaktif tak tersentuh. Jaring sanitasi: baris
+     dokumen/input disanitasi di `screen` (SGR lewat; status dikecualikan
+     karena CHA tepercaya — `test/tui-screen.test.ts`). Tab diekspansi ke
+     tab-stop 8 sebelum ukur/potong (terminal mengekspan; penggaris 0 salah).
+     Scroll transkrip: PageUp/PageDown (PageDown di dasar = follow) +
+      indikator `↑N` di status; submit kembali follow. `/model` & `/provider`
+      & `/sessions` TUI-native: modal popup I17 (tanpa angka, filter live;
+      CRUD provider via `minicode config`) — overlay manager & promptLine
+      bernomor dilarang di dalam sesi (frame overlay tertangkap jadi sampah
+      kontrol; prompt mini mencuri fokus dari daftar).
+17. Modal popup TUI (`src/ui/tui/modal.ts` view murni, controller
+    `cli/tui-modal.ts`, driver `cli/repl-tui.ts`): daftar TANPA nomor +
+    filter live + pilih (`/model`, `/provider`, `/sessions`, effort
+    thinking) tampil sebagai kotak terpusat di dalam viewport fullscreen
+    (border, judul, highlight terpilih, windowing `… N more`), BUKAN
+    lukisan stdout mentah. Aturan: controller TAK melukis/TAK membaca
+    stdin (terima PromptKey per keypress); yang melukis hanya `screen`
+    via `present({modal})` — komposit terpusat, clamp ke terminal mungil,
+    dirty-check tetap berlaku; label dari jaringan/config/disk disanitasi
+    di view (`renderModalBox`), idempoten; `Esc`/Ctrl+C = batal tanpa efek
+    (tutup teratas bila bertumpuk); kunci masuk ke listener modal khusus
+    (pompa utama sudah dilepas pasca-submit), box utama diam, sisa chunk
+    pasca-pick dibuang; non-TTY = fail-closed dengan pesan actionable.
+    Resize = re-layout dari state seperti frame biasa. Overlay lama
+    (`screens/picker.ts`, `model-manager.ts`, `provider-manager.ts`) dan
+    wizard TETAP untuk luar alt-screen (setup pertama, `handleBuiltinCommand`
+    langsung, non-TUI) — yang dipensiunkan hanya pemakaiannya dari dalam
+    sesi TUI (dispatch mencegat lebih dulu; lihat komentar `commands.ts`).
 
 ## Grammar (ringkas — TUI shell-like, I16)
 
@@ -172,10 +201,10 @@ error: `✗ pesan actionable` sekali per kegagalan (`takePendingError`).
 
 ## Peta proteksi (test → invariant)
 
-- `test/footer-render.test.ts` / `test/footer-chrome.test.ts` — I1/I6 (chrome
-  footer: non-TTY nol byte, mode off/print/sticky/auto, region DECSTBM,
-  reset-on-detach, repaint, reserve dropdown, cleanup salinan geometri lama
-  saat tumbuh + detach).
+- `test/footer-render.test.ts` — I1/I6/I13 (render status, repaint
+  identik, tanpa space-fill selebar terminal — konteks rata kanan via CHA).
+  Badai resize cepat tanpa kehilangan state diuji `test/tui-responsive.test.ts`
+  ("rapid resize … tanpa kehilangan state").
 - `test/terminal-contract.test.ts` — I2/I3/I5/I7/I8/I9/I10/I12 (konsolidasi).
 - `test/transient-arbitration.test.ts` — I3/I9/I15 (foreign-write dikomit,
   repaint, overlap signal, non-TTY bebas kontrol; spinner/garis status diam
@@ -194,10 +223,21 @@ error: `✗ pesan actionable` sekali per kegagalan (`takePendingError`).
   (salah pakai = 2, runtime = 1; `exec --json` gagal setup tetap bawa
   envelope summary di stdout).
 - `test/theme.test.ts` — I6 (warna mati saat stdout non-TTY walau COLORTERM).
-- `test/repl-linear.test.ts` / `tui-classic` — I5 interaksi user
-  (Ctrl+C/Esc/idle).
+- `test/repl-core.test.ts` / `test/repl-tui.test.ts` / `test/tui-classic.test.ts`
+  — I5 interaksi user (Ctrl+C/Esc/idle, journey TUI).
 - `test/ui-boundary.test.ts` — I1/I3/I16 batas lapisan (ui tak impor keluar,
   mencakup berkas yang belum di-stage; `src/ui/tui/` hanya `src/ui/*` + builtin).
-- `test/tui-*.test.ts` — I16 (P1: emulator grid layar — redraw identik nol
+- `test/tui-*.test.ts` — I16 (emulator grid layar — redraw identik nol
   byte, resize re-layout benar, leave selalu kembalikan buffer + info sesi;
-  fallback linear utuh).
+  terminal tak mampu DITOLAK jujur: `test/tui-policy.test.ts` mengunci
+  `MINICODE_TUI`/`--no-tui` diabaikan dan gate kapabilitas; sanitasi jaring
+  screen + CHA status: `test/tui-screen.test.ts`; scroll PageUp/PageDown +
+   resize otomatis driver: `test/repl-tui.test.ts`; /model & /provider &
+   /sessions modal-native: `test/repl-tui.test.ts`).
+- `test/tui-modal.test.ts` — I17 (komposit terpusat: tengah presisi, clamp
+  mungil, border utuh, highlight terpilih, stack Esc-pop, dirty-check tak
+  repaint ganda; label jaringan disanitasi; non-TTY fail-closed); journey
+   `/model` + effort bertumpuk, `/provider`, `/sessions`, alias `/models`,
+   resize + Ctrl+C: `test/repl-tui.test.ts`; overlay luar-TUI (wizard,
+   `handleBuiltinCommand` langsung): `test/wizard.test.ts`,
+   `test/cli-commands.test.ts`.

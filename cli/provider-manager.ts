@@ -5,6 +5,7 @@ import { reloadProviders } from "../src/app/provider-layer.ts"
 import { loadConfig, type MinicodeConfig } from "../src/config.ts"
 import { GATEWAY_PRESETS } from "../src/providers/presets.ts"
 import { detectAndSave, removeProvider } from "../src/providers/provision.ts"
+import { sanitizeAnsiLine } from "../src/ui/render/sanitize.ts"
 import {
   type ProviderActionResult,
   type ProviderRow,
@@ -30,8 +31,11 @@ export async function runProviderManager(opts: {
   if (!process.stdin.isTTY) {
     const cfg = await loadConfig(opts.cwd, { allowLocal: opts.allowLocalConfig })
     console.log("\nProviders:")
+    // id/baseUrl dari config (lokal repo tak terpercaya) — sanitasi sebelum cetak.
     for (const p of cfg.providers)
-      console.log(`  ${p.id} - ${p.baseUrl} (${p.models.length} models)`)
+      console.log(
+        `  ${sanitizeAnsiLine(p.id)} - ${sanitizeAnsiLine(p.baseUrl)} (${p.models.length} models)`,
+      )
     return
   }
 

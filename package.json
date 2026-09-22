@@ -60,6 +60,8 @@
     "test:live": "bun scripts/test-live.ts",
     "test:qa": "bun scripts/live-qa.ts",
     "test:coverage": "bun test --coverage",
+    "gate:fast": "bun x tsc --noEmit && bun run lint && bun test && bun run gate:coverage && bun run gate:pack && bun run gate:bash && bun run bench:smoke && bun run audit:harness",
+    "gate:slow": "bun experiments/extreme-bash-fuzz.ts --rounds 12 && bun experiments/extreme-shadow-git.ts && bun experiments/extreme-mcp-adversarial.ts",
     "gate:coverage": "bun scripts/coverage-gate.ts",
     "gate:bash": "bun experiments/bash-bypass-probe.ts && bun experiments/bash-bypass-probe.ts --mode allowlist",
     "gate:pack": "bun scripts/pack-check.ts",

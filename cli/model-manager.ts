@@ -12,7 +12,54 @@ import {
   writeConfigAtomic,
 } from "../src/config.ts"
 import { effortOptionsForModel } from "../src/providers/effort.ts"
+import { sanitizeAnsiLine } from "../src/ui/render/sanitize.ts"
 import { type ModelRow, runModelManagerView } from "../src/ui/screens/model-manager.ts"
+
+/**
+ * Tulis mutasi ke file scope tempat provider itu benar-benar hidup (semua
+ * salinan, bukan hasil merge) — diekstrak dari closure runModelManager agar
+ * alur TUI-native bisa memakai semantik tulis yang sama. Lempar bila provider
+ * tak ada di scope mana pun.
+ */
+export async function mutateProviderInScopes(
+  cwd: string | undefined,
+  id: string,
+  mutate: (p: ProviderEntry) => void,
+): Promise<void> {
+  const paths = cwd ? [resolve(cwd, LOCAL), globalConfigPath()] : [globalConfigPath()]
+  let touched = false
+  for (const path of paths) {
+    let cfg: MinicodeConfig
+    try {
+      cfg = normalizeConfig(JSON.parse(await readFile(path, "utf8")))
+    } catch {
+      continue
+    }
+    const p = cfg.providers.find((x) => x.id === id)
+    if (!p) continue
+    mutate(p)
+    await writeConfigAtomic(path, cfg)
+    touched = true
+  }
+  if (!touched) throw new Error(`provider not found: ${id}`)
+}
+
+/**
+ * Simpan reasoning effort satu model (dipakai alur TUI-native /model).
+ * effort "default" = hapus tersimpan. Semantik tulis = onSetEffort view.
+ */
+export async function saveModelEffort(
+  cwd: string | undefined,
+  modelId: string,
+  effort: "default" | "low" | "medium" | "high",
+): Promise<void> {
+  const sep = modelId.indexOf("::")
+  const pid = sep === -1 ? modelId : modelId.slice(0, sep)
+  await mutateProviderInScopes(cwd, pid, (p) => {
+    if (effort === "default") delete (p as { reasoningEffort?: string }).reasoningEffort
+    else (p as ProviderEntry).reasoningEffort = effort
+  })
+}
 
 /** Minimal model registry: list, select, add, and remove. */
 export async function runModelManager(opts: {
@@ -27,7 +74,11 @@ export async function runModelManager(opts: {
 }): Promise<void> {
   const cfg = await loadConfig(opts.cwd, { allowLocal: opts.allowLocalConfig })
   if (!process.stdin.isTTY) {
-    for (const p of cfg.providers) for (const model of p.models) console.log(`${p.id}::${model}`)
+    // Daftar ke scrollback: id/model dari config (lokal repo tak terpercaya)
+    // dan hasil probe jaringan — sanitasi sebelum cetak.
+    for (const p of cfg.providers)
+      for (const model of p.models)
+        console.log(`${sanitizeAnsiLine(p.id)}::${sanitizeAnsiLine(model)}`)
     return
   }
 
@@ -49,24 +100,7 @@ export async function runModelManager(opts: {
   const updateProviderInScopes = async (
     id: string,
     mutate: (p: ProviderEntry) => void,
-  ): Promise<void> => {
-    const paths = opts.cwd ? [resolve(opts.cwd, LOCAL), globalConfigPath()] : [globalConfigPath()]
-    let touched = false
-    for (const path of paths) {
-      let cfg: MinicodeConfig
-      try {
-        cfg = normalizeConfig(JSON.parse(await readFile(path, "utf8")))
-      } catch {
-        continue
-      }
-      const p = cfg.providers.find((x) => x.id === id)
-      if (!p) continue
-      mutate(p)
-      await writeConfigAtomic(path, cfg)
-      touched = true
-    }
-    if (!touched) throw new Error(`provider not found: ${id}`)
-  }
+  ): Promise<void> => mutateProviderInScopes(opts.cwd, id, mutate)
 
   return runModelManagerView({
     initialRows: rowsOf(cfg.providers),

@@ -42,6 +42,9 @@ export type TuiInputEvent =
   | { type: "submit"; line: string }
   | { type: "cancel" }
   | { type: "render" }
+  /** Gulir transkrip (PageUp/PageDown): box tidak mengubah state input,
+   * driver yang menggeser viewport screen. */
+  | { type: "scroll"; dir: 1 | -1 }
   /** Diteruskan mentah ke driver (mode cycle, compact, thinking, search):
    * engine me-return none untuk ini dan state tak berubah. */
   | { type: "key"; key: PromptKey }
@@ -137,6 +140,10 @@ export function createTuiInput(opts: TuiInputOptions): TuiInputBox {
 
   const handleKey = (key: PromptKey): TuiInputEvent[] => {
     if (DRIVER_KEYS.has(key.type)) return [{ type: "key", key }]
+    // Scroll transkrip: intersepsi SEBELUM applyKey (yang tak mengenalnya
+    // dan me-return undefined → crash `r.state`). State input utuh.
+    if (key.type === "pageup") return [{ type: "scroll", dir: -1 }]
+    if (key.type === "pagedown") return [{ type: "scroll", dir: 1 }]
     // Ctrl+R: masuk search (dari baris apapun); di dalam search, tangani
     // di bawah. Keluar search dulu untuk tombol lain.
     if (key.type === "ctrl-r" && !search) {

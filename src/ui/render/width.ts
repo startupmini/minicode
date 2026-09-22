@@ -77,6 +77,10 @@ function inRanges(cp: number, ranges: [number, number][]): boolean {
 export function charWidth(cp: number): number {
   if (cp === 0) return 0
   // C0/C1 control: tidak menempati kolom (dan seharusnya tidak sampai ke layar).
+  // CATATAN: TAB (0x09) juga 0 di sini — terminal mengekspansinya ke tab-stop
+  // (satu tab bisa 1-8 kolom), jadi teks BER-TAB tak boleh diukur/dipotong
+  // langsung: lewat expandTabs() dulu (dipakai screen TUI). Linear scrollback
+  // aman karena terminal yang mengekspan, bukan renderer.
   if (cp < 0x20 || (cp >= 0x7f && cp < 0xa0)) return 0
   if (inRanges(cp, ZERO)) return 0
   if (inRanges(cp, WIDE)) return 2
@@ -160,6 +164,43 @@ export function escapeLength(s: string, i: number): number {
   if (next === undefined) return 1
   const code = next.charCodeAt(0)
   return code >= 0x30 && code <= 0x7e ? 2 : 1
+}
+
+/**
+ * Ekspansi TAB ke spasi (tab-stop 8, gaya terminal) sebelum diukur/dipotong.
+ * Wajib di batas grid TUI: displayWidth menghitung tab 0 kolom sementara
+ * terminal mengekspansinya — baris ber-tab akan meluap dan membungkus liar,
+ * merusak pemetaan baris viewport. SGR dipertahankan; tab di dalam sekuens
+ * escape tak mungkin ada (escapeLength memakannya utuh).
+ */
+export function expandTabs(s: string, tabStop = 8): string {
+  if (!s.includes("\t")) return s
+  let out = ""
+  let w = 0
+  let i = 0
+  while (i < s.length) {
+    if (s[i] === "\x1b") {
+      const len = escapeLength(s, i)
+      if (len > 0) {
+        out += s.slice(i, i + len)
+        i += len
+        continue
+      }
+    }
+    const cp = s.codePointAt(i)!
+    if (cp === 0x09) {
+      const n = tabStop - (w % tabStop)
+      out += " ".repeat(n)
+      w += n
+      i += 1
+      continue
+    }
+    const size = cp > 0xffff ? 2 : 1
+    out += s.slice(i, i + size)
+    w += charWidth(cp)
+    i += size
+  }
+  return out
 }
 
 /**

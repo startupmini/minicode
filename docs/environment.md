@@ -39,6 +39,7 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 |---|---|
 | `MINICODE_PROVIDER_ORDER` | Urutkan provider agnostik tanpa edit config: `openai,anthropic,deepseek` |
 | `MINICODE_EMBED_MODEL` | Model embedding untuk memory/vector (default `text-embedding-3-small`) |
+| `MINICODE_COMPACT_KEEP_TURNS` | Override keepRecentTurns kompaksi (bilangan ≥1; invalid → default kernel + warn) |
 | `MINICODE_MEMORY_SCOPE` | Scope baca memory: `cwd` (default) \| `global` \| `all` (gabung, tanpa silent shadowing) |
 | `MINICODE_AUTO_MEMORY` | `0` → matikan auto-simpan summary/snippet ke memory (opt-out) |
 | `MINICODE_REPOMAP` | `regex` → paksa repo-map regex (skip LSP) |
@@ -62,7 +63,6 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | `MINICODE_BELL` | `0` → matikan bell `\x07` saat approval (aksesibilitas) |
 | `MINICODE_STATUSLINE` | `rich` → statusline turn menampilkan token kumulatif + biaya sesi (default hemat) |
 | `MINICODE_A11Y` | `1` → live-region approval untuk screen reader (baris polos tanpa ANSI) |
-| `MINICODE_TUI` | `auto` (default: TUI bila TTY+mampu) \| `always` \| `never` (paksa linier; pasangan `--no-tui`) |
 | `MINICODE_SHOW_THINKING` | `1` → tampilkan reasoning model (`--verbose` atau env) |
 | `MINICODE_THINKING` | `off` → kirim `enable_thinking:false` ke OpenAI-compat (DeepSeek) |
 | `NO_COLOR` | Set apa pun selain `0` → matikan seluruh warna |

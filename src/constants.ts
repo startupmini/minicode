@@ -25,6 +25,11 @@ export const LIMITS = {
   AGENTS_MD_MAX_CHARS: 3_000,
   COMPACTION_SUMMARY_MAX_CHARS: 1_500,
   COMPACTION_LLM_TIMEOUT_MS: 10_000,
+  /** F3.1 anti-thrash: kompaksi LLM yang mengurangi <10% dihitung tak
+   * berprogres (satu output tool raksasa mendominasi jendela); 2× beruntun
+   * = thrash → jalur LLM dimatikan sesi-ini (mekanikal saja). */
+  COMPACTION_THRASH_MIN_PROGRESS: 0.1,
+  COMPACTION_THRASH_MAX_STREAK: 2,
   EMBEDDING_TIMEOUT_MS: 3_500,
   /** Budget TOTAL semua attempt embedding (3 header × 2 URL sekuensial):
    * tanpa ini endpoint lambat-menjawab menahan RAG setup ~21 dtk (6×3,5 dtk

@@ -31,8 +31,11 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
 
 ---
 
-## Status eksekusi terbaru (update 2026-09-18)
+## Status eksekusi terbaru (update 2026-09-22)
 
+- ✅ AUDIT KONSISTENSI + KETANGGUHAN UI (2026-09-22): ditemukan jalur cetak yang melewatkan sanitasi untuk teks dari jaringan/config lokal — label `runPicker` (TTY & non-TTY), daftar provider-manager, daftar model-manager, `minicode providers|models|sync` (`cli/commands/providers.ts`), echo `config add/detect/mcp/lsp` (`cli/commands/config.ts`), dan listing non-TTY kedua controller. Bukti: 3 test diferensial (picker, provider-manager TTY, provider+model-manager non-TTY) **gagal di kode lama** — `\x1b[2J`/`\x1b[?1049h`/OSC terbukti sampai ke terminal. `truncateToWidth` SENGAJA tidak dijadikan lapis sanitasi (pernah dicoba: merusak CHA rata-kanan footer) — sanitasi satu gerbang di `sanitize.ts`, dikunci test regresi CHA di `test/width.test.ts` + `test/tui-screen.test.ts`. Dead code `formatStepCalls` dihapus. Gate: `2196 pass 0 fail / tsc / lint 0 warn / coverage 83.13/84.20 (min 80/84) / pack 22/22 / gate:bash 0/0 / harness-audit 60/60 / web:check lolos`.
+- ✅ PLAN PENGUATAN HARNESS F0–F5 DIEKSEKUSI (2026-09-21, tanpa sandbox/harga-live, minimalis): F0 TUI satu-satunya (REPL linier + `--no-tui`/`MINICODE_TUI` dihapus dari kode; 9 titik dokumen dibersihkan termasuk peta proteksi yang menunjuk test tak-ada; P14 diamandemen); F1 token first-class (`Turn:` di `/status`, `totalTokens` per baris step-trace + `peakTotalTokens` di stats, panduan angka token); F2 bench beku 13 tugas (2 gagal-by-design jujur-berhenti) + taksonomi `VERIFY_FAIL/MAX_STEPS/NO_PROGRESS/ABORT` + `eval-gate --observe-tokens` + `bench/HARNESS-CARD.md`; F3 anti-thrash kompaksi (2× <10% → LLM mati sesi-ini) + `MINICODE_COMPACT_KEEP_TURNS` + kontrak verify-before-done; F4.1 skills (`disable-model-invocation`, aset scripts/references) + F4.2 `gate:fast`/`gate:slow` + `slow.yml` nightly (extreme+docker keluar CI); F5 `minicode acp` (subset JSON-RPC stdio: initialize/run/cancel/shutdown, deny-headless, sesi baru per run). Gate: `2212 pass 0 fail / tsc / lint 0 warn / coverage 83.29/84.26 (min 80/84) / pack 22/22 / harness-audit 60/60 / web:check lolos / gate:bash 0/0 / bench smoke 13/13`. Audit pasca-eksekusi menemukan + memperbaiki 4 bug nyata: (1) folder aset skill `references/*.md` ikut ter-load sebagai skill (polusi katalog) — rekursi kini melewati `<skill>/scripts|references`; (2) akumulasi teks ACP tanpa cap (risiko memori run panjang); (3) KRITIS: `handleAcp` event-driven return sinkron → dispatch selesai → one-shot "acp" (NoProviderError exit 1) berlomba dengan stdin — kini menunggu `Promise<never>` + regression test tulis-tertunda (terbukti gagal di kode lama); (4) handler `close` memakai `flight.active()` yang salah saat run masih await (respons run hilang) — kini flag `busy` + tulis ke pipe-mati di-try/catch.
+- ✅ AUDIT LOGIKA RENDER TUI (2026-09-22): temuan T1 KRITIS `/model` & `/provider` (+ picker effort) berjalan di dalam `suspend` capture — frame overlay tertangkap lalu disuntik ke dokumen sebagai sampah kontrol + layar beku (dibuktikan empiris: `HAS_CUP=true`); T2 turn skill `/nama` dibungkus suspend (layar beku + frame tertimbun) — keduanya kini alur TUI-native (daftar statis + `promptLine`, paritas pilih + effort + resi; turn skill tanpa suspend); T3 resize idle basi (driver tanpa listener — kontrak mengeklaim ada) — kini listener + debounce 50ms + `invalidate()`; T4 tab dihitung 0 kolom (baris kode meluap di grid) — kini `expandTabs` (tab-stop 8) di batas lukis; T5 `/status` + `/sync` cetak id/model/reason mentah — kini sanitasi; T6 screen jadi jaring sanitasi doc/input (status dikecualikan/CHA); T7 scroll tak tersambung (PageUp jatuh ke catch-all Esc = cancel!) — kini PageUp/PageDown + indikator `↑N` + tipe key `pageup/pagedown` + default aman `applyKey`; T8 baris parsial abort dipotong — kini wrap; T9 layout `r<=2` buang status — kini status selalu dapat baris; T10 `catch{}` render tanpa sinyal — kini hitung + warn sekali. Guard: journey `/model` & `/provider` + scroll + resize otomatis (`test/repl-tui.test.ts`), unit scroll/tab/layout/key (`test/tui-screen.test.ts`, `test/width.test.ts`, `test/tui-input.test.ts`, `test/prompt-engine.test.ts`, `test/repl-core.test.ts`); kontrak I13/I16 + `docs/repl.md` + help diperbarui. Gate: `2213 pass 0 fail / tsc / lint 0 warn / coverage 83.31/84.30 (min 80/84) / pack 22/22 / harness-audit 60/60 / web:check lolos / gate:bash 0/0 / bench smoke 13/13`.
 - ✅ FIX SETUP PERTAMA (2026-09-18): `minicode` dari home selalu tampak
   berhenti di `⠴ Menyiapkan sesi…` — spinner sesi di composition root menulis
   frame `\r\x1b[2K` mentah ke stderr selama wizard setup (picker gateway +
@@ -325,27 +328,32 @@ Skor saat ini **8.2**. Target **P0 (≤3 hari): 8.4**, **P1 (sprint): 8.6**. Ber
 - `memory status --json`: kategori + scope tampil ✅; summary persist opt-out ✅ (kecuali `MINICODE_AUTO_MEMORY=0`).
 - SWE-Lite-20: dataset pin + harness benar + fake hijau + **run nyata 0/20 (terkonfoundasi env — lihat P1.2)** ✅; angka leaderboard-comparable ⏳ (butuh Docker per-instance).
 
-## P14 — TUI alt-screen (keputusan pemilik 2026-09-19, mengamandemen I1)
+## P14 — TUI alt-screen (keputusan pemilik 2026-09-19, diamandemen: TUI satu-satunya)
 
 Latar: footer lengket tidak selamat dari resize PowerShell/Windows Terminal
 (salinan ganda + hilang total — 3 ronde fix menutup sebagian, kelas risikonya
 tetap: lukisan absolut + reflow terminal). Pemilik memutuskan: sesi
-interaktif boleh berjalan sebagai TUI alternate-screen satu sesi penuh,
+interaktif berjalan sebagai TUI alternate-screen satu sesi penuh,
 didesain senatural bash (prompt `minicode ›`, binding Tab/Ctrl+C tetap,
 riwayat layar dibuang + info sesi saat keluar, zero-dep hand-rolled).
 
-Keputusan terkunci: `MINICODE_TUI=auto|always|never` + `--no-tui`
-(auto = TUI bila TTY+mampu, linear bila tidak); wizard tetap linear;
-jalur non-interaktif tak tersentuh; fallback linear first-class (aksesibel).
-Kontrak: I16 baru di `docs/TERMINAL_CONTRACT.md` (I1–I15 tetap mengikat
-penuh mode linear). Lapisan: `src/ui/tui/` hanya impor `src/ui/*` + node
-builtin (dijaga `test/ui-boundary.test.ts` yang kini mencakup berkas belum
-di-stage); controller di `cli/repl-tui.ts` via DI.
+Keputusan terkunci (amandemen: TUI satu-satunya UI interaktif, tanpa opsi):
+REPL linier DIHAPUS (`cli/index.ts` selalu `runTuiRepl`); flag `--no-tui`
+dan env `MINICODE_TUI` DIHAPUS dan diabaikan bila diset (dikunci
+`test/tui-policy.test.ts`); terminal tak mampu (non-TTY/dumb/legacy/mungil)
+DITOLAK jujur (`exit 1` + pesan actionable, kontrak I16) — bukan fallback
+diam-diam; wizard tetap linear (pra-sesi, transient); jalur non-interaktif
+tak tersentuh. Kontrak: I16 di `docs/TERMINAL_CONTRACT.md`. Lapisan:
+`src/ui/tui/` hanya impor `src/ui/*` + node builtin (dijaga
+`test/ui-boundary.test.ts`); controller di `cli/repl-tui.ts` via DI;
+orkestrasi loop/dispatch/turn TUNGGAL di `cli/repl-core.ts`.
 
-Fase: P0 kontrak+boundary (ini) → P1 model dokumen-baris + renderer +
+Fase: P0 kontrak+boundary → P1 model dokumen-baris + renderer +
 emulator grid harness → P2 input (prompt-engine reuse) → P3 transcript/box/
-policy/info-sesi → P4 fallback-a11y/docs/re-audit. Selesai bila: gate hijau
-+ resize brutal tanpa duplikat (live WT) + fallback linear terbukti.
+policy/info-sesi → P4 penolakan-jujur/docs/re-audit. Selesai bila: gate hijau
++ resize brutal tanpa duplikat (live WT) + penolakan terminal tak mampu
+terbukti + SEMUA dokumen tak lagi menyebut opsi linear
+(`docs/cli.md`, `docs/environment.md`, `AGENTS.md`).
 
 ## Yang sengaja TIDAK dikerjakan
 

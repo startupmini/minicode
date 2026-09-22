@@ -9,8 +9,8 @@ Di dalam TUI alternate-screen: ketik `/` di prompt → dropdown (max 10 item + `
 |---|---|
 | `/help` | Daftar perintah + skill + tombol penting |
 | `/help tombol` | Pintasan papan tombol lengkap |
-| `/provider` | Kelola provider: tambah (`a`), hapus (`d`), ubah (`e`). Aktif ditandai `(aktif)`; hapus menyebut jumlah model yang ikut hilang |
-| `/model [cari]` | Picker semua `provider::model` (argumen = filter awal; di dalam ketik langsung untuk cari live, Esc keluar filter). Tambah = Ctrl+N, hapus = tombol Del. Enter = pilih + atur thinking effort (`default/low/medium/high`, tersimpan di provider, berlaku sesi berikutnya; Esc = batal total). Effort non-default tampil badge `[low|medium|high]` |
+| `/provider` | Daftar bernomor + pilih angka (pakai model pertama provider itu). Tambah/hapus/ubah via `minicode config` di luar sesi |
+| `/model [cari]` | Daftar bernomor `provider::model` (argumen = filter substring, aktif ditandai). Pilih angka → pilih + atur thinking effort bernomor bila keluarga thinking (`default/low/medium/high`, tersimpan di provider, berlaku sesi berikutnya; kosong = batal/keep). Kosong = batal diam; angka ngawur = usage |
 | `/sync` | Segarkan daftar model semua provider (hanya bilang restart bila benar ada model baru) |
 | `/undo` | Batalkan perubahan berkas turn terakhir |
 | `/redo` | Terapkan ulang yang dibatalkan |
@@ -25,7 +25,7 @@ Di dalam TUI alternate-screen: ketik `/` di prompt → dropdown (max 10 item + `
 
 Alias (jalan, tidak diiklankan di `/help`): `/models` → `/model`, `/providers` → `/provider`, `/usage` & `/cost` → `/status`, `/resume [id]` → `/sessions [id]`, `/compact`.
 
-Catatan dropdown: Tab menawarkan builtin + `/compact` `/thinking` `/expand` `/minimize` agar pendek. `/mode` tak masuk dropdown (Tab/Shift+Tab sudah memutar mode). `/undo /redo /clear /copy /history` tidak masuk dropdown tapi ada di `/help`. `/thinking` = toggle tampilan reasoning (expand/minimize); effort via picker Enter di `/model`.
+Catatan dropdown: Tab menawarkan builtin + `/compact` `/thinking` `/expand` `/minimize` agar pendek. `/mode` tak masuk dropdown (Tab/Shift+Tab sudah memutar mode). `/undo /redo /clear /copy /history` tidak masuk dropdown tapi ada di `/help`. `/thinking` = toggle tampilan reasoning (expand/minimize); effort via angka di `/model`.
 
 Did-you-mean: typo `/sessoons` → `Did you mean /sessions?` (jarak ≤ 2).
 
@@ -37,6 +37,7 @@ Did-you-mean: typo `/sessoons` → `Did you mean /sessions?` (jarak ≤ 2).
 | `shift+tab` | Putar permission |
 | `tab` | Lengkapi dari dropdown; di baris kosong = putar mode |
 | `↑` / `↓` | History, atau pilih item dropdown bila terbuka |
+| `PgUp` / `PgDn` | Gulir transkrip (pin); PgDn di dasar = kembali follow (`↑N` di status = pin N baris) |
 | `ctrl+o` | Putar tool call compact/expanded (juga `/compact`) |
 | `ctrl+t` | Toggle tampilan reasoning expanded/minimized (juga `/thinking`) |
 | `+` / `-` | Saat turn berjalan: expand / minimize section aktif (thinking & tool) |

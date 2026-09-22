@@ -69,4 +69,20 @@ describe("harness P1.2: step trace", () => {
     expect(txt).toContain('"denied":true')
     expect(txt).toContain('"sandbox":"none"')
   })
+
+  test("F1.2: totalTokens kumulatif bertahan round-trip jsonl", async () => {
+    dir = await mkdtemp(join(tmpdir(), "minicode-harness-p1-"))
+    await writeStepTrace(dir, {
+      sessionId: "s-2",
+      timestamp: new Date().toISOString(),
+      kind: "step",
+      step: 3,
+      tools: 2,
+      errors: 0,
+      sandbox: "none",
+      totalTokens: 1234,
+    })
+    const txt = await readFile(`${dir}/.minicode/step-traces.jsonl`, "utf8")
+    expect(txt).toContain('"totalTokens":1234')
+  })
 })

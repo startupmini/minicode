@@ -60,7 +60,27 @@ const CASES: [string, boolean][] = [
   ["rm -rf ..", true],
   ["rm -rf ../..", true],
   ["rm -rf $(pwd)/../..", true],
-  // ── negatif: harus TETAP diizinkan (di mode auto) ──
+  // ── kelas 11: escape caret command-line cmd.exe (temuan F1, audit 2026-09-20) ──
+  // cmd.exe melepas `^` (di luar kutip ganda) sebelum mengeksekusi. Guard lama
+  // memeriksa nama LITERAL, jadi satu caret memindahkan perintah dari "ditahan"
+  // ke "lolos": `type .e^nv` membaca .env, `echo x > .e^nv` menimpanya.
+  ["type .e^nv", true],
+  ["ty^pe .env", true],
+  ["cat .e^nv", true],
+  ["copy .e^nv out.txt", true],
+  ["findstr x .e^nv", true],
+  ["echo x > .e^nv", true],
+  ["set /p x=<.e^nv", true],
+  // ── kelas 12: %VAR% pada argumen PEMBACA (temuan F2) ──
+  // Target redirect berpola %NAMA% sudah ditahan; argumen pembaca belum —
+  // resolve() melihat `%USERPROFILE%` sebagai nama direktori DI DALAM cwd.
+  ["type %USERPROFILE%\\notes.txt", true],
+  ["type %TEMP%\\x.txt", true],
+  // ── kelas 13: pembaca berkas bawaan cmd.exe (temuan F3) ──
+  // `for /f` itu loop, bukan utilitas → tak ada di READERS sehingga targetnya
+  // tak pernah diperiksa, walau `type .env` ditahan.
+  ["for /f %i in (.env) do @echo %i", true],
+
   // Mode `allowlist` sengaja lebih ketat: operasi tulis lewat shell memang
   // ditahan di sana, jadi mkdir/cp/rm ditandai auto-only.
   ["git status", false],
@@ -74,14 +94,22 @@ const CASES: [string, boolean][] = [
   ["grep -r TODO src", false],
   ["echo $PATH", false],
   ["cat package.json", false],
+  // Tetangga terdekat kelas 11/12 — harus tetap lolos: caret literal di dalam
+  // kutip ganda (cmd.exe tidak memprosesnya di sana) dan `%` tunggal.
+  ['echo "a^b"', false],
+  ["echo 100%.txt", false],
+  ["type src/index.ts", false],
 ]
 
-// Perintah tulis yang sah di mode `auto` tapi memang ditolak di `allowlist`.
+// Perintah sah di mode `auto` yang memang tak punya pola `allowlist`: operasi
+// tulis lewat shell (mode allowlist menahannya by design) dan loop bawaan
+// seperti `for /f` yang bukan utilitas.
 const AUTO_ONLY_BENIGN: string[] = [
   "mkdir -p src/new",
   "cp src/a.ts src/b.ts",
   "rm -rf node_modules/.cache",
   "touch src/new.ts",
+  "for /f %i in (src/list.txt) do @echo %i",
 ]
 
 const h = createPermissionHandler({ mode: modeArg, root: process.cwd() })

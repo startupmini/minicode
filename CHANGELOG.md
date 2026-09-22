@@ -2,7 +2,9 @@
 
 ## [Unreleased]
 
-## [0.10.0] - 2026-09-21 — Satu TUI fullscreen + popup komposit + i18n dwibahasa
+### Fixed
+- **Bash-guard: tiga kelas bypass `cmd.exe` ditutup (audit keamanan 2026-09-20)**: `type .e^nv` dan `ty^pe .env` LOLOS saat `type .env` ditahan — cmd.exe melepas caret `^` di luar kutip ganda sebelum eksekusi, sementara guard mencocokkan nama berkas LITERAL, jadi satu caret cukup untuk **membaca** `.env` atau **menimpanya** (`echo x > .e^nv` lolos, `echo x > .env` ditolak). Kini `stripCaretEscapes` (quote-aware — caret di dalam kutip ganda tidak disentuh agar `echo "a^b"` tak berubah arti) berjalan sebelum seluruh aturan nama/jail, dan target redirect diperiksa dalam bentuk kanoniknya. Dua celah sekelas ikut ditutup: (1) argumen **pembaca** berpola `%VAR%` kini fail-closed seperti target redirect — `type %USERPROFILE%\notes.txt` dulu ALLOW karena `resolve()` melihat `%USERPROFILE%` sebagai direktori di dalam cwd; (2) set berkas `for /f … in (…)` — pembaca bawaan cmd.exe yang bukan utilitas sehingga tak ada di `READERS` — kini diekstrak (`forFileSets`) dan diperiksa (`for /f %i in (.env) do @echo %i` dulu ALLOW). Bukti: A/B assertion identik terhadap kode HEAD vs ber-patch → **10 pelanggaran (semua serangan lolos) menjadi 0**, tanpa over-block baru (`echo "a^b"`, `echo a^^b`, `echo 100%.txt`, `%PATH%` di `echo`, dan set `for /f` jinak tetap lolos di kedua versi). Guard `test/bash-guard-escaping.test.ts` (6 test: diferensial kontrol-vs-treatment + integrasi mode default `auto`); korpus `gate:bash` diperluas 38 → 48 pola serangan / 19 perintah sah (0 bypass · 0 over-block di kedua mode); ketiga kelas didokumentasikan di `docs/security.md`.
+
 
 ### Changed
 - **Satu tampilan interaktif: TUI fullscreen** (`bun cli/index.ts` langsung

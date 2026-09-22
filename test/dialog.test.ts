@@ -2,12 +2,27 @@
 // SELAYAR tepat `rows` baris, clamp kolom, fallback ASCII, judul, truncate
 // defensif. Murni (tanpa IO) — deterministik penuh.
 import { expect, test } from "bun:test"
-import { stripAnsi } from "../src/ui/render/theme.ts"
+import { stripAnsi, supportsUtf8 } from "../src/ui/render/theme.ts"
 import { displayWidth } from "../src/ui/render/width.ts"
 import { dialogBox, dialogFrame } from "../src/ui/screens/dialog.ts"
 
 const plain = (lines: string[]) => lines.map((l) => stripAnsi(l))
 const textOf = (out: string[]) => plain(out).join("\n")
+
+// Glyph bingkai mengikuti kapabilitas terminal (dialog.ts `boxChars()`):
+// Linux/CI & terminal UTF-8 → Unicode, konsol Windows legacy / MINICODE_ASCII=1
+// → ASCII. Test mengunci STRUKTUR (jumlah baris, geometri, marker truncate) dan
+// memilih glyph sesuai kapabilitas — hardcode Unicode dulu membuat test merah di
+// konsol Windows nyata tanpa ada regresi kode (asumsi lingkungan test).
+const U8 = supportsUtf8()
+const BOX = U8 ? { tl: "┌", bl: "└" } : { tl: "+", bl: "+" }
+const SHADE = U8 ? "░" : "."
+
+// Baris border BAWAH = kemunculan TERAKHIR glyph sudut bawah. Di mode ASCII
+// sudut atas dan bawah sama-sama "+", jadi `findIndex` mengembalikan baris atas
+// dan tinggi kotak terhitung 1 (merah palsu).
+const lastIdx = (lines: string[], glyph: string) =>
+  lines.map((l) => l.includes(glyph)).lastIndexOf(true)
 
 test("frame tepat rows baris, judul + isi + footer muat", () => {
   const out = dialogFrame({ title: "Models", body: ["a", "b"], footer: "Esc close" }, 80, 24)
@@ -33,7 +48,7 @@ test("isi melebihi layar dipotong defensif + marker", () => {
   // 100 isi vs jatah 12-4(chrome)-1(marker)=7 → 93 terpotong, marker tampil.
   // Border bawah tetap ada (regresi: dulu total r0+1 hingga border terbuang).
   expect(plain(out).join("\n")).toContain("93")
-  expect(plain(out).join("\n")).toContain("└")
+  expect(plain(out).join("\n")).toContain(BOX.bl)
 })
 
 test("fallback ASCII tanpa MINICODE_ASCII tak ada glyph box", () => {
@@ -66,7 +81,7 @@ test("judul kosong = tanpa baris judul (chrome menyesuaikan)", () => {
   // mengandung │, jadi hitung via ┌/└, bukan via │).
   const boxH = (o: string[]) => {
     const p = textOf(o).split("\n")
-    return p.findIndex((l) => l.includes("└")) - p.findIndex((l) => l.includes("┌")) + 1
+    return lastIdx(p, BOX.bl) - p.findIndex((l) => l.includes(BOX.tl)) + 1
   }
   expect(boxH(noTitle)).toBe(boxH(withTitle) - 1)
   expect(noTitle).toHaveLength(12)
@@ -76,8 +91,8 @@ test("maxWidth/maxHeight mengecilkan kotak (dialog mungil)", () => {
   const out = dialogFrame({ title: "", body: ["a", "b", "c"], maxWidth: 30, maxHeight: 8 }, 100, 24)
   expect(out).toHaveLength(24)
   const p = textOf(out).split("\n")
-  const top = p.findIndex((l) => l.includes("┌"))
-  const bottom = p.findIndex((l) => l.includes("└"))
+  const top = p.findIndex((l) => l.includes(BOX.tl))
+  const bottom = lastIdx(p, BOX.bl)
   // border atas + 3 isi + border bawah = 5 ≤ maxHeight 8.
   expect(bottom - top + 1).toBe(5)
   const widestBox = Math.max(...p.slice(top, bottom + 1).map((l) => displayWidth(l.trimStart())))
@@ -92,8 +107,8 @@ test("dialogBox: kotak saja tanpa backdrop + tanpa bayangan (popup komposit)", (
   expect(box.lines).toHaveLength(4)
   expect(box.topRow).toBe(Math.floor((24 - 4) / 2) + 1)
   const text = plain(box.lines).join("\n")
-  expect(text).toContain("┌")
-  expect(text).toContain("└")
+  expect(text).toContain(BOX.tl)
+  expect(text).toContain(BOX.bl)
   // Bayangan ▓ dihapus (artefak strip di Windows Terminal) — tak ada lagi.
   expect(text).not.toContain("▓")
   expect(text).not.toContain("#")
@@ -105,10 +120,10 @@ test("dialogFrame: backdrop redup ░ bukan hitam polos", () => {
   expect(out).toHaveLength(12)
   const p = textOf(out).split("\n")
   // Baris backdrop (di luar kotak) berisi pola shade, bukan kosong.
-  const top = p.findIndex((l) => l.includes("┌"))
+  const top = p.findIndex((l) => l.includes(BOX.tl))
   expect(top).toBeGreaterThan(0)
-  expect(p[0]).toContain("░")
-  expect(p[p.length - 1]).toContain("░")
+  expect(p[0]).toContain(SHADE)
+  expect(p[p.length - 1]).toContain(SHADE)
 })
 
 test("minWidth: kotak tak pernah lebih sempit dari minimum (geometri stabil)", () => {

@@ -721,6 +721,13 @@ describe("audit #12: delegation behavior", () => {
   })
 
   test("delegasi headless tanpa TTY: deny + terlihat (§20 §24)", async () => {
+    // Paksa non-TTY: gate approver membaca `process.stdin.isTTY`, yang mengikuti
+    // terminal pemanggil `bun test`. Di shell ber-TTY gate lolos → tool jalan →
+    // `r.calls` berisi dan test merah tanpa ada regresi (flaky di mesin dev,
+    // hijau di CI detached). Jalur yang diuji adalah HEADLESS, jadi statusnya
+    // ditentukan di sini — pola yang sama dengan test plan di bawah.
+    const prevTty = process.stdin.isTTY
+    Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true })
     const r = await runScenario("delegatedeny", {
       tools: [delegateTaskTool],
       mode: "auto",
@@ -741,6 +748,7 @@ describe("audit #12: delegation behavior", () => {
       expect(r.calls).toEqual([])
       expect(reqText(r.requests[1])).toMatch(/denied|deny|approv/i)
     } finally {
+      Object.defineProperty(process.stdin, "isTTY", { value: prevTty, configurable: true })
       await cleanup(r.dir)
     }
   })

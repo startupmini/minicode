@@ -233,6 +233,12 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       try {
         opts.onCancel()
       } catch {}
+      // Tutup layar sebelum batal: openAltScreen sudah menulis ENTER fisik
+      // (?1049h) — bail tanpa close membocorkan alt-screen (terminal tertinggal
+      // di buffer alternatif) dan hold painter-nya (I27) tidak pernah lepas.
+      try {
+        screen.close()
+      } catch {}
       resolve()
       return
     }

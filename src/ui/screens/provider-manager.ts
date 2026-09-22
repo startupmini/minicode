@@ -179,6 +179,11 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
       try {
         console.log(`⚠ ${t("gate.tuiProvider")}`)
       } catch {}
+      // Tutup layar sebelum batal: openAltScreen sudah menulis ENTER fisik —
+      // bail tanpa close membocorkan alt-screen + hold painter (I27).
+      try {
+        screen.close()
+      } catch {}
       resolve()
       return
     }

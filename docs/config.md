@@ -17,7 +17,7 @@ Di mana pengaturan dan data Minicode tinggal, dan bagaimana file lokal yang tak 
 }
 ```
 
-- `providers` — bisa juga diisi lewat wizard/`minicode config add`/`/provider` (14 preset, lihat [Config & Provider](config-providers.md)).
+- `providers` — bisa juga diisi lewat wizard/`minicode config add`/`/provider` (15 preset, lihat [Config & Provider](config-providers.md)).
 - `mcpServers` — dua bentuk: stdio (`command`+`args`) dan HTTP (`url`+opsional `headers`). Detail transport di [MCP & LSP](mcp-lsp.md).
 - `verifyCommand` — dipakai `--verify` bila auto-detect tidak menemukan (urutan deteksi: `typecheck` → `test` → `tsconfig`).
 - `bashAllowlist` — pola koma/pola glob perintah bash yang dianggap aman (mode `allowlist`).

@@ -7,6 +7,7 @@ test("presets: daftar lengkap & id unik", () => {
   expect(ids).toContain("openai")
   expect(ids).toContain("anthropic")
   expect(ids).toContain("openrouter")
+  expect(ids).toContain("yolo-auto")
   expect(ids).toContain("deepseek")
   expect(ids).toContain("opencode-zen")
   expect(ids).toContain("google")

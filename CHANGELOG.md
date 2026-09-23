@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **Preset gateway `yolo-auto`**: endpoint OpenAI-compatible (`https://yolo-auto.com/v1`) dengan alias model `yolo`/`yolo-small`; katalog model penuh di-auto-detect via `GET /models` seperti preset lain, tanpa modul provider baru (lihat [docs/config-providers.md](docs/config-providers.md)).
+
 ## [0.10.1] - 2026-09-22 — Integrasi pasca-branch: ACP + token first-class + gate cepat/lambat + fix keamanan F-CRIT
 
 

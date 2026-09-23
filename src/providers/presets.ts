@@ -38,6 +38,14 @@ export const GATEWAY_PRESETS: GatewayPreset[] = [
     ],
   },
   {
+    // Katalog penuh lewat GET /v1/models (auto-detect); fallback sengaja
+    // hanya alias stabil, sebab nama model dasar bisa berubah kapan saja.
+    id: "yolo-auto",
+    label: "Yolo-Auto (yolo/yolo-small)",
+    baseUrl: "https://yolo-auto.com/v1",
+    fallbackModels: ["yolo", "yolo-small"],
+  },
+  {
     id: "deepseek",
     label: "DeepSeek (deepseek-chat/reasoner)",
     baseUrl: "https://api.deepseek.com/v1",

@@ -1,6 +1,6 @@
 # Config & Provider
 
-## 14 preset gateway
+## 15 preset gateway
 
 `Gateway >` hanya menampilkan `[0] Label` tanpa URL (minimalis, tanpa bocor endpoint).
 
@@ -9,6 +9,7 @@
 | `openai` | OpenAI | gpt, o-series |
 | `anthropic` | Anthropic | Claude, streaming `tool_use` |
 | `openrouter` | OpenRouter | Gateway 75+ model |
+| `yolo-auto` | Yolo-Auto | OpenAI-compatible, alias `yolo`/`yolo-small` |
 | `deepseek` | DeepSeek | chat/reasoner |
 | `opencode-zen` | OpenCode Zen | Gateway |
 | `google` | Google Gemini | Konteks 1M, `thought_signature` pass-through |
@@ -22,7 +23,7 @@
 | `generic` | OpenAI-compatible umum | vLLM / LM Studio |
 | `custom` | Custom URL | Pseudo-preset untuk baseUrl sendiri |
 
-Alur: wizard & `/provider` (add `[0] OpenAI` … `[14] Custom URL`) → API key ter-masking → auto-detect models via `GET /models` timeout 4 dtk → provider otomatis pindah saat pilih model beda provider (tanpa restart, via `reloadProviders()` setelah `Gateway >2`).
+Alur: wizard & `/provider` (add `[0] OpenAI` … `[15] Custom URL`) → API key ter-masking → auto-detect models via `GET /models` timeout 4 dtk → provider otomatis pindah saat pilih model beda provider (tanpa restart, via `reloadProviders()` setelah `Gateway >2`).
 
 ## Dua jalur autentikasi
 

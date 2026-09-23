@@ -66,7 +66,7 @@ export async function ptyAvailable(): Promise<PtyAvailability> {
     const child = spawn(
       process.execPath,
       ["--eval", "setTimeout(() => { console.log('MINICODE-PTY-PROBE'); process.exit(0) }, 150)"],
-      { name: "xterm-256color", cols: 80, rows: 24, env: { ...process.env } },
+      { name: "xterm-256color", cols: 80, rows: 24, env: cleanEnvForChild() },
     )
     let out = ""
     child.onData((d: string) => (out += d))
@@ -81,6 +81,26 @@ export async function ptyAvailable(): Promise<PtyAvailability> {
     availability = { ok: false, reason: `spawn PTY gagal: ${(e as Error).message}` }
   }
   return availability
+}
+
+/**
+ * Env anak yang HERMETIK (audit F1b): proses test berbagi `process.env`, dan
+ * test lain men-set `MINICODE_*`/`OPENAI_*` (mis. MINICODE_HOME, MINICODE_SANDBOX,
+ * MINICODE_TIMEOUT_MS, ANTHROPIC_AUTH_TOKEN, OPENAI_BASE_URL). Anak yang
+ * mewarisinya menjalankan jalur kode berbeda — terbukti: test `exec --json`
+ * hijau sendirian tapi GAGAL di suite penuh (env provider bocor → anak mencoba
+ * jaringan, envelope tak sesuai harapan). Strip semua prefiks provider/kontrol
+ * lalu isi ulang hanya yang memang dibutuhkan test.
+ */
+export function cleanEnvForChild(extra: Record<string, string | undefined> = {}) {
+  const providerOrControlEnv =
+    /^(MINICODE_|OPENAI|ANTHROPIC|DEEPSEEK|AGENT_|TOKENHARBOR|GEMINI|GROQ|MISTRAL|OPENROUTER|TAVILY|CODEX_)/
+  const out: Record<string, string | undefined> = {}
+  for (const [k, v] of Object.entries(process.env)) {
+    if (providerOrControlEnv.test(k)) continue
+    out[k] = v
+  }
+  return { ...out, ...extra }
 }
 
 export interface TuiPtyHandle {
@@ -154,18 +174,15 @@ export async function spawnTui(opts: SpawnTuiOptions = {}): Promise<TuiPtyHandle
     cols,
     rows,
     cwd: dir,
-    env: {
-      ...process.env,
+    // Env hermetic (lihat cleanEnvForChild): env host tak boleh menentukan
+    // jalur kode anak — kredensial provider host juga tak diwarisi.
+    env: cleanEnvForChild({
       NO_COLOR: "1",
       MINICODE_HOME: home,
       HOME: home,
       USERPROFILE: home,
-      // Jangan warisi kredensial host — paksa jalur config seeded.
-      OPENAI_API_KEY: undefined,
-      ANTHROPIC_API_KEY: undefined,
-      DEEPSEEK_API_KEY: undefined,
       ...opts.env,
-    },
+    }),
   })
 
   let acc = ""

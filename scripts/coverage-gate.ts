@@ -13,6 +13,7 @@
 // Usage: bun scripts/coverage-gate.ts [--lines N] [--funcs N]
 
 import { spawnSync } from "node:child_process"
+import { readFileSync } from "node:fs"
 
 function getArg(name: string, fallback: number): number {
   const i = process.argv.indexOf(name)
@@ -60,24 +61,81 @@ function getArg(name: string, fallback: number): number {
 // abort hint, MINICODE_MOTION, kursor sync-update, form idle + 13 test
 // baru): 83,42–83,45/84,64–84,65. Lines +0,14 — margin terlalu tipis untuk
 // dikunci 84,6 (berisiko flaky); kunci tetap 84,5; funcs tetap 80.
+// Audit menyeluruh 2026-09-23 (F1 skip PTY nyata, F5 lantai per-berkas, F9
+// env docs, F13 batas lapisan): 83,42 funcs / 84,64 lines, 2350 pass / 20 skip
+// (run penuh 259 dtk). Funcs NAIK dikunci 82 (margin 1,4 pp — sebelumnya 80
+// dibiarkan 3,4 pp di bawah hasil terukur, jadi tak pernah menangkap regresi);
+// lines tetap 84,5 (margin 0,14 pp sudah disengaja anti-flaky sejak 0.10.x).
 const MIN_LINES = getArg("--lines", 84.5)
-const MIN_FUNCS = getArg("--funcs", 80)
+const MIN_FUNCS = getArg("--funcs", 82)
 
-const res = spawnSync(
-  process.execPath,
-  ["test", "--coverage", "--reporter", "dots", "--timeout", "30000"],
-  {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    maxBuffer: 32 * 1024 * 1024,
-  },
-)
-const output = `${res.stdout ?? ""}\n${res.stderr ?? ""}`
+// ── lantai per-berkas modul kritis (audit F5) ──
+// Gate agregat BUTA terhadap modul tunggal yang jatuh: policy/jail 97% → 5%
+// tak terlihat selama total tertahan. Daftar ini SENGAJA per-berkas, bukan
+// per-direktori — modul ber-lantai rendah karena batas proses/jaringan
+// (mcp/server.ts dijalankan test-nya sebagai subprocess sehingga tak
+// terinstrumentasi; update-check/web_search/lsp butuh server nyata) tak boleh
+// memaksa exemption global.
+// Angka = hasil terukur 2026-09-23 dikurangi margin ≥5 pp. Bila berkas
+// dipindah/di-rename, gate GAGAL ("tidak ada di laporan") supaya lantai tak
+// pernah jadi zombie yang diam-diam tak memeriksa apa pun.
+// Blind spot yang DICATAT (belum dilantai, alasan diverifikasi):
+//   src/mcp/server.ts 5,06% lines — test-nya spawn server (proses lain);
+//   cli/auto-update.ts 18,18% — butuh rilis npm nyata;
+//   src/lib/atomic-write.ts 53,73% — cabang retry Windows EPERM/EBUSY;
+//   src/policy/pricing.ts 68,78% / src/tools/web_search.ts 48,87% — jaringan.
+const CRITICAL_FILES: [string, number, number][] = [
+  // [path, min funcs, min lines]
+  ["src/policy/permission.ts", 90, 90],
+  ["src/policy/jail.ts", 92, 92],
+  ["src/policy/bash-guard.ts", 92, 92],
+  ["src/policy/executor.ts", 92, 92],
+  ["src/policy/scrub.ts", 95, 95],
+  ["src/lib/net.ts", 90, 90],
+  ["src/lib/trusted-exec.ts", 90, 90],
+  ["src/lib/safe-open.ts", 58, 90],
+  ["src/session/journal.ts", 85, 90],
+  ["src/session/checkpoint.ts", 80, 85],
+  ["src/providers/router.ts", 78, 90],
+  ["src/ui/render/sanitize.ts", 90, 90],
+  ["src/ui/render/width.ts", 90, 90],
+  ["src/ui/tui/app.ts", 85, 90],
+  ["src/tools/bash.ts", 72, 78],
+]
 
-if (res.status !== 0 && !/\d+ pass/.test(output)) {
-  process.stderr.write(output.slice(-4000))
-  console.error("[coverage-gate] test run failed")
-  process.exit(1)
+/** Baris laporan coverage untuk satu berkas (pemisah path platform apa pun). */
+function criticalRow(output: string, path: string): { funcs: number; lines: number } | null {
+  const esc = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\//g, "[\\\\/]")
+  const re = new RegExp(`^\\s*${esc}\\s*\\|\\s*([\\d.]+)\\s*\\|\\s*([\\d.]+)\\s*\\|`, "m")
+  const m = re.exec(output)
+  return m ? { funcs: Number(m[1]), lines: Number(m[2]) } : null
+}
+
+// Opsi `--report <file>`: evaluasi ulang laporan yang SUDAH ada tanpa
+// menjalankan suite (4 menit). Dipakai saat CI merah untuk tahu modul mana yang
+// jatuh, dan untuk menguji gate ini sendiri tanpa membayar satu run penuh.
+const reportIdx = process.argv.indexOf("--report")
+const savedReport = reportIdx !== -1 ? process.argv[reportIdx + 1] : undefined
+
+let output: string
+if (savedReport) {
+  output = readFileSync(savedReport, "utf8")
+} else {
+  const res = spawnSync(
+    process.execPath,
+    ["test", "--coverage", "--reporter", "dots", "--timeout", "30000"],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 32 * 1024 * 1024,
+    },
+  )
+  output = `${res.stdout ?? ""}\n${res.stderr ?? ""}`
+  if (res.status !== 0 && !/\d+ pass/.test(output)) {
+    process.stderr.write(output.slice(-4000))
+    console.error("[coverage-gate] test run failed")
+    process.exit(1)
+  }
 }
 
 const failCount = Number(/(\d+) fail/.exec(output)?.[1] ?? "0")
@@ -105,6 +163,31 @@ const okLines = lines >= MIN_LINES
 console.log(
   `[coverage-gate] funcs ${funcs.toFixed(2)}% (min ${MIN_FUNCS}) · lines ${lines.toFixed(2)}% (min ${MIN_LINES})`,
 )
+
+// Lantai per-berkas modul kritis — dijalankan SEBELUM keputusan agregat agar
+// modul yang jatuh sendiri selalu terlihat, walau total masih di atas ambang.
+let criticalFail = 0
+for (const [path, minF, minL] of CRITICAL_FILES) {
+  const f = criticalRow(output, path)
+  if (!f) {
+    console.error(`[coverage-gate] FAIL ${path}: tidak ada di laporan coverage (dipindah/rename?)`)
+    criticalFail++
+    continue
+  }
+  if (f.funcs < minF) {
+    console.error(`[coverage-gate] FAIL ${path}: funcs ${f.funcs.toFixed(2)}% < ${minF}%`)
+    criticalFail++
+  }
+  if (f.lines < minL) {
+    console.error(`[coverage-gate] FAIL ${path}: lines ${f.lines.toFixed(2)}% < ${minL}%`)
+    criticalFail++
+  }
+}
+console.log(
+  `[coverage-gate] lantai per-berkas: ${CRITICAL_FILES.length - criticalFail}/${CRITICAL_FILES.length} modul kritis hijau`,
+)
+if (criticalFail > 0) process.exit(1)
+
 if (okFuncs && okLines) process.exit(0)
 if (!okFuncs) console.error(`[coverage-gate] FAIL funcs ${funcs.toFixed(2)}% < ${MIN_FUNCS}%`)
 if (!okLines) console.error(`[coverage-gate] FAIL lines ${lines.toFixed(2)}% < ${MIN_LINES}%`)

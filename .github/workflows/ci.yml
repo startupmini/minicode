@@ -71,8 +71,9 @@ jobs:
           MINICODE_GREP_ENGINE: js
         run: bun test test/phase1-tools.test.ts test/tools.test.ts
 
-      # Gate keamanan: korpus 38 pola serangan + 15 perintah sah. Exit 1 bila
-      # ada bypass ATAU over-block, jadi regresi ke dua arah tertangkap.
+      # Gate keamanan: korpus 62 pola serangan + 24 perintah sah (sumber angka:
+      # experiments/bash-bypass-probe.ts). Exit 1 bila ada bypass ATAU
+      # over-block, jadi regresi ke dua arah tertangkap.
       - name: Bash bypass probe (auto)
         working-directory: minicode
         run: bun experiments/bash-bypass-probe.ts
@@ -126,3 +127,35 @@ jobs:
         run: bun run web:build
       - name: Check web
         run: bun run web:check
+
+  # Smoke Windows (temuan audit F2): jalur khusus Windows — pelepasan caret dan
+  # %VAR% cmd.exe, junction/symlink owned-state, fsutil/mklink/hardlink, jail
+  # path case-insensitive — TIDAK PERNAH dilihat job ubuntu, sehingga regresinya
+  # dulu hanya ketahuan di mesin dev (dan probe PTY/ConPTY di sebagian mesin
+  # Windows memang rusak; lihat test/helpers/pty-harness.ts).
+  # Suite penuh tetap milik job ubuntu; di sini subset yang menyentuh jalur
+  # Windows (terverifikasi hijau di Windows: 337 pass / 3 skip / 0 fail, ~4 dtk).
+  ci-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: bun install
+      - name: Typecheck
+        run: bun x tsc --noEmit
+      - name: Lint (biome)
+        run: bun run lint
+      - name: Test jalur Windows (guard cmd.exe, jail, permission, tool, render)
+        run: >-
+          bun test test/bash-guard-escaping.test.ts test/phase2-security.test.ts
+          test/permission-matrix.test.ts test/deny-reason.test.ts
+          test/jail-realpath.test.ts test/safe-open.test.ts test/tool-toctou.test.ts
+          test/width.test.ts test/sanitize.test.ts test/tui-geometry.test.ts
+          test/cli-subcommands.test.ts
+      - name: Bash bypass probe (auto)
+        run: bun experiments/bash-bypass-probe.ts
+      - name: Pack check (npm tarball)
+        run: bun run gate:pack

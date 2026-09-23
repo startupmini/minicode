@@ -67,14 +67,30 @@ Options:
   --budget <usd>      session cost limit
   --budget-strict     unknown cost + spend counts as over budget (fail-closed default)
   --tool-scope <s>    full (default) | explore (read-only subset)
+  --tui               deprecated no-op (interactive mode is always the fullscreen TUI)
 
 TUI: /help /provider /model /sync /status /sessions /init /exit /mode /undo /redo /clear /copy /history /compact /thinking /minimize
-Keys: Enter submit · Tab/Shift+Tab mode · Up/Down history · PgUp/PgDn scroll · Ctrl+R search · Esc/Ctrl+C abort turn · Ctrl+D exit
+Keys: Enter submit · Tab/Shift+Tab mode · Up/Down history · PgUp/PgDn scroll (Shift = half page)
+      Home/End jump to transcript top/tail · Ctrl+R search · Esc/Ctrl+C abort turn (twice = quit) · Ctrl+D exit
+Subcommand flags (config/mcp/sessions/skills/exec/...): see 'minicode <cmd> --help'.
 `
 
 const args = process.argv.slice(2)
 function getArg(name: string): string | undefined {
   return rawGetArg(args, name)
+}
+
+// Guard runtime: `AbortSignal.any()` (dipakai policy/context, tools/git,
+// memory/vector, mcp/server, providers/detect) baru tersedia di Bun 1.1.x.
+// `engines.bun` di package.json hanya DOKUMENTASI (npm menegakkan node/npm,
+// bukan bun), jadi tanpa guard ini user Bun lama cuma melihat
+// "AbortSignal.any is not a function" di tengah turn pertama — jauh dari
+// penyebabnya. Gagal cepat + sebut versi minimum.
+if (typeof AbortSignal.any !== "function") {
+  process.stderr.write(
+    `minicode requires Bun >= 1.1.13 (AbortSignal.any missing; detected ${process.versions.bun ?? "unknown"})\n`,
+  )
+  process.exit(1)
 }
 
 // Update-notifier untuk mode NON-interaktif (one-shot/pipe/subcommand):
@@ -130,6 +146,13 @@ if (hasFlag(args, "--version") || args.includes("-v")) {
 }
 
 if (args.includes("-h") || args.includes("--help")) {
+  if (args.includes("--tui")) {
+    // Peringatan usang TETAP dicetak walau help dicetak: sensitivitas ke
+    // urutan argumen = alasan klasik flag "diam" tak ketahuan (audit F8).
+    process.stderr.write(
+      "[deprecated] --tui is a no-op: interactive mode is always the fullscreen TUI\n",
+    )
+  }
   if (args.includes("--json")) {
     // machine-readable help for CI (minicode --help --json)
     console.log(
@@ -173,6 +196,7 @@ if (args.includes("-h") || args.includes("--help")) {
           { flag: "--budget-strict", desc: "unknown cost + spend counts as over budget (default)" },
           { flag: "--tool-scope <full|explore>", desc: "tool subset (explore = read-only)" },
           { flag: "--json", desc: "JSON output (help/exec)" },
+          { flag: "--tui", desc: "deprecated no-op (interactive is always the fullscreen TUI)" },
         ],
       }),
     )
@@ -209,6 +233,14 @@ let maxSteps = maxStepsRaw ? Number(maxStepsRaw) : undefined
 if (maxStepsRaw && (!Number.isFinite(maxSteps) || (maxSteps as number) <= 0)) {
   process.stderr.write(`[warn] --max-steps requires a positive number, ignoring "${maxStepsRaw}"\n`)
   maxSteps = undefined
+}
+// `--tui` alias usang (TUI fullscreen kini satu-satunya tampilan interaktif):
+// tetap diterima agar skrip lama tak pecah, tapi TIDAK diam — tanpa peringatan
+// user mengira flag-nya masih mengubah perilaku.
+if (args.includes("--tui")) {
+  process.stderr.write(
+    "[deprecated] --tui is a no-op: interactive mode is always the fullscreen TUI\n",
+  )
 }
 const ctxWindowRaw = getArg("--context-window")
 let contextWindowTokens = ctxWindowRaw ? Number(ctxWindowRaw) : undefined

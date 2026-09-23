@@ -55,6 +55,13 @@ export class McpHttpTransport implements McpTransportLike {
   private seq = 0
   private sessionId: string | null = null
   private closed = false
+  /**
+   * Set bila host TERBUKTI privat (audit F7): egress fire-and-forget
+   * (notify/close) mengikuti keputusan ini supaya tak ada jalur yang
+   * melewati validasi host. request()/connect() tetap THROW eksplisit agar
+   * pemanggil melihat penolakannya.
+   */
+  private blockedPrivate = false
   private readonly url: URL
   private readonly extraHeaders: Record<string, string>
   private readonly allowPrivate: boolean
@@ -76,9 +83,29 @@ export class McpHttpTransport implements McpTransportLike {
     this.allowPrivate = opts.allowPrivateHost === true
   }
 
+  /**
+   * Validasi host satu tempat (audit F7): strict + noCache seperti jalur
+   * embedding (`vector.ts`) — MCP HTTP adalah URL konfigurasi pihak ketiga
+   * seumur panjang, jadi fail-open 400 ms + cache 30 dtk (default
+   * `isPrivateHostWithDns`) adalah postur yang salah untuknya. Mengembalikan
+   * true bila egress BOLEH jalan; false + tandai `blockedPrivate` bila host
+   * terbukti privat.
+   */
+  private async checkHost(): Promise<boolean> {
+    if (this.allowPrivate) return true
+    // noCache: tiap pengecekan resolve ulang (DNS bisa berubah setelah
+    // connect — klaim F-21). strict: kegagalan/timeout DNS = BLOKIR
+    // (fail-closed), karena config server MCP bebas menunjuk ke mana pun.
+    if (await isPrivateHostWithDns(this.url.hostname, { strict: true, noCache: true })) {
+      this.blockedPrivate = true
+      return false
+    }
+    return true
+  }
+
   async connect(): Promise<void> {
     // Validasi host sebelum request PERTAMA, bukan setelahnya.
-    if (!this.allowPrivate && (await isPrivateHostWithDns(this.url.hostname))) {
+    if (!(await this.checkHost())) {
       throw new Error(
         `MCP http: private host rejected: ${this.url.hostname} (set allowPrivateHost for local servers)`,
       )
@@ -104,12 +131,15 @@ export class McpHttpTransport implements McpTransportLike {
     signal?: AbortSignal,
   ): Promise<unknown> {
     if (this.closed) throw new Error("MCP http: transport already closed")
+    if (this.blockedPrivate)
+      throw new Error(`MCP http: private host rejected: ${this.url.hostname}`)
     signal?.throwIfAborted()
     // F-21: validasi ulang tiap request (bukan hanya saat connect): sesi MCP
-    // berumur panjang dan DNS bisa berubah setelah connect. Cache default
-    // (30 dtk) membuat cek ini murah; bukan penutup TOCTOU check-then-connect
-    // (itu fundamental, lihat web_fetch), melainkan penutup drift sesi.
-    if (!this.allowPrivate && (await isPrivateHostWithDns(this.url.hostname))) {
+    // berumur panjang dan DNS bisa berubah setelah connect. noCache membuat
+    // cek ini resolve ulang (bukan penutup TOCTOU check-then-connect yang
+    // fundamental — lihat web_fetch — melainkan penutup drift sesi); strict
+    // = kegagalan DNS memblokir, bukan mengizinkan.
+    if (!(await this.checkHost())) {
       throw new Error(`MCP http: private host rejected: ${this.url.hostname}`)
     }
     const id = ++this.seq
@@ -178,23 +208,30 @@ export class McpHttpTransport implements McpTransportLike {
   }
 
   notify(method: string, params: Record<string, unknown> = {}): void {
-    if (this.closed) return
+    if (this.closed || this.blockedPrivate) return
     // Notifikasi tak punya id dan tak menunggu balasan; kegagalan tidak fatal.
-    void fetch(this.url.toString(), {
-      method: "POST",
-      headers: this.headers("application/json, text/event-stream"),
-      body: JSON.stringify({ jsonrpc: "2.0", method, params }),
-      redirect: "manual",
-      signal: AbortSignal.timeout(LIMITS.MCP_HANDSHAKE_TIMEOUT_MS),
-    }).catch(() => {})
+    // Audit F7: fire-and-forget BUKAN berarti tanpa validasi — host dicek
+    // sebelum mengirim; bila privat, blokir transport ini selamanya (sesuai
+    // request()/connect()) alih-alih mengirim lalu diam.
+    void (async () => {
+      if (!(await this.checkHost())) return
+      await fetch(this.url.toString(), {
+        method: "POST",
+        headers: this.headers("application/json, text/event-stream"),
+        body: JSON.stringify({ jsonrpc: "2.0", method, params }),
+        redirect: "manual",
+        signal: AbortSignal.timeout(LIMITS.MCP_HANDSHAKE_TIMEOUT_MS),
+      }).catch(() => {})
+    })()
   }
 
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
     // Spec: DELETE mengakhiri sesi. Server yang tak mendukung akan menolak —
-    // itu bukan kegagalan bagi kita.
-    if (this.sessionId) {
+    // itu bukan kegagalan bagi kita. Audit F7: cleanup TIDAK boleh jadi jalur
+    // egress tanpa validasi host (blockedPrivate = host terbukti privat).
+    if (this.sessionId && !this.blockedPrivate && (await this.checkHost())) {
       await fetch(this.url.toString(), {
         method: "DELETE",
         headers: this.headers("application/json"),

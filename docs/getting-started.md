@@ -1,6 +1,6 @@
 # Instalasi
 
-Prasyarat tunggal: **`bun >= 1.0`** — runtime Minicode, bukan Node.js. `npm` hanya dipakai untuk distribusi, bukan untuk menjalankan.
+Prasyarat tunggal: **`bun >= 1.1.13`** — runtime Minicode, bukan Node.js. `npm` hanya dipakai untuk distribusi, bukan untuk menjalankan. (Lantai versi: kode memakai `AbortSignal.any()` yang absen di Bun 1.0.x; `minicode` gagal cepat dengan pesan jelas bila versi lebih lama.)
 
 > Kernel MiniCore ikut repo di `vendor/minicore`, jadi **tanpa clone tambahan**. Clone sibling `../minicore` hanya dibutuhkan bila kamu mau sync ulang kernel via `bun run vendor:minicore`.
 

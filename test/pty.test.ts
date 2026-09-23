@@ -4,26 +4,35 @@
 // pseudo-terminal sungguhan, mengirim byte dari sisi keyboard, dan
 // meng-assert terhadap output mentah — bukan mock stdin/stdout.
 //
-// Test yang butuh terminal hidup otomatis SKIP dengan alasan jelas bila
-// platform tak mampu (lib tak terpasang, ConPTY rusak di sebagian mesin
-// Windows) — fail-open ke skip, BUKAN hijau palsu.
+// Test yang butuh terminal hidup di-SKIP lewat runner (bun mencetak `(skip)`)
+// bila platform tak mampu (lib tak terpasang, ConPTY rusak di sebagian mesin
+// Windows). Audit TUI-008: sebelumnya skip ditulis `console.warn` + `return`,
+// dan runner menghitungnya PASS — terbukti `5 pass / 0 fail` padahal empat
+// test tidak mengeksekusi satu byte pun, jadi klaim "BUKAN hijau palsu" di
+// komentar ini tidak terpenuhi. Skip kini TERLIHAT di ringkasan runner, dan di
+// CI Linux ketiadaan PTY = kegagalan (audit runtime tak boleh jadi no-op di
+// lingkungan yang seharusnya mendukungnya).
 
 import { describe, expect, test } from "bun:test"
-import { ptyAvailable, spawnTui, type TuiPtyHandle } from "./helpers/pty-harness.ts"
+import {
+  cleanEnvForChild,
+  ptyAvailable,
+  spawnTui,
+  type TuiPtyHandle,
+} from "./helpers/pty-harness.ts"
 
 const pty = await ptyAvailable()
 const runsPty = pty.ok
 const skipReason = pty.reason
 
-// Wrapper skip eksplisit — alasan tercetak di output test.
+/** Nama test yang membawa alasan skip — ringkasan runner cukup untuk diagnosis. */
+function skipped(name: string, reason: string): string {
+  return `${name} [skip: ${reason}]`
+}
+
+// Wrapper skip NYATA: `test.skipIf` (bun melaporkan `(skip)`, bukan `(pass)`).
 function ptyTest(name: string, fn: () => Promise<void>) {
-  test(name, async () => {
-    if (!runsPty) {
-      console.warn(`[pty] SKIP: ${skipReason}`)
-      return
-    }
-    await fn()
-  })
+  test.skipIf(!runsPty)(runsPty ? name : skipped(name, skipReason), fn)
 }
 
 async function withTui(
@@ -78,56 +87,62 @@ describe("PTY: exec --json tetap bersih di TTY", () => {
     const dir = mkdtempSync(join(tmpdir(), "minicode-pty-exec-"))
     const home = join(dir, "home")
     mkdirSync(join(home, ".minicode"), { recursive: true })
-    await new Promise<void>((r) => {
+    // Hermetic: env provider host (OPENAI_*, ANTHROPIC_*, TOKENHARBOR_*, …)
+    // TIDAK diwarisi. Sebelum ini anak sempat mencoba jaringan dengan kunci host
+    // dan envelope stdout-nya berbeda → hijau sendirian, merah di suite penuh.
+    const env = cleanEnvForChild({
+      NO_COLOR: "1",
+      MINICODE_HOME: home,
+      HOME: home,
+      USERPROFILE: home,
+    })
+    const res = await new Promise<{ stdout: string; stderr: string; code: number }>((r) => {
       execFile(
         process.execPath,
         [resolve(import.meta.dir, "..", "cli", "index.ts"), "exec", "--json", "--cwd", dir, "halo"],
-        {
-          encoding: "utf8",
-          // Exec = non-interaktif; PTY TIDAK diperlukan. Assert di sini
-          // menjaga kontrak "stdout bersih" tetap dijaga dari jalur TTY
-          // yang bisa bocor ke stream (regresi audit klasik).
-          env: {
-            ...process.env,
-            NO_COLOR: "1",
-            MINICODE_HOME: home,
-            HOME: home,
-            USERPROFILE: home,
-          },
-          timeout: 30000,
-        },
-        (_err, stdout) => {
-          // Gagal setup (tanpa provider) sah — yang diuji: ENVELOPE bersih.
-          const lines = stdout.split("\n").filter(Boolean)
-          expect(lines.length).toBeGreaterThanOrEqual(1)
-          for (const l of lines) {
-            // Satu-satunya baris JSON di stdout; tanpa ANSI apapun.
-            expect(() => JSON.parse(l)).not.toThrow()
-            expect(l).not.toContain("\x1b")
-          }
-          r()
+        // Exec = non-interaktif; PTY TIDAK diperlukan. Assert di sini menjaga
+        // kontrak "stdout bersih" dari jalur TTY yang bisa bocor ke stream.
+        { encoding: "utf8", env, timeout: 30000 },
+        (err, stdout, stderr) => {
+          const code = (err as { code?: number } | null)?.code
+          r({
+            stdout: stdout ?? "",
+            stderr: stderr ?? "",
+            code: typeof code === "number" ? code : 0,
+          })
         },
       )
     })
+    // Gagal setup (tanpa provider) SAH — yang diuji: ENVELOPE di stdout.
+    const lines = res.stdout.split("\n").filter(Boolean)
+    const diag = `exit=${res.code} stderr=${JSON.stringify(res.stderr.slice(-300))}`
+    expect(lines.length, `stdout kosong — ${diag}`).toBeGreaterThanOrEqual(1)
+    for (const l of lines) {
+      // Satu-satunya baris JSON di stdout; tanpa ANSI apapun.
+      expect(() => JSON.parse(l), `baris bukan JSON: ${l.slice(0, 120)}`).not.toThrow()
+      expect(l).not.toContain("\x1b")
+    }
     rmSync(dir, { recursive: true, force: true })
   })
 })
 
 describe("PTY: sinyal & resize", () => {
-  ptyTest("SIGTERM → terminal dipulihkan (alt-screen exit + exit 128+15)", async () => {
-    if (process.platform === "win32") {
-      console.warn("[pty] SKIP (windows): pengiriman sinyal POSIX tak berlaku di ConPTY")
-      return
-    }
-    await withTui({}, async (tui) => {
-      await tui.waitFor((raw) => raw.includes("\x1b[?1049h"))
-      tui.kill("SIGTERM")
-      const { exitCode } = await tui.exit()
-      expect(exitCode).toBe(128 + 15)
-      // Restore di dalam byte stream NYATA: alt-screen exit tercatat.
-      expect(tui.raw()).toContain("\x1b[?1049l")
-    })
-  })
+  // Sinyal POSIX tak disampaikan ConPTY — skip eksplisit, bukan pass palsu.
+  const sigName = "SIGTERM → terminal dipulihkan (alt-screen exit + exit 128+15)"
+  const winSkip = process.platform === "win32" && runsPty
+  test.skipIf(!runsPty || process.platform === "win32")(
+    winSkip ? skipped(sigName, "win32: ConPTY tak menyampaikan sinyal POSIX") : sigName,
+    async () => {
+      await withTui({}, async (tui) => {
+        await tui.waitFor((raw) => raw.includes("\x1b[?1049h"))
+        tui.kill("SIGTERM")
+        const { exitCode } = await tui.exit()
+        expect(exitCode).toBe(128 + 15)
+        // Restore di dalam byte stream NYATA: alt-screen exit tercatat.
+        expect(tui.raw()).toContain("\x1b[?1049l")
+      })
+    },
+  )
 
   ptyTest("resize → layar menggambar ulang tanpa merusak state", async () => {
     await withTui({ cols: 100, rows: 30 }, async (tui) => {
@@ -140,4 +155,12 @@ describe("PTY: sinyal & resize", () => {
       expect((await tui.exit()).exitCode).toBe(0)
     })
   })
+})
+
+// CI Linux WAJIB punya PTY: tanpa itu seluruh audit runtime (byte stream
+// nyata) jadi no-op tanpa suara — persis kelas "hijau palsu" yang ditutup
+// audit TUI-008. Di mesin dev tanpa ConPTY test ini hanya SKIP.
+const ciLinux = process.env.CI === "true" && process.platform === "linux"
+test.skipIf(!ciLinux)("PTY tersedia di CI Linux (audit runtime bukan no-op)", () => {
+  expect(runsPty, `pty tidak tersedia: ${skipReason}`).toBe(true)
 })

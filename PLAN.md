@@ -14,8 +14,8 @@ Jalankan sendiri, jangan percaya angka di dokumen:
 bun test                  # harapan: semua hijau, 0 fail
 bun x tsc --noEmit        # harapan: tanpa keluaran
 bun run lint              # harapan: exit 0 (warning boleh ada)
-bun run gate:coverage     # harapan: melewati min 80 funcs / 84 lines
-bun run gate:pack         # harapan: 22 pemeriksaan lulus
+bun run gate:coverage     # harapan: melewati min 82 funcs / 84,5 lines
+bun run gate:pack         # harapan: 23 pemeriksaan lulus
 bun run extreme           # harapan: 0 bypass, semua pass
 bun run gate:fast         # gabungan per-commit/CI: tsc+lint+test+coverage+pack+bash+bench smoke+audit harness
 bun run gate:slow         # extreme fuzz+shadow-git+MCP adversarial (nightly/manual, workflow slow.yml)
@@ -29,7 +29,7 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
 - Biaya sesi kumulatif benar; `--budget` benar-benar memutus (+ `--budget-strict` untuk model tanpa harga, yang cost-nya tak dikenal).
 - Error provider tampil ringkas + saran, bukan dump JSON.
 - Semua overlay menghormati ukuran terminal sungguhan.
-- Bahasa UI diarahkan ke English-only pada surface UI aktif; glyph tetap punya fallback ASCII.
+- Bahasa UI dwibahasa id/en pada surface UI aktif (kontrak terminal §i18n: `/lang` > MINICODE_LANG > state.json > locale OS > en; literal hardcode dilarang test); glyph tetap punya fallback ASCII.
 
 ---
 
@@ -95,7 +95,7 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   Guard integritas URL (2026-09-18): web:check + test web-build kini
   memvalidasi SEMUA URL absolut minicode.fun di llms.txt/llms-full.txt/
   rss.xml menunjuk file site/ yang ada (±160 kemunculan) — lahir dari
-  audit yang menemukan ](../PLAN.md) lolos mapper (404 konteks root).
+  audit yang menemukan tautan ke `../PLAN.md` lolos mapper (404 konteks root).
   Jadwal mingguan (2026-09-18): web.yml cron Senin 03:17 UTC — tanpa
   deploy pun sitemap tetap dikirim (build/deploy di-skip saat schedule,
   indexnow jalan utk deploy sukses ATAU skipped); concurrency grup pages
@@ -157,7 +157,7 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
   dokumen (dari isi sebenarnya), baris nav di docs/README.md. KASKADE yang
   ditangkap guard: (a) mapper link md diperluas menerima nama kapital/
   underscore + bentuk ../CHANGELOG (baris 1 PLAN_UIUX_V6 memuat
-  ](../CHANGELOG.md) yang dulu lolos TANPA rewrite — kelas bug ../PLAN.md);
+  tautan ke `../CHANGELOG.md` yang dulu lolos TANPA rewrite — kelas bug tautan ke `../PLAN.md`);
   (b) guard rahasia web:check false-positive pada id heading "risiko-
   disengaja" (kata Indonesia kebetulan pola sk-...) → scan kini konten tanpa
   atribut id/href (teks nyata tetap penuh); (c) test count sitemap 34 →
@@ -452,7 +452,7 @@ Skor saat ini **8.2**. Target **P0 (≤3 hari): 8.4**, **P1 (sprint): 8.6**. Ber
 - **Sesi/Memori:** ✅ plan artifact `.minicode/plans/<id>.md` (`src/tools/todo.ts`, test); auto-extract snippet dari turn verify sukses (`buildVerifySnippet` + `onOk`, opt-out sama, test); branch `branchSession` (`src/session/persistence.ts`, test); TTL hierarkis `fact/decision/preference 180, summary 90, snippet 14` + `accessCount` (test).
 
 **Selesai bila (semua diukur):**
-- Gate: `bun x tsc --noEmit && bun run lint && bun test && bun run gate:coverage && bun run gate:pack` hijau; `MIN_LINES/MIN_FUNCS` di `scripts/coverage-gate.ts` = **80/84** (funcs sengaja tidak dinaikkan ke 81: hasil terukur berayun 80.62–81.84 antar run, mengunci 81 membuat gate flaky; tercapai 2026-09-09 `1357 pass / 81.84/84.26`).
+- Gate: `bun x tsc --noEmit && bun run lint && bun test && bun run gate:coverage && bun run gate:pack` hijau; `MIN_LINES/MIN_FUNCS` di `scripts/coverage-gate.ts` = **82/84,5** (funcs dinaikkan dari 80 setelah terukur 83,42 stabil 2026-09-23; kebijakan lama "jangan kunci funcs" sudah usang — margin 1,4 pp, bukan berayun; lines tetap 84,5 dengan margin 0,14 pp yang disengaja anti-flaky) + 15 lantai per-berkas modul kritis (permission/jail/bash-guard/executor/scrub/net/trusted-exec/safe-open/journal/checkpoint/router/sanitize/width/app/bash).
 - `test/tool-toctou.test.ts` swapper 1000 iterasi **0 lolos** di POSIX (skip bila symlink EPERM; Windows CI: 3 skip by design).
 - `test/cli-subcommands.test.ts`: tiap subcommand `--cwd tmp` → artefak lokal, bukan repo/global. ✅
 - `test/tui-harness.test.ts` 10× hijau. ✅ (2026-09-06)

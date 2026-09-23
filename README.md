@@ -34,7 +34,7 @@ minicode (coding-agent — self-contained, tanpa sibling clone)
 
 ## Quickstart
 ```bash
-# 0. Bun dulu (butuh bun >= 1.0; sekali, tutup-buka terminal lagi):
+# 0. Bun dulu (butuh bun >= 1.1.13; sekali, tutup-buka terminal lagi):
 # Windows: powershell -c "irm bun.sh/install.ps1 | iex"  (atau npm i -g bun)
 # macOS/Linux: curl -fsSL https://bun.sh/install | bash
 # cek: bun --version  -> 1.4.x
@@ -157,7 +157,7 @@ web_fetch         → redirect manual ≤5 hop, DNS pinning per-hop, body hard-c
 ## Pengujian
 
 ```bash
-bun install                 # sekali (butuh bun >= 1.0; tanpa clone tambahan)
+bun install                 # sekali (butuh bun >= 1.1.13; tanpa clone tambahan)
 bun test                    # offline/hermetic; live & docker di-skip otomatis
 bun test test/ssrf-guard.test.ts          # satu file spesifik
 bun run typecheck           # tsc --noEmit (strict) — mencakup src cli test bench scripts

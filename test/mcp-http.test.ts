@@ -336,6 +336,45 @@ describe("MCP http: keamanan", () => {
     await t.connect()
     await expect(t.request("flood")).rejects.toThrow(/batas ukuran/)
   })
+
+  test("F7: notify() ke host privat TIDAK mengirim (bukan fire-and-forget tanpa cek)", async () => {
+    // Skenario: egress ke 127.0.0.1 tanpa allowPrivateHost. Tanpa cek, server
+    // lokal akan menerima POST notifikasi sebelum request pertama.
+    let hits = 0
+    const url = serve(() => {
+      hits++
+      return new Response(jsonRpc(0, {}), { headers: { "content-type": "application/json" } })
+    })
+    const t = new McpHttpTransport({ url })
+    t.notify("ping", {})
+    await new Promise((r) => setTimeout(r, 200))
+    expect(hits).toBe(0)
+  })
+
+  test("F7: setelah host terbukti privat, request berikutnya tetap ditolak", async () => {
+    // blockedPrivate = keputusan sekali-berlaku: sesi yang sudah ditolak tak
+    // bisa "dingin" lagi memakai jalur yang sama.
+    const t = new McpHttpTransport({ url: "http://127.0.0.1:9/mcp" })
+    await expect(t.connect()).rejects.toThrow(/private host rejected/)
+    await expect(t.request("ping")).rejects.toThrow(/private host rejected/)
+    // close() pada transport terblokir tidak melempar (cleanup harus aman)
+    // dan tidak mengirim DELETE.
+    await t.close()
+  })
+
+  test("F7: close() tanpa sessionId tidak menyentuh jaringan", async () => {
+    // DELETE hanya bermakna bila server memberi session id; tanpanya close
+    // murni state lokal.
+    let hits = 0
+    const url = serve(() => {
+      hits++
+      return new Response(jsonRpc(0, {}), { headers: { "content-type": "application/json" } })
+    })
+    const t = mk(url)
+    await t.close()
+    await new Promise((r) => setTimeout(r, 100))
+    expect(hits).toBe(0)
+  })
 })
 
 describe("MCP http: helper parsing", () => {

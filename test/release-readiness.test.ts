@@ -102,7 +102,11 @@ describe("release: satu kontrak instalasi di semua permukaan", () => {
     }
     for (const f of ["README.md", "docs/getting-started.md"]) {
       const src = read(f)
-      const bunIdx = firstIdx(src, ["Bun >=", "bun >= 1.0", "Bun ≥"])
+      // Case-insensitive + bebas angka: yang diwajibkan ADALAH lantai versi
+      // bun sebelum perintah install, bukan angka persis — angka memang bergerak
+      // naik (1.0 → 1.1.13 saat AbortSignal.any jadi wajib) dan pola kaku membuat
+      // permukaan yang jujur versinya justru gagal kontrak (audit 2026-09-23).
+      const bunIdx = firstIdx(src.toLowerCase(), ["bun >=", "bun ≥"])
       expect(bunIdx).toBeGreaterThanOrEqual(0)
       expect(bunIdx).toBeLessThan(src.indexOf("npm install -g minicode-ai"))
     }

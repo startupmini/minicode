@@ -15,6 +15,12 @@
 //
 // Usage: bun scripts/pack-check.ts [--verbose]
 
+// `@lydell/node-pty` DIPIN EKSAK (tanpa caret; lihat `bun.lock`):
+// modul native berprebuild per platform; versi beta berikutnya butuh validasi
+// probe PTY ulang di Linux + Windows sebelum diadopsi. Tetap devDependency
+// end-user `npm install -g` tidak boleh ikut mengunduh biner native test-only.
+// (JSON tak mengizinkan komentar — catatan ini hidup di sini agar alasan pin
+// tetap tercatat; salinan ringkasnya ada di docs/contributing.md.)
 import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { join, relative, resolve } from "node:path"
@@ -185,6 +191,38 @@ for (const [re, label] of FORBIDDEN) {
 for (const doc of ["README.md", "LICENSE"]) {
   check(`${doc} ikut`, inPack(doc))
 }
+
+// ── 5b. tautan dokumen relatif ──
+// Temuan audit F4: tarball hanya membawa 4 berkas docs, sementara README.md
+// menautkan getting-started/quickstart/choosing-mode dan docs/README.md
+// menautkan 23 halaman sibling — semuanya 404 bagi pembaca paket lokal
+// (node_modules) dan bagi apa pun yang membaca tarball. Gate ini menjaga janji
+// "dokumen yang dikirim bisa dibaca": setiap tautan relatif antar-berkas .md
+// di markdown yang IKUT paket harus menunjuk berkas yang juga ikut.
+const MD_LINK = /\]\(([^)\s#]+\.md)\)/g
+const docLinkMissing: string[] = []
+for (const f of npmFiles) {
+  if (!f.endsWith(".md")) continue
+  const src = readIfPacked(f)
+  if (src === null) continue
+  const dir = f.split("/").slice(0, -1).join("/")
+  MD_LINK.lastIndex = 0
+  let m: RegExpExecArray | null = MD_LINK.exec(src)
+  while (m !== null) {
+    const raw = m[1]!
+    if (!/^(https?:|mailto:)/.test(raw)) {
+      const target = relative(repoRoot, resolve(repoRoot, dir, raw)).replace(/\\/g, "/")
+      if (!inPack(target)) docLinkMissing.push(`${f} → ${raw}`)
+    }
+    m = MD_LINK.exec(src)
+  }
+}
+check(
+  "tautan dokumen relatif menunjuk berkas yang ikut paket",
+  docLinkMissing.length === 0,
+  docLinkMissing.slice(0, 5).join("; ") +
+    (docLinkMissing.length > 5 ? ` (+${docLinkMissing.length - 5} lagi)` : ""),
+)
 
 // ── 6. ukuran wajar ──
 const sizeR = spawnSync("npm", ["pack", "--dry-run", "--json"], {

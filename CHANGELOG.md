@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed — Audit menyeluruh 2026-09-23 (14 temuan, semua diverifikasi sebelum diperbaiki)
+
+- **Test PTY hijau palsu (F1)**: `test/pty.test.ts` menulis skip sebagai `console.warn` + `return` — runner menghitungnya PASS (terbukti 5 pass/0 fail padahal 4 test tak jalan). Kini `test.skipIf` nyata (skip TERLIHAT + alasan di nama test), ada test CI-Linux yang gagal bila PTY tak tersedia, dan anak TUI/exec memakai env hermetic (`test/helpers/pty-harness.ts:cleanEnvForChild`) — env provider host (`TOKENHARBOR_*`, `AGENT_*`, `MINICODE_*` bocor dari proses test) tidak lagi menentukan jalur kode anak (akar 1 kegagalan `exec --json` di run penuh).
+- **SSRF MCP HTTP (F7)**: `McpHttpTransport` kini `strict + noCache` (seperti embedding), dan `notify()`/`close()` ikut divalidasi host (`blockedPrivate`). Istilah "DNS pinning" di `src/lib/net.ts` diperbaiki (resolve-lalu-cek, bukan pinning).
+- **Guard Bun (F3)**: `engines.bun` `>= 1.0.0` → `>= 1.1.13` (`AbortSignal.any` absen di 1.0.x; dipakai 6 titik), guard startup gagal-cepat dengan pesan versi, docs diselaraskan (getting-started, README).
+- **Dokumen npm (F4)**: paket kini mengirim `docs/` + `PLAN.md` + `AGENTS.md` (README menautkan 3 berkas & docs/README 23 berkas yang sebelumnya 404); `gate:pack` bertambah pemeriksaan tautan dokumen relatif (**23** pemeriksaan).
+- **Coverage (F5)**: `MIN_FUNCS` 80 → **82** (terukur 83,42) + 15 lantai per-berkas modul kritis + opsi `--report` untuk evaluasi ulang; blind spot tercatat (mcp/server.ts, auto-update, atomic-write, pricing, web_search).
+- **Peta arsitektur (F6/F13)**: 4 berkas yang hilang dari `docs/ARCHITECTURE.html` ditambahkan (`lib/ignore.ts`, `lib/keystore.ts`, `lib/session-id.ts`, `runtime/motion.ts`), pin kernel disinkronkan dengan `VENDOR.md`; test baru `test/architecture-map.test.ts` + aturan `src/** → cli/**` di `test/ui-boundary.test.ts`.
+- **CI Windows (F2)**: job `ci-windows` baru (tsc + lint + 11 berkas test jalur Windows + gate:bash + gate:pack).
+- **CLI (F8)**: `--help` menyebut Home/End, Shift+Pg setengah halaman, keluar dua-tap + `--tui` (deprecated no-op, tertulis + warning stderr).
+- **Env (F9)**: 6 variabel didokumentasikan di `docs/environment.md` + drift-check `test/env-docs.test.ts`.
+- **Semantik `MINICODE_MOTION`**: nilai eksplisit `0/false/off/no`; nilai tak dikenal fail-closed ke animasi hidup.
+
 ## [0.10.1] - 2026-09-22 — Integrasi pasca-branch: ACP + token first-class + gate cepat/lambat + fix keamanan F-CRIT
 
 
@@ -713,7 +726,7 @@ Sebelumnya `fullscreen.ts`, `input.ts`, `picker.ts`, `panel.ts`, `provider-manag
 
 ## [Sebelumnya] — Audit V4 (Fase 0–4) + V5 (eksperimen ekstrem & distribusi)
 
-Basis: audit menyeluruh v0.7.0 ([docs/PLAN_V4.md](docs/PLAN_V4.md)) dilanjutkan dengan tiga harness adversarial ([docs/PLAN_V5.md](docs/PLAN_V5.md)). Semua angka terverifikasi dengan eksekusi.
+Basis: audit menyeluruh v0.7.0 (rencana V4, Fase 0–4) dilanjutkan dengan tiga harness adversarial (rencana V5, eksperimen ekstrem & distribusi). Semua angka terverifikasi dengan eksekusi.
 
 ### Security — V5: empat bug ditemukan oleh eksperimen adversarial
 

@@ -22,6 +22,17 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | `MINICODE_VERIFY_CMD` | Custom verify command (ganti `detectVerifyCommand`) |
 | `MINICODE_BASH_ALLOWLIST` | Kustom allowlist bash (koma-pisah, ganti DEFAULT) |
 
+## Bahasa, diagnosis & kunci
+
+| Variabel | Fungsi |
+|---|---|
+| `MINICODE_LANG` | `en`/`id` → bahasa UI (prioritas lengkap di kontrak terminal §i18n: `/lang` > env ini > state.json > locale OS > en) |
+| `MINICODE_DEBUG_STARTUP` | `1` → cetak durasi tiap tahap setup sesi ke stderr (diagnosis startup lambat; diagnostik saja, bukan perilaku) |
+| `MINICODE_MINIMIZE_ANSWER` | set (nilai apa pun) → JANGAN auto-minimize section jawaban model (nilai unset = minimize default) |
+| `MINICODE_KEYSTORE_DISABLE` | `1` → matikan keystore OS seluruhnya (jatuh ke penyimpanan file; untuk CI/headless yang tak punya keychain/DPAPI) |
+| `MINICODE_KEYSTORE_FORCE_DPAPI` | set (nilai apa pun) → paksa jalur DPAPI/Windows walau di non-Windows (khusus test portabilitas; bukan konfigurasi produksi) |
+| `MINICODE_MINIMIZE_TOOL` | set (nilai apa pun) → JANGAN auto-minimize section tool di TUI (nilai unset = minimize default) |
+
 ## Sandbox
 
 | Variabel | Fungsi |

@@ -1,7 +1,12 @@
-// Penjaga jaringan bersama: validasi host anti-SSRF + DNS pinning.
+// Penjaga jaringan bersama: validasi host anti-SSRF + re-resolve DNS per cek.
 // Dipakai web_fetch (tool), web_search, dan transport HTTP MCP — server MCP
 // remote yang menunjuk ke metadata endpoint adalah jalur SSRF yang identik,
 // jadi semuanya memakai satu penjaga yang sama.
+// CATATAN audit F7: istilah "DNS pinning" DILARANG di sini — yang dilakukan
+// fungsi ini adalah resolve-lalu-cek (check-then-connect), BUKAN menanam IP ke
+// socket. Residualnya jujur didokumentasikan di web_fetch (cek dan connect
+// bisa melihat IP berbeda); yang ditutup di sini adalah cache basi (noCache)
+// dan kegagalan DNS (strict) — pilih per jalur sesuai risikonya.
 import { lookup } from "node:dns/promises"
 
 // Host validasi untuk anti-SSRF. Catatan: WHATWG URL sudah menormalisasi host

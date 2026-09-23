@@ -56,11 +56,13 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
   selalu berpasangan, termasuk exception/SIGINT via handler `process.on("exit")`
   sinkron best-effort). Turn berjalan = indikator spark pada status bar.
 - **Sinyal fatal** (I31): saat sesi TUI hidup, `App.run()` memasang
-  `process.once("SIGTERM"/"SIGHUP")` → restore terminal (alt-screen exit +
-  raw mode pulih) lalu `process.exit(128+n)`. Pasangan ketat: dilepas di
-  cleanup `run()` — tanpa sesi TUI, sinyal TIDAK di-intercept (perilaku
-  default proses tetap). Tanpa ini SIGTERM meninggalkan terminal di
-  alt-screen + raw mode (user harus `reset`).
+  `process.on("SIGTERM")`/`process.on("SIGHUP")` (handler terpisah karena Bun
+  tak menyampaikan nama sinyal — satu handler bersama tak bisa membedakan)
+  → restore terminal (alt-screen exit + raw mode pulih) lalu
+  `process.exit(128+n)`. Pasangan ketat: keduanya dilepas di cleanup `run()` —
+  tanpa sesi TUI, sinyal TIDAK di-intercept (perilaku default proses tetap).
+  Tanpa ini SIGTERM meninggalkan terminal di alt-screen + raw mode (user harus
+  `reset`).
 - App me-repaint live mengikuti event bus (stream teks, ledger, thinking;
   coalesce 30ms) — TANPA ini layar buta selama turn. Suspend menahan repaint
   (popup melukis sendiri); quit menahan semua.

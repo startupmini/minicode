@@ -13,7 +13,19 @@ bun run lint
 bun run gate:coverage
 ```
 
-Butuh `bun >= 1.0` (`bun:sqlite` tidak jalan di Node).
+Butuh `bun >= 1.1.13` (`bun:sqlite` tidak jalan di Node; kode juga memakai
+`AbortSignal.any()` yang absen di Bun 1.0.x — `minicode` gagal cepat dengan
+pesan versi bila runtime terlalu lama).
+
+Catatan instalasi dev:
+
+- `@lydell/node-pty` DIPIN EKSAK di `bun.lock` (bukan caret): modul native
+  berprebuild per platform, khusus test PTY; upgrade beta berikutnya wajib
+  validasi probe PTY ulang di Linux + Windows. Sengaja devDependency agar
+  instalasi user `npm install -g` tidak ikut mengunduh biner native test-only.
+- PTY tidak tersedia di sebagian mesin Windows (ConPTY) — test PTY di-SKIP
+  nyata via `test.skipIf` (bukan pass palsu, lihat F1 di CHANGELOG); CI Linux
+  justru GAGAL bila PTY tersedia-di-harapkan tapi tak bisa dibuka.
 
 ## Gate (urutan ini, semua hijau sebelum selesai)
 
@@ -21,7 +33,7 @@ Butuh `bun >= 1.0` (`bun:sqlite` tidak jalan di Node).
 bun x tsc --noEmit && bun run lint && bun test && bun run gate:coverage && bun run gate:pack
 ```
 
-Coverage naik → naikkan minimum di `scripts/coverage-gate.ts` (saat ini **80 funcs / 84 lines** — funcs sengaja tidak dikunci 81 karena berayun antar run dan membuat gate flaky). Ambang coverage dikunci ke suite CEPAT (`bun test` di CI); gerbang lambat/stokastik tak boleh menaikkan ambang.
+Coverage naik → naikkan minimum di `scripts/coverage-gate.ts` (saat ini **82 funcs / 84,5 lines** + 15 lantai per-berkas modul kritis). Ambang coverage dikunci ke suite CEPAT (`bun test` di CI); gerbang lambat/stokastik tak boleh menaikkan ambang.
 
 ## Gate cepat vs lambat (F4.2)
 

@@ -93,4 +93,22 @@ describe("batas presentation layer (src/ui)", () => {
     }
     expect(offenders).toEqual([])
   })
+
+  test("src/** tidak mengimpor cli/ (composition root satu arah)", () => {
+    // Aturan AGENTS.md: DI mengalir cli/ → src/ via injeksi; src/ yang menarik
+    // cli/ langsung mengikat lapisan logika ke entry point. Uji F13: aturan ini
+    // sebelumnya tak dijaga mesin (test lain hanya menutup src/ui ↔ src/cli).
+    const offenders: string[] = []
+    for (const f of srcFiles) {
+      const dir = posix.dirname(f)
+      const src = readFileSync(join(repoRoot, f), "utf8")
+      for (const spec of specifiersOf(src)) {
+        const resolved = resolveSpec(dir, spec)
+        if (resolved === "cli" || resolved?.startsWith("cli/")) {
+          offenders.push(`${f}: "${spec}" -> ${resolved}`)
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
 })

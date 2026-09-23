@@ -193,6 +193,16 @@ describe("TUI-006: MINICODE_MOTION=0 spark statis", () => {
       expect(motionReduced()).toBe(true)
       process.env.MINICODE_MOTION = ""
       expect(motionReduced()).toBe(false)
+      // Semantik eksplisit (audit minor): nilai off lain dikenali, nilai tak
+      // dikenal fail-closed ke animasi hidup (bukan menebak).
+      for (const v of ["false", "off", "no", "FALSE", " Off "]) {
+        process.env.MINICODE_MOTION = v
+        expect(motionReduced()).toBe(true)
+      }
+      for (const v of ["yes", "true", "banana"]) {
+        process.env.MINICODE_MOTION = v
+        expect(motionReduced()).toBe(false)
+      }
     } finally {
       if (orig === undefined) delete process.env.MINICODE_MOTION
       else process.env.MINICODE_MOTION = orig

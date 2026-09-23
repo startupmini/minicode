@@ -53,6 +53,34 @@ describe("cli: versi", () => {
     expect(parsed.version).toBe(run(["--version"]).stdout.trim())
     expect(parsed.options.length).toBeGreaterThan(5)
   })
+
+  test("--tui dicatat usang di help teks + help JSON", () => {
+    // Temuan audit F8: flag yang diterima tapi diam = user mengira ia bekerja.
+    const r = run(["--help"])
+    expect(r.code).toBe(0)
+    expect(r.stdout).toContain("--tui")
+    expect(r.stdout).toContain("deprecated")
+    const j = JSON.parse(run(["--help", "--json"]).stdout) as {
+      options: { flag: string; desc: string }[]
+    }
+    const tui = j.options.find((o) => o.flag === "--tui")
+    expect(tui?.desc).toMatch(/deprecated/i)
+  })
+
+  test("--help menyebut binding baru (Home/End, setengah halaman, keluar dua-tap)", () => {
+    const r = run(["--help"])
+    expect(r.stdout).toContain("Home/End")
+    expect(r.stdout).toContain("half page")
+    expect(r.stdout).toContain("twice = quit")
+  })
+
+  test("--tui memicu peringatan deprecation di stderr, exit tetap sepadan", () => {
+    // Peringatan hanya di stderr (kontrak stdout bersih untuk machine-readable).
+    const withTui = run(["--help", "--tui"])
+    expect(withTui.stderr).toContain("[deprecated] --tui")
+    expect(withTui.stdout).toContain("Minicode - coding agent")
+    expect(withTui.code).toBe(0)
+  })
 })
 
 describe("cli: help kontekstual + exit code", () => {

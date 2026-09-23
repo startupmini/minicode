@@ -347,8 +347,16 @@ describe("last-model: default = terakhir dipakai", () => {
       const ref: { current?: string } = {}
       persistModelChoice("p::m", ref)
       expect(ref.current).toBe("p::m")
-      await new Promise((r) => setTimeout(r, 50))
-      expect(await loadLastModel()).toBe("p::m")
+      // saveLastModel fire-and-forget + withConfigLock: tunggu dengan POLLING,
+      // bukan satu jeda tetap — jeda 50ms sempat kalah race di run penuh
+      // ber-instrumentasi coverage (I/O Windows + lock contention membuat
+      // kegagalan order/load-dependent, bukan regresi). Maks 5s lalu fail.
+      let got: string | undefined
+      for (let i = 0; i < 100 && got !== "p::m"; i++) {
+        await new Promise((r) => setTimeout(r, 50))
+        got = await loadLastModel()
+      }
+      expect(got).toBe("p::m")
     })
   })
 })

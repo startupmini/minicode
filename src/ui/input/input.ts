@@ -20,10 +20,16 @@ import {
   toGraphemes,
 } from "./prompt-engine.ts"
 
-const HISTORY_FILE = join(homedir(), ".minicode", "history")
+// Lokasi histori: MINICODE_HOME diperioritaskan (test hermetic, XDG-ish).
+// Fungsi alih-alih const statis: homedir() terkunci saat module-load,
+// MINICODE_HOME bisa diset sesudahnya (pola sama dengan homeDir() di
+// src/lib/db-path.ts, tanpa impor lintas-lapisan — batas ui dijaga).
+function historyFile(): string {
+  return join(process.env.MINICODE_HOME || homedir(), ".minicode", "history")
+}
 const MAX_HISTORY = 1000
 
-export async function loadHistory(file = HISTORY_FILE): Promise<string[]> {
+export async function loadHistory(file = historyFile()): Promise<string[]> {
   try {
     const content = await readFile(file, "utf8")
     const out: string[] = []
@@ -51,7 +57,7 @@ export async function loadHistory(file = HISTORY_FILE): Promise<string[]> {
   }
 }
 
-export async function appendHistory(entry: string, file = HISTORY_FILE): Promise<void> {
+export async function appendHistory(entry: string, file = historyFile()): Promise<void> {
   const clean = entry.trim()
   if (!clean) return
   try {
@@ -59,7 +65,9 @@ export async function appendHistory(entry: string, file = HISTORY_FILE): Promise
     const filtered = existing.filter((e) => e !== clean)
     filtered.push(clean)
     const capped = filtered.slice(-MAX_HISTORY)
-    await mkdir(join(homedir(), ".minicode"), { recursive: true }).catch(() => {})
+    await mkdir(join(process.env.MINICODE_HOME || homedir(), ".minicode"), {
+      recursive: true,
+    }).catch(() => {})
     await writeFile(file, `${capped.map((e) => JSON.stringify(e)).join("\n")}\n`, "utf8")
   } catch {}
 }

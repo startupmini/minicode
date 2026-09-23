@@ -59,7 +59,7 @@ export function matchAllowlist(call: ToolCall, allowlist: string[]): boolean {
   // prefix 'A'x195 + tail jinak vs tail jahat → kunci terpotong identik).
   const key = `${call.name}:${JSON.stringify(call.args)}`
   return allowlist.some((pat) => {
-    const safe = pat.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")
+    const safe = pat.replace(/[.+^${}()|[\]\\?]/g, "\\$&").replace(/\*/g, ".*")
     const re = new RegExp(`^${safe}$`)
     if (pat.includes(":")) return re.test(key)
     return re.test(call.name) || re.test(key)

@@ -187,4 +187,27 @@ describe("turn-status: heartbeat", () => {
     expect(err()).toBe("")
     status.detach()
   }, 4000)
+
+  test("tool berjalan >= 2000ms menampilkan durasi waktu (elapsed time)", async () => {
+    const { bus, status } = setup()
+    bus.emit("turn:started", { turn: 1 })
+    bus.emit("execution:started", {
+      execution: { call: { name: "bash", args: { command: "sleep 5" } } },
+    })
+    await sleep(60)
+    expect(err()).toContain("bash sleep 5")
+    expect(err()).not.toContain("(3s)")
+
+    const realNow = Date.now
+    try {
+      Date.now = () => realNow() + 3500
+      await sleep(200)
+      expect(err()).toContain("bash sleep 5")
+      expect(err()).toContain("(3s)")
+    } finally {
+      Date.now = realNow
+      status.endTurn()
+      status.detach()
+    }
+  }, 4000)
 })

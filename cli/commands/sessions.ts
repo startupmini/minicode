@@ -1,6 +1,5 @@
 import { Database } from "bun:sqlite"
 import { existsSync, mkdirSync } from "node:fs"
-import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { homeDir } from "../../src/lib/db-path.ts"
 import { deleteJournalFile, findOrphanJournals } from "../../src/session/journal.ts"
@@ -79,7 +78,7 @@ export async function handleSessions(
     const dbPath = existsSync(localPath)
       ? localPath
       : (() => {
-          const g = join(homedir(), ".minicode")
+          const g = join(homeDir(), ".minicode")
           mkdirSync(g, { recursive: true })
           return join(g, "sessions.db")
         })()

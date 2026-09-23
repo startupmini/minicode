@@ -15,6 +15,7 @@ import {
   createDecoderState,
   createKeyStreamPump,
   createState,
+  cursorLineIndex,
   type DecoderState,
   type KeyStreamPump,
   type PromptKey,
@@ -67,7 +68,7 @@ const MIN_ROWS = 10
 const MIN_COLS = 20
 
 const PROMPT_FIRST = "minicode › "
-const PROMPT_CONT = "  "
+const PROMPT_CONT = "  · "
 
 interface RawStdin {
   setRawMode(v: boolean): void
@@ -339,8 +340,33 @@ export class TuiApp {
       this.historySearch()
       return
     }
-    // Up/Down di luar menu = histori (bukan scroll — scroll milik PgUp/PgDn).
+    // Up/Down di luar menu: jika teks multi-line, navigasi baris dalam teks dulu.
+    // Hanya picu navigasi histori bila Up di baris pertama atau Down di baris terakhir.
     if ((key.type === "up" || key.type === "down") && !this.state.menuOpen) {
+      if (this.state.line.includes("\n")) {
+        const { lineIdx, colIdx } = cursorLineIndex(this.state.line, this.state.cursor)
+        const lines = this.state.line.split("\n")
+        if (key.type === "up" && lineIdx > 0) {
+          const targetLine = lineIdx - 1
+          const targetCol = Math.min(colIdx, toGraphemes(lines[targetLine] ?? "").length)
+          let newCursor = 0
+          for (let i = 0; i < targetLine; i++) newCursor += toGraphemes(lines[i] ?? "").length + 1
+          newCursor += targetCol
+          this.state = { ...this.state, cursor: newCursor }
+          this.paintCurrent()
+          return
+        }
+        if (key.type === "down" && lineIdx < lines.length - 1) {
+          const targetLine = lineIdx + 1
+          const targetCol = Math.min(colIdx, toGraphemes(lines[targetLine] ?? "").length)
+          let newCursor = 0
+          for (let i = 0; i < targetLine; i++) newCursor += toGraphemes(lines[i] ?? "").length + 1
+          newCursor += targetCol
+          this.state = { ...this.state, cursor: newCursor }
+          this.paintCurrent()
+          return
+        }
+      }
       this.historyNav(key.type === "up" ? -1 : 1)
       return
     }
@@ -482,6 +508,21 @@ export class TuiApp {
     return this.suspended > 0
   }
 
+  /**
+   * Bungkus baris dengan mode redup (\x1b[2m) untuk backdrop popup.
+   * Reset (\x1b[0m atau \x1b[22m) dan bold (\x1b[1m) di dalam teks dinetralkan
+   * agar peredupan tidak bocor di tengah baris yang diwarnai.
+   */
+  static applyBackdropDim(ln: string): string {
+    if (!ln) return ""
+    const esc = String.fromCharCode(27)
+    let s = ln.replaceAll(`${esc}[1m`, "")
+    s = s.replaceAll(`${esc}[22m`, `${esc}[2m`)
+    s = s.replaceAll(`${esc}[0m`, `${esc}[0m${esc}[2m`)
+    s = s.replaceAll(`${esc}[m`, `${esc}[0m${esc}[2m`)
+    return `${esc}[2m${s}${esc}[22m${esc}[0m`
+  }
+
   /** Layar redup sebagai backdrop popup: frame normal dibungkus faint. */
   private paintDimmed(): void {
     const screen = this.currentScreen
@@ -497,7 +538,7 @@ export class TuiApp {
     const body = this.transcript.view(cols, viewH, this.scrollBack)
     const frame: string[] = [...body, ...menu, ...inputAll.slice(-inputH), statusLine]
     while (frame.length < rows) frame.unshift("")
-    const dimmed = frame.slice(-rows).map((ln) => `\x1b[2m${ln}\x1b[22m`)
+    const dimmed = frame.slice(-rows).map((ln) => TuiApp.applyBackdropDim(ln))
     try {
       screen.paint(dimmed)
     } catch {}

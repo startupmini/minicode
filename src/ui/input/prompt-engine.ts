@@ -85,6 +85,21 @@ export function pointLength(s: string): number {
   return toGraphemes(s).length
 }
 
+/** Menghitung jumlah baris logis dalam teks prompt (berdasarkan separator \n). */
+export function countLogicalLines(text: string): number {
+  return text.split("\n").length
+}
+
+/** Menghitung indeks baris kursor (0-based) dan offset kolom dalam baris tersebut. */
+export function cursorLineIndex(text: string, cursor: number): { lineIdx: number; colIdx: number } {
+  const units = toGraphemes(text)
+  const before = units.slice(0, Math.max(0, Math.min(cursor, units.length))).join("")
+  const lines = before.split("\n")
+  const lineIdx = lines.length - 1
+  const colIdx = toGraphemes(lines[lineIdx] ?? "").length
+  return { lineIdx, colIdx }
+}
+
 // Tanda diakritik Thai/Lao yang menempel: satu grapheme Thai bisa terdiri
 // dari konsonan + 1-2 tanda (mis. U+0E19 U+0E49 U+0E33 = satu suku kata).
 // Menghapus per grapheme (aturan emoji ZWJ) membuat satu backspace menelan

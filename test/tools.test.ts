@@ -44,6 +44,9 @@ test("glob finds files", async () => {
   const ctx: any = { signal: new AbortController().signal }
   const out = (await globTool.execute({ pattern: "**/*.ts", cwd: tmp }, ctx)) as string
   expect(out).toContain("x.ts")
+  const outBrace = (await globTool.execute({ pattern: "sub/{*.ts,*.js}", cwd: tmp }, ctx)) as string
+  expect(outBrace).toContain("sub/x.ts")
+  expect(outBrace).toContain("sub/y.js")
   await rm(tmp, { recursive: true, force: true })
 })
 

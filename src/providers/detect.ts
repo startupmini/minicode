@@ -109,8 +109,9 @@ export async function detectModels(
         : path.includes("anthropic")
           ? "anthropic"
           : "openai"
+      const uniqueModels = Array.from(new Set(models))
       const result = {
-        models,
+        models: uniqueModels,
         providerHint: hint as DetectResult["providerHint"],
         authFailed: everAuthFailed,
       }

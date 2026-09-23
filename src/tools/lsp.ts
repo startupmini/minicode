@@ -1,6 +1,7 @@
 import { isAbsolute, resolve as resolvePath } from "node:path"
 import { pathToFileURL } from "node:url"
 import type { Tool } from "#minicore"
+import { LSP_SYMBOL_KINDS } from "../constants.ts"
 import { safeReadFile } from "../lib/safe-open.ts"
 import {
   findSymbolPosition,
@@ -240,34 +241,7 @@ export const lspSymbolsTool: Tool = {
         ctx.signal,
       )
       if (!result || !Array.isArray(result) || result.length === 0) return "(no symbols)"
-      const KIND = [
-        "File",
-        "Module",
-        "Namespace",
-        "Package",
-        "Class",
-        "Method",
-        "Property",
-        "Field",
-        "Constructor",
-        "Enum",
-        "Interface",
-        "Function",
-        "Variable",
-        "Constant",
-        "String",
-        "Number",
-        "Boolean",
-        "Array",
-        "Object",
-        "Key",
-        "Null",
-        "EnumMember",
-        "Struct",
-        "Event",
-        "Operator",
-        "TypeParameter",
-      ]
+      const KIND = LSP_SYMBOL_KINDS
       return scrubSecrets(
         result
           .map((s) => {
@@ -305,34 +279,7 @@ export const lspWorkspaceSymbolsTool: Tool = {
         ctx.signal,
       )
       if (!symbols.length) return "(no symbols)"
-      const KIND = [
-        "File",
-        "Module",
-        "Namespace",
-        "Package",
-        "Class",
-        "Method",
-        "Property",
-        "Field",
-        "Constructor",
-        "Enum",
-        "Interface",
-        "Function",
-        "Variable",
-        "Constant",
-        "String",
-        "Number",
-        "Boolean",
-        "Array",
-        "Object",
-        "Key",
-        "Null",
-        "EnumMember",
-        "Struct",
-        "Event",
-        "Operator",
-        "TypeParameter",
-      ]
+      const KIND = LSP_SYMBOL_KINDS
       const rows = symbols.map((s) => {
         const kind = KIND[(s.kind ?? 1) - 1] ?? "?"
         const uri = s.location.uri ?? "?"

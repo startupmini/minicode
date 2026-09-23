@@ -5,7 +5,7 @@ import { readdir, readFile, stat } from "node:fs/promises"
 import { join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { LIMITS } from "../constants.ts"
+import { LIMITS, LSP_SYMBOL_KINDS } from "../constants.ts"
 import { homeDir } from "../lib/db-path.ts"
 import { GIT_SAFE_BASE } from "../lib/git-hardening.ts"
 import { resolveTrustedExecutable } from "../lib/trusted-exec.ts"
@@ -380,34 +380,7 @@ async function buildRepoMapLsp(cwd: string): Promise<string | null> {
     if (getConfiguredExts().length === 0) return null
     const symbols = await workspaceSymbols("", 4000, cwd)
     if (!symbols.length) return null
-    const KIND = [
-      "File",
-      "Module",
-      "Namespace",
-      "Package",
-      "Class",
-      "Method",
-      "Property",
-      "Field",
-      "Constructor",
-      "Enum",
-      "Interface",
-      "Function",
-      "Variable",
-      "Constant",
-      "String",
-      "Number",
-      "Boolean",
-      "Array",
-      "Object",
-      "Key",
-      "Null",
-      "EnumMember",
-      "Struct",
-      "Event",
-      "Operator",
-      "TypeParameter",
-    ]
+    const KIND = LSP_SYMBOL_KINDS
     const byFile = new Map<string, string[]>()
     for (const s of symbols.slice(0, 200)) {
       let file: string

@@ -4,7 +4,7 @@
 // pun; harness fake-TTY dipakai agar columns terkontrol.
 
 import { afterEach, describe, expect, test } from "bun:test"
-import { paintFooterMode, renderFooter, shortModel } from "../src/ui/footer.ts"
+import { paintFooterMode, renderFooter, shortenPath, shortModel } from "../src/ui/footer.ts"
 import { stripAnsi } from "../src/ui/render/theme.ts"
 import { displayWidth } from "../src/ui/render/width.ts"
 import { installFakeTty } from "./helpers/tui-harness.ts"
@@ -131,5 +131,26 @@ describe("footer render", () => {
     expect(plain).toContain("a b")
     expect(plain).toContain("9 k")
     expect(displayWidth(plain)).toBeLessThanOrEqual(79)
+  })
+
+  test("shortenPath memperpendek segmen direktori", () => {
+    expect(shortenPath("d:\\git\\minicode\\src\\ui")).toBe("...\\src\\ui")
+    expect(shortenPath("/home/user/projects/minicode/src")).toBe(".../minicode/src")
+    expect(shortenPath("/short/path")).toBe("/short/path")
+    expect(shortenPath("")).toBe("")
+  })
+
+  test("terminal sedang: menggunakan shortened cwd sebelum dibuang total", () => {
+    tty = installFakeTty({ columns: 65 })
+    const longCwd = "D:\\very\\long\\nested\\workspace\\directory\\for\\testing\\repo"
+    const [status] = renderFooter(
+      { mode: "auto", model: "gpt-4o", cwd: longCwd, context: "10k" },
+      65,
+    )
+    const plain = stripAnsi(status!)
+    // Harus memuat shortened cwd, bukan hilang total
+    expect(plain).toContain("...\\testing\\repo")
+    expect(plain).not.toContain("D:\\very\\long")
+    expect(displayWidth(plain)).toBeLessThanOrEqual(64)
   })
 })

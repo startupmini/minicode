@@ -247,8 +247,8 @@ export const bashTool: Tool = {
         })
         const text = scrubSecrets(res.output)
         if (res.code !== 0 && res.code !== null)
-          return `exit ${res.code}\n${capMarked(text, 20000)}`
-        return capMarked(text, 20000)
+          return `exit ${res.code}\n${capMarked(text, LIMITS.BASH_OUTPUT_MAX_CHARS)}`
+        return capMarked(text, LIMITS.BASH_OUTPUT_MAX_CHARS)
       }
       if (sandboxStrict() || !sandboxExplicitFallbackAllowed()) {
         throw new Error(
@@ -272,8 +272,8 @@ export const bashTool: Tool = {
         })
         const text = scrubSecrets(res.output)
         if (res.code !== 0 && res.code !== null)
-          return `exit ${res.code}\n${capMarked(text, 20000)}`
-        return capMarked(text, 20000)
+          return `exit ${res.code}\n${capMarked(text, LIMITS.BASH_OUTPUT_MAX_CHARS)}`
+        return capMarked(text, LIMITS.BASH_OUTPUT_MAX_CHARS)
       }
       if (sandboxStrict() || !sandboxExplicitFallbackAllowed()) {
         throw new Error(
@@ -331,20 +331,18 @@ export const bashTool: Tool = {
           killTree(p)
         }, 2000)
       }, timeout)
-      ctx.signal.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(t)
-          if (killTimer) clearTimeout(killTimer)
-          if (process.platform === "win32") killTree(p)
-          else p.kill("SIGTERM")
-          killTimer = setTimeout(() => {
-            killTree(p)
-          }, 1000)
-        },
-        { once: true },
-      )
+      const onAbort = () => {
+        clearTimeout(t)
+        if (killTimer) clearTimeout(killTimer)
+        if (process.platform === "win32") killTree(p)
+        else p.kill("SIGTERM")
+        killTimer = setTimeout(() => {
+          killTree(p)
+        }, 1000)
+      }
+      ctx.signal.addEventListener("abort", onAbort, { once: true })
       p.on("close", () => {
+        ctx.signal.removeEventListener("abort", onAbort)
         clearTimeout(t)
         if (killTimer) clearTimeout(killTimer)
       })

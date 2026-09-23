@@ -63,6 +63,7 @@ class LspConnection {
   private killSignal = new AbortController()
   private opened = new Map<string, number>()
   readonly diagnostics = new Map<string, Record<string, unknown>[]>()
+  private diagnosticWaiters = new Map<string, Set<() => void>>()
 
   constructor(public entry: LspServerEntry) {}
 
@@ -161,14 +162,36 @@ class LspConnection {
   }
 
   async waitForDiagnostics(uri: string, timeoutMs = 5_000): Promise<Record<string, unknown>[]> {
-    const start = Date.now()
-    while (Date.now() - start < timeoutMs) {
-      if (this.diagnostics.has(uri)) {
-        await sleep(400) // settle window for follow-up pushes
-        return this.diagnostics.get(uri) ?? []
-      }
-      await sleep(100)
+    if (this.diagnostics.has(uri)) {
+      await sleep(100) // settle window for follow-up pushes
+      return this.diagnostics.get(uri) ?? []
     }
+    await new Promise<void>((resolve) => {
+      let timer: ReturnType<typeof setTimeout>
+      const onDiag = () => {
+        clearTimeout(timer)
+        cleanup()
+        setTimeout(resolve, 50)
+      }
+      const cleanup = () => {
+        const s = this.diagnosticWaiters.get(uri)
+        if (s) {
+          s.delete(onDiag)
+          if (s.size === 0) this.diagnosticWaiters.delete(uri)
+        }
+      }
+      timer = setTimeout(() => {
+        cleanup()
+        resolve()
+      }, timeoutMs)
+
+      let s = this.diagnosticWaiters.get(uri)
+      if (!s) {
+        s = new Set()
+        this.diagnosticWaiters.set(uri, s)
+      }
+      s.add(onDiag)
+    })
     return this.diagnostics.get(uri) ?? []
   }
 
@@ -252,11 +275,21 @@ class LspConnection {
       const params = msg.params as
         | { uri?: string; diagnostics?: Record<string, unknown>[] }
         | undefined
-      if (params?.uri) this.diagnostics.set(params.uri, params.diagnostics ?? [])
+      if (params?.uri) {
+        this.diagnostics.set(params.uri, params.diagnostics ?? [])
+        const waiters = this.diagnosticWaiters.get(params.uri)
+        if (waiters) {
+          for (const cb of waiters) cb()
+        }
+      }
     }
   }
 
   private failAll(err: Error) {
+    for (const s of this.diagnosticWaiters.values()) {
+      for (const cb of s) cb()
+    }
+    this.diagnosticWaiters.clear()
     for (const p of this.pending.values()) {
       clearTimeout(p.timer)
       p.reject(err)

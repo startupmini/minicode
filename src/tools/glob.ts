@@ -34,17 +34,16 @@ async function walk(
   }
 }
 
-function globToRegExp(glob: string): RegExp {
-  let esc = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&")
-  // handle {a,b} → (a|b)
-  esc = esc.replace(
-    /\\\{([^}]+)\\\}/g,
-    (_m, inner: string) =>
-      `(${inner
-        .split(",")
-        .map((s) => s.trim().replace(/[.+^${}()|[\]\\]/g, "\\$&"))
-        .join("|")})`,
-  )
+export function globToRegExp(glob: string): RegExp {
+  // Tangani brace expansion {a,b} tanpa double-escape
+  const str = glob.replace(/\{([^{}]+)\}/g, (_m, inner: string) => {
+    const alts = inner.split(",").map((s) => s.trim())
+    return `\0BRACE_START\0${alts.join("\0BRACE_OR\0")}\0BRACE_END\0`
+  })
+  let esc = str.replace(/[.+^${}()|[\]\\]/g, "\\$&")
+  esc = esc.replace(/\0BRACE_START\0/g, "(")
+  esc = esc.replace(/\0BRACE_OR\0/g, "|")
+  esc = esc.replace(/\0BRACE_END\0/g, ")")
   esc = esc.replace(/\*\*/g, "§§")
   // **/ di awal/pola rekursif harus cocok file root juga: **/* sekarang jadi
   // (.*/)?[^/]*, bukan .*/[^/]* yang butuh slash dan membuat root kosong.

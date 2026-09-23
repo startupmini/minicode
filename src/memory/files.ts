@@ -108,11 +108,12 @@ export async function appendMemory(text: string, cwd = process.cwd()): Promise<s
       const st = await stat(path)
       if (st.size > MAX_MEMORY_FILE_BYTES) {
         const txt = await readFile(path, "utf8")
-        const keep = txt.slice(-LIMITS.MEMORY_TRUNCATE_KEEP_BYTES)
-        const cut = keep.indexOf("\n")
-        await import("node:fs/promises").then((m) =>
-          m.writeFile(path, cut >= 0 ? keep.slice(cut + 1) : keep, "utf8"),
-        )
+        const rawKeep = txt.slice(-LIMITS.MEMORY_TRUNCATE_KEEP_BYTES)
+        // Cari batas entri utuh berikutnya (diawali \n- ) agar entri pertama tak terpotong buntung
+        const entryBoundary = rawKeep.indexOf("\n- ")
+        const cut = entryBoundary >= 0 ? entryBoundary + 1 : rawKeep.indexOf("\n")
+        const trimmed = cut >= 0 ? rawKeep.slice(cut + (entryBoundary >= 0 ? 0 : 1)) : rawKeep
+        await import("node:fs/promises").then((m) => m.writeFile(path, trimmed, "utf8"))
       }
     } catch {}
     return path

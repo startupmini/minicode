@@ -7,7 +7,7 @@ const SKILLS_HELP = `minicode skills — markdown skills in .minicode/skills/*.m
   minicode skills list           list installed skills
   minicode skills show <name>    show one skill
 
-  In REPL, run a skill with /name [arguments].`
+  In interactive mode, run a skill with /name [arguments].`
 
 export async function handleSkills(
   args: string[],

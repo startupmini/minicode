@@ -153,7 +153,16 @@ export async function loadSkills(cwd = process.cwd()): Promise<Skill[]> {
   }
   const skills: Skill[] = []
   await loadDir(GLOBAL_SKILLS, skills)
-  await loadDir(resolve(cwd, LOCAL_SKILLS), skills)
+  const localSkills: Skill[] = []
+  await loadDir(resolve(cwd, LOCAL_SKILLS), localSkills, resolve(cwd, LOCAL_SKILLS))
+  if (localSkills.length > 0) {
+    try {
+      process.stderr.write(
+        `[warn] skills: loaded ${localSkills.length} project skill(s) from ${LOCAL_SKILLS} (untrusted repo instructions)\n`,
+      )
+    } catch {}
+    skills.push(...localSkills)
+  }
   // local overrides global by name
   const map = new Map<string, Skill>()
   for (const s of skills) map.set(s.name, s)

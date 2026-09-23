@@ -97,6 +97,9 @@ export class McpTransport {
     })
   }
 
+  private writeQueue: string[] = []
+  private draining = false
+
   notify(method: string, params: Record<string, unknown> = {}) {
     this.write({ jsonrpc: "2.0", method, params })
   }
@@ -104,6 +107,8 @@ export class McpTransport {
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
+    this.writeQueue = []
+    this.draining = false
     this.failAll(new Error("transport closed"))
     if (this.rl) this.rl.close()
     try {
@@ -136,8 +141,34 @@ export class McpTransport {
     } catch {
       throw new Error("circular JSON in MCP message")
     }
+    if (this.draining) {
+      this.writeQueue.push(line)
+      return
+    }
     const ok = this.proc.stdin.write(line)
-    if (!ok) this.proc.stdin.once("drain", () => {})
+    if (!ok) {
+      this.draining = true
+      this.proc.stdin.once("drain", () => {
+        this.draining = false
+        this.flushQueue()
+      })
+    }
+  }
+
+  private flushQueue() {
+    if (!this.proc?.stdin || this.draining) return
+    while (this.writeQueue.length > 0) {
+      const next = this.writeQueue.shift()!
+      const ok = this.proc.stdin.write(next)
+      if (!ok) {
+        this.draining = true
+        this.proc.stdin.once("drain", () => {
+          this.draining = false
+          this.flushQueue()
+        })
+        break
+      }
+    }
   }
 
   private failAll(err: Error) {

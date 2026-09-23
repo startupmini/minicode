@@ -365,7 +365,9 @@ test("§24 undo+redo konkuren: hasil valid (salah satu urutan penuh)", async () 
     // Pointer selalu dalam batas; konten konsisten dengan salah satu ujung.
     expect(man.currentIndex).toBeGreaterThanOrEqual(-1)
     expect(man.currentIndex).toBeLessThanOrEqual(0)
-    expect(["v1"].includes(readFileSync(f, "utf8"))).toBe(true)
+    // Dengan lock serial, urutan undo→redo atau redo→undo keduanya valid.
+    // Undo menang terakhir → v1, redo menang terakhir → v2.
+    expect(["v1", "v2"].includes(readFileSync(f, "utf8"))).toBe(true)
   } finally {
     cleanup(dir)
   }

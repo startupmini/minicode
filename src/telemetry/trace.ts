@@ -131,6 +131,24 @@ function telemetryEnabled(): boolean {
   return v !== "0" && v !== "false" && v !== "off"
 }
 
+// Mutex per-file untuk mencegah race condition pada rotasi konkuren (A6-fix).
+const rotationLocks = new Map<string, Promise<void>>()
+
+async function rotateFile(file: string): Promise<void> {
+  const currentLock = rotationLocks.get(file) ?? Promise.resolve()
+  const nextLock = currentLock.then(async () => {
+    try {
+      const txt = await readFile(file, "utf8")
+      const lines = txt.split("\n").filter(Boolean)
+      if (lines.length > LIMITS.TRACE_MAX_LINES) {
+        await atomicWriteText(file, `${lines.slice(-LIMITS.TRACE_MAX_LINES).join("\n")}\n`)
+      }
+    } catch {}
+  })
+  rotationLocks.set(file, nextLock)
+  await nextLock
+}
+
 // Telemetry ringan: satu baris JSON per run di .minicode/traces.jsonl.
 // Tanpa OTel — cukup untuk agregasi manual / metrik sederhana.
 export async function writeTrace(cwd: string | undefined, trace: RunTrace): Promise<void> {
@@ -148,14 +166,8 @@ export async function writeTrace(cwd: string | undefined, trace: RunTrace): Prom
     }
     await appendFile(file, `${JSON.stringify(safe)}\n`, "utf8")
     await chmod(file, 0o600).catch(() => {})
-    // Rotate: keep TRACE_MAX_LINES baris terakhir (tmp+rename agar anti-korupsi)
-    try {
-      const txt = await readFile(file, "utf8")
-      const lines = txt.split("\n").filter(Boolean)
-      if (lines.length > LIMITS.TRACE_MAX_LINES) {
-        await atomicWriteText(file, `${lines.slice(-LIMITS.TRACE_MAX_LINES).join("\n")}\n`)
-      }
-    } catch {}
+    // Rotate: keep TRACE_MAX_LINES baris terakhir (serialized via rotateFile)
+    await rotateFile(file)
   } catch {}
 }
 
@@ -168,13 +180,7 @@ export async function writeStepTrace(cwd: string | undefined, step: StepTrace): 
     const safe: StepTrace = { ...step, ...(step.args ? { args: scrubSecrets(step.args) } : {}) }
     await appendFile(file, `${JSON.stringify(safe)}\n`, "utf8")
     await chmod(file, 0o600).catch(() => {})
-    try {
-      const txt = await readFile(file, "utf8")
-      const lines = txt.split("\n").filter(Boolean)
-      if (lines.length > LIMITS.TRACE_MAX_LINES) {
-        await atomicWriteText(file, `${lines.slice(-LIMITS.TRACE_MAX_LINES).join("\n")}\n`)
-      }
-    } catch {}
+    await rotateFile(file)
   } catch {}
 }
 

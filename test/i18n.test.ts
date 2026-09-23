@@ -85,6 +85,8 @@ describe("t()", () => {
     // tui.thinkingSet).
     const NEUTRAL = new Set([
       "pick.filter",
+      "pick.hint",
+      "form.footerDefault",
       "prov.hint",
       "st.model",
       "st.budget",

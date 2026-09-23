@@ -49,6 +49,7 @@ export async function runSetupWizardView(opts: SetupWizardViewOptions): Promise<
   if (!process.stdin.isTTY) return false
   const screen = openAltScreen()
   if (!screen.ok) return false
+  let exitMsg: string | null = null
   try {
     const CUSTOM = "\u0000custom"
     const items = [
@@ -70,14 +71,14 @@ export async function runSetupWizardView(opts: SetupWizardViewOptions): Promise<
       },
     })
     if (picked === null) {
-      process.stdout.write(`${t("wiz.canceled")}\n`)
+      exitMsg = `${t("wiz.canceled")}\n`
       return false
     }
 
     // URL via form dalam popup (validasi inline, bukan gagal saat detect).
     const urlForm = await runForm(
       {
-        title: t("wiz.title"),
+        title: t("wiz.stepUrl"),
         fields: [
           {
             id: "url",
@@ -95,13 +96,13 @@ export async function runSetupWizardView(opts: SetupWizardViewOptions): Promise<
       screen,
     )
     if (urlForm.cancelled || !urlForm.values) {
-      process.stdout.write(`${t("wiz.canceled")}\n`)
+      exitMsg = `${t("wiz.canceled")}\n`
       return false
     }
     const rawUrl = (urlForm.values.url ?? "").trim()
     const targetUrl = rawUrl || (picked === CUSTOM ? "" : (picked as string))
     if (!targetUrl) {
-      process.stdout.write(`${t("wiz.canceled")}\n`)
+      exitMsg = `${t("wiz.canceled")}\n`
       return false
     }
 
@@ -112,7 +113,7 @@ export async function runSetupWizardView(opts: SetupWizardViewOptions): Promise<
     if (!lokal) {
       const keyForm = await runForm(
         {
-          title: t("wiz.title"),
+          title: t("wiz.stepKey"),
           fields: [
             {
               id: "key",
@@ -125,12 +126,12 @@ export async function runSetupWizardView(opts: SetupWizardViewOptions): Promise<
         screen,
       )
       if (keyForm.cancelled || !keyForm.values) {
-        process.stdout.write(`${t("wiz.canceled")}\n`)
+        exitMsg = `${t("wiz.canceled")}\n`
         return false
       }
       apiKey = (keyForm.values.key ?? "").trim()
       if (!apiKey) {
-        process.stdout.write(`${t("wiz.keyLater")}\n`)
+        exitMsg = `${t("wiz.keyLater")}\n`
         return false
       }
     }
@@ -187,5 +188,8 @@ export async function runSetupWizardView(opts: SetupWizardViewOptions): Promise<
     try {
       screen.close()
     } catch {}
+    if (exitMsg) {
+      process.stdout.write(exitMsg)
+    }
   }
 }

@@ -119,8 +119,10 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
           const active = row.active ? ` (${t("common.active")})` : ""
           const nameBudget = Math.max(8, w - 4 - displayWidth(active))
           const label = `${truncateToWidth(`${sanitizeAnsiLine(row.id)}${badge}`, nameBudget, "…")}${active}`
-          if (picked) lines.push(`  ${c.accent(c.bold(label))}`)
-          else lines.push(`  ${dim(label)}`)
+          // Penanda › paritas picker/provider-manager — aksesibilitas visual
+          // (warna saja tak cukup untuk sebagian pengguna).
+          if (picked) lines.push(`  ${c.accent("›")} ${c.accent(c.bold(label))}`)
+          else lines.push(`    ${dim(label)}`)
         }
       }
       if (notice) lines.push(cut(dim(sanitizeAnsiLine(notice))))
@@ -432,8 +434,10 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
               continue
             }
             if (item.key.type === "ctrl-u") {
-              // Ctrl+U = clear query (paritas editor, sama dengan picker).
-              filter = null
+              // Ctrl+U = kosongkan query tapi TETAP di mode saring (paritas
+              // readline kill-line + picker). Dulu null (keluar mode) — beda
+              // dari picker yang tetap di mode filter setelah Ctrl+U.
+              filter = ""
               sel = 0
               scroll = 0
               continue

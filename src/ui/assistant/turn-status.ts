@@ -95,6 +95,7 @@ export function attachTurnStatus(
   // Interval animasi mengikuti — cepat bila model berpikir cepat.
   let intervalMs = 150
   let lastReasoningMs: number | null = null
+  let toolStartMs: number | null = null
   const recentDeltas: number[] = []
   // Kepemilikan transient stderr selama interval hidup — lihat statusline.ts.
   let owned: { release(): void } | null = null
@@ -124,10 +125,17 @@ export function attachTurnStatus(
     // Sinyal "alive" (spark pulse) kini MILIK FOOTER, bukan thinking line:
     // satu sumber agar tak ada dua denyut. Thinking = titik saja; tool line
     // tetap pakai spinner braille (itu progres, bukan spark).
+    let elapsedText = ""
+    if (label !== "Thinking" && toolStartMs !== null) {
+      const elapsed = Date.now() - toolStartMs
+      if (elapsed >= 2000) {
+        elapsedText = ` ${c.faint(`(${formatElapsed(elapsed)})`)}`
+      }
+    }
     const body =
       label === "Thinking"
         ? `${dots}`
-        : `${c.info(glyphs.spinnerFrames[fi % glyphs.spinnerFrames.length]!)} ${label}  ${dots}`
+        : `${c.info(glyphs.spinnerFrames[fi % glyphs.spinnerFrames.length]!)} ${label}  ${dots}${elapsedText}`
     const full = body + extra
     // Terminal sangat sempit: potongan label bisa tinggal 1 huruf ("t") —
     // dalam kasus itu tampilkan titiknya saja daripada label rusak.
@@ -189,6 +197,7 @@ export function attachTurnStatus(
     turnOn = false
     textOn = false
     textSeen = false
+    toolStartMs = null
     label = "Thinking"
     intervalMs = 150
     lastReasoningMs = null
@@ -291,10 +300,12 @@ export function attachTurnStatus(
       // Fase kerja baru: latch teks dibuka lagi (thinking antar-tool tampil).
       textOn = false
       textSeen = false
+      toolStartMs = Date.now()
       startPaint(toolLabel(e))
     }),
     bus.on("execution:completed", () => {
       // Tool selesai: kembali ke "Thinking" selama model belum mengeluarkan teks.
+      toolStartMs = null
       textSeen = false
       if (shouldPaint()) startPaint("Thinking")
     }),

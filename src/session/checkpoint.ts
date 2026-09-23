@@ -376,12 +376,13 @@ async function applyCheckpoint(
   direction: "undo" | "redo",
   cwd: string,
 ): Promise<string[]> {
-  const tree = direction === "undo" ? cp.treeBefore : (cp.treeAfter ?? cp.treeBefore)
+  const tree = direction === "undo" ? cp.treeBefore : cp.treeAfter
   if (tree) {
     const res = await restoreTree(cwd, tree)
     return [...res.applied, ...res.skipped.map((s) => `${s} (skipped)`)]
   }
-  const snaps = direction === "undo" ? cp.snapshots : (cp.redoSnapshots ?? cp.snapshots)
+  const snaps = direction === "undo" ? cp.snapshots : cp.redoSnapshots
+  if (!snaps) throw new Error(`checkpoint ${cp.id} does not have ${direction} data`)
   return applySnapshots(snaps, cwd)
 }
 
@@ -397,6 +398,15 @@ export async function undoLastCheckpoint(
     }
 
     const targetCp = manifest.checkpoints[manifest.currentIndex]!
+    if (!targetCp.redoSnapshots && !targetCp.treeAfter && targetCp.snapshots) {
+      try {
+        const redoSnaps: FileSnapshot[] = []
+        for (const snap of targetCp.snapshots) {
+          redoSnaps.push(await captureFileSnapshot(resolve(cwd, snap.path), cwd))
+        }
+        targetCp.redoSnapshots = redoSnaps
+      } catch {}
+    }
     const restoredFiles = await applyCheckpoint(targetCp, "undo", cwd)
 
     // Urutan: marker DULU (bukti durable niat+hasil apply), pointer-disk
@@ -437,6 +447,13 @@ export async function redoLastCheckpoint(
     // mengaburkan jendela crash (pointer-memory vs pointer-disk berbeda).
     const targetIndex = manifest.currentIndex + 1
     const targetCp = manifest.checkpoints[targetIndex]!
+    if (!targetCp.treeAfter && !targetCp.redoSnapshots) {
+      return {
+        success: false,
+        reappliedFiles: [],
+        message: `checkpoint ${targetCp.id} (turn ${targetCp.turn}) does not have redo data`,
+      }
+    }
     const reappliedFiles = await applyCheckpoint(targetCp, "redo", cwd)
 
     await appendUndoMarker(sessionId, cwd, "redo", targetCp.turn, {

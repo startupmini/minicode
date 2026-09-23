@@ -60,6 +60,22 @@ function sparkGlyph(frame: number): string {
 }
 
 /**
+ * Perpendek path agar muat di terminal sedang tanpa membuang CWD sepenuhnya.
+ * Mis. "D:\git\minicode\src\ui" -> "...\src\ui"
+ * atau "/home/user/projects/minicode/src" -> ".../minicode/src"
+ */
+export function shortenPath(p: string, maxSegments = 2): string {
+  if (!p) return ""
+  const isWin = p.includes("\\")
+  const sep = isWin ? "\\" : "/"
+  const clean = p.replace(/[\\/]+$/, "")
+  const parts = clean.split(/[\\/]+/).filter(Boolean)
+  if (parts.length <= maxSegments) return clean
+  const tail = parts.slice(-maxSegments).join(sep)
+  return `...${sep}${tail}`
+}
+
+/**
  * Render 1 baris footer untuk lebar `columns` (+ 1 baris kosong di atasnya
  * bila dilukis lengket). Tanpa garis separator — clean (keputusan user).
  * Non-TTY/dimati diputuskan pemanggil (mekanisme), bukan di sini.
@@ -76,8 +92,10 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
   // \n = 0 sehingga align mengira muat).
   const model = c.gray(sanitizeAnsiLine(shortModel(s.model)))
   const cwdTxt = c.gray(sanitizeAnsiLine(s.cwd))
+  const shortCwdTxt = c.gray(sanitizeAnsiLine(shortenPath(s.cwd)))
 
   const full = `${spark}  ${mode}${sep}${model}${sep}${cwdTxt}`
+  const shortened = `${spark}  ${mode}${sep}${model}${sep}${shortCwdTxt}`
   const mid = `${spark}  ${mode}${sep}${model}`
   const lean = `${spark}  ${mode}`
 
@@ -97,8 +115,9 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
     return `${left}${" ".repeat(gap)}${c.gray(ctx)}`
   }
 
-  // Tangga prioritas buang saat sempit: cwd → model (spark+mode+context kekal).
-  for (const left of [full, mid, lean]) {
+  // Tangga prioritas buang saat sempit: cwd penuh → cwd diperpendek → model (spark+mode+context kekal).
+  const candidates = shortCwdTxt !== cwdTxt ? [full, shortened, mid, lean] : [full, mid, lean]
+  for (const left of candidates) {
     const line = align(left)
     if (displayWidth(line) <= target) return [line]
   }

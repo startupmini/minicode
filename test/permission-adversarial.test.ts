@@ -248,6 +248,13 @@ test("matchAllowlist: wildcard eksplisit vs literal tersimpan", () => {
   expect(matchAllowlist(call("write_file", { path: "a" }), ["bash:*"])).toBe(false)
 })
 
+test("matchAllowlist: tanda ? di-escape secara harfiah (bukan regex quantifier / wildcard)", () => {
+  const call = (name: string, args: unknown) => ({ name, args }) as never
+  expect(matchAllowlist(call("bash", { cmd: "help?" }), ['bash:{"cmd":"help?"}'])).toBe(true)
+  expect(matchAllowlist(call("bash", { cmd: "helpx" }), ['bash:{"cmd":"help?"}'])).toBe(false)
+  expect(() => matchAllowlist(call("bash", { cmd: "test" }), ["?"])).not.toThrow()
+})
+
 // ── MCP dotted: tak pernah auto-allow ──
 
 test("tool MCP runtime (srv.tool) selalu gated kecuali allow-all", async () => {

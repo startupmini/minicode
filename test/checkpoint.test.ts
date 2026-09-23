@@ -38,10 +38,10 @@ test("checkpoint: records snapshot and undos file modifications", async () => {
   expect(undoRes.success).toBe(true)
   expect(await readFile(testFile, "utf8")).toBe("initial content")
 
-  // Redo
+  // Redo menerapkan kembali modified state yang ditangkap saat undo
   const redoRes = await redoLastCheckpoint(sessionId, testDir)
   expect(redoRes.success).toBe(true)
-  expect(await readFile(testFile, "utf8")).toBe("initial content")
+  expect(await readFile(testFile, "utf8")).toBe("modified by agent")
 })
 
 test("checkpoint: recordCheckpointFromSnapshots restores pre-edit state", async () => {

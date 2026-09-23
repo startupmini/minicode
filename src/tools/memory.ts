@@ -96,18 +96,19 @@ export const writeMemoryTool: Tool = {
     const cat = (category as string) ?? "fact"
     const tagArr = Array.isArray(tags) ? (tags as string[]) : undefined
     // also add to vector (hybrid) — pass cwd so local vector.db is used
-    try {
-      const baseUrl = process.env.AGENT_BASE_URL ?? "https://api.openai.com/v1"
-      const apiKey =
-        process.env.DEEPSEEK_API_KEY ??
-        process.env.OPENAI_API_KEY ??
-        process.env.AGENT_API_KEY ??
-        ""
-      if (apiKey) await addMemory(t, { baseUrl, apiKey, cwd, category: cat, tags: tagArr })
-      else await addMemory(t, { cwd, category: cat, tags: tagArr })
-    } catch (e) {
-      process.stderr.write(`[warn] memory vector embedding failed: ${(e as Error).message}\n`)
-      // fallback keyword-only
+    const baseUrl = process.env.AGENT_BASE_URL ?? "https://api.openai.com/v1"
+    const apiKey =
+      process.env.DEEPSEEK_API_KEY ?? process.env.OPENAI_API_KEY ?? process.env.AGENT_API_KEY ?? ""
+    let added = false
+    if (apiKey) {
+      try {
+        await addMemory(t, { baseUrl, apiKey, cwd, category: cat, tags: tagArr })
+        added = true
+      } catch (e) {
+        process.stderr.write(`[warn] memory vector embedding failed: ${(e as Error).message}\n`)
+      }
+    }
+    if (!added) {
       try {
         await addMemory(t, { cwd, category: cat, tags: tagArr })
       } catch (e2) {

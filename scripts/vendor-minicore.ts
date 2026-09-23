@@ -64,12 +64,19 @@ function hashOf(root: string, files: string[]): string {
 }
 
 // Fingerprint kedua: file vendor yang BENAR-BENAR ikut paket npm (field
-// `files` di package.json minicode). vendor/minicore/test/fakes.ts SENGAJA
-// tidak ikut (fixture test — dijaga test/pack-integrity.test.ts), jadi hash
-// 19-file di atas TIDAK BISA direproduksi dari tarball terbit. Hash ini
-// menjembatani: siapa pun bisa menghitungnya dari vendor/minicore di dalam
-// paket yang diunduh dan mencocokkannya dengan angka di VENDOR.md.
-const SHIPPED_EXCLUDE = new Set(["test/fakes.ts"])
+// `files` di package.json minicode). Dua file SENGAJA dikecualikan:
+// - test/fakes.ts — fixture test, tidak tercantum di `files` (dijaga
+//   test/pack-integrity.test.ts), jadi hash N-file di atas TIDAK BISA
+//   direproduksi dari tarball terbit.
+// - LICENSE — vendor/minicore/LICENSE tidak tercantum di `files` minicode
+//   (yang terkemas: vendor/minicore/src + package.json + VENDOR.md; LICENSE
+//   paket memakai berkas root). Tanpa pengecualian ini, sink pertama setelah
+//   upstream menambah LICENSE menggeser shipped hash dan guard provenance
+//   test/pack-integrity.test.ts (yang menghitung dari src + package.json)
+//   berubah merah.
+// Hash ini menjembatani: siapa pun bisa menghitungnya dari vendor/minicore
+// di dalam paket yang diunduh dan mencocokkannya dengan angka di VENDOR.md.
+const SHIPPED_EXCLUDE = new Set(["test/fakes.ts", "LICENSE"])
 function hashShipped(root: string, files: string[]): string {
   const shipped = files.filter((f) => !SHIPPED_EXCLUDE.has(f))
   return hashOf(root, shipped)

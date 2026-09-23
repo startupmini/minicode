@@ -77,9 +77,9 @@ async function writeLocalProviders(providers: unknown[]): Promise<void> {
 
 async function readConfig(
   path: string,
-): Promise<{ providers: { id: string; models: string[] }[] }> {
+): Promise<{ providers: { id: string; models: string[]; apiKey?: string }[] }> {
   return JSON.parse(await readFile(path, "utf8")) as {
-    providers: { id: string; models: string[] }[]
+    providers: { id: string; models: string[]; apiKey?: string }[]
   }
 }
 
@@ -376,7 +376,14 @@ describe.serial("provider-manager: add (a)", () => {
     await tty.send(KEY.tab)
     await tty.send(KEY.right) // Tidak → Ya
     await tty.send(KEY.enter)
-    await waitFor(async () => (await readConfig(globalPath)).providers.length === 1)
+    // Save terjadi SETELAH "Detecting models…" async. Config global SUDAH
+    // berisi 1 provider ("lama") sejak awal — menunggu jumlah = no-op yang
+    // lolos seketika; di bawah coverage save melambat dan assert membaca
+    // key lama (flake nyata). Tunggu ISI-nya: apiKey berubah jadi k-baru.
+    await waitFor(async () => {
+      const c = await readConfig(globalPath)
+      return c.providers.find((p) => p.id === "openai")?.apiKey === "k-baru"
+    })
     const cfg = JSON.parse(await readFile(globalPath, "utf8")) as {
       providers: { id: string; apiKey: string }[]
     }

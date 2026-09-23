@@ -42,8 +42,8 @@ Did-you-mean: typo `/sessoons` → `Did you mean /sessions?` (jarak ≤ 2).
 | `enter` | Kirim prompt (di picker/form: pilih/simpan; kosong = batal di picker) |
 | `tab` / `shift+tab` | Putar mode izin (di form: pindah field) |
 | `↑` / `↓` | Riwayat prompt, atau navigasi item di picker/manager/form |
-| `pgup` / `pgdn` | Gulir transkrip (di picker/manager: gulir daftar) |
-| `home` / `end` | Awal/akhir baris (di picker/manager: lompat atas/bawah daftar) |
+| `pgup` / `pgdn` | Gulir transkrip satu halaman; dengan `shift`: setengah halaman (di picker/manager: gulir daftar) |
+| `home` / `end` | Awal/akhir baris; saat baris kosong tanpa dropdown: lompat ke atas transkrip / kembali ke ekor (di picker/manager: lompat atas/bawah daftar) |
 | `←` / `→` | Geser kursor (di form select/confirm: ganti opsi/nilai) |
 | `ctrl+a` / `ctrl+e` | Awal / akhir baris |
 | `delete` / `backspace` | Hapus karakter (di filter: pangkas query; di /model browse: Del = hapus model dengan konfirmasi) |

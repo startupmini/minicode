@@ -127,6 +127,10 @@ function clonePlainValue(value: unknown, seen = new WeakMap<object, unknown>()):
     return out;
   }
   const proto = Object.getPrototypeOf(value);
+  // Known limitation (documented): non-plain objects (Date, RegExp, class
+  // instances, …) are returned AS-IS — the same reference crosses the
+  // boundary. Plain objects/arrays/binary are deep-copied; exotic types are
+  // kept so cloning never corrupts them, at the cost of shared identity.
   if (proto !== Object.prototype && proto !== null) return value;
   const out = Object.create(proto) as Record<string, unknown>;
   seen.set(value, out);

@@ -3,10 +3,10 @@
 Salinan kernel MiniCore agar `bun install` tidak membutuhkan clone sibling
 `../minicore`. Sumber kebenaran tetap repo minicore.
 
-- source commit: `ae9d1be362d24b685f83858f65ee12cbfa3ca75a`
-- files: 19
-- hash: `96bcd6f7b8b62a4e`
-- shipped hash: `824f509e6506c4b3` (18 file) — fingerprint file vendor yang ikut paket npm
+- source commit: `0d33571047c0ed3778986108fd42e4bde6828bb0`
+- files: 20
+- hash: `840aa2e9cd70a401`
+- shipped hash: `78768e71a45254c3` (18 file) — fingerprint file vendor yang ikut paket npm
   (hash di atas mencakup test/fakes.ts yang sengaja tidak ikut paket;
    verifikasi dari paket terbit: hitung hash vendor/minicore di dalam tarball)
 

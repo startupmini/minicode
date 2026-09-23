@@ -23,6 +23,10 @@ const CLEAR_ALL = "\x1b[2J"
 const RESET_REGION = "\x1b[r"
 const SYNC_START = "\x1b[?2026h"
 const SYNC_END = "\x1b[?2026l"
+/** Ekspor untuk pemanggil yang melukis kursor di luar paint() (app.ts) —
+ * kursor WAJIB di dalam blok sync yang sama dengan framenya (TUI-007). */
+export const SYNC_UPDATE_START = SYNC_START
+export const SYNC_UPDATE_END = SYNC_END
 
 let depth = 0
 let exitHookInstalled = false
@@ -32,6 +36,9 @@ function installExitHook(): void {
   exitHookInstalled = true
   // Jaring terakhir (best-effort, sinkron): modal yatim mengunci layar di
   // buffer alt. `kill -9` tak tercakup — ketik `reset` (residual kontrak).
+  // CATATAN TUI-001: handler `exit` Node TIDAK jalan pada SIGTERM/SIGHUP
+  // default — restore pada sinyal fatal adalah tanggung jawab pemilik sesi
+  // interaktif (TuiApp) yang memasang handler sinyalnya sendiri per-run.
   process.on("exit", () => {
     if (depth > 0) {
       try {
@@ -197,6 +204,21 @@ export function openAltScreen(): AltScreen {
 /** Introspeksi untuk test: kedalaman modal aktif. */
 export function altScreenDepth(): number {
   return depth
+}
+
+/**
+ * Tulis exit-sequence alt-screen SEKARANG (dipanggil handler sinyal TuiApp
+ * sebelum process.exit): jaring restore saat SIGTERM/SIGHUP — handler `exit`
+ * Node TIDAK jalan pada sinyal fatal default.
+ */
+export function forceRestoreScreenForSignal(): void {
+  if (depth > 0) {
+    try {
+      process.stdout.write(EXIT)
+      process.stdout.write(RESET_REGION)
+    } catch {}
+    depth = 0
+  }
 }
 
 /**

@@ -56,6 +56,10 @@ function getArg(name: string, fallback: number): number {
 // tooSmall abort, stale-handle, clear/scroll, approval pipe-deny, form
 // revert, i18n label + 30 test baru): 83,28/84,58 satu run. Lines +0,05
 // (noise) — kunci tetap 84,5; funcs tetap 80 (aturan lama anti-flaky).
+// Audit TUI (sinyal SIGTERM/SIGHUP, Home/End jump, Shift+Pg half-page,
+// abort hint, MINICODE_MOTION, kursor sync-update, form idle + 13 test
+// baru): 83,42–83,45/84,64–84,65. Lines +0,14 — margin terlalu tipis untuk
+// dikunci 84,6 (berisiko flaky); kunci tetap 84,5; funcs tetap 80.
 const MIN_LINES = getArg("--lines", 84.5)
 const MIN_FUNCS = getArg("--funcs", 80)
 

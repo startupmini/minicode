@@ -12,20 +12,19 @@ import type { Content, Message } from "../core/types.ts";
 // `args` — the executor rejects unknown properties (all schemas are
 // additionalProperties:false), so smuggling it there fails validation.
 // Side-map keeps args clean; consume-once + cap so long sessions can't leak.
-const providerMetaByCallId = new Map<string, unknown>()
-function stashProviderMeta(id: string, meta: unknown): void {
-  if (!id || meta == null) return
-  providerMetaByCallId.set(id, meta)
-  // Cap: drop the oldest entry when a very long session piles up.
-  if (providerMetaByCallId.size > 500) {
-    const first = providerMetaByCallId.keys().next()
-    if (!first.done) providerMetaByCallId.delete(first.value)
-  }
-}
-function takeProviderMeta(id: string): unknown {
-  const v = providerMetaByCallId.get(id)
-  if (v != null) providerMetaByCallId.delete(id)
-  return v
+// The map lives per provider INSTANCE (inside createOpenAICompatProvider):
+// a module-level map would be shared across concurrent sessions, and
+// index-based fallback ids (`call_0`) could then echo one session's metadata
+// into another session's history replay.
+
+/** Sniff a well-known image format from magic bytes; undefined when unknown. */
+function sniffImageMime(bytes: Uint8Array): string | undefined {
+  if (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 4 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) return "image/gif";
+  if (bytes.length >= 12 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) return "image/webp";
+  if (bytes.length >= 2 && bytes[0] === 0x42 && bytes[1] === 0x4d) return "image/bmp";
+  return undefined;
 }
 
 /** Configuration for an OpenAI-compatible chat completions endpoint. */
@@ -68,6 +67,23 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): ModelPro
     ...config.headers,
   };
 
+  // Per-instance provider-metadata side-map (see comment at top of file).
+  const providerMetaByCallId = new Map<string, unknown>();
+  function stashProviderMeta(id: string, meta: unknown): void {
+    if (!id || meta == null) return;
+    providerMetaByCallId.set(id, meta);
+    // Cap: drop the oldest entry when a very long session piles up.
+    if (providerMetaByCallId.size > 500) {
+      const first = providerMetaByCallId.keys().next();
+      if (!first.done) providerMetaByCallId.delete(first.value);
+    }
+  }
+  function takeProviderMeta(id: string): unknown {
+    const v = providerMetaByCallId.get(id);
+    if (v != null) providerMetaByCallId.delete(id);
+    return v;
+  }
+
   return {
     id: config.id ?? "openai-compat",
     models: config.models,
@@ -76,14 +92,16 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): ModelPro
       const buildBody = (withUsage: boolean): string =>
         JSON.stringify({
           model: request.model ?? config.defaultModel,
-          messages: toMessages(request.messages),
+          messages: toMessages(request.messages, takeProviderMeta),
           tools: request.tools?.length ? toTools(request.tools) : undefined,
           stream: true,
           // JSON.stringify drops undefined keys, so the field is omitted entirely.
           stream_options: withUsage ? { include_usage: true } : undefined,
           // DeepSeek-style thinking: provider seperti b.ai butuh reasoning_content
           // di history saat thinking aktif. OFF via env agar multi-turn aman.
-          ...(process.env.MINICODE_THINKING === "off" ? { enable_thinking: false } : {}),
+          // MINICORE_THINKING adalah nama resmi; MINICODE_THINKING (brand lama)
+          // dipertahankan sebagai fallback kompatibilitas.
+          ...((process.env.MINICORE_THINKING ?? process.env.MINICODE_THINKING) === "off" ? { enable_thinking: false } : {}),
           ...(config.reasoningEffort ? { reasoning_effort: config.reasoningEffort } : {}),
         });
       let body = buildBody(includeUsage);
@@ -223,7 +241,7 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): ModelPro
   };
 }
 
-function toMessages(messages: readonly Message[]): unknown[] {
+function toMessages(messages: readonly Message[], takeMeta: (id: string) => unknown): unknown[] {
   return messages.map((message) => {
     switch (message.role) {
       case "user":
@@ -239,7 +257,7 @@ function toMessages(messages: readonly Message[]): unknown[] {
               ? message.toolCalls.map((call) => {
                 // Echo provider metadata from the side-map (consume-once);
                 // args are sent exactly as received, with no hidden keys.
-                const extra = takeProviderMeta(call.id)
+                const extra = takeMeta(call.id)
                 return {
                   id: call.id,
                   type: "function",
@@ -249,12 +267,24 @@ function toMessages(messages: readonly Message[]): unknown[] {
               })
             : undefined,
         };
-      case "tool":
+      case "tool": {
+        const content = message.content;
+        // Binary tool results must never reach the wire as a JSON index map
+        // ({"0":1,...}): sniffed images travel as an image_url data-URL part;
+        // any other binary becomes an explicit placeholder string.
+        if (content instanceof Uint8Array) {
+          const mime = sniffImageMime(content);
+          const wire = mime
+            ? [{ type: "image_url", image_url: { url: `data:${mime};base64,${bytesToBase64(content)}` } }]
+            : `[binary: ${content.byteLength} bytes]`;
+          return { role: "tool", tool_call_id: message.toolCallId, content: wire };
+        }
         return {
           role: "tool",
           tool_call_id: message.toolCallId,
-          content: typeof message.content === "string" ? message.content : JSON.stringify(message.content),
+          content: typeof content === "string" ? content : JSON.stringify(content),
         };
+      }
     }
   });
 }
@@ -351,16 +381,37 @@ async function* sse(body: ReadableStream<Uint8Array>, signal: AbortSignal): Asyn
 
 function toProviderError(status: number, body: string, headers: Headers): ProviderError {
   const detail = body.slice(0, 500);
-  const retryAfter = headers.get("retry-after");
+  const retryAfterMs = parseRetryAfter(headers.get("retry-after"));
   if (status === 429) {
-    const ms = retryAfter ? Number(retryAfter) * 1_000 : undefined;
-    return new ProviderError("rate_limit", `rate limited (${status}): ${detail}`, Number.isFinite(ms) ? ms : undefined);
+    return new ProviderError("rate_limit", `rate limited (${status}): ${detail}`, retryAfterMs);
   }
   if (status === 401 || status === 403) return new ProviderError("auth", `auth failed (${status}): ${detail}`);
   if (status === 400 || status === 404 || status === 422) {
-    const isContext = body.toLowerCase().includes("context_length") || body.toLowerCase().includes("maximum context");
+    // Providers phrase context overflow differently: OpenAI "maximum context
+    // length", OpenRouter-style "context_length_exceeded", Anthropic "prompt
+    // is too long", Gemini-style "input is too long". Missing a phrase turns
+    // a compact-and-retry case into a terminal invalid_request throw.
+    const lower = body.toLowerCase();
+    const isContext = ["context_length", "context length", "maximum context", "prompt is too long", "input is too long"].some((phrase) =>
+      lower.includes(phrase),
+    );
     return new ProviderError(isContext ? "context_length_exceeded" : "invalid_request", `${status}: ${detail}`);
   }
   if (status >= 500) return new ProviderError("server", `server error (${status}): ${detail}`);
   return new ProviderError("unknown", `${status}: ${detail}`);
+}
+
+/**
+ * Parse a `Retry-After` header in either RFC form — delta-seconds ("120")
+ * or HTTP-date ("Wed, 21 Oct 2026 07:28:00 GMT") — into milliseconds from
+ * now. Returns undefined when absent or unparsable; a past date yields 0.
+ */
+function parseRetryAfter(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  if (trimmed === "") return undefined;
+  if (/^\d+(\.\d+)?$/.test(trimmed)) return Math.round(Number(trimmed) * 1_000);
+  const date = Date.parse(trimmed);
+  if (Number.isNaN(date)) return undefined;
+  return Math.max(0, date - Date.now());
 }

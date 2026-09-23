@@ -131,6 +131,7 @@ const KEYBOARD_HELP: [string, MsgKey][] = [
   ["tab / shift+tab", "help.k.cycleMode"],
   ["up / down", "help.k.history"],
   ["pgup / pgdn", "help.k.scroll"],
+  ["home / end (prompt)", "help.k.jumpTop"],
   ["left / right", "help.k.move"],
   ["home / end", "help.k.jump"],
   ["delete", "help.k.delChar"],

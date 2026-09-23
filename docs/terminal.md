@@ -64,7 +64,14 @@ tak boleh mengandalkan alternate screen di jalur non-interaktif.
 
 ## Aksesibilitas & konsol lawas
 
-`MINICODE_ASCII=1` (glyph `[OK]`/`>`/`.`), `MINICODE_A11Y=1` (live-region approval polos tanpa ANSI), `MINICODE_BELL=0`, `MINICODE_DROPDOWN=0` (hint inline). Daftar lengkap di [Environment Variables](environment.md).
+`MINICODE_ASCII=1` (glyph `[OK]`/`>`/`.`), `MINICODE_A11Y=1` (live-region approval polos tanpa ANSI), `MINICODE_BELL=0`, `MINICODE_DROPDOWN=0` (hint inline), `MINICODE_MOTION=0` (spark statis, tanpa pulse). Daftar lengkap di [Environment Variables](environment.md).
+
+### Sinyal fatal & pemulihan terminal
+
+Sesi TUI memasang handler SIGTERM/SIGHUP sendiri selama hidup (dilepas saat
+quit): sinyal = raw mode dimatikan + alt-screen ditutup + exit `128+n`
+(SIGTERM=143, SIGHUP=129) — terminal tidak tertinggal di buffer alt. `kill -9`
+tetap di luar jangkauan (ketik `reset`; residual kontrak #2).
 
 ## Lanjut
 

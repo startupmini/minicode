@@ -138,6 +138,8 @@ export interface FakeTty {
    * pasca-quit pakai byte pairing, bukan parser). CJK/emoji dihitung 2 kolom
    * via `displayWidth` supaya kursor tidak meleset setelah glyph lebar.
    */
+  /** Status raw mode saat ini (untuk assertion restore TUI-001). */
+  isRaw(): boolean
   screen(): string[]
   /** Rejection/exception yang tertangkap selama test. Harus kosong. */
   failures(): string[]
@@ -419,6 +421,8 @@ export function installFakeTty(opts: FakeTtyOptions = {}): FakeTty {
       for (const fn of [...resizeListeners]) fn()
     },
     screen: () => parseScreenBuffer(chunks.join(""), columns, rows),
+    /** Status raw mode saat ini (untuk assertion restore TUI-001). */
+    isRaw: () => rawMode,
     failures: () => [...failures],
     restore() {
       process.off("unhandledRejection", onFailure)

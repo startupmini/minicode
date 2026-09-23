@@ -25,7 +25,14 @@ import {
 import { sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c } from "../render/theme.ts"
 import { chunkByWidth, displayWidth, truncateToWidth } from "../render/width.ts"
-import { type AltScreen, openAltScreen } from "../runtime/screen.ts"
+import { motionReduced } from "../runtime/motion.ts"
+import {
+  type AltScreen,
+  forceRestoreScreenForSignal,
+  openAltScreen,
+  SYNC_UPDATE_END,
+  SYNC_UPDATE_START,
+} from "../runtime/screen.ts"
 import type { Transcript } from "./transcript.ts"
 
 export interface TuiStatusSnapshot {
@@ -89,6 +96,8 @@ export class TuiApp {
   private tick = 0
   /** Timestamp abort terakhir (ms) — deteksi double-tap Esc/Ctrl+C = quit. */
   private lastAbortAt = 0
+  /** Hint "tekan lagi untuk keluar" tampil sekali setelah abort pertama. */
+  private abortHintOn = false
   private frames = 0
   private quitRequested = false
   private finish: (() => void) | null = null
@@ -96,6 +105,14 @@ export class TuiApp {
   private pump: KeyStreamPump | null = null
   private onData: ((chunk: Buffer) => void) | null = null
   private onResize: (() => void) | null = null
+  /**
+   * Dua wrapper sinyal terpisah — Bun tidak menyampaikan nama sinyal ke
+   * handler (argumen undefined, beda dengan Node), jadi pemetaan sinyal →
+   * exit code dilakukan lewat pemasangan per-sinyal ke core di bawah.
+   */
+  private onSignalTerm: (() => void) | null = null
+  private onSignalHup: (() => void) | null = null
+
   private wasRaw = false
   /**
    * Kedalaman suspend (popup komposit memegang fokus). >0 = listener stdin
@@ -176,6 +193,42 @@ export class TuiApp {
       removeListener(e: string, fn: () => void): void
     }
     stdout.on("resize", this.onResize)
+    // Sinyal fatal (temuan audit TUI-001): default kernel-kill TIDAK
+    // menjalankan handler "exit" Node — terminal bisa tertinggal alt-screen
+    // + raw mode. Dipasang per-run, dilepas di cleanup (pasangan ketat).
+    // Handler TERPISAH per sinyal: Bun TIDAK menyampaikan nama sinyal ke
+    // handler (argumen undefined — beda dengan Node), jadi satu handler
+    // bersama tak bisa membedakan TERM vs HUP dari parameternya.
+    // WAJIB tetap di blok sinkron yang sama dengan openAltScreen() di atas
+    // (tanpa await di antaranya): sinyal hanya disampaikan antar-tick event
+    // loop, jadi tak ada jendela nyata; sisipkan await di antara keduanya =
+    // membuka race SIGTERM sebelum handler terpasang.
+    const restoreAndExit = (code: number) => {
+      try {
+        stdin.setRawMode(false)
+      } catch {}
+      try {
+        stdin.pause()
+      } catch {}
+      try {
+        stdin.removeListener("data", this.onData!)
+      } catch {}
+      forceRestoreScreenForSignal()
+      // exit() eksplisit memicu handler "exit" yang tersisa (spinner,
+      // turn-status) — best-effort sinkron. 128+n = konvensi "mati oleh
+      // sinyal n" (SIGTERM=15 → 143, SIGHUP=1 → 129) agar automation
+      // tetap bisa membedakan sebab.
+      process.exit(code)
+    }
+    this.onSignalTerm = () => restoreAndExit(143)
+    this.onSignalHup = () => restoreAndExit(129)
+    try {
+      process.on("SIGTERM", this.onSignalTerm)
+      process.on("SIGHUP", this.onSignalHup)
+    } catch {
+      this.onSignalTerm = null
+      this.onSignalHup = null
+    }
     // Repaint live mengikuti event bus (stream teks, ledger, thinking).
     // Suspend menahan repaint (popup melukis sendiri); quit menahan semua.
     const requestPaint = () => {
@@ -221,6 +274,18 @@ export class TuiApp {
     this.busUnsubs = []
     this.suspended = 0
     this.released = false
+    if (this.onSignalTerm) {
+      try {
+        process.off("SIGTERM", this.onSignalTerm)
+      } catch {}
+      this.onSignalTerm = null
+    }
+    if (this.onSignalHup) {
+      try {
+        process.off("SIGHUP", this.onSignalHup)
+      } catch {}
+      this.onSignalHup = null
+    }
     this.stdin = null
     this.pump.dispose()
     this.pump = null
@@ -260,8 +325,32 @@ export class TuiApp {
     // di-intercept sebelum engine supaya tak jadi histori maupun teks.
     // Dulu di bawah gate tooSmall: terminal menciut + turn busy = tak bisa
     // scroll maupun abort (harus kill -9).
+    // Shift+PgUp/PgDn (ESC[5;2~/6;2~, didekode modifier 2 = shift) = setengah
+    // halaman (temuan audit TUI-002): halaman penuh terlalu kasar untuk
+    // transkrip panjang; Home/End = lompat top/tail (di bawah).
     if (key.type === "pageup" || key.type === "pagedown") {
+      const mod = key.modifier ?? 0
+      if (mod === 2) {
+        this.scrollBy(key.type === "pageup" ? 0.5 : -0.5)
+        return
+      }
       this.scrollBy(key.type === "pageup" ? 1 : -1)
+      return
+    }
+    // Home/End LOMPAT transkrip HANYA saat prompt kosong & tanpa dropdown
+    // (temuan audit TUI-002): transkrip cap 5000 baris ≈ 125 halaman —
+    // menekan PgUp 125× bukan navigasi. Home = baris teratas, End = kembali
+    // ke ekor. Baris BERISI = tombol editing (awal/akhir baris, kontrak lama);
+    // dropdown terbuka = navigasi menu (jalur engine).
+    if ((key.type === "home" || key.type === "end") && !this.state.menuOpen && !this.state.line) {
+      const logical = key.type === "home"
+      if (logical || this.scrollBack !== 0) {
+        this.jumpEdge(logical)
+        return
+      }
+      // End saat sudah di ekor: biarkan ke engine (kebiasaan editing —
+      // tidak ada yang berubah, action "none").
+      this.applyEngine(key)
       return
     }
     // Abort/batal: Esc & Ctrl+C — berlaku juga saat layar menciut (jalan
@@ -276,8 +365,14 @@ export class TuiApp {
         } catch {}
         const now = Date.now()
         const doubleTap = now - this.lastAbortAt < 1500
+        // Hint "tekan lagi untuk keluar" SEKALI setelah abort pertama (temuan
+        // audit TUI-005): tanpa ini user yang menekan Esc dua kali untuk
+        // "memastikan" justru keluar sesi tanpa sengaja — transkrip TUI hilang.
+        // Hanya saat TIDAK double-tap; saat menciut indikator tak dilukis.
+        if (!doubleTap) this.abortHintOn = true
         this.lastAbortAt = now
         if (doubleTap) this.quit()
+        else this.paintCurrent()
         return
       }
       if (this.tooSmall()) return
@@ -396,6 +491,7 @@ export class TuiApp {
     this.state = createState()
     this.histIdx = -1
     this.followTail()
+    this.abortHintOn = false
     if (!line) {
       this.paintCurrent()
       return
@@ -605,9 +701,34 @@ export class TuiApp {
     // scrollBack dihitung dalam BARIS agar presisi di terminal pendek. Basis
     // hitung "baris baru" dicatat saat mulai meninggalkan ekor. total()
     // (monotonik) dipakai agar evict cap 5000 tak merusak hitungan.
+    // pages pecahan (±0.5) = setengah halaman (temuan audit TUI-002).
     if (this.scrollBack === 0 && pages > 0) this.scrollBase = this.transcript.total()
-    this.scrollBack = Math.max(0, this.scrollBack + pages * page)
+    this.scrollBack = Math.max(0, Math.round(this.scrollBack + pages * page))
     if (this.scrollBack === 0) {
+      this.tailSize = this.transcript.total()
+      this.scrollBase = this.tailSize
+    }
+    this.paintCurrent()
+  }
+
+  /**
+   * Lompat ke ujung transkrip (temuan audit TUI-002): Home = baris teratas
+   * (scrollBack maksimum), End = ekor. `lastWrapped` dinetralkan SEBELUM
+   * perhitungan kunci-posisi-baca berikutnya: jendela yang sengaja dipindah
+   * user bukan drift stream, tanpa ini paint pertama post-jump menarik
+   * viewport kembali ke ekor (lompatan tak terlihat).
+   */
+  private jumpEdge(top: boolean): void {
+    const rows = process.stdout.rows || 24
+    const cols = process.stdout.columns || 80
+    const curWrapped = this.transcript.wrappedLength(cols)
+    this.lastWrapped = curWrapped
+    if (top) {
+      const viewH = Math.max(1, this.viewportHeight(rows, cols) - 1)
+      if (this.scrollBack === 0) this.scrollBase = this.transcript.total()
+      this.scrollBack = Math.max(0, curWrapped - viewH)
+    } else {
+      this.scrollBack = 0
       this.tailSize = this.transcript.total()
       this.scrollBase = this.tailSize
     }
@@ -726,9 +847,14 @@ export class TuiApp {
       return
     }
     const snap = this.host.getStatus()
+    // MINICODE_MOTION=0 (temuan audit TUI-006): spark statis redup — status
+    // busy tak boleh bergantung pada animasi (aksesibilitas / rec / SSH lambat).
     this.tick = snap.busy ? this.tick + 1 : 0
     const statusLine =
-      renderFooter({ ...snap.footer, sparkFrame: snap.busy ? this.tick : 0 }, cols)[0] ?? ""
+      renderFooter(
+        { ...snap.footer, sparkFrame: snap.busy && !motionReduced() ? this.tick : 0 },
+        cols,
+      )[0] ?? ""
     const menu = this.menuRows(rows, cols)
     const inputAll = this.inputRows(cols)
     const inputH = Math.min(MAX_INPUT_ROWS, Math.max(1, inputAll.length))
@@ -736,7 +862,11 @@ export class TuiApp {
     // masuk — tanpa ini output baru lewat diam-diam. Makan 1 baris viewport.
     // total() monotonik: evict cap tak membuat hitungan negatif/hilang.
     const newCount = this.scrollBack > 0 ? this.transcript.total() - this.scrollBase : 0
-    const indicator = newCount > 0 ? [c.muted(t("app.newBelow", { n: newCount }))] : []
+    // Indikator + hint abort saling eksklusif (satu slot): scroll memakai slot
+    // untuk "baris baru"; abort memakainya untuk petunjuk keluar.
+    const indicator: string[] = []
+    if (newCount > 0) indicator.push(c.muted(t("app.newBelow", { n: newCount })))
+    else if (this.busy && this.abortHintOn) indicator.push(c.warning(t("app.abortHint")))
     const viewH = Math.max(1, rows - 1 - inputH - menu.length - indicator.length)
     // Kunci posisi baca: stream yang menambah baris saat user scroll ke atas
     // ikut menggeser scrollBack agar jendela menunjuk baris absolut yang sama
@@ -764,10 +894,13 @@ export class TuiApp {
       screen.paint(out)
     } catch {}
     // Parkir kursor di posisi ketik (kolom terminal, bukan karakter).
+    // Di dalam blok sync-update yang SAMA dengan frame (temuan audit TUI-007):
+    // kursor yang ditulis setelah SYNC_END berpotensi tearing di emulator
+    // tanpa ?2026 (frame tampil, kursor satu posisi lama).
     const cursorRow = viewH + menu.length + indicator.length + (cursor.visIdx - winStart) + 1
     try {
       process.stdout.write(
-        `\x1b[?25l\x1b[${Math.max(1, cursorRow)};${Math.max(1, cursor.col)}H\x1b[?25h`,
+        `${SYNC_UPDATE_START}\x1b[?25l\x1b[${Math.max(1, cursorRow)};${Math.max(1, cursor.col)}H\x1b[?25h${SYNC_UPDATE_END}`,
       )
     } catch {}
     this.frames++

@@ -44,8 +44,10 @@ export type PromptKey =
   | { type: "up" }
   | { type: "down" }
   // PgUp/PgDn (ESC[5~/[6~) — di TUI scroll viewport transkrip, bukan histori.
-  | { type: "pageup" }
-  | { type: "pagedown" }
+  // modifier (kode xterm, 0 = polos): 2 = shift — Shift+PgUp/PgDn = setengah
+  // halaman (temuan audit TUI-002).
+  | { type: "pageup"; modifier?: number }
+  | { type: "pagedown"; modifier?: number }
   | { type: "tab" }
   | { type: "enter" }
   | { type: "esc" }
@@ -286,6 +288,8 @@ export function applyKey(
     // applyKey; engine netral (tanpa ini switch tak exhaustive → tsc merah).
     case "pageup":
     case "pagedown":
+      // Scroll ditangani App TUI SEBELUM applyKey (I18); engine netral
+      // (tanpa ini switch tak exhaustive → tsc merah).
       return { state, action: "none" }
     case "ctrl-w": {
       if (state.cursor === 0) return { state, action: "none" }
@@ -665,8 +669,31 @@ export function decodeKey(s: string, i: number): DecodedKey | null {
       if (kind === "8" && s[i + 3] === "~") return { key: { type: "end" }, width: 4 }
       if (kind === "3" && s[i + 3] === "~") return { key: { type: "delete" }, width: 4 }
       // PgUp/PgDn — App TUI memakainya untuk scroll transkrip (I18).
-      if (kind === "5" && s[i + 3] === "~") return { key: { type: "pageup" }, width: 4 }
-      if (kind === "6" && s[i + 3] === "~") return { key: { type: "pagedown" }, width: 4 }
+      // Dua varian sah: polos ESC[5~ (4 byte) dan bermodifier ESC[5;<m>~
+      // (modifier bisa multi-digit: 2=shift, 5=ctrl, 3=alt, kombinasi >9
+      // seperti 23). HANYA terminator '~' yang dianggap PgUp/PgDn — response
+      // DSR kursor (ESC[5;34R) dsb. harus jatuh ke catch-all esc di bawah;
+      // tanpa guard ini, response DSR baris-5/6 dibajak jadi pageup + residu
+      // char bocor ke prompt (bug ditemukan audit typing, probe ESC[5;34R).
+      // Width dihitung dari posisi terminator — width tetap 5 membuat sisa
+      // '~' ter-decode jadi keystroke char (prompt tiba-tiba berisi '~').
+      if (kind === "5" || kind === "6") {
+        const type = kind === "5" ? "pageup" : "pagedown"
+        if (s[i + 3] === "~") return { key: { type, modifier: 0 }, width: 4 }
+        if (s[i + 3] === ";") {
+          let j = i + 4
+          let ch: string | undefined = s[j]
+          while (ch !== undefined && ch >= "0" && ch <= "9") {
+            j++
+            ch = s[j]
+          }
+          if (ch === "~") {
+            const mod = Number.parseInt(s.slice(i + 4, j), 10) || 0
+            return { key: { type, modifier: mod }, width: j + 1 - i }
+          }
+        }
+        // selain itu (ESC[5;34R, ESC[5x, …) → catch-all esc di bawah
+      }
       // Shift+Tab (backtab) ESC [ Z — dipakai REPL linier untuk cycle mode.
       // Tanpa cabang eksplisit ini ia jatuh ke catch-all "esc" di bawah,
       // sehingga tipe "shift-tab" tidak pernah dihasilkan decodeKeys.

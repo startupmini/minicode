@@ -1,4 +1,10 @@
-# Kontrak Terminal MiniCode (TUI fullscreen — v6, 2026-09-22)
+# Kontrak Terminal MiniCode (TUI fullscreen — v7, 2026-09-23)
+
+Perubahan v7 (temuan audit `audit-tui`): penanganan sinyal fatal
+SIGTERM/SIGHUP (I31), navigasi transkrip Home/End + Shift+PgUp/PgDn (I14),
+hint abort sekali saat busy (I14), idle guard form dua-tahap (I21), spark
+statis via `MINICODE_MOTION=0` (I13), parkir kursor di dalam blok
+sync-update (I25).
 
 Satu-satunya tampilan interaktif adalah **TUI fullscreen**: transkrip ala
 shell + status bar + popup komposit. REPL linier, footer lengket (chrome),
@@ -18,7 +24,8 @@ proteksi").
   (transkrip sesi tidak di-dump ke scrollback).
 - **Non-interaktif** (one-shot prompt, `exec`, pipe/redirect/CI): cetak polos,
   tak pernah membuka TUI.
-- Tanpa panel/sidebar; tanpa mouse; tanpa animasi.
+- Tanpa panel/sidebar; tanpa mouse; tanpa animasi dekoratif (pulse spark
+  status bar dapat dimatikan `MINICODE_MOTION=0` — I13).
 
 ## Contract stdout/stderr
 
@@ -48,6 +55,12 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
 - `App` pemilik tunggal layar (alt-screen enter saat start, exit saat quit —
   selalu berpasangan, termasuk exception/SIGINT via handler `process.on("exit")`
   sinkron best-effort). Turn berjalan = indikator spark pada status bar.
+- **Sinyal fatal** (I31): saat sesi TUI hidup, `App.run()` memasang
+  `process.once("SIGTERM"/"SIGHUP")` → restore terminal (alt-screen exit +
+  raw mode pulih) lalu `process.exit(128+n)`. Pasangan ketat: dilepas di
+  cleanup `run()` — tanpa sesi TUI, sinyal TIDAK di-intercept (perilaku
+  default proses tetap). Tanpa ini SIGTERM meninggalkan terminal di
+  alt-screen + raw mode (user harus `reset`).
 - App me-repaint live mengikuti event bus (stream teks, ledger, thinking;
   coalesce 30ms) — TANPA ini layar buta selama turn. Suspend menahan repaint
   (popup melukis sendiri); quit menahan semua.
@@ -59,6 +72,9 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
   popup — dilarang.
 - Saat turn berjalan SEMUA input dibekukan kecuali abort (Esc/Ctrl+C) dan
   scroll (PgUp/PgDn). Enter saat busy = sunyi (bukan antre, bukan petunjuk).
+  Abort pertama menampilkan hint "tekan Esc/Ctrl+C lagi untuk keluar" di slot
+  indikator SEKALI (anti keluar sesi tak sengaja saat double-tap "memastikan"
+  — I14); abort kedua dalam 1,5 dtk = quit.
 
 ## Popup, dialog, form & i18n
 
@@ -125,12 +141,19 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     geometri popup, dialog, dan viewport TUI.
 12. Long session tetap readable (cap 5000 baris, tertua dibuang).
 13. Status bar: 1 baris dasar (`✦ mode • model • cwd … ctx`) dari sumber yang
-    sama dengan angka sesi; spark pulse saat busy.
-14. Binding TUI: PgUp/PgDn scroll; Up/Down histori; Tab/Shift+Tab mode;
+    sama dengan angka sesi; spark pulse saat busy; `MINICODE_MOTION=0`
+    mematikan pulse (spark statis redup — status busy tak bergantung animasi;
+    aksesibilitas/SSH lambat/rekaman; temuan audit TUI-006), dibaca saat
+    dipakai (bukan beku saat import).
+14. Binding TUI: PgUp/PgDn scroll; **Shift+PgUp/PgDn (ESC[5;2~/6;2,
+     modifier 2) = setengah halaman; Home/End saat prompt KOSONG = lompat
+     baris-teratas/ekor transkrip (baris berisi = editing awal/akhir baris;
+     dropdown terbuka = jalur engine)**; Up/Down histori; Tab/Shift+Tab mode;
      Ctrl+O/T compact/thinking; Ctrl+D baris-kosong keluar; Esc/Ctrl+C =
      batal input / abort turn (busy: SEMUA input dibekukan kecuali abort dan
      scroll — Enter pun sunyi; berlaku juga saat layar MENCIUT: abort+scroll
-     selalu lolos agar turn bisa dibatalkan tanpa kill -9). Baris kosong menampilkan placeholder +
+     selalu lolos agar turn bisa dibatalkan tanpa kill -9; abort pertama
+     menampilkan hint keluar sekali). Baris kosong menampilkan placeholder +
      cara keluar; scroll ke atas + stream masuk = indikator `↓ N baris baru`.
 15. (Dihapus bersama jendela info — nomor dipertahankan.)
 16. Popup komposit: region tanpa clear + union-clear anti-hantu + clearRegion
@@ -148,7 +171,11 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
 21. Form dalam popup: semua input teks/pilihan di dalam kotak (text/secret/
      select/confirm + validasi inline + kursor diparkir); tak ada ketikan di
      luar kotak. Esc dua-tahap: tekan-1 KEMBALIKAN nilai bawaan field
-     (prefill/edit tak hilang sekali tekan), tekan-2 batal.
+     (prefill/edit tak hilang sekali tekan), tekan-2 batal. Idle guard
+     dua-tahap (temuan audit TUI-004): 80 dtk tanpa input = peringatan statis
+     di footer form ("batal dalam 10 dtk" — bukan countdown hidup), 10 dtk
+     berikutnya = auto-batal (cancel), total semantik 90 dtk lama; SATU
+     ketikan apa pun me-reset kedua timer.
 22. Thinking terlihat: minimized = penanda `… thinking` + isi di `/expand`;
     expanded = alir redup; fase berakhir = commit (tak ada thinking yatim).
 23. Approval & ask_user tercatat di transkrip (pertanyaan + keputusan) dan
@@ -166,6 +193,12 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      (tsc mengawal); fallback kunci hilang → en; prioritas sesi > env >
      state.json > locale OS > en (di OS: `LC_ALL` > `LANG`, string kosong
      diabaikan); literal Indonesia hardcode dilarang.
+31. Sinyal fatal saat TUI hidup (SIGTERM/SIGHUP): restore terminal dulu
+     (alt-screen exit + raw mode pulih + handler exit sinkron) lalu exit
+     `128+n` (143/129). Pasangan ketat per-run — handler dipasang di
+     `run()` dan dilepas di cleanup; tanpa sesi TUI, sinyal tak disentuh.
+     (Temuan audit TUI-001: handler `exit` Node tak jalan pada SIGTERM
+     default — terminal tertinggal alt-screen + raw.)
 27. Painter transient stderr (spinner setup/cek-update, garis status turn)
      DITAHAN selama layar interaktif memegang terminal: `beginInteractiveScreen`
      (`src/ui/runtime/statusline.ts`) membisukan `paintWrite` (nol byte + baris
@@ -204,8 +237,9 @@ berbingkai di atasnya) · status bar = 1 baris · ledger tool
 kegagalan · thinking: `… thinking` / alir redup · popup: konten redup di
 belakang + kotak terpusat (form di dalam) + Esc tutup · approval tercatat ·
 `/status`, `/history`, `/help` ringkas & `/expand` mengalir ke transkrip ·
-`Ctrl+C`/`Esc` saat turn = abort; busy = input beku total · PgUp/PgDn =
-scroll + indikator `↓ N baris baru` · tab dihitung 8 kolom (batas atas stop
+`Ctrl+C`/`Esc` saat turn = abort (+ hint sekali); busy = input beku total ·
+PgUp/PgDn = scroll, Shift+PgUp/PgDn = setengah halaman, Home/End (prompt
+kosong) = lompat top/ekor · indikator `↓ N baris baru` · tab dihitung 8 kolom (batas atas stop
 terminal — tak pernah undercount) · C1/bidi/tag dibuang dari teks
 tak-terpercaya (sanitasi) · truncate/chunk hanya menyalin SGR (non-SGR
 dibuang) · penanda `(aktif)` di luar budget truncasi (tak termakan URL
@@ -214,7 +248,9 @@ panjang).
 ## Residual risk (DISENGAJA — jangan "perbaiki" tanpa keputusan)
 
 1. Foreign partial stderr write tanpa newline (non-interaktif).
-2. `kill -9` di tengah sesi: ketik `reset` (pola standar).
+2. `kill -9` di tengah sesi: ketik `reset` (pola standar). SIGTERM/SIGHUP
+   SUDAH di-handle (I31 — restore + exit 128+n); hanya kill -9/terminal
+   close yang masih menyisakan alt-screen.
 3. Transkrip TUI hilang saat quit (disengaja — TUI fullscreen).
 4. Terminal purba tanpa alternate screen: pesan satu baris + keluar (bukan error).
 5. Approval saat user scroll ke atas: blok tercatat di ekor (tak terlihat
@@ -283,3 +319,17 @@ panjang).
   buang escape di hulu).
 - `test/provider-manager-flows.test.ts` — I21 (Ctrl+C dua-tahap revert
   prefill; penanda aktif anti-truncasi).
+- `test/tui-signal.test.ts` — I31 (SIGTERM→143, SIGHUP→129: alt-screen exit
+  + raw mode pulih; handler dilepas saat quit — pasangan ketat; tanpa
+  `run()` sinyal tak di-intercept).
+- `test/tui-audit-fixes.test.ts` — I14 (Home/End jump top/tail saat prompt
+  kosong + baris berisi tetap editing; Shift+PgUp/PgDn half-page + dekode
+  ESC[5;2~; hint abort pertama), I13 (MINICODE_MOTION=0: spark statis,
+  env dibaca saat dipakai), I25 (kursor CUP parkir di dalam blok ?2026 yang
+  sama), I21 (konstanta idle form 80+10 dtk + teks peringatan).
+- `test/pty.test.ts` — I17/I31/I28 via BYTE STREAM NYATA (harness PTY
+  `test/helpers/pty-harness.ts`, CLI di pseudo-terminal sesungguhan +
+  provider fake hermetic): boot → ?1049h + prompt, turn penuh end-to-end,
+  SIGTERM → restore + exit 143 (POSIX), resize → repaint, exec --json
+  bersih tanpa ANSI. Platform tak mampu (ConPTY rusak) = SKIP beralasan,
+  bukan hijau palsu.

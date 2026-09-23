@@ -88,6 +88,10 @@ export async function executeTurn(
     let text = "";
     let reasoning = ""; // DeepSeek-style thinking content
     let attempt = 0;
+    // The original ProviderError behind the current attempt (if any), kept so a
+    // terminal throw can carry it as `cause` — callers/CLI can then reach the
+    // provider category (auth, rate_limit, …) instead of only the message.
+    let providerError: ProviderError | undefined;
 
     while (true) {
       attempt++;
@@ -96,6 +100,7 @@ export async function executeTurn(
       text = "";
       reasoning = "";
       toolCalls.length = 0;
+      providerError = undefined;
       let action: RecoveryAction | null = null;
       let errorMessage: string | undefined;
       let completed: FinishReason | undefined;
@@ -151,6 +156,7 @@ export async function executeTurn(
         }
       } catch (error) {
         const cause = toProviderError(error, signal);
+        providerError = cause;
         s.events.emit({
           type: "provider:extension",
           kind: "error",
@@ -163,10 +169,14 @@ export async function executeTurn(
       if (action === null) break;
       switch (action.type) {
         case "throw":
-          throw new AgentError("provider", errorMessage ?? "provider error", { cause: action });
+          // `cause` is the original ProviderError when the throw came from a
+          // provider failure (category reachable by callers); it falls back to
+          // the recovery action for finish-reason throws (length/error/abort),
+          // which have no underlying ProviderError.
+          throw new AgentError("provider", errorMessage ?? "provider error", { cause: providerError ?? action });
         case "force_compact_and_retry": {
           if (compactedForRecovery)
-            throw new AgentError("budget_exceeded", errorMessage ?? "context too large", { cause: action });
+            throw new AgentError("budget_exceeded", errorMessage ?? "context too large", { cause: providerError ?? action });
           await compactStore(s, signal);
           // The recovery flag is ALWAYS set (even on no-op):
           // force_compact_and_retry is exempt from maxProviderRetries, so a

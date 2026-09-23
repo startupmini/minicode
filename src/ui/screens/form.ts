@@ -21,7 +21,7 @@ import {
 import { sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, stripAnsi } from "../render/theme.ts"
 import { displayWidth, truncateToWidth } from "../render/width.ts"
-import type { AltScreen } from "../runtime/screen.ts"
+import { type AltScreen, SYNC_UPDATE_END, SYNC_UPDATE_START } from "../runtime/screen.ts"
 import { boxLeftPad, dialogBox } from "./dialog.ts"
 
 export interface FormField {
@@ -139,6 +139,14 @@ function sliceByWidth(pts: string[], start: number, maxV: number): string[] {
   return out
 }
 
+// Jeda sebelum peringatan idle & jeda peringatan → batal (temuan audit
+// TUI-004): raw-mode digenggam tanpa input rawan macet saat ConPTY mati,
+// tapi batal diam-diam membuang draft yang sudah diketik. Dua-tahap: 80 dtk
+// diam → peringatan di footer kotak; 10 dtk lagi tanpa keypress → batal.
+// TOTAL tetap 90 dtk (semantik anti-hang dipertahankan).
+export const IDLE_WARN_MS = 80_000
+export const IDLE_CANCEL_MS = 10_000
+
 export async function runForm(spec: FormSpec, screen: AltScreen): Promise<FormResult> {
   if (!spec.fields.length) return { cancelled: true }
   return new Promise<FormResult>((resolve) => {
@@ -146,6 +154,7 @@ export async function runForm(spec: FormSpec, screen: AltScreen): Promise<FormRe
     let idx = 0
     let done = false
     let idleTimer: ReturnType<typeof setTimeout> | undefined
+    let idleWarned = false
     const clearIdle = () => {
       if (idleTimer) clearTimeout(idleTimer)
       idleTimer = undefined
@@ -153,7 +162,17 @@ export async function runForm(spec: FormSpec, screen: AltScreen): Promise<FormRe
     const resetIdle = () => {
       if (done) return
       clearIdle()
-      idleTimer = setTimeout(() => finish(true), 90_000)
+      idleWarned = false
+      idleTimer = setTimeout(() => {
+        // Tahap 1: peringatan (draft TIDAK dibuang — render footer merah).
+        idleWarned = true
+        render()
+        // Tahap 2: batal — hanya bila tetap hening.
+        idleTimer = setTimeout(() => finish(true), IDLE_CANCEL_MS)
+        try {
+          ;(idleTimer as unknown as { unref?: () => void }).unref?.()
+        } catch {}
+      }, IDLE_WARN_MS)
       try {
         ;(idleTimer as unknown as { unref?: () => void }).unref?.()
       } catch {}
@@ -220,7 +239,12 @@ export async function runForm(spec: FormSpec, screen: AltScreen): Promise<FormRe
         {
           title: spec.title,
           body,
-          footer: spec.footer ?? t("form.footerDefault"),
+          // Peringatan idle (TUI-004): footer berubah merah 10 dtk sebelum
+          // batal sendiri — user tahu kenapa dan bisa mencegah (tekan apa
+          // saja), draft tidak hilang tanpa jejak.
+          footer: idleWarned
+            ? c.error(t("form.idleWarning", { s: Math.ceil(IDLE_CANCEL_MS / 1000) }))
+            : (spec.footer ?? t("form.footerDefault")),
           // Lebar TETAP (paritas picker/manager — geometri stabil, tak
           // bernapas saat error muncul/hilang).
           minWidth: FORM_BOX_W,
@@ -243,7 +267,10 @@ export async function runForm(spec: FormSpec, screen: AltScreen): Promise<FormRe
           const contentW = displayWidth(stripped) - leftPad
           const raw = activeCol >= 0 ? leftPad + activeCol + 2 : leftPad + contentW + 1
           const col = Math.max(1, Math.min(screen.cols || 80, raw))
-          process.stdout.write(`\x1b[${row};${col}H\x1b[?25h`)
+          // Di dalam blok sync-update yang SAMA dengan paintRegion di atas
+          // (temuan audit TUI-007): kursor yang muncul di luar sync berpotensi
+          // tearing di emulator tanpa ?2026.
+          process.stdout.write(`${SYNC_UPDATE_START}\x1b[${row};${col}H\x1b[?25h${SYNC_UPDATE_END}`)
         }
       } catch {}
       return { activeRow, activeCol }

@@ -1,2 +1,9 @@
 [test]
 timeout = 10000
+# test/helpers/pty-harness.ts (infrastruktur test PTY) DIKECUALIKAN dari
+# coverage: jalur spawn-nya platform-kondisional — di mesin dengan ConPTY
+# rusak (sebagian Windows dev) sebagian besar tak terjangkau test, di CI
+# Linux tercakup penuh. Menghitungnya membuat gate coverage beda hasil antar
+# platform. Wajib di dalam section [test] — di top-level bun mengabaikannya
+# (diverifikasi: agregat tak berubah).
+coveragePathIgnorePatterns = ["**/pty-harness.ts"]

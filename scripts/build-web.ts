@@ -15,7 +15,7 @@ import {
 } from "./web/landing2.ts"
 import { buildLlmsTxt } from "./web/llms.ts"
 import { buildLlmsFullTxt } from "./web/llms-full.ts"
-import { renderPage, softwareJsonld } from "./web/page.ts"
+import { organizationJsonld, renderPage, softwareJsonld } from "./web/page.ts"
 
 const repoRoot = join(import.meta.dir, "..")
 const webDir = join(repoRoot, "web")
@@ -69,12 +69,17 @@ write(
     // jadi flex column + `order`) hanya boleh menyentuh halaman ini.
     bodyClass: "home",
     version,
-    // FAQPage + SoftwareApplication dalam satu @graph: jawaban FAQ = konten
-    // yang paling sering dikutip AI-assistant & rich result Google (riset
-    // discoverability 2026-09-17).
+    // FAQPage + SoftwareApplication + Organization dalam satu @graph: jawaban
+    // FAQ = konten paling sering dikutip AI-assistant & rich result Google
+    // (riset discoverability 2026-09-17); Organization + sameAs = entitas
+    // brand yang terikat ke situs ini (audit SERP-01 2026-09-24).
     jsonld: JSON.stringify({
       "@context": "https://schema.org",
-      "@graph": [JSON.parse(softwareJsonld(version)), JSON.parse(faqPageJsonld(base))],
+      "@graph": [
+        JSON.parse(softwareJsonld(version)),
+        JSON.parse(faqPageJsonld(base)),
+        organizationJsonld(base),
+      ],
     }).replaceAll("</", "<\\/"),
   }),
 )
@@ -108,10 +113,13 @@ write(
   // `User-agent: *` saja cukup secara mekanis, tapi sektor eksplisit membuat
   // kebijakan situs terbaca sendiri oleh tiap bot — dan jadi tempat
   // dokumentasi bila suatu hari ada crawler yang mau diblokir.
+  // admin.html TIDAK di-Disallow (audit IDX-01 2026-09-24): noindex hanya
+  // efektif bila crawler bisa Membaca halamannya — blokir di robots justru
+  // menyembunyikan meta noindex sehingga URL bisa muncul tanpa kontrol.
+  // Cukup meta noindex di halaman (dijaga test).
   `${[
     "User-agent: *",
     "Allow: /",
-    "Disallow: /admin.html",
     "",
     "# AI crawlers — dokumentasi minicode.fun bebas dibaca & dikutip",
     ...[
@@ -129,7 +137,7 @@ write(
       "CCBot",
       "meta-externalagent",
       "Amazonbot",
-    ].map((ua) => `User-agent: ${ua}\nAllow: /\nDisallow: /admin.html`),
+    ].map((ua) => `User-agent: ${ua}\nAllow: /`),
     "",
     `Sitemap: ${base}/sitemap.xml`,
     "",

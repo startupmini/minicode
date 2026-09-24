@@ -173,7 +173,25 @@ export function buildBlog(
               datePublished: p.fm.date,
               // Pelengkap audit SEO 2026-09-18: author & inLanguage — sinyal
               // keaslian & bahasa yang sebelumnya absen di schema post.
-              author: { "@type": "Organization", name: "Minicode" },
+              // Audit STRUCT-01 (2026-09-24) melengkapi field wajib Article:
+              // dateModified = tanggal terbit (frontmatter tak punya field
+              // "modified"; memakai tanggal terbit jujur lebih baik daripada
+              // mengarang), image = og-image ≥1200px, mainEntityOfPage =
+              // kanonik post, publisher = entitas brand di halaman post.
+              dateModified: p.fm.date,
+              image: `${base}/og-image.png`,
+              mainEntityOfPage: `${base}/blog/${p.slug}.html`,
+              author: { "@type": "Organization", name: "Minicode", url: `${base}/` },
+              publisher: {
+                "@type": "Organization",
+                name: "Minicode",
+                logo: {
+                  "@type": "ImageObject",
+                  url: `${base}/og-image.png`,
+                  width: 1200,
+                  height: 630,
+                },
+              },
               inLanguage: "id-ID",
             },
             // Sama seperti softwareJsonld: `</` di-escape agar string tak bisa

@@ -14,6 +14,10 @@ export interface DocEntry {
 const DOC_META: Record<string, { desc: string; src: string }> = {
   // Key = slug (readDocNav selalu lowercase) — key "README" dulu tak pernah
   // kena lookup dan halaman docs/index jatuh ke desc fallback 29 char.
+  // desc = meta description (juga dipakai grid docs & llms.txt): pasangan
+  // terminal/terminal_contract dan trio keamanan sengaja dibedakan intent-nya
+  // (audit CANNIB-01/02 2026-09-24) — desc 85% sama membuat halaman saling
+  // berebut cuplikan SERP yang sama. Jaga: 50–160 char, akhiri tanda kalimat.
   readme: {
     desc: "Dokumentasi Minicode: coding agent CLI shell-native di atas MiniCore.",
     src: "docs/README.md",
@@ -51,15 +55,15 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
     src: "src/agents/",
   },
   security: {
-    desc: "Threat model: bash-guard, path jail, prompt injection, supply chain.",
+    desc: "Prinsip keamanan Minicode: fail-closed, bash-guard yang diukur, dan teks eksternal yang tak dipercaya.",
     src: "src/policy/bash-guard.ts",
   },
   "security-model": {
-    desc: "Model keamanan Minicode: rantai eksekusi, 6 mode izin, trust boundary, limitasi.",
+    desc: "Model ancaman Minicode dalam satu halaman: execution chain, trust boundary, dan limitasi yang diakui.",
     src: "src/policy/permission.ts",
   },
   terminal: {
-    desc: "Kontrak terminal FROZEN: TUI fullscreen, stdout/stderr, invariant I1–I31, dan peta test proteksinya.",
+    desc: "Ringkasan kontrak terminal untuk pengguna: satu tampilan TUI fullscreen, stdout/stderr yang jelas, dan status FROZEN-nya.",
     src: "docs/TERMINAL_CONTRACT.md",
   },
   quickstart: {
@@ -91,7 +95,7 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
     src: "src/tools/index.ts",
   },
   "policy-sandbox": {
-    desc: "6 permission mode, bash-guard, sandbox otomatis, path jail.",
+    desc: "Referensi 6 permission mode, bash-guard, sandbox, dan path jail — beserta batas jujurnya.",
     src: "src/policy/permission.ts",
   },
   "memory-sessions": {
@@ -125,7 +129,7 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
   // Dokumen internal kontributor (SUMMARY grup "Internal & Arsitektur",
   // audit docs 2026-09-18: sebelumnya orphan dari nav web/llms).
   terminal_contract: {
-    desc: "Kontrak terminal FROZEN untuk kontributor: 31 invariant (I1–I31) dan peta test proteksinya.",
+    desc: "Referensi kontributor: 31 invariant (I1–I31), peta test proteksinya, dan residual risk yang disengaja.",
     src: "docs/TERMINAL_CONTRACT.md",
   },
   "control-plane-map": {

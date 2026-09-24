@@ -1,6 +1,6 @@
 # Arsitektur
 
-Peta struktur hidup yang interaktif ada di `ARCHITECTURE.html` (file pendamping di folder ini — search/filter, 9 section `00 Sekilas` → `09 UI/UX rendering terminal`). Halaman ini ringkasannya agar bisa dibaca GitBook + AI Ask.
+Peta struktur hidup yang interaktif ada di [ARCHITECTURE.html](https://github.com/startupmini/minicode/blob/main/docs/ARCHITECTURE.html) (file pendamping di repo — search/filter, 9 section `00 Sekilas` → `09 UI/UX rendering terminal`; tidak ikut di-deploy ke situs). Halaman ini ringkasannya agar bisa dibaca GitBook + AI Ask.
 
 Rencana aktif: `PLAN.md` (root). Kontrak terminal FROZEN: `TERMINAL_CONTRACT.md` (folder ini) — baca sebelum menyentuh output/rendering; perubahan perilaku wajib update dokumen + test peta proteksinya. Riset harness: `HARNESS.md` (folder ini). Arsip: `PLAN_UIUX_V6.md` (selesai, jangan dikerjakan ulang).
 

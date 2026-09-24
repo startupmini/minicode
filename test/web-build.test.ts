@@ -19,7 +19,7 @@ import { parsePlanStatus } from "../scripts/web/changelog.ts"
 import { renderDocGrid, renderDocHead, renderDocNav, stripMdSection } from "../scripts/web/docs.ts"
 import { parseFrontmatter } from "../scripts/web/fm.ts"
 import { mdToHtml } from "../scripts/web/md.ts"
-import { readDocNav } from "../scripts/web/nav.ts"
+import { docMeta, readDocNav } from "../scripts/web/nav.ts"
 import { breadcrumbJsonld, softwareJsonld } from "../scripts/web/page.ts"
 import { isPathWithinSite } from "../scripts/web-serve.ts"
 
@@ -145,7 +145,10 @@ describe("web ssg", () => {
   test("subset ikon: URL Material Symbols memakai icon_names eksplisit (audit web P2-9)", () => {
     for (const f of ["web/layout.html", "web/admin.html"]) {
       const src = readFileSync(join(repoRoot, f), "utf8")
-      const m = /fonts\.googleapis\.com\/css2\?family=Material\+Symbols\+Outlined[^"]*/.exec(src)
+      // Pola sadar-URL-gabungan (PERF-01): ketiga family kini berbagi satu
+      // `css2?family=…&family=…` — family=Material Symbols boleh muncul di
+      // posisi mana pun; yang dijaga tetap keberadaan icon_names.
+      const m = /fonts\.googleapis\.com\/css2[^"]*family=Material\+Symbols\+Outlined[^"]*/.exec(src)
       expect(m, f).toBeTruthy()
       expect(m![0]).toContain("icon_names=")
     }
@@ -836,14 +839,18 @@ describe("web audit 2026-09-16", () => {
     }
     expect(full).not.toMatch(/\]\([^)]*\.md/)
     expect(full).toContain("# Status eksekusi")
-    // robots: crawler AI utama eksplisit di-allow; admin tetap disallow.
+    // robots: crawler AI utama eksplisit di-allow; admin.html TIDAK disallow
+    // (audit IDX-01): noindex hanya terbaca bila halaman bisa di-crawl —
+    // blokir di robots justru menyembunyikan meta noindex dari Google.
     const robots = readFileSync(join(repoRoot, "site", "robots.txt"), "utf8")
     for (const ua of ["GPTBot", "ClaudeBot", "PerplexityBot", "OAI-SearchBot", "Google-Extended"]) {
       expect(robots, ua).toContain(`User-agent: ${ua}`)
     }
     expect(robots).toContain("llms-full.txt")
-    const adminIdx = robots.indexOf("Disallow: /admin.html")
-    expect(adminIdx).toBeGreaterThan(-1)
+    expect(robots, "admin cukup noindex, jangan di-block").not.toContain("Disallow: /admin.html")
+    expect(readFileSync(join(repoRoot, "site", "admin.html"), "utf8")).toContain(
+      '<meta name="robots" content="noindex">',
+    )
     // IndexNow: key file terkemas di root + robots memuat petunjuknya
     // (ping sitemap sudah mati — IndexNow satu-satunya jalur push tersisa).
     const key = readFileSync(join(repoRoot, "web", "indexnow-key.txt"), "utf8").trim()
@@ -934,6 +941,48 @@ describe("web audit 2026-09-16", () => {
     expect(tools).toContain("<title>Tools (37) — Minicode</title>")
     expect(tools).not.toContain("— Minicode — Minicode")
     expect(tools).not.toMatch(/<title>Minicode — /)
+    // Audit SERP-01: Organization + sameAs mengikat entitas brand ke situs ini
+    // (sebelumnya SERP "minicode" didominasi proyek GitHub tak terkait).
+    const home = readFileSync(join(repoRoot, "site", "index.html"), "utf8")
+    const homeLd = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(home)![1]!
+    const homeGraph = (
+      JSON.parse(homeLd.replace(/<\\\//g, "</")) as {
+        "@graph": { "@type": string; sameAs?: string[] }[]
+      }
+    )["@graph"]
+    const org = homeGraph.find((n) => n["@type"] === "Organization")
+    expect(org, "Organization JSON-LD di homepage").toBeDefined()
+    expect(org!.sameAs).toContain("https://github.com/startupmini/minicode")
+    expect(org!.sameAs).toContain("https://www.npmjs.com/package/minicode-ai")
+    // Audit PERF-01: ketiga font Google digabung jadi SATU request stylesheet.
+    expect(home.match(/href="https:\/\/fonts\.googleapis\.com\/css2[^"]*"/g)).toHaveLength(1)
+    // Audit LLMS-01: baris Docs di llms.txt memakai deskripsi kurasi DOC_META
+    // = persis meta description halamannya (bukan cuplikan body mentah).
+    for (const e of readDocNav(repoRoot)) {
+      const curated = docMeta(e.slug).desc
+      if (curated === `Dokumentasi Minicode: ${e.slug}.`) continue // belum dikurasi
+      const href =
+        e.slug === "readme"
+          ? "https://minicode.fun/docs/"
+          : `https://minicode.fun/docs/${e.slug}.html`
+      expect(llms, `llms desc ${e.slug}`).toContain(`](${href}): ${curated}`)
+    }
+    // Audit STRUCT-01: Article schema lengkap (image/dateModified/publisher/
+    // mainEntityOfPage) di permalink post blog.
+    const postFile = join(repoRoot, "site", "blog", "rename-paket-npm-minicode-ai.html")
+    if (existsSync(postFile)) {
+      const postLd = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(
+        readFileSync(postFile, "utf8"),
+      )![1]!
+      const postGraph = (
+        JSON.parse(postLd.replace(/<\\\//g, "</")) as { "@graph": Record<string, unknown>[] }
+      )["@graph"]
+      const article = postGraph.find((n) => n["@type"] === "Article")
+      expect(article, "Article JSON-LD di post").toBeDefined()
+      for (const k of ["dateModified", "image", "publisher", "mainEntityOfPage"]) {
+        expect(article![k], k).toBeDefined()
+      }
+    }
   })
 
   test("breadcrumbJsonld: satu pemilik konvensi (Beranda posisi 1, terakhir tanpa item)", () => {

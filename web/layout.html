@@ -26,11 +26,12 @@
 <link rel="icon" href="/assets/logo-user.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&icon_names=check,content_copy,dark_mode,light_mode,terminal&display=swap">
-<!-- Inter sebagai VARIABLE 400..700: satu file woff2 per subset Unicode
-     menggantikan lima instance statis (audit perf: bobot font kritis). -->
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&display=swap">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&display=swap">
+<!-- Satu request css2 untuk ketiga font (audit SEO PERF-01: 3 round-trip
+     jadi 1; param global `display`/`icon_names` berlaku untuk seluruh family
+     dalam satu URL — diverifikasi langsung terhadap css2 API). Inter VARIABLE
+     400..700: satu file woff2 per subset Unicode menggantikan lima instance
+     statis (audit perf: bobot font kritis). -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&family=JetBrains+Mono:wght@500;600;700&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&icon_names=check,content_copy,dark_mode,light_mode,terminal&display=swap">
 <link rel="stylesheet" href="/styles.css">
 <!-- Prerender navigasi docs berikutnya (audit perf): 'moderate' menunggu
      sinyal niat kuat; browser lama abaikan. Docs = tujuan berikutnya yang

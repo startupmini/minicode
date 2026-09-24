@@ -100,6 +100,30 @@ export function softwareJsonld(version: string): string {
  * terakhir TANPA `item` (rekomendasi Google) — ditegakkan di sini meski
  * pemanggil mengirimnya. Kembalikan objek; stringify+escape di call site.
  */
+/**
+ * JSON-LD Organization untuk homepage (audit SEO SERP-01 2026-09-24): entitas
+ * brand resmi + sameAs (GitHub, npm) agar mesin pencari bisa mengikat "Minicode"
+ * ke situs ini — sebelumnya SERP brand didominasi proyek GitHub tak terkait dan
+ * minicode.fun sama sekali absen. @id stabil agar node lain (Article.publisher)
+ * boleh merujuk tanpa menduplikasi definisi lintas halaman.
+ */
+export function organizationJsonld(base: string): Record<string, unknown> {
+  return {
+    "@type": "Organization",
+    "@id": `${base}/#organization`,
+    name: "Minicode",
+    url: `${base}/`,
+    // Logo pakai og-image.png (PNG, 1200×630): format PNG aman untuk semua
+    // crawler/rich result — SVG belum tentu diterima, dan file ini sudah
+    // di-generate tiap build (bukan asset tambahan).
+    logo: { "@type": "ImageObject", url: `${base}/og-image.png`, width: 1200, height: 630 },
+    sameAs: [
+      "https://github.com/startupmini/minicode",
+      "https://www.npmjs.com/package/minicode-ai",
+    ],
+  }
+}
+
 export function breadcrumbJsonld(
   base: string,
   trail: { name: string; item?: string }[],

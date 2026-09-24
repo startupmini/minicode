@@ -16,21 +16,90 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 
+interface PtyExit {
+  exitCode: number
+  signal?: number
+}
+
 /** Bentuk minimum proses PTY yang dipakai harness (tanpa types lib). */
 interface PtyTerm {
   write(data: string): void
   resize(cols: number, rows: number): void
   kill(signal?: string): void
   onData(cb: (d: string) => void): void
-  onExit(cb: (e: { exitCode: number; signal?: number }) => void): void
+  onExit(cb: (e: PtyExit) => void): void
 }
 type PtySpawn = (file: string, args: string[], opts: Record<string, unknown>) => PtyTerm
+
+function spawnWithBunTerminal(
+  file: string,
+  args: string[],
+  opts: Record<string, unknown>,
+): PtyTerm {
+  let dataHandler: ((data: string) => void) | undefined
+  let exitHandler: ((event: PtyExit) => void) | undefined
+  let pendingData = ""
+  let exitResult: PtyExit | undefined
+  let exitNotified = false
+  const notifyExit = () => {
+    if (!exitResult || !exitHandler || exitNotified) return
+    exitNotified = true
+    exitHandler(exitResult)
+  }
+  const proc = Bun.spawn([file, ...args], {
+    ...(typeof opts.cwd === "string" ? { cwd: opts.cwd } : {}),
+    ...(opts.env ? { env: opts.env as Record<string, string | undefined> } : {}),
+    terminal: {
+      ...(typeof opts.name === "string" ? { name: opts.name } : {}),
+      cols: typeof opts.cols === "number" ? opts.cols : 80,
+      rows: typeof opts.rows === "number" ? opts.rows : 24,
+      data(_terminal, data) {
+        const text = new TextDecoder().decode(data)
+        if (dataHandler) dataHandler(text)
+        else pendingData += text
+      },
+    },
+    onExit(_proc, exitCode, signalCode) {
+      exitResult = { exitCode: exitCode ?? 1, signal: signalCode ?? undefined }
+      notifyExit()
+    },
+  })
+  const terminal = proc.terminal
+  if (!terminal) throw new Error("Bun.spawn tidak membuat terminal")
+  return {
+    write: (data) => terminal.write(data),
+    resize: (cols, rows) => terminal.resize(cols, rows),
+    kill: (signal) => {
+      if (signal) proc.kill(signal as NodeJS.Signals)
+      else proc.kill()
+    },
+    onData(cb) {
+      dataHandler = cb
+      if (pendingData) {
+        const data = pendingData
+        pendingData = ""
+        cb(data)
+      }
+    },
+    onExit(cb) {
+      exitHandler = cb
+      notifyExit()
+    },
+  }
+}
 
 let ptySpawn: PtySpawn | null | undefined
 async function loadPty(): Promise<PtySpawn | null> {
   if (ptySpawn !== undefined) return ptySpawn
+  if (
+    process.platform !== "win32" &&
+    typeof Bun !== "undefined" &&
+    typeof Bun.Terminal === "function"
+  ) {
+    ptySpawn = spawnWithBunTerminal
+    return ptySpawn
+  }
   try {
-    // Deps opsional: dynamic import agar suite tetap jalan tanpa dia.
     const mod = (await import("@lydell/node-pty")) as
       | { spawn: PtySpawn }
       | { default: { spawn: PtySpawn } }
@@ -76,8 +145,14 @@ export async function ptyAvailable(): Promise<PtyAvailability> {
     let out = ""
     child.onData((d: string) => (out += d))
     const got = await new Promise<boolean>((resolveGot) => {
-      child.onExit(() => resolveGot(out.includes("MINICODE-PTY-PROBE")))
-      setTimeout(() => resolveGot(out.includes("MINICODE-PTY-PROBE")), 6000)
+      let settled = false
+      const finish = () => {
+        if (settled) return
+        settled = true
+        resolveGot(out.includes("MINICODE-PTY-PROBE"))
+      }
+      child.onExit(() => setTimeout(finish, 100))
+      setTimeout(finish, 6000)
     })
     availability = got
       ? { ok: true, reason: "ok" }

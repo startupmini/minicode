@@ -335,6 +335,8 @@ test("instruksi: pagar 200-char diakui terpotong, run tetap penuh (bug-hunt PI-H
   const { todoSession } = await import("../src/tools/todo.ts")
   const prevId = todoSession.id
   todoSession.id = "p-fence-note"
+  const prevKey = process.env.OPENAI_API_KEY
+  process.env.OPENAI_API_KEY = "test-hermetic-fake"
   try {
     let captured = ""
     let ran = ""
@@ -357,6 +359,8 @@ test("instruksi: pagar 200-char diakui terpotong, run tetap penuh (bug-hunt PI-H
   } finally {
     todoSession.id = prevId
     clearSubAgentSessionFactory()
+    if (prevKey === undefined) delete process.env.OPENAI_API_KEY
+    else process.env.OPENAI_API_KEY = prevKey
     await cleanup(dir)
   }
 })

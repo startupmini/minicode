@@ -27,6 +27,7 @@ export interface FooterStatus {
    * memetakan frame → glyph berwarna.
    */
   sparkFrame?: number
+  activity?: string
 }
 
 /** Lebar tetap kolom mode — `allowlist`/`allow-all` (9) adalah yang terpanjang. */
@@ -84,6 +85,8 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
   const cols = Math.max(10, Math.floor(columns) || 80)
 
   const spark = sparkGlyph(s.sparkFrame ?? 0)
+  const activity = s.activity ? `  ${c.info(sanitizeAnsiLine(s.activity))}` : ""
+  const lead = `${spark}${activity}  `
   const mode = paintFooterMode(s.mode)
   const dot = c.gray("•")
   const sep = `    ${dot}    `
@@ -94,10 +97,10 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
   const cwdTxt = c.gray(sanitizeAnsiLine(s.cwd))
   const shortCwdTxt = c.gray(sanitizeAnsiLine(shortenPath(s.cwd)))
 
-  const full = `${spark}  ${mode}${sep}${model}${sep}${cwdTxt}`
-  const shortened = `${spark}  ${mode}${sep}${model}${sep}${shortCwdTxt}`
-  const mid = `${spark}  ${mode}${sep}${model}`
-  const lean = `${spark}  ${mode}`
+  const full = `${lead}${mode}${sep}${model}${sep}${cwdTxt}`
+  const shortened = `${lead}${mode}${sep}${model}${sep}${shortCwdTxt}`
+  const mid = `${lead}${mode}${sep}${model}`
+  const lean = `${lead}${mode}`
 
   const target = Math.max(4, cols - 1)
   const ctx = s.context ? sanitizeAnsiLine(s.context) : ""

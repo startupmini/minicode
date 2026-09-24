@@ -77,6 +77,15 @@ const MIN_COLS = 20
 
 const PROMPT_FIRST = "minicode › "
 const PROMPT_CONT = "  · "
+type ActivityKind = "working" | "thinking" | "tool" | "stopping"
+
+function formatElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m${String(seconds % 60).padStart(2, "0")}s`
+  return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}m`
+}
 
 interface RawStdin {
   setRawMode(v: boolean): void
@@ -95,6 +104,10 @@ export class TuiApp {
   private draft = ""
   private busy = false
   private tick = 0
+  private turnStartedAt = 0
+  private activityKind: ActivityKind = "working"
+  private textSeen = false
+  private activityTimer: ReturnType<typeof setTimeout> | undefined
   /** Timestamp abort terakhir (ms) — deteksi double-tap Esc/Ctrl+C = quit. */
   private lastAbortAt = 0
   /** Hint "tekan lagi untuk keluar" tampil sekali setelah abort pertama. */
@@ -113,6 +126,7 @@ export class TuiApp {
    */
   private onSignalTerm: (() => void) | null = null
   private onSignalHup: (() => void) | null = null
+  private onSignalInt: (() => void) | null = null
 
   private wasRaw = false
   /**
@@ -223,12 +237,21 @@ export class TuiApp {
     }
     this.onSignalTerm = () => restoreAndExit(143)
     this.onSignalHup = () => restoreAndExit(129)
+    this.onSignalInt = () => this.requestAbort()
     try {
       process.on("SIGTERM", this.onSignalTerm)
-      process.on("SIGHUP", this.onSignalHup)
     } catch {
       this.onSignalTerm = null
+    }
+    try {
+      process.on("SIGHUP", this.onSignalHup)
+    } catch {
       this.onSignalHup = null
+    }
+    try {
+      process.on("SIGINT", this.onSignalInt)
+    } catch {
+      this.onSignalInt = null
     }
     // Repaint live mengikuti event bus (stream teks, ledger, thinking).
     // Suspend menahan repaint (popup melukis sendiri); quit menahan semua.
@@ -243,16 +266,41 @@ export class TuiApp {
         ;(this.repaintTimer as unknown as { unref?: () => void }).unref?.()
       } catch {}
     }
-    const sub = (type: Parameters<UiBus["on"]>[0]) => {
+    const sub = (type: Parameters<UiBus["on"]>[0], handler?: (event: any) => void) => {
       try {
-        this.busUnsubs.push(this.host.bus.on(type, requestPaint))
+        this.busUnsubs.push(
+          this.host.bus.on(type, (event: any) => {
+            try {
+              handler?.(event)
+            } finally {
+              requestPaint()
+            }
+          }),
+        )
       } catch {}
     }
-    sub("provider:text")
-    sub("provider:extension")
-    sub("execution:started")
-    sub("execution:completed")
-    sub("turn:started")
+    sub("turn:started", () => {
+      this.turnStartedAt = Date.now()
+      if (this.activityKind !== "stopping") this.activityKind = "working"
+      this.textSeen = false
+    })
+    sub("provider:extension", (event: { kind?: string }) => {
+      if (event?.kind === "reasoning" && !this.textSeen && this.activityKind !== "stopping") {
+        this.activityKind = "thinking"
+      }
+    })
+    sub("provider:text", () => {
+      if (this.activityKind !== "stopping") this.activityKind = "working"
+      this.textSeen = true
+    })
+    sub("execution:started", () => {
+      if (this.activityKind !== "stopping") this.activityKind = "tool"
+      this.textSeen = false
+    })
+    sub("execution:completed", () => {
+      if (this.activityKind !== "stopping") this.activityKind = "working"
+      this.textSeen = false
+    })
     sub("turn:completed")
     sub("context:compacted")
     this.tailSize = this.transcript.total()
@@ -267,6 +315,7 @@ export class TuiApp {
       clearTimeout(this.repaintTimer)
       this.repaintTimer = undefined
     }
+    this.stopActivityClock()
     for (const u of this.busUnsubs) {
       try {
         u()
@@ -286,6 +335,12 @@ export class TuiApp {
         process.off("SIGHUP", this.onSignalHup)
       } catch {}
       this.onSignalHup = null
+    }
+    if (this.onSignalInt) {
+      try {
+        process.off("SIGINT", this.onSignalInt)
+      } catch {}
+      this.onSignalInt = null
     }
     this.stdin = null
     this.pump.dispose()
@@ -307,6 +362,23 @@ export class TuiApp {
   }
 
   // ── Penanganan key ──
+
+  private requestAbort(): void {
+    if (!this.busy) return
+    try {
+      this.host.abort()
+    } catch {}
+    const now = Date.now()
+    const doubleTap = now - this.lastAbortAt < 1500
+    if (!doubleTap) {
+      this.activityKind = "stopping"
+      this.abortHintOn = true
+      this.startActivityClock()
+    }
+    this.lastAbortAt = now
+    if (doubleTap) this.quit()
+    else this.paintCurrent()
+  }
 
   private handleKeys(keys: { key: PromptKey }[]): boolean {
     // Garda suspend: timer flush lone-ESC yang dipersenjatai SEBELUM suspend
@@ -361,19 +433,7 @@ export class TuiApp {
     // = abort + quit. Tanpa ini sesi hanya bisa dibunuh kill -9 (kontrak I14).
     if (key.type === "esc" || key.type === "ctrl-c") {
       if (this.busy) {
-        try {
-          this.host.abort()
-        } catch {}
-        const now = Date.now()
-        const doubleTap = now - this.lastAbortAt < 1500
-        // Hint "tekan lagi untuk keluar" SEKALI setelah abort pertama (temuan
-        // audit TUI-005): tanpa ini user yang menekan Esc dua kali untuk
-        // "memastikan" justru keluar sesi tanpa sengaja — transkrip TUI hilang.
-        // Hanya saat TIDAK double-tap; saat menciut indikator tak dilukis.
-        if (!doubleTap) this.abortHintOn = true
-        this.lastAbortAt = now
-        if (doubleTap) this.quit()
-        else this.paintCurrent()
+        this.requestAbort()
         return
       }
       if (this.tooSmall()) return
@@ -500,7 +560,11 @@ export class TuiApp {
     this.rememberHistory(line)
     this.transcript.pushUser(rawLine)
     this.busy = true
+    this.turnStartedAt = Date.now()
+    this.activityKind = "working"
+    this.textSeen = false
     this.lastAbortAt = 0
+    this.startActivityClock()
     this.paintCurrent()
     try {
       const res = await this.host.submit(line)
@@ -509,12 +573,20 @@ export class TuiApp {
       this.transcript.pushError(e instanceof Error ? e.message : String(e))
     } finally {
       this.busy = false
+      this.activityKind = "working"
+      this.turnStartedAt = 0
+      this.textSeen = false
+      this.stopActivityClock()
       if (!this.quitRequested) this.paintCurrent()
     }
   }
 
   private quit(): void {
     if (this.quitRequested) return
+    try {
+      this.host.abort()
+    } catch {}
+    this.stopActivityClock()
     this.quitRequested = true
     this.finish?.()
   }
@@ -556,6 +628,7 @@ export class TuiApp {
     try {
       if (this.onData) this.stdin?.on("data", this.onData)
     } catch {}
+    if (this.busy) this.startActivityClock()
     this.paintCurrent()
   }
 
@@ -567,6 +640,7 @@ export class TuiApp {
    * setelah anak keluar.
    */
   releaseTerminal(): void {
+    this.stopActivityClock()
     try {
       if (this.onData) this.stdin?.removeListener("data", this.onData)
     } catch {}
@@ -596,6 +670,7 @@ export class TuiApp {
     try {
       this.stdin?.setRawMode(true)
     } catch {}
+    if (this.busy) this.startActivityClock()
     this.paintCurrent()
     return true
   }
@@ -627,7 +702,16 @@ export class TuiApp {
     const cols = screen.cols
     const rows = screen.rows
     const snap = this.host.getStatus()
-    const statusLine = renderFooter({ ...snap.footer, sparkFrame: 0 }, cols)[0] ?? ""
+    const busy = this.busy || snap.busy
+    const statusLine =
+      renderFooter(
+        {
+          ...snap.footer,
+          activity: this.activityText(snap),
+          sparkFrame: busy && !motionReduced() ? this.tick : 0,
+        },
+        cols,
+      )[0] ?? ""
     const menu = this.menuRows(rows, cols)
     const inputAll = this.inputRows(cols)
     const inputH = Math.min(MAX_INPUT_ROWS, Math.max(1, inputAll.length))
@@ -752,6 +836,44 @@ export class TuiApp {
     this.paintCurrent()
   }
 
+  private startActivityClock(): void {
+    if (this.activityTimer || this.quitRequested) return
+    const tick = () => {
+      this.activityTimer = undefined
+      if (!this.busy || this.quitRequested) return
+      if (this.suspended === 0 && !this.released) this.paintCurrent()
+      this.startActivityClock()
+    }
+    this.activityTimer = setTimeout(tick, 200)
+    try {
+      ;(this.activityTimer as unknown as { unref?: () => void }).unref?.()
+    } catch {}
+  }
+
+  private stopActivityClock(): void {
+    if (this.activityTimer !== undefined) {
+      clearTimeout(this.activityTimer)
+      this.activityTimer = undefined
+    }
+  }
+
+  private activityText(snap: TuiStatusSnapshot): string | undefined {
+    if (!this.busy && !snap.busy) return undefined
+    const elapsedStart = this.turnStartedAt || Date.now()
+    if (this.activityKind === "stopping") {
+      return `${t("app.stopping")} ${formatElapsed(Date.now() - elapsedStart)}`
+    }
+    const activity = snap.pinnedActivity
+    if (activity) {
+      const name = sanitizeAnsiLine(activity.name || "tool")
+      const target = activity.target ? ` ${sanitizeAnsiLine(activity.target)}` : ""
+      const activityStart = Number.isFinite(activity.tsStart) ? activity.tsStart : elapsedStart
+      return `${t("app.running")} ${name}${target} ${formatElapsed(Date.now() - activityStart)}`
+    }
+    const label = this.activityKind === "thinking" ? t("app.thinking") : t("app.working")
+    return `${label} ${formatElapsed(Date.now() - elapsedStart)}`
+  }
+
   // ── Paint ──
 
   private currentScreen: AltScreen | null = null
@@ -848,12 +970,17 @@ export class TuiApp {
       return
     }
     const snap = this.host.getStatus()
+    const busy = this.busy || snap.busy
     // MINICODE_MOTION=0 (temuan audit TUI-006): spark statis redup — status
     // busy tak boleh bergantung pada animasi (aksesibilitas / rec / SSH lambat).
-    this.tick = snap.busy ? this.tick + 1 : 0
+    this.tick = busy ? this.tick + 1 : 0
     const statusLine =
       renderFooter(
-        { ...snap.footer, sparkFrame: snap.busy && !motionReduced() ? this.tick : 0 },
+        {
+          ...snap.footer,
+          activity: this.activityText(snap),
+          sparkFrame: busy && !motionReduced() ? this.tick : 0,
+        },
         cols,
       )[0] ?? ""
     const menu = this.menuRows(rows, cols)
@@ -866,8 +993,8 @@ export class TuiApp {
     // Indikator + hint abort saling eksklusif (satu slot): scroll memakai slot
     // untuk "baris baru"; abort memakainya untuk petunjuk keluar.
     const indicator: string[] = []
-    if (newCount > 0) indicator.push(c.muted(t("app.newBelow", { n: newCount })))
-    else if (this.busy && this.abortHintOn) indicator.push(c.warning(t("app.abortHint")))
+    if (this.busy && this.abortHintOn) indicator.push(c.warning(t("app.abortHint")))
+    else if (newCount > 0) indicator.push(c.muted(t("app.newBelow", { n: newCount })))
     const viewH = Math.max(1, rows - 1 - inputH - menu.length - indicator.length)
     // Kunci posisi baca: stream yang menambah baris saat user scroll ke atas
     // ikut menggeser scrollBack agar jendela menunjuk baris absolut yang sama

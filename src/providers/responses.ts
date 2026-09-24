@@ -263,6 +263,15 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
                   }
                 }
               }
+              const reasoningText =
+                (dtype === "response.reasoning_summary_text.delta" ||
+                  dtype === "response.reasoning_text.delta") &&
+                typeof data.delta === "string"
+                  ? data.delta
+                  : ""
+              if (reasoningText) {
+                yield { type: "extension", kind: "reasoning", data: { text: reasoningText } }
+              }
               const rawDelta: unknown = (data.delta as unknown) ?? data
               const drec = (
                 typeof rawDelta === "object" && rawDelta !== null
@@ -328,11 +337,12 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
                   typeof data.arguments === "string" ? data.arguments : "",
                 )
               }
-              const text =
-                (typeof rawDelta === "string" ? rawDelta : undefined) ??
-                drec.text ??
-                drec.content ??
-                drec.output_text
+              const text = reasoningText
+                ? undefined
+                : ((typeof rawDelta === "string" ? rawDelta : undefined) ??
+                  drec.text ??
+                  drec.content ??
+                  drec.output_text)
               if (typeof text === "string" && text) yield { type: "text", text }
               const finish =
                 (data as { finish_reason?: string }).finish_reason ??

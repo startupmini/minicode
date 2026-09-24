@@ -464,7 +464,7 @@ footer.site .spacer { flex: 1; }
     <span class="mi">search</span><span>Cari modul, simbol, env…</span><kbd>Ctrl K</kbd>
   </div>
   <div class="top-actions">
-    <span class="vpill hide-m">v0.11.0 · Bun-only · 0 deps</span>
+    <span class="vpill hide-m">v0.11.1 · Bun-only · 0 deps</span>
     <button class="iconbtn" id="themeBtn" aria-label="Ganti tema terang/gelap" title="Ganti tema"><span class="mi">dark_mode</span></button>
   </div>
 </header>
@@ -1009,7 +1009,7 @@ bun run bench            # benchmark loop agen</pre></div>
   <div class="uxgrid">
     <div class="uxcard"><h4>1 · Prompt</h4><p><code>minicode &lt;mode&gt; ›</code> — baris input interaktif + dropdown slash; satu-satunya elemen “hidup” saat idle.</p></div>
     <div class="uxcard"><h4>2 · Pesan model</h4><p>Streaming ke <b>stdout</b>, di-sanitasi, dibungkus per baris mengikuti kolom terminal; fence markdown indent 2 spasi.</p></div>
-    <div class="uxcard"><h4>3 · Aktivitas</h4><p>Garis transient di <b>stderr</b> (TTY saja): <code>✦···</code> kelip putih↔abu saat thinking, atau <code>frame label···</code> selama tool berjalan. Hilang saat teks mengalir.</p></div>
+    <div class="uxcard"><h4>3 · Aktivitas</h4><p>Status bar fullscreen memiliki clock sendiri: <code>Working</code> selama turn hidup, <code>Thinking</code> hanya saat reasoning nyata, dan <code>Running tool target</code> selama tool. Elapsed dan pulse menjadi milik App, bukan event provider; <code>MINICODE_MOTION=0</code> mematikan pulse tetapi mempertahankan teks status.</p></div>
     <div class="uxcard"><h4>4 · Hasil tool</h4><p>Ledger stderr, compact: <code>› nama target</code> satu baris (hijau; tanpa bocor isi file); error <code>› nama: pesan</code> (merah). Section besar default minimize (<code>+ label</code>); expanded/verbose menampilkan isi.</p></div>
     <div class="uxcard"><h4>5 · Error</h4><p><code>✗ pesan actionable</code> — sekali per kegagalan via <code>takePendingError()</code>; tidak pernah dump JSON/stack ke user.</p></div>
     <div class="uxcard"><h4>Stream contract</h4><p>stdout = output program (teks model, receipt). stderr = progress/diagnostik. Non-TTY: 0 ANSI, 0 spinner, 0 cursor control.</p></div>
@@ -1017,9 +1017,9 @@ bun run bench            # benchmark loop agen</pre></div>
 
   <p class="lede" style="margin-top:22px">Transient rendering memiliki <b>satu ownership mechanism</b> (<code>src/ui/runtime/statusline.ts</code>):</p>
   <div class="uxgrid">
-    <div class="uxcard"><h4>Ownership</h4><p>Painter garis turn (<code>turn</code>) dan wizard spinner (<code>spinner</code>) klaim via <code>acquireTransientPaint(kind)</code>; semua tulis painter lewat <code>paintWrite</code>.</p></div>
+    <div class="uxcard"><h4>Ownership</h4><p>Painter garis turn (<code>turn</code>) dipakai pada shell/linier; TUI fullscreen status-nya dimiliki <code>TuiApp</code> dan clock-nya berjalan independen dari event. Wizard spinner tetap lewat <code>acquireTransientPaint(kind)</code>.</p></div>
     <div class="uxcard"><h4>Foreign writers</h4><p>Diagnostik non-UI (router/providers/tool warnings) boleh menulis mentah ke stderr — arbitrator mengkomitnya sebagai baris permanen saat painter aktif.</p></div>
-    <div class="uxcard"><h4>Lifecycle tertutup</h4><p>Garis tidak pernah stale: <code>endTurn()</code> dipanggil driver setelah setiap <code>session.run</code> settle (kernel hanya emit <code>turn:completed</code> di jalur sukses).</p></div>
+    <div class="uxcard"><h4>Lifecycle tertutup</h4><p>Status TUI memiliki status <code>Working</code>/<code>Thinking</code>/<code>Running</code> dan konfirmasi <code>Stopping</code>; cleanup terjadi pada sukses, kegagalan, pembatalan, serta double-abort.</p></div>
     <div class="uxcard"><h4>Mutual exclusion</h4><p>Painter vs spinner secara desain disjoint; overlap memicu signal <code>[transient-paint] …</code> sekali per pasangan (bukan crash).</p></div>
   </div>
 
@@ -1065,7 +1065,7 @@ bun run bench            # benchmark loop agen</pre></div>
 <footer class="site">
   <span>Minicode · Peta struktur hidup — terminal contract FROZEN (<a href="TERMINAL_CONTRACT.md">docs/TERMINAL_CONTRACT.md</a>)</span>
   <span class="spacer"></span>
-  <span>v0.11.0 · diperbarui 2026-09-24</span>
+  <span>v0.11.1 · diperbarui 2026-09-24</span>
 </footer>
 
 </div>

@@ -146,11 +146,14 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     `… N baris awal di luar viewport — riwayat penuh di model` yang melacak
     jumlah baris yang di-evict; `total()` tetap monotonik.
 
-13. Status bar: 1 baris dasar (`✦ mode • model • cwd … ctx`) dari sumber yang
-    sama dengan angka sesi; spark pulse saat busy; `MINICODE_MOTION=0`
-    mematikan pulse (spark statis redup — status busy tak bergantung animasi;
-    aksesibilitas/SSH lambat/rekaman; temuan audit TUI-006), dibaca saat
-    dipakai (bukan beku saat import).
+13. Status bar: 1 baris dasar (`✦ [status] mode • model • cwd … ctx`) dari
+    sumber yang sama dengan angka sesi. Saat turn aktif, status teks dan
+    elapsed selalu tampil tanpa bergantung pada event provider; `Working`
+    berarti turn hidup, `Thinking` hanya untuk reasoning nyata, dan tool
+    running memakai label/tool target. Spark pulse saat busy;
+    `MINICODE_MOTION=0` mematikan pulse (status textual tetap tampil dan
+    tidak boleh identik dengan idle; aksesibilitas/SSH lambat/rekaman; temuan
+    audit TUI-006), dibaca saat dipakai (bukan beku saat import).
 14. Binding TUI: PgUp/PgDn scroll; **Shift+PgUp/PgDn (ESC[5;2~/6;2,
      modifier 2) = setengah halaman; Home/End saat prompt KOSONG = lompat
      baris-teratas/ekor transkrip (baris berisi = editing awal/akhir baris;
@@ -159,7 +162,8 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      batal input / abort turn (busy: SEMUA input dibekukan kecuali abort dan
      scroll — Enter pun sunyi; berlaku juga saat layar MENCIUT: abort+scroll
      selalu lolos agar turn bisa dibatalkan tanpa kill -9; abort pertama
-     menampilkan hint keluar sekali). Baris kosong menampilkan placeholder +
+     menampilkan status `Stopping` + hint keluar sekali, abort kedua dalam
+     1,5 detik menutup sesi). Baris kosong menampilkan placeholder +
      cara keluar; scroll ke atas + stream masuk = indikator `↓ N baris baru`.
 15. (Dihapus bersama jendela info — nomor dipertahankan.)
 16. Popup komposit: region tanpa clear + union-clear anti-hantu + clearRegion
@@ -167,7 +171,8 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     + batal.
 17. Transkrip append-only di memori (cap 5000), viewport ikut ekor otomatis;
     ketikan baru kembali ke ekor; stream turn TIDAK merampas posisi baca;
-    repaint live coalesce 30ms (layar tak buta saat turn). Proyeksi
+    repaint live coalesce 30ms dan clock activity 200ms (layar tak buta
+    saat turn). Proyeksi
     presentasi: baris running di-pin dari snapshot, elapsed tampil setelah
     ≥2s, status tool final memakai glyph + kata
     (`completed`/`failed`/`denied`/`cancelled`/`interrupted`), retry dan

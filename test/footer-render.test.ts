@@ -41,6 +41,24 @@ describe("footer render", () => {
     expect(plain).toContain("14.2k")
   })
 
+  test("activity status tampil dan tetap satu baris", () => {
+    tty = installFakeTty({ columns: 80 })
+    const [status] = renderFooter(
+      {
+        mode: "auto",
+        model: "m1",
+        cwd: "cwd",
+        activity: "Working 12s",
+        sparkFrame: 2,
+      },
+      80,
+    )
+    const plain = stripAnsi(status!)
+    expect(plain).toContain("Working 12s")
+    expect(plain).toContain("auto")
+    expect(displayWidth(plain)).toBeLessThanOrEqual(79)
+  })
+
   test("mode di-pad lebar tetap agar teks kanan tak bergeser saat ganti mode", () => {
     tty = installFakeTty({ columns: 80 })
     const withMode = (mode: string) =>
@@ -107,7 +125,13 @@ describe("footer render", () => {
   test("injeksi ANSI dari nama model/cwd/context dinetralkan", () => {
     tty = installFakeTty({ columns: 80 })
     const [status] = renderFooter(
-      { mode: "auto", model: "evil\x1b[2Jm", cwd: "C:\\x\x1b[?25lh", context: "9k\x1b[2J" },
+      {
+        mode: "auto",
+        model: "evil\x1b[2Jm",
+        cwd: "C:\\x\x1b[?25lh",
+        context: "9k\x1b[2J",
+        activity: "Working\x1b[2Jnow",
+      },
       80,
     )
     expect(status!).not.toContain("[2J")

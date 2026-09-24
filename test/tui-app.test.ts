@@ -7,6 +7,7 @@
 // state — bukan race. Hanya paint awal & submit async yang butuh
 // waitForOutput.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import type { UiPresentationActivity } from "../src/ui/contract.ts"
 import { resetLocaleState, setSessionLocale } from "../src/ui/i18n/locale.ts"
 import { resetAltScreenDepth } from "../src/ui/runtime/screen.ts"
 import { TuiApp, type TuiHost } from "../src/ui/tui/app.ts"
@@ -31,11 +32,13 @@ function setup(opts: { columns?: number; rows?: number; isTTY?: boolean } = {}) 
   const transcript = new Transcript(bus as never)
   const calls: string[] = []
   let slowGate: (() => void) | null = null
+  let pinnedActivity: UiPresentationActivity | undefined
   const host: TuiHost = {
     bus: bus as never,
     getStatus: () => ({
       footer: { mode: "auto", model: "test-model", cwd: "/kerja", context: "1k" },
       busy: false,
+      ...(pinnedActivity ? { pinnedActivity } : {}),
     }),
     listCommands: (prefix) => ["/model", "/help", "/exit"].filter((c) => c.startsWith(prefix)),
     submit: async (text) => {
@@ -59,7 +62,17 @@ function setup(opts: { columns?: number; rows?: number; isTTY?: boolean } = {}) 
     slowGate?.()
     await new Promise((r) => setTimeout(r, 20))
   }
-  return { bus, transcript, app, calls, releaseSlow, screenText }
+  return {
+    bus,
+    transcript,
+    app,
+    calls,
+    releaseSlow,
+    screenText,
+    setPinnedActivity: (next: UiPresentationActivity | undefined) => {
+      pinnedActivity = next
+    },
+  }
 }
 describe("TuiApp", () => {
   test("boot: frame penuh tepat rows + enter/exit berpasangan (I17)", async () => {
@@ -141,6 +154,84 @@ describe("TuiApp", () => {
     expect(last).toContain("auto")
     expect(last).toContain("test-model")
     expect(last).toContain("1k")
+    await tty!.send(KEY.ctrlD)
+    await runP
+  })
+  test("busy tanpa event: Working tampil dan elapsed bergerak", async () => {
+    const { app, releaseSlow, screenText } = setup()
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.send("/slow")
+    await tty!.send(KEY.enter)
+    await tty!.waitForOutput((o) => o.includes("Working"))
+    await tty!.waitForOutput((o) => o.includes("› /slow"))
+    expect(screenText()).toContain("Working 0s")
+    await new Promise((r) => setTimeout(r, 1100))
+    expect(screenText()).toMatch(/Working [1-9]\d*s/)
+    await releaseSlow()
+    await tty!.send(KEY.ctrlD)
+    await runP
+  })
+  test("busy + motion off tetap menampilkan status tekstual", async () => {
+    const previous = process.env.MINICODE_MOTION
+    process.env.MINICODE_MOTION = "0"
+    try {
+      const { app, releaseSlow, screenText } = setup()
+      const runP = app.run()
+      await tty!.ready()
+      await tty!.waitForOutput((o) => o.includes("minicode"))
+      await tty!.send("/slow")
+      await tty!.send(KEY.enter)
+      await tty!.waitForOutput((o) => o.includes("Working"))
+      await tty!.waitForOutput((o) => o.includes("› /slow"))
+      expect(screenText()).toContain("Working 0s")
+      await releaseSlow()
+      await tty!.send(KEY.ctrlD)
+      await runP
+    } finally {
+      if (previous === undefined) delete process.env.MINICODE_MOTION
+      else process.env.MINICODE_MOTION = previous
+    }
+  })
+  test("reasoning event menunjukkan Thinking, text kembali Working", async () => {
+    const { app, bus, releaseSlow, screenText } = setup()
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.send("/slow")
+    await tty!.send(KEY.enter)
+    await tty!.waitForOutput((o) => o.includes("› /slow"))
+    bus.emit("provider:extension", { kind: "reasoning", data: { text: "hmm" } })
+    await tty!.waitForOutput((o) => o.includes("Thinking"))
+    expect(screenText()).toContain("Thinking")
+    tty!.clear()
+    bus.emit("provider:text", { text: "jawaban" })
+    await tty!.waitForOutput((o) => o.includes("Working"))
+    expect(screenText()).toContain("Working")
+    await releaseSlow()
+    await tty!.send(KEY.ctrlD)
+    await runP
+  })
+  test("activity snapshot tampil sebagai status tool", async () => {
+    const { app, releaseSlow, screenText, setPinnedActivity } = setup()
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.send("/slow")
+    await tty!.send(KEY.enter)
+    await tty!.waitForOutput((o) => o.includes("Working"))
+    await tty!.waitForOutput((o) => o.includes("› /slow"))
+    setPinnedActivity({
+      toolCallId: "call-1",
+      name: "read_file",
+      target: "src/server.ts",
+      status: "running",
+      tsStart: Date.now() - 3000,
+    })
+    app.repaint()
+    expect(screenText()).toContain("Running read_file src/server.ts 3s")
+    await releaseSlow()
     await tty!.send(KEY.ctrlD)
     await runP
   })
@@ -337,7 +428,7 @@ describe("TuiApp", () => {
     void app
   })
   test("busy + Esc ganda = abort lalu quit; tunggal = abort saja", async () => {
-    const { app } = setup()
+    const { app, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
     await tty!.waitForOutput((o) => o.includes("minicode"))
@@ -348,8 +439,25 @@ describe("TuiApp", () => {
     await tty!.send(KEY.esc, 90)
     await new Promise((r) => setTimeout(r, 100))
     expect(tty!.all()).not.toContain("\x1b[?1049l")
+    expect(screenText()).toContain("Stopping")
+    expect(screenText()).toContain("abort sent")
     // Esc kedua <1.5 dtk: quit.
     await tty!.send(KEY.esc, 90)
+    await runP
+    expect(tty!.all()).toContain("\x1b[?1049l")
+  })
+  test("busy + Ctrl+C tunggal menampilkan acknowledgement, ganda menutup", async () => {
+    const { app, screenText } = setup()
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.send("/slow")
+    await tty!.send(KEY.enter)
+    await tty!.waitForOutput((o) => o.includes("› /slow"))
+    await tty!.send(KEY.ctrlC, 90)
+    expect(screenText()).toContain("Stopping")
+    expect(screenText()).toContain("abort sent")
+    await tty!.send(KEY.ctrlC, 90)
     await runP
     expect(tty!.all()).toContain("\x1b[?1049l")
   })

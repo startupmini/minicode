@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-09-24
+
+### Fixed — TUI runtime feedback
+
+- TUI fullscreen sekarang menampilkan `Working` dan elapsed secara clock-driven saat provider Diam, tanpa menunggu event output.
+- `Thinking` hanya muncul untuk reasoning nyata; reasoning delta pada Responses API dipetakan ke lifecycle reasoning.
+- Tool running dari presentation snapshot tampil di footer; `MINICODE_MOTION=0` tetap mempertahankan status textual yang dapat dibedakan dari idle.
+- Esc/Ctrl+C menampilkan acknowledgement `Stopping`, dan tekanan kedua atau `SIGINT` menjalankan jalur keluar yang sama.
+
 ## [0.11.0] - 2026-09-24
 
 ### Added — Agent Presentation V2.1

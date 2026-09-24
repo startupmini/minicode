@@ -36,9 +36,11 @@ scrollback, tanpa alternate screen. `provider:text` → `sanitizeAnsi` PER CHUNK
 (buffer 1MB + marker, dibuka via `/expand`).
 
 Tahap E — garis status transient `src/ui/assistant/turn-status.ts`: satu baris
-`stderr`, hidup hanya di fase sunyi (latch `turnOn && !textOn`), hilang saat
-teks mengalir, hidup lagi saat tool berikut. `endTurn()` deterministik dari
-driver `finally` (kernel tak emit `completed` saat gagal/abort).
+`stderr` untuk shell/linier, hidup hanya di fase sunyi (latch
+`turnOn && !textOn`), hilang saat teks mengalir, hidup lagi saat tool
+berikut. `endTurn()` deterministik dari driver `finally` (kernel tak emit
+`completed` saat gagal/abort). TUI fullscreen tidak memakai painter transient
+ini karena alternate screen dimiliki `TuiApp`.
 
 Tahap F — arbitrator `src/ui/runtime/statusline.ts`: satu pemilik transient
 (`turn` vs `spinner`); tulis asing saat painter aktif dikomit
@@ -46,10 +48,12 @@ Tahap F — arbitrator `src/ui/runtime/statusline.ts`: satu pemilik transient
 bukan crash. `paintWrite` tak pernah melempar (fail-closed Bun Windows).
 
 Tahap G — status bar `src/ui/footer.ts` dirender `src/ui/tui/app.ts` sebagai
-baris dasar frame fullscreen. Footer/chrome lama (`src/ui/runtime/chrome.ts`,
-DECSTBM scroll-region, `MINICODE_FOOTER`) DIHAPUS bersama lapisan TUI lama —
-alternate screen menggantikannya; nol byte di non-TTY. Footer baca
-`session.contextTokens` kernel (bukan spend kumulatif).
+baris dasar frame fullscreen. `TuiApp` memiliki clock activity 200ms,
+`Working`/`Thinking`/tool status, elapsed, dan konfirmasi `Stopping`
+tanpa menunggu event provider. Footer/chrome lama
+(`src/ui/runtime/chrome.ts`, DECSTBM scroll-region, `MINICODE_FOOTER`) DIHAPUS
+bersama lapisan TUI lama — alternate screen menggantikannya; nol byte di
+non-TTY. Footer baca `session.contextTokens` kernel (bukan spend kumulatif).
 
 Tahap H — primitif render `src/ui/render/`: `sanitize.ts` (hanya SGR lolos),
 `markdown.ts` + `highlight.ts` (fence-state per baris, konten utuh),

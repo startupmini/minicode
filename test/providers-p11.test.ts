@@ -65,6 +65,40 @@ test("responses: teks mengalir + store:false + finish length eksplisit", async (
   }
 })
 
+test("responses: reasoning summary delta menjadi extension reasoning", async () => {
+  const srv = Bun.serve({
+    port: 0,
+    fetch: () =>
+      new Response(
+        sseBody([
+          JSON.stringify({ type: "response.reasoning_summary_text.delta", delta: "memeriksa" }),
+          JSON.stringify({ type: "response.output_text.delta", delta: "jawaban" }),
+        ]),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+  })
+  try {
+    const p = createResponsesProvider({
+      baseUrl: `http://127.0.0.1:${srv.port}/v1`,
+      models: ["m"],
+    })
+    const events: string[] = []
+    const ac = new AbortController()
+    for await (const ev of p.stream(
+      { messages: [{ role: "user", content: "hi" }], model: "m" },
+      ac.signal,
+    )) {
+      if (ev.type === "extension" && ev.kind === "reasoning") {
+        events.push(`reasoning:${(ev.data as { text: string }).text}`)
+      }
+      if (ev.type === "text") events.push(`text:${ev.text}`)
+    }
+    expect(events).toEqual(["reasoning:memeriksa", "text:jawaban"])
+  } finally {
+    srv.stop(true)
+  }
+})
+
 test("responses: previous_response_id dirantai dari completed id", async () => {
   clearResponsesChain()
   const bodies: string[] = []

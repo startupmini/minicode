@@ -72,6 +72,13 @@ describe("P5 transcript projection", () => {
     expect(out).toContain("› read_file a.ts … running (3s)")
   })
 
+  test("event turn dan approval tidak membuat phantom activity", () => {
+    const { transcript, emitPresentation } = setup(true)
+    emitPresentation({ type: "turn.started", turnId: 1 })
+    emitPresentation({ type: "approval.requested", approvalId: "a-1" })
+    expect(transcript.size()).toBe(0)
+  })
+
   test("terminal event duplikat tidak menggandakan baris", () => {
     setSessionLocale("en")
     const { transcript, setSnapshot, emitPresentation } = setup(true)

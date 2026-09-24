@@ -218,6 +218,12 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     `MINICODE_PRESENTATION_V2=1`; sumbernya snapshot struktural dari
     composition root, bukan parser string. `view`, cap, scroll, approval,
     transient, resize, cursor, dan PTY path tetap memakai kontrak lama.
+33. Proyeksi linear dan ACP dengan `MINICODE_PRESENTATION_V2=1` memakai
+    snapshot/event presentasi yang sama: linear menambahkan status/duration/
+    receipt/retry tanpa mengubah stdout/stderr split, sedangkan ACP mengirim
+    lifecycle `turn.*`, `tool.*`, dan `approval.*` terstruktur plus teks delta.
+    Flag OFF mempertahankan golden linear dan notifikasi ACP legacy; exit code,
+    pipe safety, dan determinisme non-TTY tetap sama.
 
 27. Painter transient stderr (spinner setup/cek-update, garis status turn)
      DITAHAN selama layar interaktif memegang terminal: `beginInteractiveScreen`
@@ -293,6 +299,8 @@ panjang).
 - `test/presentation-projections.test.ts` — I12/I17/I26/I32 (projection
   snapshot, running/elapsed, status terminal, retry/child grouping, summary,
   marker evict, dan parity flag OFF).
+- `test/presentation-linear-acp.test.ts` — I2/I6/I28/I33 (linear projection
+  status/duration/receipt dan lifecycle ACP terstruktur).
 
 - `test/tui-popup.test.ts` — I16 (komposit di atas transkrip, anti-bocor,
   anti-hantu).

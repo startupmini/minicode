@@ -89,17 +89,36 @@ export interface UiTurnSummary {
   durationMs: number
 }
 
+export interface UiPresentationError {
+  cause?: string
+  message: string
+  hint?: string
+}
+
+export interface UiPresentationReceipt {
+  paths?: string[]
+  checkpointId?: string
+  stats?: { added?: number; removed?: number }
+  test?: { passed: number; failed: number; summary: string }
+  cmd?: { exit?: number }
+}
+
 export interface UiPresentationActivity {
   seq?: number
   turnId?: number
   sessionId?: string
   toolCallId: string
   name: string
+  qualified?: string
   target?: string
   status: UiToolStatus
   tsStart: number
   tsEnd?: number
   durationMs?: number
+  summary?: string
+  error?: UiPresentationError
+  denyReason?: string
+  receipt?: UiPresentationReceipt
   parentToolCallId?: string
   supersedes?: string
   expandRef?: { toolCallId: string; idx: number }
@@ -116,21 +135,40 @@ export interface UiPresentationSnapshot {
   turns: UiPresentationTurn[]
 }
 
+export interface UiApprovalOutcome {
+  decision: "allow" | "allow-always" | "deny" | "cancelled"
+  by: "user" | "system"
+  reason?: string
+}
+
 export interface UiPresentationEvent {
   type:
+    | "turn.started"
+    | "turn.completed"
+    | "turn.failed"
+    | "turn.cancelled"
     | "tool.started"
     | "tool.completed"
     | "tool.failed"
     | "tool.denied"
     | "tool.cancelled"
-    | "turn.completed"
+    | "approval.requested"
+    | "approval.settled"
   seq?: number
   turnId?: number
   toolCallId?: string
+  approvalId?: string
   name?: string
+  qualified?: string
   target?: string
   status?: UiToolStatus
   tsStart?: number
+  durationMs?: number
   message?: string
+  cause?: string
+  reason?: string
+  error?: string
+  outcome?: UiApprovalOutcome
+  via?: "prompt" | "system"
   summary?: UiTurnSummary
 }

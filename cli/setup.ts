@@ -43,6 +43,7 @@ import {
   type ContentEntry,
   type ContentStore,
   createContentStore,
+  presentationV2Enabled,
 } from "../src/presentation/store.ts"
 import {
   beginTurnSnapshot,
@@ -402,11 +403,34 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       sessionId: a.sessionId,
       toolCallId: a.toolCallId,
       name: a.identity.name,
+      qualified: a.identity.qualified,
       ...(a.target ? { target: a.target } : {}),
       status: a.status as UiToolStatus,
       tsStart: a.tsStart,
       ...(a.tsEnd !== undefined ? { tsEnd: a.tsEnd } : {}),
       ...(a.durationMs !== undefined ? { durationMs: a.durationMs } : {}),
+      ...(a.summary ? { summary: a.summary } : {}),
+      ...(a.error
+        ? {
+            error: {
+              cause: a.error.cause,
+              message: a.error.message,
+              ...(a.error.hint ? { hint: a.error.hint } : {}),
+            },
+          }
+        : {}),
+      ...(a.denyReason ? { denyReason: a.denyReason } : {}),
+      ...(a.receipt
+        ? {
+            receipt: {
+              ...(a.receipt.paths ? { paths: a.receipt.paths } : {}),
+              ...(a.receipt.checkpointId ? { checkpointId: a.receipt.checkpointId } : {}),
+              ...(a.receipt.stats ? { stats: a.receipt.stats } : {}),
+              ...(a.receipt.test ? { test: a.receipt.test } : {}),
+              ...(a.receipt.cmd ? { cmd: a.receipt.cmd } : {}),
+            },
+          }
+        : {}),
       ...(a.parentToolCallId ? { parentToolCallId: a.parentToolCallId } : {}),
       ...(a.supersedes ? { supersedes: a.supersedes } : {}),
       ...(a.expandRef
@@ -422,14 +446,39 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   }
   const toPresentationEvent = (event: DomainEvent): UiPresentationEvent | null => {
     switch (event.type) {
+      case "turn.started":
+        return { type: event.type, seq: event.eventSeq, turnId: event.turnId }
+      case "turn.completed":
+        return {
+          type: event.type,
+          seq: event.eventSeq,
+          turnId: event.turnId,
+          summary: event.summary,
+        }
+      case "turn.failed":
+        return {
+          type: event.type,
+          seq: event.eventSeq,
+          turnId: event.turnId,
+          error: event.error.message,
+          cause: event.error.cause,
+        }
+      case "turn.cancelled":
+        return {
+          type: event.type,
+          seq: event.eventSeq,
+          turnId: event.turnId,
+          reason: event.reason,
+        }
       case "tool.started":
         return {
           type: event.type,
           seq: event.eventSeq,
           turnId: event.turnId,
           toolCallId: event.toolCallId,
-          name: event.identity?.name,
-          target: event.argsSummary?.target,
+          name: event.identity.name,
+          qualified: event.identity.qualified,
+          target: event.argsSummary.target,
           status: "running",
           tsStart: event.ts,
         }
@@ -450,19 +499,39 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
                 : event.type === "tool.denied"
                   ? "denied"
                   : "cancelled",
-          message:
-            "message" in event && typeof event.message === "string" ? event.message : undefined,
+          ...("durationMs" in event ? { durationMs: event.durationMs } : {}),
+          ...("message" in event ? { message: event.message } : {}),
+          ...("cause" in event ? { cause: event.cause } : {}),
+          ...("reason" in event ? { reason: event.reason } : {}),
         }
-      case "turn.completed":
+      case "approval.requested":
         return {
           type: event.type,
           seq: event.eventSeq,
           turnId: event.turnId,
-          summary: event.summary,
+          approvalId: event.approvalId,
+          toolCallId: event.toolCallId,
+          name: event.identity.name,
+          qualified: event.identity.qualified,
+          target: event.argsSummary.target,
+          via: event.via,
+        }
+      case "approval.settled":
+        return {
+          type: event.type,
+          seq: event.eventSeq,
+          turnId: event.turnId,
+          approvalId: event.approvalId,
+          toolCallId: event.toolCallId,
+          outcome: event.outcome,
         }
       default:
         return null
     }
+  }
+  const onPresentationEvent = (handler: (event: UiPresentationEvent) => void): (() => void) => {
+    presentationSubscribers.add(handler)
+    return () => presentationSubscribers.delete(handler)
   }
   const publishPresentationEvent = (event: Parameters<typeof toPresentationEvent>[0]): void => {
     const projected = toPresentationEvent(event)
@@ -918,7 +987,14 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     // mengotori alt-screen — state tetap jalan (quiet: rememberTurn untuk
     // /copy, bufferSection untuk /expand). One-shot/exec (enterRepl false)
     // tetap melukis seperti dulu.
-    detachSimple = attachSimpleLogger(session.events, { verbose, quiet: enterRepl === true })
+    const presentationV2 = presentationV2Enabled()
+    detachSimple = attachSimpleLogger(session.events, {
+      verbose,
+      quiet: enterRepl === true,
+      presentationV2,
+      getSnapshot: getPresentationSnapshot,
+      ...(presentationV2 ? { onPresentationEvent } : {}),
+    })
     if (enterRepl === true) {
       turnStatus = null
       return
@@ -1018,10 +1094,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     /** Fase 3 dark-launch: counter shadow reducer (divergensi harus 0). */
     getShadowDiagnostics,
     getPresentationSnapshot,
-    onPresentationEvent: (handler) => {
-      presentationSubscribers.add(handler)
-      return () => presentationSubscribers.delete(handler)
-    },
+    onPresentationEvent,
     /** Fase 4: query content store untuk /expand [id] (buka-ulang identik). */
     expandContent: (toolCallId: string): ContentEntry[] => {
       if (!contentStore) return []

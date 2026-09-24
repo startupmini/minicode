@@ -3,7 +3,13 @@
 // inline dan EXPANDED by default (transparansi shell); mode compact via
 // MINICODE_COMPACT=1 atau setCompactMode (/compact).
 import { Buffer } from "node:buffer"
-import type { UiBus, UiStep } from "../contract.ts"
+import type {
+  UiBus,
+  UiPresentationActivity,
+  UiPresentationEvent,
+  UiPresentationSnapshot,
+  UiStep,
+} from "../contract.ts"
 import { t } from "../i18n/locale.ts"
 import {
   bufferSection,
@@ -39,6 +45,9 @@ export interface SimpleOptions {
    * alt-screen di sela repaint App — kontrak I3 (App penulis tunggal layar).
    */
   quiet?: boolean
+  presentationV2?: boolean
+  getSnapshot?: () => UiPresentationSnapshot | null
+  onPresentationEvent?: (handler: (event: UiPresentationEvent) => void) => () => void
 }
 
 // Buffer output turn terakhir untuk /copy: teks model (sudah sanitize, sama
@@ -284,7 +293,80 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     streamBuffer = parts[parts.length - 1] ?? ""
   }
 
+  const presentationEnabled = opts.presentationV2 === true && !!opts.getSnapshot
+  const presentedTerminals = new Set<string>()
+  const presentationSnapshot = (): UiPresentationSnapshot | null => {
+    if (!presentationEnabled || !opts.getSnapshot) return null
+    try {
+      return opts.getSnapshot()
+    } catch {
+      return null
+    }
+  }
+  const presentationActivity = (toolCallId: string | undefined) => {
+    if (!toolCallId) return undefined
+    return presentationSnapshot()?.activities.find((activity) => activity.toolCallId === toolCallId)
+  }
+  const statusWord = (status: UiPresentationActivity["status"]): string => {
+    if (status === "completed") return t("ts.statusCompleted")
+    if (status === "failed") return t("ts.statusFailed")
+    if (status === "denied") return t("ts.statusDenied")
+    if (status === "cancelled") return t("ts.statusCancelled")
+    if (status === "interrupted") return t("ts.statusInterrupted")
+    return t("ts.statusRunning")
+  }
+  const linearSuffix = (activity: UiPresentationActivity | undefined): string => {
+    if (!activity) return ""
+    const parts: string[] = [statusWord(activity.status)]
+    if (activity.durationMs !== undefined)
+      parts.push(t("one.duration", { v: Math.max(0, Math.round(activity.durationMs)) }))
+    if (activity.denyReason)
+      parts.push(t("one.denyReason", { reason: sanitizeAnsiLine(activity.denyReason) }))
+    const paths = activity.receipt?.paths ?? []
+    if (paths.length > 0) {
+      const cleanPaths = paths
+        .map((path) => truncateToWidth(sanitizeAnsiLine(path), 80, ""))
+        .join(", ")
+      parts.push(t("one.receipt", { paths: cleanPaths }))
+    }
+    if (activity.supersedes) parts.push(t("ts.retry"))
+    return parts.length > 0 ? ` ${c.muted(`[${parts.join(" · ")}]`)}` : ""
+  }
+  const paintTerminal = (status: UiPresentationActivity["status"], line: string): string => {
+    if (status === "failed") return c.error(line)
+    if (status === "denied") return c.warning(line)
+    if (status === "completed") return c.success(line)
+    return c.muted(line)
+  }
+  const writePresentationTerminal = (event: UiPresentationEvent): void => {
+    if (!presentationEnabled) return
+    if (
+      event.type !== "tool.failed" &&
+      event.type !== "tool.denied" &&
+      event.type !== "tool.cancelled"
+    ) {
+      return
+    }
+    if (!event.toolCallId) return
+    if (presentedTerminals.has(event.toolCallId)) return
+    presentedTerminals.add(event.toolCallId)
+    const activity = presentationActivity(event.toolCallId)
+    const name = sanitizeAnsiLine(activity?.name ?? event.name ?? "tool")
+    const target = activity?.target ?? event.target
+    const targetText = target ? ` ${truncateToWidth(sanitizeAnsiLine(target), 120, "")}` : ""
+    const status = activity?.status ?? event.status ?? "failed"
+    const message = event.message ?? activity?.error?.message
+    const detail = message
+      ? `: ${truncateToWidth(sanitizeAnsi(String(message)), 200, "…").split("\n")[0] ?? ""}`
+      : ""
+    const line = `  ${glyphs.arrow} ${name}${targetText}${linearSuffix(activity)}${detail}`
+    wErr(paintTerminal(status, `${line}\n`))
+  }
+
   const offs: (() => void)[] = []
+  if (opts.presentationV2 && opts.onPresentationEvent) {
+    offs.push(opts.onPresentationEvent((event) => writePresentationTerminal(event)))
+  }
   offs.push(
     bus.on("turn:started", (e) => {
       // Turn baru: buffer turn sebelumnya dibuang (lihat /copy yang juga
@@ -298,6 +380,8 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       collapse.setActiveSection(null)
       lastTurnText = ""
       pendingError = null
+      presentedTerminals.clear()
+
       if (opts.verbose) wErr(c.muted(t("one.turnHead", { n: e.turn })))
     }),
   )
@@ -458,20 +542,27 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   )
   offs.push(
     bus.on("execution:completed", (e) => {
+      const callId = e.execution.call.id
+      const activity = presentationActivity(callId)
+      if (activity && activity.status !== "completed" && callId && presentedTerminals.has(callId)) {
+        return
+      }
       const r = e.execution.result
       const name = e.execution.call.name
       const args = (e.execution.call.args ?? {}) as Record<string, unknown>
+      const suffix = linearSuffix(activity)
+      const isError = activity ? activity.status !== "completed" : r.isError === true
       // Hasil string ikut ke buffer /copy (versi sanitize, cap per-add agar
       // satu read_file raksasa tak langsung memenuhi buffer sendirian).
-      if (!r.isError && typeof r.content === "string")
+      if (!isError && typeof r.content === "string")
         rememberTurn(truncateToWidth(sanitizeAnsi(r.content), 20000, ""))
-      if (r.isError) {
+      if (isError) {
         // Error tool ditampilkan ringkas per baris (cap 200 kolom + marker) —
         // tanpa marker user tak bisa bedakan "pesan 200 kolom" vs "terpotong".
         collapse.setActiveSection(null)
         wErr(
           c.error(
-            `  ${glyphs.arrow} ${sanitizeAnsiLine(name)}: ${truncateToWidth(sanitizeAnsi(String(r.content)), 200, "…")}\n`,
+            `  ${glyphs.arrow} ${sanitizeAnsiLine(name)}${suffix}: ${truncateToWidth(sanitizeAnsi(String(r.content)), 200, "…")}\n`,
           ),
         )
         return
@@ -482,8 +573,10 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       // pencetakan isi (bash/edit/diff/content tool), bukan marker.
       if (sectionMinimized("tool")) {
         collapse.setActiveSection(null)
-        const label = toolSummary(name, args, target)
-        wErr(c.info(`  + ${label}\n`))
+        const label = activity?.summary
+          ? sanitizeAnsiLine(activity.summary)
+          : toolSummary(name, args, target)
+        wErr(c.info(`  + ${label}${suffix}\n`))
         bufferSection(label, sanitizeAnsi(String(r.content ?? "")).trim())
         return
       }
@@ -494,7 +587,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         const cleanTarget = sanitizeAnsiLine(target)
         wOut(
           c.success(
-            `  ${glyphs.arrow} write_file ${cleanTarget}${size ? c.muted(` (${size})`) : ""}\n`,
+            `  ${glyphs.arrow} write_file ${cleanTarget}${size ? c.muted(` (${size})`) : ""}${suffix}\n`,
           ),
         )
         return
@@ -514,7 +607,11 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
           )
           return
         }
-        wOut(c.success(`  ${glyphs.arrow} ${sanitizeAnsiLine(name)} ${sanitizeAnsiLine(target)}\n`))
+        wOut(
+          c.success(
+            `  ${glyphs.arrow} ${sanitizeAnsiLine(name)} ${sanitizeAnsiLine(target)}${suffix}\n`,
+          ),
+        )
         return
       }
       // todo_write: tampilkan daftarnya utuh — ini rencana kerja, bukan noise.
@@ -523,7 +620,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         // lain agar ESC[2J/OSC tak lolos via label.
         const cleanName = sanitizeAnsiLine(name)
         wErr(
-          c.success(`  ${glyphs.arrow} ${cleanName}\n`) +
+          c.success(`  ${glyphs.arrow} ${cleanName}${suffix}\n`) +
             c.muted(`${sanitizeAnsi(String(r.content))}\n`),
         )
         return
@@ -540,7 +637,9 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
             lines.length > 3
               ? lines.slice(0, 3).join("\n    ") + c.muted(t("one.more3", { n: lines.length - 3 }))
               : lines.join("\n    ")
-          wErr(c.success(`  ${glyphs.arrow} $ ${cmdLabel}\n`) + c.muted(`    ${preview}\n`))
+          wErr(
+            c.success(`  ${glyphs.arrow} $ ${cmdLabel}${suffix}\n`) + c.muted(`    ${preview}\n`),
+          )
           return
         }
         const maxLines = TOOL_OUT_MAX_LINES()
@@ -548,7 +647,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         const more =
           lines.length > maxLines ? c.muted(t("one.moreLines", { n: lines.length - maxLines })) : ""
         wErr(
-          c.success(`  ${glyphs.arrow} $ ${cmdLabel}\n`) +
+          c.success(`  ${glyphs.arrow} $ ${cmdLabel}${suffix}\n`) +
             (shown.length ? `${c.muted(shown.join("\n")) + more}\n` : ""),
         )
         return
@@ -557,8 +656,15 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       // satu baris › + target — isinya milik model untuk dibaca, bukan untuk
       // membanjiri scrollback pengguna. Konten tetap bisa dilihat via expanded.
       if (detail.compact && CONTENT_TOOLS.has(name)) {
-        const label = truncateWords(sanitizeAnsiLine(target ?? formatArgsPreview(args)), 120)
-        wErr(c.success(`  ${glyphs.arrow} ${sanitizeAnsiLine(name)}${label ? ` ${label}` : ""}\n`))
+        const label = activity?.summary
+          ? sanitizeAnsiLine(activity.summary)
+          : truncateWords(sanitizeAnsiLine(target ?? formatArgsPreview(args)), 120)
+
+        wErr(
+          c.success(
+            `  ${glyphs.arrow} ${sanitizeAnsiLine(name)}${label ? ` ${label}` : ""}${suffix}\n`,
+          ),
+        )
         return
       }
       if (!detail.compact && CONTENT_TOOLS.has(name)) {
@@ -583,19 +689,21 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       }
       // Sisa tool (compact & expanded): satu baris › + label. WAJIB diakhiri
       // newline — tanpa itu baris berikutnya menempel (overlap di stderr log).
-      const label = truncateWords(sanitizeAnsiLine(target ?? formatArgsPreview(args)), 120)
+      const label = activity?.summary
+        ? sanitizeAnsiLine(activity.summary)
+        : truncateWords(sanitizeAnsiLine(target ?? formatArgsPreview(args)), 120)
       const first = sanitizeAnsi(String(r.content)).trim().split("\n")[0] ?? ""
       const preview = truncateToWidth(first, 80, "")
       const cleanName = sanitizeAnsiLine(name)
       if (!detail.compact && preview) {
         wErr(
           c.success(
-            `  ${glyphs.arrow} ${cleanName}${label ? ` ${label}` : ""} ${c.muted(preview)}\n`,
+            `  ${glyphs.arrow} ${cleanName}${label ? ` ${label}` : ""}${suffix} ${c.muted(preview)}\n`,
           ),
         )
         return
       }
-      wErr(c.success(`  ${glyphs.arrow} ${cleanName}${label ? ` ${label}` : ""}\n`))
+      wErr(c.success(`  ${glyphs.arrow} ${cleanName}${label ? ` ${label}` : ""}${suffix}\n`))
     }),
   )
   offs.push(

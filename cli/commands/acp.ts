@@ -4,8 +4,10 @@ import { createInterface } from "node:readline"
 import { LIMITS } from "../../src/constants.ts"
 import { scrubSecrets } from "../../src/policy/scrub.ts"
 import { budgetStatus } from "../../src/policy/usage.ts"
+import { presentationV2Enabled } from "../../src/presentation/store.ts"
 import { clearSubmittedResult, getSubmittedResult } from "../../src/tools/submit_result.ts"
 import { formatError } from "../../src/ui/assistant/simple.ts"
+import type { UiPresentationEvent, UiPresentationSnapshot } from "../../src/ui/contract.ts"
 import { formatUsd } from "../../src/ui/render/money.ts"
 import { createCliSession } from "../setup.ts"
 
@@ -20,7 +22,11 @@ import { createCliSession } from "../setup.ts"
 //   <- {"id":1,"result":{"server":"minicode-acp","capabilities":{...}}}
 //   -> {"id":2,"method":"run","params":{"prompt":"...","cwd":"...","model":"...","maxSteps":50,"timeoutMs":600000,"budget":0.5,"mode":"auto"|"plan"}}
 //   <- {"type":"text","delta":"..."} ... (notifikasi, tanpa id)
-//   <- {"type":"tool","name":"read_file"} ... (notifikasi, tanpa id)
+//   <- {"type":"tool","name":"read_file"} ... (notifikasi legacy, tanpa id)
+//   <- {"type":"tool.started","toolCallId":"...","name":"read_file"} ...
+//   <- {"type":"tool.completed|failed|denied|cancelled",...} ...
+//   <- {"type":"approval.requested|settled",...} ...
+//   <- {"type":"turn.started|completed|failed|cancelled",...} ...
 //   <- {"id":2,"result":{"ok":true,"tokens":123,"steps":4,"turns":1,"text":"..."}}
 //   -> {"id":3,"method":"cancel"}  (menggugurkan run yang berjalan)
 //   -> {"id":4,"method":"shutdown"} (keluar 0 setelah run selesai/dibatalkan)
@@ -101,6 +107,85 @@ export function parseRunParams(
   if (to !== undefined) out.timeoutMs = Math.floor(to)
   if (typeof p.budget === "number") out.budget = p.budget
   return { ok: true, value: out }
+}
+
+function projectAcpLifecycle(
+  event: UiPresentationEvent,
+  snapshot?: UiPresentationSnapshot | null,
+): Record<string, unknown> | null {
+  const activity = event.toolCallId
+    ? snapshot?.activities.find((item) => item.toolCallId === event.toolCallId)
+    : undefined
+  const base = {
+    type: event.type,
+    ...(event.seq !== undefined ? { eventSeq: event.seq } : {}),
+    ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+  }
+  if (event.type === "turn.started") return base
+  if (event.type === "turn.completed")
+    return { ...base, ...(event.summary ? { summary: event.summary } : {}) }
+  if (event.type === "turn.failed")
+    return {
+      ...base,
+      ...(event.error ? { error: event.error } : {}),
+      ...(event.cause ? { cause: event.cause } : {}),
+    }
+  if (event.type === "turn.cancelled")
+    return { ...base, ...(event.reason ? { reason: event.reason } : {}) }
+  if (event.type === "approval.requested")
+    return {
+      ...base,
+      ...(event.approvalId ? { approvalId: event.approvalId } : {}),
+      ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+      ...(event.name ? { name: event.name } : {}),
+      ...(event.qualified ? { qualified: event.qualified } : {}),
+      ...(event.target ? { target: event.target } : {}),
+      ...(event.via ? { via: event.via } : {}),
+    }
+  if (event.type === "approval.settled")
+    return {
+      ...base,
+      ...(event.approvalId ? { approvalId: event.approvalId } : {}),
+      ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+      ...(event.outcome ? { outcome: event.outcome } : {}),
+    }
+  if (event.type === "tool.started")
+    return {
+      ...base,
+      ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+      ...(event.name ? { name: event.name } : {}),
+      ...(event.qualified ? { qualified: event.qualified } : {}),
+      ...(event.target ? { target: event.target } : {}),
+      status: "running",
+      ...(event.tsStart !== undefined ? { tsStart: event.tsStart } : {}),
+    }
+  if (
+    event.type === "tool.completed" ||
+    event.type === "tool.failed" ||
+    event.type === "tool.denied" ||
+    event.type === "tool.cancelled"
+  ) {
+    return {
+      ...base,
+      ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+      ...((event.name ?? activity?.name) ? { name: event.name ?? activity?.name } : {}),
+      ...((event.qualified ?? activity?.qualified)
+        ? { qualified: event.qualified ?? activity?.qualified }
+        : {}),
+      ...((event.target ?? activity?.target) ? { target: event.target ?? activity?.target } : {}),
+      ...((event.status ?? activity?.status) ? { status: event.status ?? activity?.status } : {}),
+      ...((event.durationMs ?? activity?.durationMs)
+        ? { durationMs: event.durationMs ?? activity?.durationMs }
+        : {}),
+      ...(event.message ? { message: event.message } : {}),
+      ...(event.cause ? { cause: event.cause } : {}),
+      ...(event.reason ? { reason: event.reason } : {}),
+      ...(event.type === "tool.failed" && activity?.error ? { error: activity.error } : {}),
+      ...(activity?.denyReason ? { denyReason: activity.denyReason } : {}),
+      ...(activity?.receipt ? { receipt: activity.receipt } : {}),
+    }
+  }
+  return null
 }
 
 /** Satu run dalam terbang; cancel menggugurkan via signal. Box bermethod
@@ -190,6 +275,19 @@ export async function runAcpSession(
       ...(rp.maxSteps ? { maxSteps: rp.maxSteps } : {}),
       ...(rp.timeoutMs ? { timeoutMs: rp.timeoutMs } : {}),
     })
+    const projection = ctx as unknown as {
+      onPresentationEvent?: (handler: (event: UiPresentationEvent) => void) => () => void
+      getPresentationSnapshot?: () => UiPresentationSnapshot
+    }
+    const lifecycle =
+      presentationV2Enabled() && typeof projection.onPresentationEvent === "function"
+    let unsubPresentation = (): void => {}
+    if (lifecycle) {
+      unsubPresentation = projection.onPresentationEvent!((event) => {
+        const note = projectAcpLifecycle(event, projection.getPresentationSnapshot?.())
+        if (note) write(scrubSecrets(JSON.stringify(note)))
+      })
+    }
     const unsub = ctx.session.events.on("*", (ev) => {
       try {
         const e = ev as { type?: string; text?: string; execution?: { call?: { name?: string } } }
@@ -198,7 +296,7 @@ export async function runAcpSession(
           // menumpuk megabyte di memori sebelum result dirakit.
           if (text.length < LIMITS.MCP_OUTPUT_MAX_CHARS) text += e.text
           write(scrubSecrets(JSON.stringify({ type: "text", delta: e.text })))
-        } else if (e.type === "execution:started") {
+        } else if (e.type === "execution:started" && !lifecycle) {
           const name = e.execution?.call?.name ?? "?"
           write(JSON.stringify({ type: "tool", name }))
         }
@@ -237,6 +335,7 @@ export async function runAcpSession(
       }
     } finally {
       unsub()
+      unsubPresentation()
       await ctx.close()
     }
   } catch (e) {

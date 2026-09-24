@@ -314,7 +314,7 @@ describe("cli/setup: permissionMode & timeout & budget", () => {
       target: "a.ts",
       status: "completed",
     })
-    expect(seen).toEqual(["tool.started", "tool.completed"])
+    expect(seen).toEqual(["turn.started", "tool.started", "tool.completed"])
     unsubscribe()
     await s.close()
   })

@@ -316,15 +316,16 @@ export class Transcript {
   }
 
   private presentationEvent(event: UiPresentationEvent): void {
-    if (event.type === "tool.started") {
-      this.commit()
-      this.commitThinking()
-      return
-    }
     if (event.type === "turn.completed") {
       this.commit()
       this.commitThinking()
       this.turnSummary(event.summary, event)
+      return
+    }
+    if (!event.type.startsWith("tool.")) return
+    if (event.type === "tool.started") {
+      this.commit()
+      this.commitThinking()
       return
     }
     this.presentationLedger(event)

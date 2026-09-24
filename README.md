@@ -2,7 +2,7 @@
 
 Coding agent built on **MiniCore** (kernel di-vendor ke `vendor/minicore`, seam additif `compactAsync` + `initialMessages` + `cwd`).
 
-MiniCore = kernel runtime `STATE/MODEL/ACTION/LOOP` (inti di-freeze; satu-satunya patch = seam additif backward-compatible). Minicode = layer agencode: tools FS/bash/git/memory/todo/MCP/LSP, sub-agents, skills, hooks ask, CLI shell-first pure ANSI (output linier di scrollback, tanpa Ink/React), memory hybrid RAG, sessions sqlite, repo-map, verifier.
+MiniCore = kernel runtime `STATE/MODEL/ACTION/LOOP` (inti di-freeze; satu-satunya patch = seam additif backward-compatible). Minicode = layer agencode: tools FS/bash/git/memory/todo/MCP/LSP, sub-agents, skills, hooks ask, CLI shell-first pure ANSI (non-interaktif append-only ke scrollback; interaktif TUI fullscreen; tanpa Ink/React), memory hybrid RAG, sessions sqlite, repo-map, verifier.
 
 > Angka yang bisa dihitung mesin (jumlah test, tool, coverage) **tidak ditulis di sini** — jalankan `bun test`, `bun run gate:coverage`, atau lihat CI. Riwayat perubahan per versi ada di [CHANGELOG.md](CHANGELOG.md).
 
@@ -28,7 +28,7 @@ minicode (coding-agent — self-contained, tanpa sibling clone)
   │                   approval prompt, screens (picker/wizard/managers) — tanpa impor core/#minicore
   ├─ experiments/   → harness adversarial (fuzz bash, stress shadow-git, server MCP jahat)
   ├─ docs/          → ARCHITECTURE.html (peta struktur hidup) · USAGE.md
-  └─ cli/           → REPL (tab completion, multiline, history, slash commands) + controller tipis
+  └─ cli/           → TUI fullscreen (prompt-engine: tab completion, multiline, history, slash commands) + controller tipis
                       wizard/model-manager/provider-manager (logic config tetap di src/)
 ```
 
@@ -57,7 +57,7 @@ Kernel MiniCore di-vendor ke `vendor/minicore` (20 file, ~81 KB) sehingga repo i
 Wizard & `/provider` (add: `[0] OpenAI` … `[14] Custom URL` — hanya label, tanpa URL) + `/model` (Enter = pilih `provider::model` + picker `default/low/medium/high` untuk thinking effort, tersimpan di provider dan berlaku sesi berikutnya; Esc = batal total) menyajikan preset gateway (OpenAI, Anthropic, OpenRouter, DeepSeek, OpenCode Zen, Google, Ollama, Qwen, Groq, dll), API Key ter-masking, auto-detect models, dan provider otomatis pindah saat pilih model beda provider (tanpa restart).
 
 ```bash
-minicode --interactive                  # REPL linier (agentic Unix shell, output di scrollback)
+minicode --interactive                  # paksa TUI fullscreen (sesi interaktif selalu TUI)
 minicode --ask "deploy script"          # human-in-loop confirmation card
 minicode --verify "fix bugs lalu typecheck"  # auto-verify + self-heal setelah run
 minicode --sandbox docker "task"        # eksekusi bash dalam container ephemeral

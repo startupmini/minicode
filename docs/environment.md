@@ -68,7 +68,7 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | Variabel | Fungsi |
 |---|---|
 | `MINICODE_ASCII` | `1` → paksa glyph ASCII (`[OK]`, `>`, `.`) untuk konsol tanpa UTF-8 |
-| `MINICODE_COMPACT` | `1` → tool call ringkas, `0` → expanded. Default: compact di REPL, expanded di one-shot/exec (juga `/compact`, Ctrl+O) |
+| `MINICODE_COMPACT` | `1` → tool call ringkas, `0` → expanded. Default: compact di sesi interaktif, expanded di one-shot/exec (juga `/compact`, Ctrl+O) |
 | `MINICODE_JUSTIFY` | `0` → matikan rata kanan-kiri pada keluaran teks model |
 | `MINICODE_DROPDOWN` | `0` → matikan floating dropdown, pakai hint inline (konsol legacy) |
 | `MINICODE_MOTION` | `0` → matikan animasi status (pulse spark saat turn berjalan jadi glyph statis) — aksesibilitas/rekaman layar/SSH lambat |

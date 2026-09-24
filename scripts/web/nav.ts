@@ -59,7 +59,7 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
     src: "src/policy/permission.ts",
   },
   terminal: {
-    desc: "Kontrak terminal FROZEN: TUI fullscreen, stdout/stderr, invariant I1–I30, dan peta test proteksinya.",
+    desc: "Kontrak terminal FROZEN: TUI fullscreen, stdout/stderr, invariant I1–I31, dan peta test proteksinya.",
     src: "docs/TERMINAL_CONTRACT.md",
   },
   quickstart: {
@@ -125,7 +125,7 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
   // Dokumen internal kontributor (SUMMARY grup "Internal & Arsitektur",
   // audit docs 2026-09-18: sebelumnya orphan dari nav web/llms).
   terminal_contract: {
-    desc: "Kontrak terminal FROZEN untuk kontributor: 30 invariant dan peta test proteksinya.",
+    desc: "Kontrak terminal FROZEN untuk kontributor: 31 invariant (I1–I31) dan peta test proteksinya.",
     src: "docs/TERMINAL_CONTRACT.md",
   },
   "control-plane-map": {

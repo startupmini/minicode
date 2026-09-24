@@ -97,7 +97,7 @@ Kuat L2–L3 di loop/state/safety-dasar. Mendarat:
   (`bash.ts` + `MINICODE_SANDBOX_STRICT`), allowlist `bun run`/`bun x`,
   scrub `exec --json` + flag `overBudget`.
 - P1.3: `budgetStatus` satu predikat (`usage.ts`) + `--budget-strict` /
-  `MINICODE_BUDGET_STRICT` di one-shot/REPL/`exec` (`exec` sebelumnya
+  `MINICODE_BUDGET_STRICT` di one-shot/sesi interaktif/`exec` (`exec` sebelumnya
   mengabaikan `--budget` total — diperbaiki).
 - P1.2: `step-traces.jsonl` per tool/step + klasifikasi deny + mode sandbox
   (`trace.ts`, wiring `cli/setup.ts`).

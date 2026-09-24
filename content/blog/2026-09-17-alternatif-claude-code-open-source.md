@@ -21,7 +21,7 @@ Dari pertanyaan yang muncul di komunitas, tiga alasan paling umum:
 |---|---|---|
 | Lisensi | Proprietary | MIT, open source |
 | Runtime | Node.js | Bun (zero-dep) |
-| Tempat kerja | Terminal (REPL + headless) | Terminal biasa — REPL, one-shot, pipe |
+| Tempat kerja | Terminal (interaktif + headless) | Terminal — TUI fullscreen, one-shot, pipe |
 | Model | Anthropic | 14 gateway + Ollama lokal, fallback router |
 | Transparansi tool | Ringkasan per tool | Receipt tiap langkah: token, biaya, durasi |
 | Izin | Mode izin | 6 mode dari baca-saja sampai otonom + jail path |

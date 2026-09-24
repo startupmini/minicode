@@ -17,7 +17,7 @@ Yang tetap boleh di mode plan: membaca file, `grep`/`glob`, menulis daftar renca
 
 1. Mulai dengan `--plan` dan minta rencana konkret per langkah.
 2. Periksa daftar `todo` yang dihasilkan — ubah manual bila urutannya salah.
-3. Jalankan ulang prompt yang sama **tanpa** `--plan` untuk eksekusi, atau pindah mode di REPL dengan `/mode`.
+3. Jalankan ulang prompt yang sama **tanpa** `--plan` untuk eksekusi, atau pindah mode di sesi interaktif dengan `/mode`.
 
 ## Kapan plan mode paling berguna
 
@@ -25,4 +25,4 @@ Yang tetap boleh di mode plan: membaca file, `grep`/`glob`, menulis daftar renca
 - Meninjau usulan perubahan sebelum menyetujui eksekusi.
 - Menyiapkan delegasi: parent dalam mode plan memaksa semua anak menjadi read-only, jadi satu sesi plan tak bisa "bocor" menjadi mutasi lewat sub-agen.
 
-Batasan yang perlu diketahui: plan mode menahan *efek*, bukan *pengetahuan* — agen tetap membaca isi repo Anda untuk menyusun rencana. Dan seperti biasa, pindah mode kapan pun dengan `/mode` atau Shift+Tab di REPL. Detail izin per mode ada di [Memilih Mode](/docs/choosing-mode.html) dan [Security Model](/docs/security-model.html).
+Batasan yang perlu diketahui: plan mode menahan *efek*, bukan *pengetahuan* — agen tetap membaca isi repo Anda untuk menyusun rencana. Dan seperti biasa, pindah mode kapan pun dengan `/mode` atau Shift+Tab saat mengetik di TUI. Detail izin per mode ada di [Memilih Mode](/docs/choosing-mode.html) dan [Security Model](/docs/security-model.html).

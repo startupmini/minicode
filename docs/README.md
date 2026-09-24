@@ -68,7 +68,7 @@ Anda baru dan tak mau menebak urutan baca? Ikuti jalur ini (total ±15 menit):
 1. **Install** — [Instalasi](getting-started.md) (5 menit): Bun, clone, `doctor`.
 2. **Prompt pertama** — [Quickstart](quickstart.md) (5 menit): wizard/API key atau OAuth, prompt ter-verify pertama.
 3. **Pilih mode** — [Memilih Mode](choosing-mode.md) (2 menit): baca, ubah, approve, atau plan.
-4. **Workflow pertama** — [CLI](cli.md) + [REPL](repl.md): flag harian dan slash command sesuai kebutuhan.
+4. **Workflow pertama** — [CLI](cli.md) + [TUI — Slash & Keyboard](repl.md): flag harian dan slash command sesuai kebutuhan.
 
 Habis itu, baca sesuai kebutuhan lewat tabel Navigasi di bawah — tak perlu berurutan.
 
@@ -81,7 +81,7 @@ Habis itu, baca sesuai kebutuhan lewat tabel Navigasi di bawah — tak perlu ber
 | Mulai dari nol sampai membuat prompt pertama yang terverifikasi | [Quickstart](quickstart.md) |
 | Arti istilah-istilah yang dipakai di sini | [Glosarium](glossary.md) |
 | Semua perintah CLI dan flag yang tersedia | [CLI](cli.md) |
-| Perintah khusus di dalam Minicode dan tombol pintas | [REPL](repl.md) |
+| Perintah khusus di dalam Minicode dan tombol pintas | [TUI — Slash & Keyboard](repl.md) |
 | Cara menjalankan Minicode tanpa interaksi (otomatis / di CI) | [Otomasi & CI](exec.md) |
 | Cara menyimpan pengaturan dan di mana data tersimpan | [Config](config.md) |
 | Cara menambah penyedia AI dan mengelola akses | [Config & Provider](config-providers.md) |
@@ -96,7 +96,7 @@ Habis itu, baca sesuai kebutuhan lewat tabel Navigasi di bawah — tak perlu ber
 | Threat model, prompt injection, supply chain | [Keamanan](security.md) |
 | Error umum + `doctor` | [Troubleshooting](troubleshooting.md) |
 | Peta lapisan, alur satu prompt | [Arsitektur](architecture.md) |
-| Kontrak stdout/stderr FROZEN, invariant I1–I30 | [Kontrak Terminal](terminal.md) |
+| Kontrak stdout/stderr FROZEN, invariant I1–I31 | [Kontrak Terminal](terminal.md) |
 | Kontrak internal kontributor: terminal FROZEN, control-plane, pipeline render | [Internal & Arsitektur](TERMINAL_CONTRACT.md) (grup di sidebar) |
 | Ikut kontribusi, gate, batas lapisan | [Contributing](contributing.md) |
 | Perubahan per versi | [Changelog](changelog.md) |

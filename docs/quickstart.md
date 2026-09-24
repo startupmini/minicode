@@ -56,5 +56,5 @@ minicode "/review src/a.ts"             # skill slash-command
 ## Berikutnya
 
 - [CLI](cli.md) untuk semua mode + flags.
-- [REPL](repl.md) untuk slash command dan keyboard.
+- [TUI — Slash & Keyboard](repl.md) untuk slash command dan keyboard.
 - [Config & Provider](config-providers.md) untuk pindah gateway dan model.

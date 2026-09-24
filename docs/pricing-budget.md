@@ -26,7 +26,7 @@ minicode --budget 0.05 --budget-strict "task ketat"
 ```
 
 - Peringatan kuning 80%.
-- Lewat budget: one-shot `exit(1)`, REPL `break` loop, `exec` menegakkan sama seperti one-shot (pernah ada bug `exec` mengabaikan `--budget`, sudah diperbaiki).
+- Lewat budget: one-shot `exit(1)`, sesi interaktif `break` loop, `exec` menegakkan sama seperti one-shot (pernah ada bug `exec` mengabaikan `--budget`, sudah diperbaiki).
 - Pagu juga diputus MID-TURN: watcher biaya live (`watchBudgetLimit` di `cli/setup.ts`) menggugurkan turn yang sedang berjalan begitu lewat — dulu tool loop / siklus self-heal bisa belanja tanpa batas dalam satu turn. Abort budget membawa identitas kind `budget_exceeded` (bukan `aborted` generik) agar terbedakan dari Ctrl+C user.
 - Cost tak dikenal (model tanpa harga) + ADA pemakaian = fail-closed secara DEFAULT: dianggap over budget, bukan diabaikan (dulu hanya di `--budget-strict`; perilaku lama membuat `--budget` diam-diam mati untuk model baru). Nol token (belum belanja, mis. pre-check prompt baru) tetap lolos.
 - `--budget-strict` / `MINICODE_BUDGET_STRICT=1` = penegasan eksplisit perilaku fail-closed di atas (back-compat; perilaku sama dengan default).

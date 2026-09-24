@@ -13,7 +13,7 @@
 
 * [CLI — Mode & Flags](cli.md)
 * [Memilih Mode](choosing-mode.md)
-* [REPL — Slash & Keyboard](repl.md)
+* [TUI — Slash & Keyboard](repl.md)
 * [Otomasi & CI](exec.md)
 * [Config — File & Lokasi Data](config.md)
 * [Config & Provider](config-providers.md)
@@ -45,7 +45,7 @@
 
 ## Internal & Arsitektur (untuk kontributor)
 
-* [Terminal Contract (FROZEN) — 30 invariant](TERMINAL_CONTRACT.md)
+* [Terminal Contract (FROZEN) — 31 invariant (I1–I31)](TERMINAL_CONTRACT.md)
 * [Control Plane — kontrak context/budget/compaction](CONTROL-PLANE-MAP.md)
 * [UI Render Pipeline — jalur stream ke terminal](UI_RENDER_PIPELINE.md)
 * [Harness Agent — riset fondasi](HARNESS.md)

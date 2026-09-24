@@ -59,8 +59,8 @@ per baris → aman resize), `theme.ts` (getter warna/glyph, jangan di-`const`),
 200KB/entry, 500KB total), `diff.ts`/`table.ts`/`money.ts`/`format.ts`.
 
 Tahap I — view murni vs controller: `src/ui/screens/` (props + callback,
-tanpa IO) digerakkan `cli/` (`repl.ts`, `commands.ts`, `wizard.ts`,
-`provider/model-manager.ts`, `approval/prompt.ts` via DI `ask`,
+tanpa IO) digerakkan `cli/` (`tui.ts`, `commands.ts`, `wizard.ts`,
+`model-manager.ts`/`provider-manager.ts`, `approval/prompt.ts` via DI `ask`,
 `setupWhenEmpty`, `setSubAgentSessionFactory`).
 
 ## 2. Kontrak Event → UI
@@ -157,7 +157,7 @@ error consume-once + format actionable (E15), resize 120→20 mid-stream aman
 
 ## 5. Residual risk (jujur, belum dibuktikan di audit ini)
 
-Jalur TTY-live (painter denyut, footer sticky DECSTBM, overlay picker,
+Jalur TTY-live (painter denyut, popup komposit,
 tombol busy) hanya tercakup harness fake-TTY + 178 test; tidak ada sesi TTY
 nyata di audit ini. Chaos kombinasi (stream+resize+abort serentak di TTY)
 dan soak 100+ turn multitool belum dijalankan. Sub-agent tanpa view khusus:

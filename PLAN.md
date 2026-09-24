@@ -33,7 +33,28 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
 
 ---
 
-## Status eksekusi terbaru (update 2026-09-22)
+## Status eksekusi terbaru (update 2026-09-24)
+
+- ✅ SINKRONISASI DOKUMENTASI & DATA WEBSITE (2026-09-24): drift dokumen yang
+  tertinggal dari kode diselaraskan tanpa mengubah perilaku runtime — kontrak
+  terminal disebut **31 invariant (I1–I31)** di `SUMMARY.md`, `terminal.md`,
+  `architecture.md`, `README.md` (sebelumnya 30), istilah "REPL linier" diganti
+  "TUI fullscreen"/"sesi interaktif" di `cli.md`, `choosing-mode.md`,
+  `environment.md`, `exec.md`, `pricing-budget.md`, `skills.md`, `HARNESS.md`,
+  `CONTROL-PLANE-MAP.md` (termasuk referensi test yang sudah dihapus), jalur
+  controller di `UI_RENDER_PIPELINE.md` diperbaiki (`cli/tui.ts`,
+  `cli/model-manager.ts`/`provider-manager.ts`), daftar view di
+  `architecture.md` mengikuti `src/ui/screens/` aktual, dan `ARCHITECTURE.html`
+  tidak lagi menyebut jendela info + ambang coverage disamakan dengan
+  `scripts/coverage-gate.ts` (82 funcs / 84,5 lines). Data website ikut:
+  deskripsi nav docs (`scripts/web/nav.ts`) dan narasi landing
+  (`scripts/web/landing1.ts`) tidak lagi menjanjikan "tanpa layar khusus", dan
+  3 artikel blog diselaraskan (`kenapa-shell-native` kini menyebut sesi
+  interaktif = TUI fullscreen dengan transkrip selalu terlihat + jalur
+  non-interaktif shell-first; "REPL" → "sesi interaktif"/"TUI" di
+  `rencana-dulu-plan-mode` dan `alternatif-claude-code-open-source`).
+  Verifikasi: `bun run web:build` + `bun run web:check` + `bun x tsc --noEmit`
+  + `bun run lint` + `bun run gate:pack` + seluruh suite `bun test` (2361 pass).
 
 - ✅ AUDIT KEAMANAN 2026-09-22 — F-CRIT (bypass kunci owned-state via link
   internal) DIPERBAIKI: `write_file linkdir/config.json` menembus `.minicode/`

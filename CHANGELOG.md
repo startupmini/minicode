@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Docs — Sinkronisasi dokumentasi & data website (2026-09-24)
+
+- **Kontrak terminal diselaraskan ke v7/I31**: penyebutan "30 invariant (I1–I30)" → **31 invariant (I1–I31)** di `docs/SUMMARY.md`, `docs/terminal.md`, `docs/architecture.md`, `docs/README.md`, deskripsi nav web (`scripts/web/nav.ts`), dan `docs/ARCHITECTURE.html`.
+- **Istilah "REPL linier" dihapus dari permukaan publik**: diganti "TUI fullscreen"/"sesi interaktif" di `docs/cli.md`, `docs/choosing-mode.md`, `docs/environment.md`, `docs/exec.md`, `docs/pricing-budget.md`, `docs/skills.md`, `docs/HARNESS.md`, `docs/CONTROL-PLANE-MAP.md`, `README.md`; label nav docs `REPL — Slash & Keyboard` → `TUI — Slash & Keyboard` (nama berkas `docs/repl.md` dipertahankan agar URL web tidak berubah).
+- **Drift peta arsitektur diperbaiki**: `docs/UI_RENDER_PIPELINE.md` menunjuk `cli/tui.ts` + `cli/model-manager.ts`/`cli/provider-manager.ts` (bukan `repl.ts`/`provider/model-manager.ts`), daftar view murni mengikuti `src/ui/screens/` aktual, dan `docs/ARCHITECTURE.html` tidak lagi menyebut jendela info + ambang coverage disamakan dengan `scripts/coverage-gate.ts` (82 funcs / 84,5 lines).
+- **Narasi landing web tidak lagi menjanjikan "tanpa layar khusus"** (interaktif = alt-screen TUI; scrollback hanya jalur non-interaktif) — `scripts/web/landing1.ts`.
+- **3 artikel blog diselaraskan dengan perilaku kode**: `2026-09-10-kenapa-shell-native` kini menyebut sesi interaktif = TUI fullscreen dengan transkrip selalu terlihat + jalur non-interaktif shell-first (slug/URL tidak berubah), "REPL" → "sesi interaktif"/"TUI" di `2026-09-12-rencana-dulu-plan-mode` dan `2026-09-17-alternatif-claude-code-open-source`.
+- Verifikasi: `bun run web:build`, `bun run web:check`, `bun x tsc --noEmit`, `bun run lint`, `bun run gate:pack`, seluruh suite `bun test` (2361 pass / 0 fail); situs dibangun ulang dari sumber yang sama (sitemap/llms.txt/nav ikut).
+
 ### Fixed — Audit menyeluruh 2026-09-23 (14 temuan, semua diverifikasi sebelum diperbaiki)
 
 - **Test PTY hijau palsu (F1)**: `test/pty.test.ts` menulis skip sebagai `console.warn` + `return` — runner menghitungnya PASS (terbukti 5 pass/0 fail padahal 4 test tak jalan). Kini `test.skipIf` nyata (skip TERLIHAT + alasan di nama test), ada test CI-Linux yang gagal bila PTY tak tersedia, dan anak TUI/exec memakai env hermetic (`test/helpers/pty-harness.ts:cleanEnvForChild`) — env provider host (`TOKENHARBOR_*`, `AGENT_*`, `MINICODE_*` bocor dari proses test) tidak lagi menentukan jalur kode anak (akar 1 kegagalan `exec --json` di run penuh).

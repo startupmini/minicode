@@ -6,12 +6,12 @@ Semua cara menjalankan Minicode: interaktif, sekali jalan, pipe, dan otomasi CI 
 
 | Perintah | Fungsi |
 |---|---|
-| `minicode` | Mode interaktif (REPL) + wizard bila belum ada provider |
+| `minicode` | Mode interaktif (TUI fullscreen) + wizard bila belum ada provider |
 | `minicode "prompt"` | Sekali jalan (headless) |
 | `echo "prompt" \| minicode` | Via pipe |
 | `minicode exec "prompt" [--json]` | Headless CI — event JSONL + baris `{"type":"summary"}` di stdout |
 | `minicode acp` | Server JSON-RPC stdio untuk IDE (subset minimal: initialize/run/cancel/shutdown) |
-| `minicode --interactive` | Paksa REPL |
+| `minicode --interactive` | Paksa TUI interaktif |
 | `minicode --provider <id> "prompt"` | Paksa provider agnostik tanpa ubah config (atau `provider::model`) |
 | `minicode config add --baseUrl <url> --apiKey <key>` | Tambah provider LLM |
 | `minicode config mcp add <id> --command <cmd> --args "<a1,a2>"` | Daftarkan MCP server stdio |
@@ -55,7 +55,7 @@ Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `s
 | `--context-window <n>` | Ukuran jendela konteks (token) |
 | `--session <id>` | ID sesi (default random, disanitasi) |
 
-Di REPL, **Shift+Tab** memutar permission (`auto` → `ask` → `plan` → `allowlist`) dan benar-benar mengubah keputusan, bukan label. Di baris kosong, **Tab** juga memutar mode (`auto` → `ask` → `plan` → `allowlist`).
+Di TUI, **Shift+Tab** memutar permission (`auto` → `ask` → `plan` → `allowlist`) dan benar-benar mengubah keputusan, bukan label. Di baris kosong, **Tab** juga memutar mode (`auto` → `ask` → `plan` → `allowlist`).
 
 ## Kapan memakai apa
 

@@ -42,7 +42,7 @@ Tool `submit_result` menghasilkan JSON akhir terstruktur, dipanggil paling banya
 | `--max-steps <n>` | 50 | Batas langkah tool per run |
 | `--timeout <ms>` | 900000 (15 menit) | Hard deadline per run; `0` = Infinity |
 | `--ratelimit <rpm>` | — | Token bucket request LLM per menit |
-| `--budget <usd>` | — | Warn 80%; lewat → one-shot `exit(1)`, REPL break loop; `exec` menegakkan sama seperti one-shot |
+| `--budget <usd>` | — | Warn 80%; lewat → one-shot `exit(1)`, sesi interaktif break loop; `exec` menegakkan sama seperti one-shot |
 
 `MINICODE_TIMEOUT_MS` mengisi default bila `--timeout` tidak diset.
 

@@ -2,10 +2,10 @@
 title: "Kenapa Minicode bekerja di terminal biasa"
 date: 2026-09-10
 tags: [minicode, cli, desain]
-desc: "Kenapa coding agent CLI Minicode tampil di terminal biasa, bukan layar khusus: hasil kerja berurutan di scrollback, tanpa panel tersembunyi."
+desc: "Kenapa output Minicode tetap terbaca seperti terminal: sesi interaktif TUI fullscreen dengan transkrip terlihat, non-interaktif shell-first di scrollback."
 ---
 
-Minicode adalah coding agent CLI yang bekerja di terminal biasa. Ia tidak membuka layar khusus yang menutupi tampilan Anda, dan tidak menyembunyikan apa yang sedang terjadi di balik panel tersembunyi. Semua hasil kerja muncul di scrollback seperti biasa, urut dari yang pertama sampai yang terakhir.
+Minicode adalah coding agent CLI yang bekerja apa adanya di terminal Anda. Sesi interaktif memakai TUI fullscreen, tapi prinsipnya tetap sama: transkrip selalu terlihat (redup di bawah popup, bukan tersembunyi di balik panel), dan setiap langkah tetap berurutan seperti riwayat shell. Jalur non-interaktif — one-shot, pipe, redirect, CI — sepenuhnya shell-first: hasil mengalir di scrollback biasa, urut dari yang pertama sampai yang terakhir, siap di-pipe, di-grep, dan di-copy.
 
 ## Cara Minicode menangani tampilan
 
@@ -24,6 +24,6 @@ Untuk memastikan hal ini berjalan lancar, Minicode memiliki satu aturan saja: ha
 
 ## Kenapa begitu
 
-Pendekatan ini membuat hasil kerja Anda tetap terlihat jelas, tidak ada yang bersembunyi, dan Anda selalu tahu apa yang sedang terjadi. Tidak ada tampilan khusus yang harus dibuka atau ditutup, tidak ada panel yang mengubah tampilan Anda secara tiba-tiba.
+Pendekatan ini membuat hasil kerja Anda tetap terlihat jelas, tidak ada yang bersembunyi, dan Anda selalu tahu apa yang sedang terjadi. Popup seperti `/model` atau `/sessions` muncul di atas transkrip yang tetap terlihat dan hilang begitu selesai — tidak ada panel yang mengganti isi layar Anda. Di luar sesi interaktif, Minicode tidak mengambil alih layar sama sekali.
 
 Jika Anda ingin memahami lebih detail tentang bagaimana Minicode menangani tampilan ini, baca [Arsitektur](/docs/architecture.html) atau [Kontrak Terminal](/docs/terminal.html).

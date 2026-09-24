@@ -30,7 +30,7 @@ Relationship eksplisit:
 | Context size | Kernel loop (`contextTokens`) + `Session.contextTokens` getter (ekspos ke driver/UI) | Kernel: kompaksi + gagal-bila-critical |
 | Compaction | Kernel (pressure + flag) | Kernel: KAPAN + fallback; LLM: ISI ringkasan |
 | Termination | maxSteps/timeout (kernel), budget (driver), abort (user) | Kernel: maxSteps, timeout, post-kompaksi critical; Driver: budget abort; User: Ctrl+C/Esc |
-| Budget | Collector (usage live) + `budgetStatus` | `budgetStatus` (terpusat, seragam REPL/one-shot/exec) + watcher abort |
+| Budget | Collector (usage live) + `budgetStatus` | `budgetStatus` (terpusat, seragam sesi interaktif/one-shot/exec) + watcher abort |
 | Backpressure | Producer caps + kernel truncate | Cap di producer (sudah benar); kernel truncate terakhir |
 
 ## 3. Compaction Contract (Phase 6 — seam kernel)
@@ -134,6 +134,6 @@ Operator harus bisa membedakan (tanpa ambigu):
 - `test/control-plane.test.ts` — compaction budget≠recovery (F-10), anti-loop,
   contextTokens getter + konsistensi estimator, termination reason.
 - `test/cli-help-language.test.ts` — /status membedakan Context/Usage/Budget.
-- `test/repl-linear.test.ts` — footer membaca kernel contextTokens.
+- `test/control-plane.test.ts` — footer/status membaca kernel contextTokens.
 - `test/usage-session.test.ts` / `budget-unknown.test.ts` — budget contract.
 - `test/pack-integrity.test.ts` — vendor hash + VENDOR.md sinkron.

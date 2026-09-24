@@ -8,7 +8,7 @@ export function landingHero(version: string): string {
   return `<section class="hero">
 <p class="kicker">v${version}, <a href="https://github.com/startupmini/minicode/blob/main/LICENSE">MIT</a>, zero-dep, <a href="https://bun.sh">Bun</a></p>
 <h1>Coding agent CLI yang menunjukkan semua kerjanya.</h1>
-<p class="lead">Untuk developer yang hidup di terminal: Minicode membaca kode, menjalankan tool, dan melaporkan tiap langkah di scrollback — meminta izin sebelum bertindak, tanpa layar khusus.</p>
+<p class="lead">Untuk developer yang hidup di terminal: Minicode membaca kode, menjalankan tool, dan melaporkan tiap langkah — di TUI fullscreen saat interaktif, atau di scrollback pada jalur non-interaktif — dan meminta izin sebelum bertindak.</p>
 <div class="install" id="install">
 <code class="install-cmd" translate="no">${install}</code>
 <button class="copybtn" data-copy="${install}" aria-label="Salin perintah instalasi"><span class="material-symbols-outlined" aria-hidden="true">content_copy</span></button>
@@ -35,7 +35,10 @@ export function landingHow(): string {
       "Eksekusi",
       "File, shell, git, web, dan memori dijalankan lewat tool terjail di workspace Anda.",
     ],
-    ["Hasil", "Receipt tiap langkah menempel di scrollback — bisa di-pipe, di-grep, di-copy."],
+    [
+      "Hasil",
+      "Receipt tiap langkah menempel di scrollback jalur non-interaktif — bisa di-pipe, di-grep, di-copy.",
+    ],
     ["Verifikasi", "Uji otomatis memastikan perubahan benar sebelum dianggap selesai."],
   ]
   return `<section id="cara-kerja" class="band"><h2>Cara kerja.</h2><p class="sub">Lima langkah yang sama setiap kali, tanpa kejutan.</p><ol class="how-list">${steps

@@ -11,13 +11,29 @@
 // menyerahkan bus kernel apa adanya tanpa adapter runtime.
 
 export interface UiToolCallRef {
+  /**
+   * toolCallId dari provider (ToolCall.id) — diaditif Fase 2 Presentasi V2.1.
+   * Opsional agar subscriber lama yang hanya butuh name/args tidak rusak;
+   * kernel selalu mengisi ini (snapshotToolCall), cast `as unknown` di
+   * cli/tui.ts tidak lagi buta terhadap identitas.
+   */
+  id?: string
   name: string
   args?: unknown
+}
+
+/** Hasil tool ringkas di step (Fase 2) — bukan payload penuh ToolResult. */
+export interface UiStepResultRef {
+  toolCallId?: string
+  isError?: boolean
+  content?: unknown
 }
 
 export interface UiStep {
   index: number
   toolCalls: readonly UiToolCallRef[]
+  /** Opsional: ringkas results (kernel step:completed membawa ini penuh). */
+  results?: readonly UiStepResultRef[]
 }
 
 export interface UiExecution {

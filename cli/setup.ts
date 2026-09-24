@@ -31,6 +31,13 @@ import {
   runVerify,
   runWithSelfHeal,
 } from "../src/policy/verifier.ts"
+import { createPresentationAdapter, type PresentationAdapter } from "../src/presentation/adapter.ts"
+import { createInitialState, type PresentationState } from "../src/presentation/model.ts"
+import {
+  createReducerDiagnostics,
+  type ReducerDiagnostics,
+  reduce,
+} from "../src/presentation/reducer.ts"
 import {
   beginTurnSnapshot,
   reconcileUndoRedoPointer,
@@ -53,7 +60,7 @@ import {
   summarizeArgs,
   writeStepTrace,
 } from "../src/telemetry/trace.ts"
-import { setAskTextFn } from "../src/tools/ask_user.ts"
+import { setAskApprovalHook, setAskTextFn } from "../src/tools/ask_user.ts"
 import { killAllBackgroundJobs } from "../src/tools/bash.ts"
 import { setSubAgentParentRouting } from "../src/tools/task.ts"
 import { todoSession } from "../src/tools/todo.ts"
@@ -129,6 +136,16 @@ export interface CliSession {
   /** Kontrol mode permission saat runtime (Shift+Tab / /mode di REPL). */
   permissions?: PermissionControl
   close: () => Promise<void>
+  /** Fase 3 dark-launch: counter shadow reducer (divergensi harus 0). */
+  getShadowDiagnostics: () => {
+    divergence: number
+    eventsIn: number
+    duplicateTerminal: number
+    lateEvent: number
+    orphanTool: number
+    orphanApproval: number
+    duplicateTurn: number
+  }
 }
 
 export async function createCliSession(opts: CliSessionOptions): Promise<CliSession> {
@@ -328,6 +345,33 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   let sessionEvents: {
     emit: (e: { type: "provider:extension"; kind: string; data: unknown }) => void
   } | null = null
+  // Adaptor semantik presentasi Fase 1 (AGENT_PRESENTATION_ARCHITECTURE_V2_1):
+  // mengamati bus kernel dan memancarkan DomainEvent ke subscriber-nya sendiri.
+  // Dual-subscribe dengan sink lama — perilaku user NOL berubah pada Fase 1.
+  let presentation: PresentationAdapter | null = null
+  // Fase 3 dark-launch: reducer berjalan paralel (shadow) — hasil DIBUANG,
+  // tidak mengontrol output. Divergensi = reduce melempar (harusnya 0).
+  let shadowState: PresentationState | null = null
+  let shadowDiag: ReducerDiagnostics | null = null
+  let shadowDivergence = 0
+  let shadowUnsub: (() => void) | null = null
+  const getShadowDiagnostics = (): {
+    divergence: number
+    eventsIn: number
+    duplicateTerminal: number
+    lateEvent: number
+    orphanTool: number
+    orphanApproval: number
+    duplicateTurn: number
+  } => ({
+    divergence: shadowDivergence,
+    eventsIn: shadowDiag?.eventsIn ?? 0,
+    duplicateTerminal: shadowDiag?.duplicateTerminal ?? 0,
+    lateEvent: shadowDiag?.lateEvent ?? 0,
+    orphanTool: shadowDiag?.orphanTool ?? 0,
+    orphanApproval: shadowDiag?.orphanApproval ?? 0,
+    duplicateTurn: shadowDiag?.duplicateTurn ?? 0,
+  })
   const compaction = process.env.DEEPSEEK_API_KEY
     ? createLlmCompaction({
         apiKey: process.env.DEEPSEEK_API_KEY,
@@ -360,6 +404,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // View pertanyaan ask_user — composition root meng-inject, tool menolak
   // jalan tanpanya (fail-closed, sama seperti `ask` pada permission).
   setAskTextFn(promptAskText)
+  // Cermin observability ask_user → adaptor presentasi (perilaku tool utuh).
+  setAskApprovalHook((e) => {
+    presentation?.publishApproval(e)
+  })
   // Warisan routing sub-agen (audit #14): anak memakai limiter BERSAMA
   // (satu bucket — tak memicu 429 yang baru dihindari parent) dan menghormati
   // --provider parent. Model diwarisi live via ToolContext (lihat task.ts).
@@ -388,6 +436,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       systemExtra: (systemExtra ?? "") + recoveryAppendix,
       model: modelRef.current,
       ask: promptAsk,
+      // Cermin observability persetujuan → adaptor presentasi. Keputusan gate
+      // tetap milik permission handler; hook ini hanya melaporkan.
+      onApprovalEvent: (e) => {
+        presentation?.publishApproval(e)
+      },
       onPermissions: (ctl) => {
         permissions = ctl
       },
@@ -405,6 +458,25 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // Kontrak control-plane (Phase 6): late-binding bus untuk usage kompaksi —
   // onUsage dipanggil di tengah turn, saat bus sudah hidup.
   sessionEvents = session.events
+  // Adaptor mulai mengamati sejak bus hidup (closure onApprovalEvent di atas
+  // aman: check() pertama selalu terjadi setelah wiring ini, saat run()).
+  presentation = createPresentationAdapter(session.events, { sessionId })
+  // Shadow reducer (Fase 3): consume DomainEvent yang sama, hasil dibuang.
+  // Flag env MINICODE_PRESENTATION_V2 tidak diperlukan di sini — shadow selalu
+  // jalan (observability), output TUI/linear masih sink lama.
+  try {
+    shadowState = createInitialState(sessionId)
+    shadowDiag = createReducerDiagnostics()
+    shadowUnsub = presentation.onEvent((e) => {
+      try {
+        if (shadowState && shadowDiag) reduce(shadowState, e, shadowDiag)
+      } catch {
+        shadowDivergence++
+      }
+    })
+  } catch {
+    shadowDivergence++
+  }
 
   const effectiveInitialModel = modelRef.current ?? cfg.providers[0]?.models[0] ?? "default"
 
@@ -608,7 +680,22 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         },
       })
       try {
-        await session.run(prompt, { model: modelRef.current, signal: ctl.signal })
+        try {
+          await session.run(prompt, { model: modelRef.current, signal: ctl.signal })
+        } catch (e) {
+          // Kernel diam pada gagal/abort/timeout (turn:completed hanya sukses):
+          // adaptor merekonstruksi turn.failed/cancelled dari sini. Error asli
+          // selalu dilempar ulang — observability tak menutupi kegagalan.
+          try {
+            presentation?.noteRunSettled(e, {
+              aborted: ctl.signal.aborted,
+              parentAborted: s?.aborted === true,
+            })
+          } catch {
+            // Diagnostik adaptor tak boleh menutupi error turn.
+          }
+          throw e
+        }
       } finally {
         stopWatch()
         if (s) s.removeEventListener("abort", onParentAbort)
@@ -761,6 +848,17 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   async function close(): Promise<void> {
     detachUI()
     detachBusDebug()
+    try {
+      shadowUnsub?.()
+    } catch {}
+    shadowUnsub = null
+    shadowState = null
+    shadowDiag = null
+    try {
+      presentation?.dispose()
+    } catch {}
+    presentation = null
+    setAskApprovalHook(undefined)
     // background job harus mati bersama CLI — jangan tinggalkan proses yatim
     killAllBackgroundJobs()
     await mcpCloseAll()
@@ -798,5 +896,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     runPromptWithVerify,
     permissions,
     close,
+    /** Fase 3 dark-launch: counter shadow reducer (divergensi harus 0). */
+    getShadowDiagnostics,
   }
 }

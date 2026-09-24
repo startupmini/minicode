@@ -11,6 +11,7 @@ import {
   type PermissionAsk,
   type PermissionMode,
 } from "../policy/permission.ts"
+import type { ApprovalEventHook } from "../presentation/events.ts"
 
 // P2 cap wrapper: limit retryAfter to 30s without mutating original error.
 // F-12: sanitasi PENUH di satu titik sentral (mencakup adapter vendor yang
@@ -65,6 +66,9 @@ export async function createMinicodeSession(
     /** View persetujuan tool (di-inject dari cli/; tanpa ini mode interaktif
      * menolak semua prompt — aman untuk headless/library). */
     ask?: PermissionAsk
+    /** Hook observability persetujuan Fase 1 (diteruskan ke permission
+     * handler; tanpa ini gate identik seperti dulu). */
+    onApprovalEvent?: ApprovalEventHook
   },
 ): Promise<Session> {
   const planHint =
@@ -86,6 +90,7 @@ export async function createMinicodeSession(
     provider,
     onPermissions,
     ask,
+    onApprovalEvent,
     turnCount,
     stepCount,
     ...rest
@@ -121,6 +126,7 @@ export async function createMinicodeSession(
     root: cwd,
     ask,
     allowLocalConfig,
+    onApprovalEvent,
   })
   const withMode = permissions as typeof permissions & {
     __setMode(m: PermissionMode): void

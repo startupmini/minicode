@@ -1,6 +1,7 @@
 import { resolve } from "node:path"
 import { cwd } from "node:process"
 import type { PermissionHandler, ToolCall } from "#minicore"
+import type { ApprovalEventHook, ApprovalHookEvent } from "../presentation/events.ts"
 import { loadAllowlist, matchAllowlist, saveAllowlist } from "./allowlist.ts"
 import { inspectBashCommand } from "./bash-guard.ts"
 import {
@@ -167,6 +168,10 @@ export function createPermissionHandler(
     /** Teruskan flag --allow-local-config: allowlist lokal hanya dibaca bila
      * operator opt-in (default deny — repo tak bisa memberi dirinya always). */
     allowLocalConfig?: boolean
+    /** Hook observability persetujuan (Fase 1 presentasi): dipanggil di
+     * samping callback keputusan, bukan sebagai pengganti. Tanpa hook =
+     * perilaku gate identik seperti dulu. Hook tak boleh melempar ke gate. */
+    onApprovalEvent?: ApprovalEventHook
   } = {},
 ): PermissionHandler {
   const state = { mode: (opts.mode ?? "auto") as PermissionMode }
@@ -243,6 +248,15 @@ export function createPermissionHandler(
       return null
     }
   }
+
+  // Jawaban prompt yang dilaporkan ke observability. "headless" = jalur
+  // tanpa prompt (mantan early-return noTty): pemanggil memetakan ke
+  // keputusan deny-nya sendiri agar alasan deny tak berubah.
+  type GatedAnswer = "allow" | "deny" | "always" | "aborted" | "headless"
+
+  // Counter id persetujuan per handler (= per sesi): deterministik dan
+  // test-friendly (tak perlu randomUUID untuk observability).
+  let approvalCounter = 0
 
   function saveAlways(call: ToolCall): Promise<void> {
     // Simpan kunci PENUH (tanpa slice) agar simetris dengan matchAllowlist.
@@ -322,7 +336,8 @@ export function createPermissionHandler(
       } else if (isGated(call.name)) {
         return await promptAskOr(call, () => deny(call, "gated approval unavailable"), signal)
       }
-      const ans = askUser ? await raceAbort(askUser(call), signal) : "deny"
+      const ans = await gatedPrompt(call, signal, askUser, false)
+      if (ans === "headless") return "deny"
       if (ans === "always") {
         await saveAlways(call)
         return "allow"
@@ -518,17 +533,119 @@ export function createPermissionHandler(
     ])
   }
 
+  function emitApprovalSafe(e: ApprovalHookEvent): void {
+    try {
+      opts.onApprovalEvent?.(e)
+    } catch {
+      // Observability tak boleh menggagalkan gate.
+    }
+  }
+
+  // Satu-satunya pembungkus prompt: emit requested sebelum + settled sesudah
+  // untuk SEMUA jalur prompt (gated via promptAskOr maupun inline mode ask).
+  // Allowlist-hit TIDAK lewat sini (keputusan policy, bukan persetujuan).
+  //
+  // `requireTTY`: hanya jalur GATED (promptAskOr) yang dulu menolak non-TTY
+  // sebelum prompt — mode `ask` non-gated tidak pernah mengecek isTTY (lihat
+  // kode lama: `askUser ? raceAbort(...) : "deny"`). Memaksa TTY di kedua
+  // jalur akan membalik keputusan headless-injected-ask (regresi test matrix).
+  async function gatedPrompt(
+    call: ToolCall,
+    signal: AbortSignal | undefined,
+    ask: PermissionAsk | undefined,
+    requireTTY: boolean,
+  ): Promise<GatedAnswer> {
+    const headless = signal?.aborted === true || !ask || (requireTTY && !process.stdin.isTTY)
+    const approvalId = `ap_${++approvalCounter}`
+    const callInfo = { id: call.id, name: call.name, args: call.args }
+    emitApprovalSafe({
+      kind: "requested",
+      approvalId,
+      call: callInfo,
+      via: headless ? "system" : "prompt",
+    })
+    let ans: "allow" | "deny" | "always" | "aborted"
+    try {
+      // Headless = tanpa prompt (ask tak tersedia / [gated: bukan TTY] / sudah
+      // abort): jawaban "deny" tanpa memanggil view — pemanggil memetakan ke
+      // keputusan deny-nya sendiri agar alasan deny tak berubah.
+      ans = headless || !ask ? "deny" : await raceAbort(ask(call), signal)
+    } catch (e) {
+      emitApprovalSafe({
+        kind: "settled",
+        approvalId,
+        call: callInfo,
+        outcome: { decision: "deny", by: "system", reason: "prompt-error" },
+      })
+      throw e
+    }
+    if (ans === "aborted") {
+      emitApprovalSafe({
+        kind: "settled",
+        approvalId,
+        call: callInfo,
+        outcome: { decision: "cancelled", by: "system", reason: "parent-aborted" },
+      })
+      return ans
+    }
+    if (headless) {
+      emitApprovalSafe({
+        kind: "settled",
+        approvalId,
+        call: callInfo,
+        outcome: {
+          decision: "deny",
+          by: "system",
+          reason: signal?.aborted
+            ? "parent-aborted"
+            : !ask
+              ? "no-ask"
+              : requireTTY && !process.stdin.isTTY
+                ? "headless"
+                : "no-ask",
+        },
+      })
+      return "headless"
+    }
+    if (ans === "always") {
+      emitApprovalSafe({
+        kind: "settled",
+        approvalId,
+        call: callInfo,
+        outcome: { decision: "allow-always", by: "user" },
+      })
+      return ans
+    }
+    emitApprovalSafe({
+      kind: "settled",
+      approvalId,
+      call: callInfo,
+      outcome:
+        ans === "allow"
+          ? { decision: "allow", by: "user" }
+          : { decision: "deny", by: "user", reason: "declined" },
+    })
+    return ans
+  }
+
   async function promptAskOr(
     call: ToolCall,
     noTty: () => "deny",
     signal?: AbortSignal,
   ): Promise<"allow" | "deny"> {
     if (signal?.aborted) return noTty()
-    if (!askUser) return noTty()
-    if (!process.stdin.isTTY) return noTty()
+    // Headless (tanpa ask / non-TTY) TETAP lewat gatedPrompt agar
+    // requested+settled ter-emit (observability Fase 1); keputusan deny
+    // dipetakan pemanggil seperti early-return noTty lama. TTY wajib di
+    // jalur GATED (requireTTY=true) — pola lama promptAskOr.
+    if (!askUser || !process.stdin.isTTY) {
+      await gatedPrompt(call, signal, askUser, true)
+      return noTty()
+    }
     const list = await getAllowlist()
     if (matchAllowlist(call, list)) return "allow"
-    const ans = await raceAbort(askUser(call), signal)
+    const ans = await gatedPrompt(call, signal, askUser, true)
+    if (ans === "headless") return noTty()
     if (ans === "aborted") return "deny"
     if (ans === "always") {
       await saveAlways(call)

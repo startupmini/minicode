@@ -101,6 +101,10 @@ const CRITICAL_FILES: [string, number, number][] = [
   ["src/ui/render/width.ts", 90, 90],
   ["src/ui/tui/app.ts", 85, 90],
   ["src/tools/bash.ts", 72, 78],
+  // Fase 3 Presentasi V2.1 — lantai 90 untuk modul kritis baru (plan §26 P3).
+  ["src/presentation/model.ts", 90, 90],
+  ["src/presentation/reducer.ts", 90, 90],
+  ["src/presentation/label.ts", 90, 90],
 ]
 
 /** Baris laporan coverage untuk satu berkas (pemisah path platform apa pun). */

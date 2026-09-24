@@ -254,6 +254,35 @@ describe("cli/setup: permissionMode & timeout & budget", () => {
     expect(s.runPromptWithVerify).toBeDefined()
     await s.close()
   })
+
+  // Fase 3 dark-launch: shadow reducer harus aktif dengan divergence 0
+  // dan tidak mengganggu output TUI (lihat plan §Phase 3 acceptance).
+  test("shadow reducer aktif: getShadowDiagnostics tanpa divergensi", async () => {
+    const cwd = makeWorkspace()
+    const s = await createCliSession({
+      cwd,
+      allowLocalConfig: true,
+      sessionId: "shadow1",
+      prompt: "hi",
+      enterRepl: false,
+      verbose: false,
+      allowAll: false,
+      ask: false,
+      plan: false,
+      allowlist: false,
+      verify: false,
+    })
+    const d = s.getShadowDiagnostics()
+    expect(d.divergence).toBe(0)
+    // session dibuat tapi belum ada turn → eventsIn boleh 0
+    expect(d.eventsIn).toBeGreaterThanOrEqual(0)
+    expect(d.duplicateTerminal).toBe(0)
+    expect(d.orphanTool).toBe(0)
+    // close bersihkan shadow (unsubscribe + null state) tanpa throw
+    await s.close()
+    await s.close()
+    expect(s.getShadowDiagnostics().divergence).toBe(0)
+  })
 })
 
 describe("last-model: default = terakhir dipakai", () => {

@@ -1,4 +1,5 @@
 import type { Tool } from "#minicore"
+import type { ApprovalEventHook, ApprovalHookEvent } from "../presentation/events.ts"
 
 // Tanya user di tengah run — untuk pilihan yang tidak bisa diputuskan model
 // sendiri (ambiguitas kebutuhan, kredensial, "lanjut/tidak").
@@ -14,6 +15,26 @@ let askTextFn: AskTextFn | undefined
 
 export function setAskTextFn(fn: AskTextFn | undefined): void {
   askTextFn = fn
+}
+
+// Hook observability Fase 1 (pola sama seperti setAskTextFn): pertanyaan dan
+// hasilnya dilaporkan sebagai approval.requested/settled TANPA mengubah
+// perilaku fail-closed tool. toolCallId absen di sini — ToolContext kernel
+// tidak membawa id call sendiri, dan pertanyaan ini memang ditujukan ke user
+// langsung, bukan gate atas tool lain.
+let askApprovalHook: ApprovalEventHook | undefined
+let askApprovalCounter = 0
+
+export function setAskApprovalHook(fn: ApprovalEventHook | undefined): void {
+  askApprovalHook = fn
+}
+
+function emitAskApproval(e: ApprovalHookEvent): void {
+  try {
+    askApprovalHook?.(e)
+  } catch {
+    // Observability tak boleh menggagalkan tool.
+  }
 }
 
 export const askUserTool: Tool = {
@@ -44,11 +65,59 @@ export const askUserTool: Tool = {
       : undefined
     // Tanpa view ter-inject atau di luar TTY: tolak, jangan gantung.
     // Model harus melanjutkan dengan asumsi paling aman, bukan menunggu.
-    if (!askTextFn)
+    const approvalId = `ap_${++askApprovalCounter}`
+    const callInfo = { name: "ask_user", args: { question: q, options: opts } }
+    if (!askTextFn) {
+      emitAskApproval({ kind: "requested", approvalId, call: callInfo, via: "system" })
+      emitAskApproval({
+        kind: "settled",
+        approvalId,
+        call: callInfo,
+        outcome: { decision: "deny", by: "system", reason: "no-view" },
+      })
       throw new Error("ask_user unavailable: no question view injected (headless run?)")
-    if (!process.stdin.isTTY) throw new Error("ask_user unavailable: needs an interactive terminal")
-    const answer = await askTextFn(q, opts)
-    if (answer == null || !answer.trim()) throw new Error("ask_user cancelled (empty answer)")
+    }
+    if (!process.stdin.isTTY) {
+      emitAskApproval({ kind: "requested", approvalId, call: callInfo, via: "system" })
+      emitAskApproval({
+        kind: "settled",
+        approvalId,
+        call: callInfo,
+        outcome: { decision: "deny", by: "system", reason: "headless" },
+      })
+      throw new Error("ask_user unavailable: needs an interactive terminal")
+    }
+    emitAskApproval({ kind: "requested", approvalId, call: callInfo, via: "prompt" })
+    let answer: string | null
+    try {
+      answer = await askTextFn(q, opts)
+    } catch (e) {
+      const aborted = (e instanceof Error && e.name === "AbortError") || ctx.signal.aborted
+      emitAskApproval({
+        kind: "settled",
+        approvalId,
+        call: callInfo,
+        outcome: aborted
+          ? { decision: "cancelled", by: "system", reason: "parent-aborted" }
+          : { decision: "deny", by: "system", reason: "prompt-error" },
+      })
+      throw e
+    }
+    if (answer == null || !answer.trim()) {
+      emitAskApproval({
+        kind: "settled",
+        approvalId,
+        call: callInfo,
+        outcome: { decision: "deny", by: "user", reason: "declined" },
+      })
+      throw new Error("ask_user cancelled (empty answer)")
+    }
+    emitAskApproval({
+      kind: "settled",
+      approvalId,
+      call: callInfo,
+      outcome: { decision: "allow", by: "user" },
+    })
     return answer.trim().slice(0, 4000)
   },
 }

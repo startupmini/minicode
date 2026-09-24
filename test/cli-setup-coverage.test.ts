@@ -283,6 +283,41 @@ describe("cli/setup: permissionMode & timeout & budget", () => {
     await s.close()
     expect(s.getShadowDiagnostics().divergence).toBe(0)
   })
+
+  test("P5 snapshot dan event struktural mengikuti shadow reducer", async () => {
+    const s = await createCliSession({
+      cwd: makeWorkspace(),
+      allowLocalConfig: true,
+      sessionId: "projection1",
+      prompt: "hi",
+      enterRepl: false,
+      verbose: false,
+      allowAll: false,
+      ask: false,
+      plan: false,
+      allowlist: false,
+      verify: false,
+    })
+    const seen: string[] = []
+    const unsubscribe = s.onPresentationEvent((event) => seen.push(event.type))
+    const call = { id: "p5-call", name: "read_file", args: { path: "a.ts" } }
+    const result = { role: "tool" as const, toolCallId: "p5-call", name: "read_file", content: "" }
+    s.session.events.emit({ type: "turn:started", turn: 1 })
+    s.session.events.emit({ type: "execution:started", execution: { call, result } })
+    s.session.events.emit({
+      type: "execution:completed",
+      execution: { call, result: { ...result, content: "ok" } },
+    })
+    expect(s.getPresentationSnapshot().activities[0]).toMatchObject({
+      toolCallId: "p5-call",
+      name: "read_file",
+      target: "a.ts",
+      status: "completed",
+    })
+    expect(seen).toEqual(["tool.started", "tool.completed"])
+    unsubscribe()
+    await s.close()
+  })
 })
 
 describe("last-model: default = terakhir dipakai", () => {

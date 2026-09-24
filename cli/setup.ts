@@ -32,6 +32,7 @@ import {
   runWithSelfHeal,
 } from "../src/policy/verifier.ts"
 import { createPresentationAdapter, type PresentationAdapter } from "../src/presentation/adapter.ts"
+import type { DomainEvent } from "../src/presentation/events.ts"
 import { createInitialState, type PresentationState } from "../src/presentation/model.ts"
 import {
   createReducerDiagnostics,
@@ -71,6 +72,14 @@ import { setSubAgentParentRouting } from "../src/tools/task.ts"
 import { todoSession } from "../src/tools/todo.ts"
 import { promptAsk, promptAskText } from "../src/ui/approval/prompt.ts"
 import { attachSimpleLogger } from "../src/ui/assistant/simple.ts"
+import type {
+  UiPresentationActivity,
+  UiPresentationEvent,
+  UiPresentationSnapshot,
+  UiPresentationTurn,
+  UiToolStatus,
+  UiTurnSummary,
+} from "../src/ui/contract.ts"
 import { c } from "../src/ui/render/theme.ts"
 import { runSetupWizard } from "./wizard.ts"
 
@@ -153,6 +162,8 @@ export interface CliSession {
   }
   /** Fase 4: content store untuk /expand [id] (flag-gated di tui). */
   expandContent: (toolCallId: string) => ContentEntry[]
+  getPresentationSnapshot: () => UiPresentationSnapshot
+  onPresentationEvent: (handler: (event: UiPresentationEvent) => void) => () => void
 }
 
 export async function createCliSession(opts: CliSessionOptions): Promise<CliSession> {
@@ -362,6 +373,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   let shadowDiag: ReducerDiagnostics | null = null
   let shadowDivergence = 0
   let shadowUnsub: (() => void) | null = null
+  const presentationSubscribers = new Set<(event: UiPresentationEvent) => void>()
   // Fase 4: content store in-memory (selalu aktif — zero user-visible change;
   // hanya expand(id) yang flag-gated MINICODE_PRESENTATION_V2 di tui).
   let contentStore: ContentStore | null = null
@@ -382,6 +394,85 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     orphanApproval: shadowDiag?.orphanApproval ?? 0,
     duplicateTurn: shadowDiag?.duplicateTurn ?? 0,
   })
+  const getPresentationSnapshot = (): UiPresentationSnapshot => {
+    if (!shadowState) return { activities: [], turns: [] }
+    const activities: UiPresentationActivity[] = [...shadowState.activities.values()].map((a) => ({
+      seq: a.seq,
+      turnId: a.turnId,
+      sessionId: a.sessionId,
+      toolCallId: a.toolCallId,
+      name: a.identity.name,
+      ...(a.target ? { target: a.target } : {}),
+      status: a.status as UiToolStatus,
+      tsStart: a.tsStart,
+      ...(a.tsEnd !== undefined ? { tsEnd: a.tsEnd } : {}),
+      ...(a.durationMs !== undefined ? { durationMs: a.durationMs } : {}),
+      ...(a.parentToolCallId ? { parentToolCallId: a.parentToolCallId } : {}),
+      ...(a.supersedes ? { supersedes: a.supersedes } : {}),
+      ...(a.expandRef
+        ? { expandRef: { toolCallId: a.expandRef.toolCallId, idx: a.expandRef.idx } }
+        : {}),
+    }))
+    const turns: UiPresentationTurn[] = [...shadowState.turns.values()].map((turn) => ({
+      turnId: turn.turnId,
+      status: turn.status,
+      ...(turn.summary ? { summary: turn.summary as UiTurnSummary } : {}),
+    }))
+    return { activities, turns }
+  }
+  const toPresentationEvent = (event: DomainEvent): UiPresentationEvent | null => {
+    switch (event.type) {
+      case "tool.started":
+        return {
+          type: event.type,
+          seq: event.eventSeq,
+          turnId: event.turnId,
+          toolCallId: event.toolCallId,
+          name: event.identity?.name,
+          target: event.argsSummary?.target,
+          status: "running",
+          tsStart: event.ts,
+        }
+      case "tool.completed":
+      case "tool.failed":
+      case "tool.denied":
+      case "tool.cancelled":
+        return {
+          type: event.type,
+          seq: event.eventSeq,
+          turnId: event.turnId,
+          toolCallId: event.toolCallId,
+          status:
+            event.type === "tool.completed"
+              ? "completed"
+              : event.type === "tool.failed"
+                ? "failed"
+                : event.type === "tool.denied"
+                  ? "denied"
+                  : "cancelled",
+          message:
+            "message" in event && typeof event.message === "string" ? event.message : undefined,
+        }
+      case "turn.completed":
+        return {
+          type: event.type,
+          seq: event.eventSeq,
+          turnId: event.turnId,
+          summary: event.summary,
+        }
+      default:
+        return null
+    }
+  }
+  const publishPresentationEvent = (event: Parameters<typeof toPresentationEvent>[0]): void => {
+    const projected = toPresentationEvent(event)
+    if (!projected) return
+    for (const handler of [...presentationSubscribers]) {
+      try {
+        handler(projected)
+      } catch {}
+    }
+  }
   const compaction = process.env.DEEPSEEK_API_KEY
     ? createLlmCompaction({
         apiKey: process.env.DEEPSEEK_API_KEY,
@@ -489,6 +580,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       } catch {
         shadowDivergence++
       }
+      publishPresentationEvent(e)
     })
   } catch {
     shadowDivergence++
@@ -877,6 +969,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       shadowUnsub?.()
     } catch {}
     shadowUnsub = null
+    presentationSubscribers.clear()
     shadowState = null
     shadowDiag = null
     contentStore = null
@@ -924,6 +1017,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     close,
     /** Fase 3 dark-launch: counter shadow reducer (divergensi harus 0). */
     getShadowDiagnostics,
+    getPresentationSnapshot,
+    onPresentationEvent: (handler) => {
+      presentationSubscribers.add(handler)
+      return () => presentationSubscribers.delete(handler)
+    },
     /** Fase 4: query content store untuk /expand [id] (buka-ulang identik). */
     expandContent: (toolCallId: string): ContentEntry[] => {
       if (!contentStore) return []

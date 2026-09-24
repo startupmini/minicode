@@ -69,3 +69,68 @@ export type UiEventType = UiEvent["type"]
 export interface UiBus {
   on(type: UiEventType, handler: (event: any) => void): () => void
 }
+
+export type UiToolStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "denied"
+  | "cancelled"
+  | "interrupted"
+
+export interface UiTurnSummary {
+  toolsOk: number
+  toolsFailed: number
+  toolsDenied: number
+  toolsCancelled: number
+  toolsInterrupted: number
+  filesChanged: number
+  checkpointId?: string
+  durationMs: number
+}
+
+export interface UiPresentationActivity {
+  seq?: number
+  turnId?: number
+  sessionId?: string
+  toolCallId: string
+  name: string
+  target?: string
+  status: UiToolStatus
+  tsStart: number
+  tsEnd?: number
+  durationMs?: number
+  parentToolCallId?: string
+  supersedes?: string
+  expandRef?: { toolCallId: string; idx: number }
+}
+
+export interface UiPresentationTurn {
+  turnId: number
+  status: "running" | "completed" | "failed" | "cancelled" | "interrupted"
+  summary?: UiTurnSummary
+}
+
+export interface UiPresentationSnapshot {
+  activities: UiPresentationActivity[]
+  turns: UiPresentationTurn[]
+}
+
+export interface UiPresentationEvent {
+  type:
+    | "tool.started"
+    | "tool.completed"
+    | "tool.failed"
+    | "tool.denied"
+    | "tool.cancelled"
+    | "turn.completed"
+  seq?: number
+  turnId?: number
+  toolCallId?: string
+  name?: string
+  target?: string
+  status?: UiToolStatus
+  tsStart?: number
+  message?: string
+  summary?: UiTurnSummary
+}

@@ -281,6 +281,12 @@ export const glyphs = {
   get cross() {
     return supportsUtf8() ? "✗" : "[FAIL]"
   },
+  get denied() {
+    return supportsUtf8() ? "⊘" : "[DENY]"
+  },
+  get circle() {
+    return supportsUtf8() ? "○" : "[CANCEL]"
+  },
   get arrow() {
     return supportsUtf8() ? "›" : ">"
   },

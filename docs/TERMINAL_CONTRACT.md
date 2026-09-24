@@ -141,7 +141,11 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
 10. (Dilebur ke I3 — nomor dipertahankan agar referensi lama tak patah.)
 11. Resize memakai lebar/tinggi SAAT PAINT (bukan saat event) — termasuk
     geometri popup, dialog, dan viewport TUI.
-12. Long session tetap readable (cap 5000 baris, tertua dibuang).
+12. Long session tetap readable (cap 5000 baris, tertua dibuang). Dengan
+    `MINICODE_PRESENTATION_V2=1`, cap yang sama dipertahankan dan satu marker
+    `… N baris awal di luar viewport — riwayat penuh di model` track jumlah
+    baris yang di-evict; `total()` tetap monotonik.
+
 13. Status bar: 1 baris dasar (`✦ mode • model • cwd … ctx`) dari sumber yang
     sama dengan angka sesi; spark pulse saat busy; `MINICODE_MOTION=0`
     mematikan pulse (spark statis redup — status busy tak bergantung animasi;
@@ -163,7 +167,13 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     + batal.
 17. Transkrip append-only di memori (cap 5000), viewport ikut ekor otomatis;
     ketikan baru kembali ke ekor; stream turn TIDAK merampas posisi baca;
-    repaint live coalesce 30ms (layar tak buta saat turn).
+    repaint live coalesce 30ms (layar tak buta saat turn). Dengan
+    `MINICODE_PRESENTATION_V2=1`, baris running di-pin dari snapshot,
+    elapsed tampil setelah ≥2s, status tool final memakai glyph + kata
+    (`completed`/`failed`/`denied`/`cancelled`/`interrupted`), retry dan
+    grup anak mengikuti model, serta ringkasan turn masuk sebagai system
+    entry. Flag OFF tetap memakai ledger legacy.
+
 18. Prompt multiline (Ctrl+J newline), histori memori-sesi (tak persist ke
     berkas histori lama).
 19. Dropdown `/` inline berbingkai; Enter pada menu melengkapi + kirim.
@@ -199,11 +209,16 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      state.json > locale OS > en (di OS: `LC_ALL` > `LANG`, string kosong
      diabaikan); literal Indonesia hardcode dilarang.
 31. Sinyal fatal saat TUI hidup (SIGTERM/SIGHUP): restore terminal dulu
-     (alt-screen exit + raw mode pulih + handler exit sinkron) lalu exit
-     `128+n` (143/129). Pasangan ketat per-run — handler dipasang di
-     `run()` dan dilepas di cleanup; tanpa sesi TUI, sinyal tak disentuh.
-     (Temuan audit TUI-001: handler `exit` Node tak jalan pada SIGTERM
-     default — terminal tertinggal alt-screen + raw.)
+    (alt-screen exit + raw mode pulih + handler exit sinkron) lalu exit
+    `128+n` (143/129). Pasangan ketat per-run — handler dipasang di
+    `run()` dan dilepas di cleanup; tanpa sesi TUI, sinyal tak disentuh.
+    (Temuan audit TUI-001: handler `exit` Node tak jalan pada SIGTERM
+    default — terminal tertinggal alt-screen + raw.)
+32. Proyeksi Presentasi V2.1 TUI hanya aktif dengan
+    `MINICODE_PRESENTATION_V2=1`; sumbernya snapshot struktural dari
+    composition root, bukan parser string. `view`, cap, scroll, approval,
+    transient, resize, cursor, dan PTY path tetap memakai kontrak lama.
+
 27. Painter transient stderr (spinner setup/cek-update, garis status turn)
      DITAHAN selama layar interaktif memegang terminal: `beginInteractiveScreen`
      (`src/ui/runtime/statusline.ts`) membisukan `paintWrite` (nol byte + baris
@@ -242,6 +257,9 @@ berbingkai di atasnya) · status bar = 1 baris · ledger tool
 kegagalan · thinking: `… thinking` / alir redup · popup: konten redup di
 belakang + kotak terpusat (form di dalam) + Esc tutup · approval tercatat ·
 `/status`, `/history`, `/help` ringkas & `/expand` mengalir ke transkrip ·
+Projection V2: `› name target … running`, ledger status ber-glyph/kata,
+retry/grup anak, ringkasan turn, dan marker evict sesuai flag ·
+
 `Ctrl+C`/`Esc` saat turn = abort (+ hint sekali); busy = input beku total ·
 PgUp/PgDn = scroll, Shift+PgUp/PgDn = setengah halaman, Home/End (prompt
 kosong) = lompat top/ekor · indikator `↓ N baris baru` · tab dihitung 8 kolom (batas atas stop
@@ -272,6 +290,10 @@ panjang).
 - `test/screen-buffer.test.ts` — parser frame harness (unit).
 - `test/tui-transcript.test.ts` — I7/I12/I17/I22/I24 (ledger, cap, viewport,
   thinking, buffer /expand; total() monotonik kebal evict).
+- `test/presentation-projections.test.ts` — I12/I17/I26/I32 (projection
+  snapshot, running/elapsed, status terminal, retry/child grouping, summary,
+  marker evict, dan parity flag OFF).
+
 - `test/tui-popup.test.ts` — I16 (komposit di atas transkrip, anti-bocor,
   anti-hantu).
 - `test/form.test.ts` — I21 (field, validasi, secret, select, confirm, batal;

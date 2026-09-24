@@ -7,7 +7,7 @@
 //
 // Batas lapisan: semua yang berbau sesi/model/turn datang via TuiHost yang
 // di-inject dari cli/ (composition root). src/ui TAK BOLEH impor cli/.
-import type { UiBus } from "../contract.ts"
+import type { UiBus, UiPresentationActivity } from "../contract.ts"
 import { type FooterStatus, renderFooter } from "../footer.ts"
 import { t } from "../i18n/locale.ts"
 import {
@@ -38,6 +38,7 @@ import type { Transcript } from "./transcript.ts"
 export interface TuiStatusSnapshot {
   footer: FooterStatus
   busy: boolean
+  pinnedActivity?: UiPresentationActivity
 }
 
 export interface TuiHost {

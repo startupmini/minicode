@@ -121,7 +121,12 @@ export async function runTui(ctx: CliSession): Promise<void> {
     setConfigLocale((await loadLang().catch(() => undefined)) ?? null)
   } catch {}
 
-  const transcript = new Transcript(session.events as unknown as UiBus)
+  const presentationV2 = presentationV2Enabled()
+  const transcript = new Transcript(session.events as unknown as UiBus, {
+    presentationV2,
+    getSnapshot: () => ctx.getPresentationSnapshot(),
+    ...(presentationV2 ? { onPresentationEvent: ctx.onPresentationEvent } : {}),
+  })
 
   const commandCtx: CommandContext = {
     cwd,
@@ -481,15 +486,26 @@ export async function runTui(ctx: CliSession): Promise<void> {
 
   const host: TuiHost = {
     bus: session.events as unknown as TuiHost["bus"],
-    getStatus: () => ({
-      footer: {
-        mode,
-        model: modelRef.current ?? cfg.providers[0]?.models[0] ?? t("tui.noModel"),
-        cwd: cwd ?? process.cwd(),
-        context: fmtCtx(session.contextTokens),
-      },
-      busy: abort != null,
-    }),
+    getStatus: () => {
+      const status = {
+        footer: {
+          mode,
+          model: modelRef.current ?? cfg.providers[0]?.models[0] ?? t("tui.noModel"),
+          cwd: cwd ?? process.cwd(),
+          context: fmtCtx(session.contextTokens),
+        },
+        busy: abort != null,
+      }
+      if (!presentationV2) return status
+      const activities = ctx.getPresentationSnapshot().activities
+      return {
+        ...status,
+        pinnedActivity:
+          activities.find(
+            (activity) => activity.status === "running" && !activity.parentToolCallId,
+          ) ?? activities.find((activity) => activity.status === "running"),
+      }
+    },
     listCommands: (prefix) => suggestions(prefix),
     submit,
     abort: () => {

@@ -17,6 +17,7 @@
 // - busy = input beku total kecuali abort (Esc/Ctrl+C) dan scroll.
 import { expandMentions } from "../src/app/mentions.ts"
 import { budgetStatus } from "../src/policy/usage.ts"
+import { presentationV2Enabled } from "../src/presentation/store.ts"
 import { redoLastCheckpoint, undoLastCheckpoint } from "../src/session/checkpoint.ts"
 import { renderSkill } from "../src/skills/loader.ts"
 import { getLastTurnText, writeClipboardOsc52 } from "../src/ui/assistant/simple.ts"
@@ -41,7 +42,9 @@ import {
 import type { CliSession } from "./setup.ts"
 
 const MODES = ["auto", "ask", "plan", "allowlist", "allow-all"] as const
-const DRIVER_COMMANDS = ["/compact", "/thinking", "/expand", "/minimize"]
+// /expand [id]: tanpa arg = buffer sekali-habis lama; dengan id = store
+// (flag MINICODE_PRESENTATION_V2=1). Arg di DRIVER_COMMANDS untuk discovery.
+const DRIVER_COMMANDS = ["/compact", "/thinking", "/expand [id]", "/minimize"]
 
 function fmtCtx(n: number): string | undefined {
   if (!Number.isFinite(n) || n <= 0) return undefined
@@ -363,8 +366,29 @@ export async function runTui(ctx: CliSession): Promise<void> {
       return
     }
     if (name === "expand") {
+      // Fase 4 V2.1: /expand <toolCallId> = query content store (buka-ulang
+      // identik, tidak sekali-habis). Flag OFF = bit-identik lama (abaikan id).
+      if (args && presentationV2Enabled()) {
+        const sections = ctx.expandContent(args)
+        if (!sections.length) {
+          transcript.pushInfo([c.muted(t("tui.expandEmpty"))])
+          return
+        }
+        const lines: string[] = []
+        for (const s of sections) {
+          if (s.meta.source === "retention") {
+            lines.push(c.muted(t("tui.expandRetention")))
+            continue
+          }
+          const src = s.meta.source === "durable" ? ` [${t("tui.expandDurable")}]` : ""
+          lines.push(c.muted(`  ── ${args}${src} ──`))
+          for (const ln of s.text.split("\n")) lines.push(`    ${ln}`)
+        }
+        transcript.pushInfo(lines)
+        return
+      }
       // Buka isi tool yang disembunyikan ledger compact. Sekali ambil = habis
-      // (arsip dibuka); butuh buffer baru = turn baru.
+      // (arsip dibuka); butuh buffer baru = turn baru. Tanpa arg / flag OFF.
       const sections = transcript.takeBufferedSections()
       if (!sections.length) {
         transcript.pushInfo([c.muted(t("tui.expandEmpty"))])

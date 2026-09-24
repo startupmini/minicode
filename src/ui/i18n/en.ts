@@ -175,6 +175,9 @@ export const en = {
   "tui.didYou": " Did you mean /{hint}?",
   "tui.tryHelp": " Try /help.",
   "tui.expandEmpty": "(nothing to expand — all sections were visible)",
+  "tui.expandRetention":
+    "(content outside retention — see .minicode/step-traces.jsonl / session sqlite)",
+  "tui.expandDurable": "durable",
   "tui.historyEmpty": "(empty history)",
   "tui.langUnknown": "unknown lang: {a} — choices: en, id",
   "tui.noTty": "Terminal does not support fullscreen TUI — interactive needs a TTY with ≥10 rows.",

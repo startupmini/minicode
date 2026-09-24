@@ -39,6 +39,11 @@ import {
   reduce,
 } from "../src/presentation/reducer.ts"
 import {
+  type ContentEntry,
+  type ContentStore,
+  createContentStore,
+} from "../src/presentation/store.ts"
+import {
   beginTurnSnapshot,
   reconcileUndoRedoPointer,
   recordCheckpointFromSnapshots,
@@ -146,6 +151,8 @@ export interface CliSession {
     orphanApproval: number
     duplicateTurn: number
   }
+  /** Fase 4: content store untuk /expand [id] (flag-gated di tui). */
+  expandContent: (toolCallId: string) => ContentEntry[]
 }
 
 export async function createCliSession(opts: CliSessionOptions): Promise<CliSession> {
@@ -355,6 +362,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   let shadowDiag: ReducerDiagnostics | null = null
   let shadowDivergence = 0
   let shadowUnsub: (() => void) | null = null
+  // Fase 4: content store in-memory (selalu aktif — zero user-visible change;
+  // hanya expand(id) yang flag-gated MINICODE_PRESENTATION_V2 di tui).
+  let contentStore: ContentStore | null = null
   const getShadowDiagnostics = (): {
     divergence: number
     eventsIn: number
@@ -458,9 +468,15 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // Kontrak control-plane (Phase 6): late-binding bus untuk usage kompaksi —
   // onUsage dipanggil di tengah turn, saat bus sudah hidup.
   sessionEvents = session.events
+  // Content store Fase 4: adapter menaruh konten completed ke store (put
+  // selalu jalan); expand(id) di tui di belakang flag.
+  contentStore = createContentStore()
   // Adaptor mulai mengamati sejak bus hidup (closure onApprovalEvent di atas
   // aman: check() pertama selalu terjadi setelah wiring ini, saat run()).
-  presentation = createPresentationAdapter(session.events, { sessionId })
+  presentation = createPresentationAdapter(session.events, {
+    sessionId,
+    ...(contentStore ? { contentStore } : {}),
+  })
   // Shadow reducer (Fase 3): consume DomainEvent yang sama, hasil dibuang.
   // Flag env MINICODE_PRESENTATION_V2 tidak diperlukan di sini — shadow selalu
   // jalan (observability), output TUI/linear masih sink lama.
@@ -483,7 +499,16 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // ── Mutation journal wiring (AUDIT #01C): intent di execution:started,
   // terminal di execution:completed — keduanya post-gate kernel. Total:
   // kegagalan tulis jurnal tak pernah menggagalkan turn (degraded-loud).
-  attachMutationJournal(session, { sessionId, cwd })
+  // Fase 4: onCommitted → file.changed (receipt paths+journalSeq) ke adapter.
+  attachMutationJournal(session, {
+    sessionId,
+    cwd,
+    onCommitted: (info) => {
+      try {
+        presentation?.noteFileChanged(info)
+      } catch {}
+    },
+  })
 
   // ── Shadow checkpoint ──
   // Repo git: simpan SHA tree pre/post turn (O(delta), tanpa cap file, tidak
@@ -854,6 +879,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     shadowUnsub = null
     shadowState = null
     shadowDiag = null
+    contentStore = null
     try {
       presentation?.dispose()
     } catch {}
@@ -898,5 +924,32 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     close,
     /** Fase 3 dark-launch: counter shadow reducer (divergensi harus 0). */
     getShadowDiagnostics,
+    /** Fase 4: query content store untuk /expand [id] (buka-ulang identik). */
+    expandContent: (toolCallId: string): ContentEntry[] => {
+      if (!contentStore) return []
+      // Durable fallback: sqlite tool result full (hanya output; reasoning
+      // di luar retensi = penanda). Best-effort — miss = tanpa konten.
+      const durable = (id: string): string | undefined => {
+        try {
+          const sess = loadSession(resumeId ?? sessionId, cwd)
+          if (!sess) return undefined
+          for (const m of sess.messages as {
+            role?: string
+            toolCallId?: string
+            content?: unknown
+          }[]) {
+            if (m.role === "tool" && m.toolCallId === id) {
+              return typeof m.content === "string"
+                ? m.content
+                : m.content != null
+                  ? JSON.stringify(m.content)
+                  : undefined
+            }
+          }
+        } catch {}
+        return undefined
+      }
+      return contentStore.expand(toolCallId, durable)
+    },
   }
 }

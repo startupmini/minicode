@@ -27,6 +27,7 @@ import type {
   ToolIdentity,
   TurnSummary,
 } from "./events.ts"
+import type { ContentStore } from "./store.ts"
 
 export interface AdapterDiagnostics {
   eventsIn: number
@@ -56,6 +57,16 @@ export interface PresentationAdapter {
   publishApproval(e: ApprovalHookEvent): void
   /** Dipanggil driver (runOnce) saat session.run reject — kernel diam di sini. */
   noteRunSettled(error: unknown, info: RunSettleInfo): void
+  /**
+   * Fase 4: jurnal committed → file.changed (receipt paths+seq). Dipanggil
+   * composition root via hook journal — kernel tidak meng-emit event ini.
+   */
+  noteFileChanged(info: {
+    toolCallId: string
+    paths: string[]
+    journalSeq?: number
+    checkpointId?: string
+  }): void
   getDiagnostics(): AdapterDiagnostics
   dispose(): void
 }
@@ -86,6 +97,29 @@ function firstLine(content: unknown, max: number): string {
   const s = typeof content === "string" ? content : String(content ?? "")
   const line = s.split("\n")[0] ?? ""
   return line.length > max ? `${line.slice(0, max)}…` : line
+}
+
+/** Ekstrak teks konten tool untuk store (string | content-block array | obj). */
+function contentText(content: unknown): string {
+  if (typeof content === "string") return content
+  if (Array.isArray(content)) {
+    return content
+      .map((c) => {
+        if (typeof c === "string") return c
+        if (c && typeof c === "object" && "text" in c) {
+          const t = (c as { text?: unknown }).text
+          return typeof t === "string" ? t : ""
+        }
+        return ""
+      })
+      .filter(Boolean)
+      .join("\n")
+  }
+  if (content && typeof content === "object" && "text" in content) {
+    const t = (content as { text?: unknown }).text
+    return typeof t === "string" ? t : ""
+  }
+  return ""
 }
 
 function isPermissionDenied(content: unknown): boolean {
@@ -123,9 +157,10 @@ export function assertExecutionShape(e: unknown): e is {
 
 export function createPresentationAdapter(
   source: EventBusLike,
-  opts: { sessionId: string },
+  opts: { sessionId: string; contentStore?: ContentStore },
 ): PresentationAdapter {
   const sessionId = opts.sessionId
+  const contentStore = opts.contentStore
   let seq = 0
   let currentTurn = 0
   let turnStartTs = 0
@@ -450,6 +485,22 @@ export function createPresentationAdapter(
       const emitBase = childId ? childBase(currentTurn, childId, parentLink) : base(currentTurn)
       const withLink = <T extends DomainEvent>(ev: T): T =>
         parentLink ? { ...ev, parentLink } : ev
+      // Fase 4: konten completed → store (put selalu jalan — zero user-visible
+      // change; hanya expand(id) yang flag-gated di tui).
+      if (contentStore) {
+        try {
+          const text = contentText(result.content)
+          if (text) {
+            contentStore.put({ toolCallId: call.id, idx: 0 }, text, {
+              kind: "output",
+              stream: result.isError ? "stderr" : "stdout",
+              truncated: false,
+            })
+          }
+        } catch {
+          diag.errors++
+        }
+      }
       if (!result.isError) {
         if (count) counts.ok++
         publish(
@@ -549,6 +600,21 @@ export function createPresentationAdapter(
     }
   }
 
+  const noteFileChanged: PresentationAdapter["noteFileChanged"] = (info) => {
+    try {
+      publish({
+        ...base(currentTurn),
+        type: "file.changed",
+        toolCallId: info.toolCallId,
+        paths: info.paths,
+        ...(info.journalSeq !== undefined ? { journalSeq: info.journalSeq } : {}),
+        ...(info.checkpointId !== undefined ? { checkpointId: info.checkpointId } : {}),
+      })
+    } catch {
+      diag.errors++
+    }
+  }
+
   const noteRunSettled: PresentationAdapter["noteRunSettled"] = (error, info) => {
     try {
       diag.turnsSettled++
@@ -628,6 +694,7 @@ export function createPresentationAdapter(
     },
     publishApproval,
     noteRunSettled,
+    noteFileChanged,
     getDiagnostics() {
       return { ...diag }
     },

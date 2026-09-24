@@ -184,9 +184,12 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      terlihat sebelum menjawab; non-TTY = deny/null fail-closed; stdout
      di-pipe tanpa sink TUI = deny/null (prompt tak terlihat + mencemari
      output program bila dipaksa).
-24. `/expand` membuka buffer isi tool (sekali ambil habis); pilihan `/model`
-    persist antar sesi + struk `model: x`; `/help` ringkas (penuh via
-    `/help tombol`).
+24. `/expand` membuka buffer isi tool (sekali ambil habis); dengan
+     `MINICODE_PRESENTATION_V2=1`, `/expand <toolCallId>` query Content
+     Store (buka-ulang identik, tidak sekali-habis; miss → durable sqlite
+     → penanda retensi); pilihan `/model` persist antar sesi + struk
+     `model: x`; `/help` ringkas (penuh via `/help tombol`). Flag OFF =
+     bit-identik lama (abaikan arg id).
 25. Keybinding konsisten: Esc dua-tahap (isi tak hilang sekali tekan);
     backspace/delete edit-teks (hapus-data = confirm); navigasi daftar
     (`↑↓`, pgup/pgdn, home/end) di semua popup; hint footer akurat

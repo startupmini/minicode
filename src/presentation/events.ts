@@ -102,6 +102,8 @@ export interface Receipt {
 export interface ContentRef {
   toolCallId: string
   idx: number
+  /** True bila store meng-evict entry (Fase 4): proyeksi tampilkan penanda retensi. */
+  dead?: boolean
 }
 
 /**

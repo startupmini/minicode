@@ -176,6 +176,9 @@ export const id: Record<MsgKey, string> = {
   "tui.didYou": " Maksudmu /{hint}?",
   "tui.tryHelp": " Coba /help.",
   "tui.expandEmpty": "(tidak ada yang dibuka — semua sudah terlihat)",
+  "tui.expandRetention":
+    "(konten di luar retensi — lihat .minicode/step-traces.jsonl / sesi sqlite)",
+  "tui.expandDurable": "persisten",
   "tui.historyEmpty": "(riwayat kosong)",
   "tui.langUnknown": "bahasa tak dikenal: {a} — pilihan: en, id",
   "tui.noTty": "Terminal tidak mendukung TUI fullscreen — interaktif butuh TTY dengan ≥10 baris.",

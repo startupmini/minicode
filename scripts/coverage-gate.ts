@@ -105,6 +105,8 @@ const CRITICAL_FILES: [string, number, number][] = [
   ["src/presentation/model.ts", 90, 90],
   ["src/presentation/reducer.ts", 90, 90],
   ["src/presentation/label.ts", 90, 90],
+  // Fase 4 Content Store (plan §26 P4) — lantai 90.
+  ["src/presentation/store.ts", 90, 90],
 ]
 
 /** Baris laporan coverage untuk satu berkas (pemisah path platform apa pun). */

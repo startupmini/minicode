@@ -1061,7 +1061,17 @@ interface ExecutionEvent {
  */
 export function attachMutationJournal(
   session: SessionLike,
-  opts: { sessionId: string; cwd?: string; childOf?: string },
+  opts: {
+    sessionId: string
+    cwd?: string
+    childOf?: string
+    /**
+     * Fase 4 V2.1: kabar terminal committed (paths+journalSeq) → composition
+     * root memancarkan file.changed (receipt). Opsional — tanpa hook, jurnal
+     * tetap berjalan seperti dulu.
+     */
+    onCommitted?: (info: { toolCallId: string; paths: string[]; journalSeq: number }) => void
+  },
 ): void {
   const root = resolve(opts.cwd ?? process.cwd())
   // Eager creation (AUDIT #01E §1): file jurnal dibuat saat wiring dipasang
@@ -1176,6 +1186,17 @@ export function attachMutationJournal(
           failed ? "failed" : "committed",
           note ? { note } : undefined,
         )
+        // Fase 4: kabar committed ke composition root (file.changed/receipt).
+        // Gagal hook tak boleh menggagalkan jurnal (degraded-loud).
+        if (!failed && opts.onCommitted && callId) {
+          try {
+            opts.onCommitted({
+              toolCallId: callId,
+              paths: found.paths ?? [],
+              journalSeq: found.seq,
+            })
+          } catch {}
+        }
       } catch (err) {
         process.stderr.write(`[warn] journal: terminal failed: ${(err as Error).message}\n`)
       }

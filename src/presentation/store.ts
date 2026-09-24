@@ -38,6 +38,7 @@ export interface ContentMeta {
 }
 
 export interface ContentEntry {
+  ref?: ContentRef
   text: string
   meta: ContentMeta
 }
@@ -58,6 +59,8 @@ export interface ContentStore {
   ): ContentEntry | undefined
   /** Semua idx untuk satu toolCallId (urut idx), sudah di-resolve. */
   expand(toolCallId: string, durable?: (toolCallId: string) => string | undefined): ContentEntry[]
+  /** Semua entry store yang masih hidup, insertion order (query /expand tanpa id). */
+  expandAll(): ContentEntry[]
   clear(): void
   stats(): { entries: number; totalChars: number; dead: number }
 }
@@ -135,6 +138,7 @@ export function createContentStore(): ContentStore {
       if (prev) totalChars -= prev.text.length
       const cut = trimToCap(text)
       entries.set(key, {
+        ref: { toolCallId: ref.toolCallId, idx: ref.idx },
         text: cut,
         meta: { ...meta, truncated: meta.truncated || cut.length < text.length },
       })
@@ -144,7 +148,7 @@ export function createContentStore(): ContentStore {
     },
     get(ref) {
       const hit = entries.get(contentKey(ref))
-      if (hit) return { text: hit.text, meta: { ...hit.meta, source: "store" } }
+      if (hit) return { ref: hit.ref, text: hit.text, meta: { ...hit.meta, source: "store" } }
       return undefined
     },
     markDead(ref) {
@@ -161,7 +165,8 @@ export function createContentStore(): ContentStore {
     },
     resolve(ref, durable) {
       const local = entries.get(contentKey(ref))
-      if (local) return { text: local.text, meta: { ...local.meta, source: "store" } }
+      if (local)
+        return { ref: local.ref, text: local.text, meta: { ...local.meta, source: "store" } }
       // Fallback durable HANYA untuk output (reasoning di luar retensi = hilang).
       if (durable) {
         const text = durable(ref.toolCallId)
@@ -196,7 +201,7 @@ export function createContentStore(): ContentStore {
       const out: ContentEntry[] = []
       for (const k of keys) {
         const hit = entries.get(k)
-        if (hit) out.push({ text: hit.text, meta: { ...hit.meta, source: "store" } })
+        if (hit) out.push({ ref: hit.ref, text: hit.text, meta: { ...hit.meta, source: "store" } })
       }
       if (out.length > 0) return out
       // Miss total: durable → retention (bila pernah ada & ter-evict).
@@ -232,6 +237,13 @@ export function createContentStore(): ContentStore {
       }
       return []
     },
+    expandAll() {
+      return [...entries.values()].map((entry) => ({
+        ref: entry.ref,
+        text: entry.text,
+        meta: { ...entry.meta, source: "store" as const },
+      }))
+    },
     clear() {
       entries.clear()
       dead.clear()
@@ -241,13 +253,4 @@ export function createContentStore(): ContentStore {
       return { entries: entries.size, totalChars, dead: dead.size }
     },
   }
-}
-
-/**
- * Flag perilaku baru Fase 4–6 (§28): baca LAZY per panggilan dari env —
- * jangan simpan ke `const` module scope (pola getter runtime repo).
- * Unset / "0" = bit-identik lama.
- */
-export function presentationV2Enabled(): boolean {
-  return process.env.MINICODE_PRESENTATION_V2 === "1"
 }

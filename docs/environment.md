@@ -32,7 +32,6 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | `MINICODE_KEYSTORE_DISABLE` | `1` → matikan keystore OS seluruhnya (jatuh ke penyimpanan file; untuk CI/headless yang tak punya keychain/DPAPI) |
 | `MINICODE_KEYSTORE_FORCE_DPAPI` | set (nilai apa pun) → paksa jalur DPAPI/Windows walau di non-Windows (khusus test portabilitas; bukan konfigurasi produksi) |
 | `MINICODE_MINIMIZE_TOOL` | set (nilai apa pun) → JANGAN auto-minimize section tool di TUI (nilai unset = minimize default) |
-| `MINICODE_PRESENTATION_V2` | `1` → proyeksi Presentasi V2.1 pada TUI: running terpin, status terminal, retry/grup anak, ringkasan turn, marker evict, dan `/expand <toolCallId>` |
 
 ## Sandbox
 

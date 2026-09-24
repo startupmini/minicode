@@ -27,7 +27,7 @@ Cek: `bun --version` harus keluar `1.4.x`. Kalau masih `command not found`, tutu
 ```bash
 npm install -g minicode-ai
 # bin: minicode
-minicode --version  # harus 0.9.x
+minicode --version  # harus 0.11.x
 ```
 
 Kenapa butuh keduanya? `npm` = toko distribusi, `Bun` = mesin yang menjalankan. Tanpa Bun, `minicode` gagal dengan `'bun' is not recognized`.

@@ -43,7 +43,6 @@ import {
   type ContentEntry,
   type ContentStore,
   createContentStore,
-  presentationV2Enabled,
 } from "../src/presentation/store.ts"
 import {
   beginTurnSnapshot,
@@ -161,8 +160,9 @@ export interface CliSession {
     orphanApproval: number
     duplicateTurn: number
   }
-  /** Fase 4: content store untuk /expand [id] (flag-gated di tui). */
+  /** Content store untuk /expand [id]. */
   expandContent: (toolCallId: string) => ContentEntry[]
+  expandAllContent: () => ContentEntry[]
   getPresentationSnapshot: () => UiPresentationSnapshot
   onPresentationEvent: (handler: (event: UiPresentationEvent) => void) => () => void
 }
@@ -375,8 +375,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   let shadowDivergence = 0
   let shadowUnsub: (() => void) | null = null
   const presentationSubscribers = new Set<(event: UiPresentationEvent) => void>()
-  // Fase 4: content store in-memory (selalu aktif — zero user-visible change;
-  // hanya expand(id) yang flag-gated MINICODE_PRESENTATION_V2 di tui).
+  // Content store in-memory untuk query /expand; presentation V2 adalah jalur
+  // production setelah cleanup Fase 7.
   let contentStore: ContentStore | null = null
   const getShadowDiagnostics = (): {
     divergence: number
@@ -638,8 +638,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     ...(contentStore ? { contentStore } : {}),
   })
   // Shadow reducer (Fase 3): consume DomainEvent yang sama, hasil dibuang.
-  // Flag env MINICODE_PRESENTATION_V2 tidak diperlukan di sini — shadow selalu
-  // jalan (observability), output TUI/linear masih sink lama.
+  // Shadow reducer berjalan paralel (observability), output TUI/linear memakai
+  // proyeksi presentasi yang sama.
   try {
     shadowState = createInitialState(sessionId)
     shadowDiag = createReducerDiagnostics()
@@ -985,15 +985,13 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     // Mode interaktif = TUI fullscreen memiliki layar (kontrak I3: App
     // penulis tunggal). Printer linier + spinner turn-status DITEKAN agar tak
     // mengotori alt-screen — state tetap jalan (quiet: rememberTurn untuk
-    // /copy, bufferSection untuk /expand). One-shot/exec (enterRepl false)
+    // /copy, collapsed view untuk /expand). One-shot/exec (enterRepl false)
     // tetap melukis seperti dulu.
-    const presentationV2 = presentationV2Enabled()
     detachSimple = attachSimpleLogger(session.events, {
       verbose,
       quiet: enterRepl === true,
-      presentationV2,
       getSnapshot: getPresentationSnapshot,
-      ...(presentationV2 ? { onPresentationEvent } : {}),
+      onPresentationEvent,
     })
     if (enterRepl === true) {
       turnStatus = null
@@ -1095,7 +1093,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     getShadowDiagnostics,
     getPresentationSnapshot,
     onPresentationEvent,
-    /** Fase 4: query content store untuk /expand [id] (buka-ulang identik). */
+    expandAllContent: (): ContentEntry[] => contentStore?.expandAll() ?? [],
+    /** Query content store untuk /expand [id] (buka-ulang identik). */
     expandContent: (toolCallId: string): ContentEntry[] => {
       if (!contentStore) return []
       // Durable fallback: sqlite tool result full (hanya output; reasoning

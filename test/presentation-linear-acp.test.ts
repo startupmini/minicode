@@ -17,7 +17,6 @@ afterEach(() => {
   tty?.restore()
   tty = undefined
   setCompactMode(false)
-  delete process.env.MINICODE_PRESENTATION_V2
   resetLocaleState()
 })
 
@@ -38,7 +37,6 @@ function linearSetup() {
   let snapshot: UiPresentationSnapshot = { activities: [], turns: [] }
   let presentationHandler: ((event: UiPresentationEvent) => void) | undefined
   const detach = attachSimpleLogger(bus as never, {
-    presentationV2: true,
     getSnapshot: () => snapshot,
     onPresentationEvent: (handler) => {
       presentationHandler = handler
@@ -207,7 +205,6 @@ describe("P6 linear projection", () => {
 
 describe("P6 ACP lifecycle projection", () => {
   test("tool, approval, turn lifecycle terstruktur tanpa response ganda", async () => {
-    process.env.MINICODE_PRESENTATION_V2 = "1"
     const f = acpSetup()
     const out: string[] = []
     await runAcpSession(

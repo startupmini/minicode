@@ -186,6 +186,7 @@ export const en = {
   "tui.didYou": " Did you mean /{hint}?",
   "tui.tryHelp": " Try /help.",
   "tui.expandEmpty": "(nothing to expand — all sections were visible)",
+  "tui.expandContent": "content",
   "tui.expandRetention":
     "(content outside retention — see .minicode/step-traces.jsonl / session sqlite)",
   "tui.expandDurable": "durable",

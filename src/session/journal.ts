@@ -25,6 +25,7 @@ import { mkdir, open, readFile } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { atomicWriteText } from "../lib/atomic-write.ts"
 import { sanitizeSessionPart } from "../lib/session-id.ts"
+import { isMcpToolName } from "../presentation/label.ts"
 
 export type JournalState = "pending" | "committed" | "failed"
 
@@ -130,7 +131,7 @@ const NON_MUTATION_TOOLS: ReadonlySet<string> = new Set([
 
 export function classifyTool(name: string): "mutation" | "none" | "unknown" {
   // Tool runtime MCP (server.tool) mewarisi kelas mcp_call: efek arbitrer.
-  const base = name.includes(".") ? "mcp_call" : name
+  const base = isMcpToolName(name) ? "mcp_call" : name
   if (MUTATION_TOOLS.has(base)) return "mutation"
   if (NON_MUTATION_TOOLS.has(base)) return "none"
   return "unknown"
@@ -1120,7 +1121,7 @@ export function attachMutationJournal(
     if (!name || NO_AUTO_JOURNAL.has(name) || !isMutationTool(name)) return
     const callId =
       typeof ev.execution?.call?.id === "string" ? (ev.execution.call.id as string) : ""
-    const base = name.includes(".") ? "mcp_call" : name
+    const base = isMcpToolName(name) ? "mcp_call" : name
     const args = (ev.execution?.call?.args ?? {}) as Record<string, unknown>
     // Daftarkan promise SEBELUM await: completed dijamin datang sesudah
     // started, dan kini pasti menunggu intent selesai dulu.
@@ -1172,7 +1173,7 @@ export function attachMutationJournal(
           const t =
             typeof a.tool === "string"
               ? a.tool
-              : name.includes(".")
+              : isMcpToolName(name)
                 ? name.split(".").slice(1).join(".")
                 : ""
           if (srv || t) note = `${srv ? `${srv}.` : ""}${t}`
@@ -1205,7 +1206,7 @@ export function attachMutationJournal(
 }
 
 function base_of(name: string): string {
-  return name.includes(".") ? "mcp_call" : name
+  return isMcpToolName(name) ? "mcp_call" : name
 }
 
 // ── Resume: muat jurnal (+anak) → putuskan ──

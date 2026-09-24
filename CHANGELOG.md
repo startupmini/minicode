@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-24
+
+### Added — Agent Presentation V2.1
+
+- Pipeline semantic adapter, identity, reducer, content store, TUI/linear/ACP projection, dan lifecycle approval berstruktur.
+- `/expand <toolCallId>` dapat dibuka ulang dari store dengan marker retensi; TUI menampilkan running/elapsed, status final, retry, grup anak, dan ringkasan turn.
+
+### Changed — Agent Presentation V2.1 Phase 7 cleanup
+
+- Presentasi V2.1 menjadi jalur production tunggal; `MINICODE_PRESENTATION_V2` dan fallback flag dihapus.
+- `/expand` tanpa id memakai `ContentStore.expandAll`; transcript tidak lagi menyimpan buffer tool sekali-habis.
+- Klasifikasi MCP memakai predicate `isMcpToolName`; label/ledger UI memakai sumber presentasi struktural.
+
 ### Fixed — Audit menyeluruh 2026-09-23 (14 temuan, semua diverifikasi sebelum diperbaiki)
 
 - **Test PTY hijau palsu (F1)**: `test/pty.test.ts` menulis skip sebagai `console.warn` + `return` — runner menghitungnya PASS (terbukti 5 pass/0 fail padahal 4 test tak jalan). Kini `test.skipIf` nyata (skip TERLIHAT + alasan di nama test), ada test CI-Linux yang gagal bila PTY tak tersedia, dan anak TUI/exec memakai env hermetic (`test/helpers/pty-harness.ts:cleanEnvForChild`) — env provider host (`TOKENHARBOR_*`, `AGENT_*`, `MINICODE_*` bocor dari proses test) tidak lagi menentukan jalur kode anak (akar 1 kegagalan `exec --json` di run penuh).

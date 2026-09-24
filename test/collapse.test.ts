@@ -8,9 +8,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import type { EventBus } from "#minicore/core/index.ts"
 import { attachSimpleLogger } from "../src/ui/assistant/simple.ts"
 import {
-  bufferSection,
-  getBufferedSections,
-  resetBufferedSections,
+  clearCollapsedSections,
+  collapsedSectionsSnapshot,
+  rememberCollapsedSection,
   setSectionMinimized,
 } from "../src/ui/render/collapse.ts"
 import { setReasoningVisible } from "../src/ui/render/reasoning.ts"
@@ -24,7 +24,7 @@ beforeEach(() => {
   setReasoningVisible(false)
   delete process.env.MINICODE_MINIMIZE_TOOL
   delete process.env.MINICODE_MINIMIZE_ANSWER
-  resetBufferedSections()
+  clearCollapsedSections()
 })
 
 afterEach(() => {
@@ -33,7 +33,7 @@ afterEach(() => {
   setReasoningVisible(false)
   delete process.env.MINICODE_MINIMIZE_TOOL
   delete process.env.MINICODE_MINIMIZE_ANSWER
-  resetBufferedSections()
+  clearCollapsedSections()
 })
 
 const attach = () => {
@@ -65,7 +65,7 @@ describe("collapse: thinking section", () => {
     expect(err()).toContain("+ thinking")
     expect(err()).not.toContain("pemikiran rahasia")
     expect(
-      getBufferedSections().some(
+      collapsedSectionsSnapshot().some(
         (s) => s.label === "thinking" && s.text.includes("pemikiran rahasia"),
       ),
     ).toBe(true)
@@ -98,7 +98,7 @@ describe("collapse: thinking section", () => {
     expect(err()).not.toContain("tiga")
     bus.emit("turn:completed", {})
     detach()
-    expect(getBufferedSections().some((s) => s.text.includes("tiga"))).toBe(true)
+    expect(collapsedSectionsSnapshot().some((s) => s.text.includes("tiga"))).toBe(true)
   })
 })
 
@@ -116,7 +116,9 @@ describe("collapse: tool section", () => {
     expect(err()).toContain("+ bash $ ls -la")
     expect(err()).not.toContain("file1")
     expect(
-      getBufferedSections().some((s) => s.label === "bash $ ls -la" && s.text.includes("file3")),
+      collapsedSectionsSnapshot().some(
+        (s) => s.label === "bash $ ls -la" && s.text.includes("file3"),
+      ),
     ).toBe(true)
   })
 
@@ -131,7 +133,7 @@ describe("collapse: tool section", () => {
     detach()
     expect(err()).toContain("+ edit src/a.ts")
     expect(err()).not.toContain("lama")
-    expect(getBufferedSections().some((s) => s.label === "edit src/a.ts")).toBe(true)
+    expect(collapsedSectionsSnapshot().some((s) => s.label === "edit src/a.ts")).toBe(true)
   })
 
   test("expanded (env kosong): output penuh tercetak — perilaku lama utuh", () => {
@@ -165,7 +167,7 @@ describe("collapse: tool section", () => {
     bus.emit("execution:completed", done("bash", { cmd: "c" }, "tersembunyi\n"))
     expect(err()).not.toContain("tersembunyi")
     detach()
-    expect(getBufferedSections().some((s) => s.text.includes("tersembunyi"))).toBe(true)
+    expect(collapsedSectionsSnapshot().some((s) => s.text.includes("tersembunyi"))).toBe(true)
   })
 })
 
@@ -188,7 +190,7 @@ describe("collapse: answer section", () => {
     // Baris minimize wajib memberi tahu cara membuka — tanpa ini jawaban
     // yang dikecilkan terlihat "bisu" (tak ada off-switch yang bisa ditemukan).
     expect(err()).toContain("/expand to read")
-    const buf = getBufferedSections()
+    const buf = collapsedSectionsSnapshot()
     const ans = buf.find((s) => s.label === "answer")
     expect(ans?.stream).toBe("stdout")
     expect(ans?.text).toContain("jawaban lengkap")
@@ -201,7 +203,7 @@ describe("collapse: answer section", () => {
     bus.emit("turn:completed", {})
     detach()
     expect(all()).toContain("terlihat langsung")
-    expect(getBufferedSections().length).toBe(0)
+    expect(collapsedSectionsSnapshot().length).toBe(0)
   })
 
   test("expand live: buffer lama tercetak + lanjut stream", () => {
@@ -233,17 +235,17 @@ describe("collapse: answer section", () => {
 })
 
 describe("collapse: buffer & reset", () => {
-  test("bufferSection cap per-entry", () => {
-    bufferSection("x", "y".repeat(500_000))
-    const buf = getBufferedSections()
+  test("rememberCollapsedSection cap per-entry", () => {
+    rememberCollapsedSection("x", "y".repeat(500_000))
+    const buf = collapsedSectionsSnapshot()
     expect(buf[buf.length - 1]!.text.length).toBeLessThanOrEqual(200_000)
   })
 
-  test("bufferSection cap total: tertua dibuang, terbaru dipertahankan", () => {
-    bufferSection("a", "a".repeat(200_000))
-    bufferSection("b", "b".repeat(200_000))
-    bufferSection("c", "c".repeat(200_000))
-    const buf = getBufferedSections()
+  test("rememberCollapsedSection cap total: tertua dibuang, terbaru dipertahankan", () => {
+    rememberCollapsedSection("a", "a".repeat(200_000))
+    rememberCollapsedSection("b", "b".repeat(200_000))
+    rememberCollapsedSection("c", "c".repeat(200_000))
+    const buf = collapsedSectionsSnapshot()
     const total = buf.reduce((n, s) => n + s.text.length, 0)
     expect(total).toBeLessThanOrEqual(500_000)
     expect(buf[buf.length - 1]!.label).toBe("c")
@@ -251,15 +253,15 @@ describe("collapse: buffer & reset", () => {
   })
 
   test("alur /expand: baca buffer lalu kosongkan (tanpa cetak ganda)", () => {
-    bufferSection("bash $ ls", "file1\n")
-    expect(getBufferedSections().length).toBe(1)
+    rememberCollapsedSection("bash $ ls", "file1\n")
+    expect(collapsedSectionsSnapshot().length).toBe(1)
     // repl /expand membaca lalu memanggil reset — tiru urutannya persis.
-    const shown = getBufferedSections()
+    const shown = collapsedSectionsSnapshot()
       .map((s) => `── ${s.label} ──\n${s.text}`)
       .join("\n")
     expect(shown).toContain("file1")
-    resetBufferedSections()
-    expect(getBufferedSections().length).toBe(0)
+    clearCollapsedSections()
+    expect(collapsedSectionsSnapshot().length).toBe(0)
   })
 
   test("turn:started membersihkan buffer turn sebelumnya", () => {
@@ -267,9 +269,9 @@ describe("collapse: buffer & reset", () => {
     const { bus, detach } = attach()
     bus.emit("turn:started", { turn: 1 })
     bus.emit("execution:completed", done("bash", { cmd: "a" }, "isi\n"))
-    expect(getBufferedSections().length).toBe(1)
+    expect(collapsedSectionsSnapshot().length).toBe(1)
     bus.emit("turn:started", { turn: 2 })
-    expect(getBufferedSections().length).toBe(0)
+    expect(collapsedSectionsSnapshot().length).toBe(0)
     detach()
   })
 })

@@ -5,7 +5,7 @@
 // Test ini HARUS gagal di kode lama (tanpa marker).
 import { describe, expect, test } from "bun:test"
 import { attachSimpleLogger } from "../src/ui/assistant/simple.ts"
-import { getBufferedSections, resetBufferedSections } from "../src/ui/render/collapse.ts"
+import { clearCollapsedSections, collapsedSectionsSnapshot } from "../src/ui/render/collapse.ts"
 
 function makeBus(): {
   on(type: string, h: (e: never) => void): () => void
@@ -27,7 +27,7 @@ function makeBus(): {
 
 describe("F3: marker truncasi thinking", () => {
   test("thinking >200KB: /expand membawa marker head terpotong", () => {
-    resetBufferedSections()
+    clearCollapsedSections()
     const bus = makeBus()
     const detach = attachSimpleLogger(bus, {})
     bus.emit("turn:started", { turn: 0 } as never)
@@ -38,26 +38,26 @@ describe("F3: marker truncasi thinking", () => {
     } as never)
     bus.emit("turn:completed", {} as never)
     detach()
-    const secs = getBufferedSections()
+    const secs = collapsedSectionsSnapshot()
     const thinking = secs.find((s) => s.label === "thinking" || s.text.includes("t".repeat(100)))
     expect(thinking).toBeTruthy()
     expect(thinking!.text.length).toBeLessThanOrEqual(200_000 + 200)
     expect(thinking!.text).toContain("truncated")
-    resetBufferedSections()
+    clearCollapsedSections()
   })
 
   test("thinking kecil: tanpa marker (tak ada yang dibuang)", () => {
-    resetBufferedSections()
+    clearCollapsedSections()
     const bus = makeBus()
     const detach = attachSimpleLogger(bus, {})
     bus.emit("turn:started", { turn: 0 } as never)
     bus.emit("provider:extension", { kind: "reasoning", data: { text: "pendek" } } as never)
     bus.emit("turn:completed", {} as never)
     detach()
-    const secs = getBufferedSections()
+    const secs = collapsedSectionsSnapshot()
     const thinking = secs.find((s) => s.text.includes("pendek"))
     expect(thinking).toBeTruthy()
     expect(thinking!.text).not.toContain("truncated")
-    resetBufferedSections()
+    clearCollapsedSections()
   })
 })

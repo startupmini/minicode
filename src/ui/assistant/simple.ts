@@ -12,9 +12,9 @@ import type {
 } from "../contract.ts"
 import { t } from "../i18n/locale.ts"
 import {
-  bufferSection,
+  clearCollapsedSections,
   collapse,
-  resetBufferedSections,
+  rememberCollapsedSection,
   sectionMinimized,
 } from "../render/collapse.ts"
 import { detail } from "../render/detail.ts"
@@ -40,12 +40,11 @@ export interface SimpleOptions {
   verbose?: boolean
   /**
    * Mode senyap untuk TUI fullscreen: semua tulis ke stdout/stderr DITEKAN,
-   * tapi state tetap jalan (rememberTurn untuk /copy, bufferSection untuk
+   * tapi state tetap jalan (rememberTurn untuk /copy, rememberCollapsedSection untuk
    * /expand, pendingError untuk driver). Tanpa ini printer linier mengotori
    * alt-screen di sela repaint App — kontrak I3 (App penulis tunggal layar).
    */
   quiet?: boolean
-  presentationV2?: boolean
   getSnapshot?: () => UiPresentationSnapshot | null
   onPresentationEvent?: (handler: (event: UiPresentationEvent) => void) => () => void
 }
@@ -129,7 +128,7 @@ function patchBlocks(patches: unknown): [string, string] {
 
 export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => void {
   // Shadow module-level wOut/wErr: saat quiet, paint ditekan tapi SEMUA state
-  // (rememberTurn, bufferSection, pendingError, sanitizer) tetap jalan.
+  // (rememberTurn, rememberCollapsedSection, pendingError, sanitizer) tetap jalan.
   // Shadowing disengaja agar ~20 call-site tak perlu diubah satu per satu.
   const wOut = opts.quiet ? (_: string) => {} : wOutDirect
   const wErr = opts.quiet ? (_: string) => {} : wErrDirect
@@ -212,7 +211,11 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   }
 
   /** Label satu-baris ringkas per tool (bukan dump JSON argumen). */
-  const toolSummary = (name: string, args: Record<string, unknown>, target?: string): string => {
+  const fallbackToolLabel = (
+    name: string,
+    args: Record<string, unknown>,
+    target?: string,
+  ): string => {
     if (name === "todo_write" || name === "todo_read") {
       const list = args.todos
       const n = Array.isArray(list) ? list.length : 0
@@ -251,7 +254,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     // Petunjuk /expand WAJIB di baris ini: tanpa itu jawaban yang dikecilkan
     // terlihat "bisu" (tak ada cara membuka yang bisa ditemukan user).
     wErr(c.info(t("one.answerMin", { n, cap })))
-    bufferSection("answer", answerBuf, "stdout")
+    rememberCollapsedSection("answer", answerBuf, "stdout")
     answerBuf = ""
     answerTruncated = false
   }
@@ -259,7 +262,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   const flushThinking = () => {
     flushReasoningTail()
     if (thinkState === "min" && thinkingBuf) {
-      bufferSection("thinking", thinkingBuf)
+      rememberCollapsedSection("thinking", thinkingBuf)
       thinkingBuf = ""
     }
     thinkState = "off"
@@ -293,7 +296,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     streamBuffer = parts[parts.length - 1] ?? ""
   }
 
-  const presentationEnabled = opts.presentationV2 === true && !!opts.getSnapshot
+  const presentationEnabled = !!opts.getSnapshot
   const presentedTerminals = new Set<string>()
   const presentationSnapshot = (): UiPresentationSnapshot | null => {
     if (!presentationEnabled || !opts.getSnapshot) return null
@@ -364,7 +367,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   }
 
   const offs: (() => void)[] = []
-  if (opts.presentationV2 && opts.onPresentationEvent) {
+  if (opts.onPresentationEvent) {
     offs.push(opts.onPresentationEvent((event) => writePresentationTerminal(event)))
   }
   offs.push(
@@ -376,7 +379,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       reasoningLine = ""
       answerBuf = ""
       answerTruncated = false
-      resetBufferedSections()
+      clearCollapsedSections()
       collapse.setActiveSection(null)
       lastTurnText = ""
       pendingError = null
@@ -470,7 +473,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
             thinkingBuf += cleanUntrusted(reasoningSan.push(text), !!process.stdout.isTTY)
             if (thinkingBuf.length > THINKING_BUF_MAX) {
               // Total ber-marker dibatasi THINKING_BUF_MAX (= cap per-entry
-              // bufferSection) agar tak ada pemotongan diam-diam kedua di hilir.
+              // rememberCollapsedSection) agar tak ada pemotongan diam-diam kedua di hilir.
               // Tail-slice jangan mulai di tengah surrogate pair: trail
               // yatim di awal tampil sebagai U+FFFD saat /expand.
               const body = thinkingBuf.startsWith(THINKING_TRUNCATED_MARKER)
@@ -575,9 +578,9 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         collapse.setActiveSection(null)
         const label = activity?.summary
           ? sanitizeAnsiLine(activity.summary)
-          : toolSummary(name, args, target)
+          : fallbackToolLabel(name, args, target)
         wErr(c.info(`  + ${label}${suffix}\n`))
-        bufferSection(label, sanitizeAnsi(String(r.content ?? "")).trim())
+        rememberCollapsedSection(label, sanitizeAnsi(String(r.content ?? "")).trim())
         return
       }
       if (name === "write_file" && target) {

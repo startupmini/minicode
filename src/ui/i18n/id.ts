@@ -187,6 +187,7 @@ export const id: Record<MsgKey, string> = {
   "tui.didYou": " Maksudmu /{hint}?",
   "tui.tryHelp": " Coba /help.",
   "tui.expandEmpty": "(tidak ada yang dibuka — semua sudah terlihat)",
+  "tui.expandContent": "konten",
   "tui.expandRetention":
     "(konten di luar retensi — lihat .minicode/step-traces.jsonl / sesi sqlite)",
   "tui.expandDurable": "persisten",

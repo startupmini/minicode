@@ -162,11 +162,11 @@ describe("terminal contract: tidak ada tulis setelah detach/endTurn", () => {
 
   test("quiet TUI: paint ditekan, state tetap jalan (/copy + /expand hidup)", async () => {
     // Kontrak I3: saat TUI memiliki layar, printer linier tidak boleh menulis
-    // apa pun — tapi rememberTurn (copy) dan bufferSection (expand) harus
+    // apa pun — tapi rememberTurn (copy) dan collapsed view (expand) harus
     // tetap terisi. Gagal-di-kode-lama: attach tanpa quiet mengotori alt-screen
     // di sela repaint App.
     const { getLastTurnText } = await import("../src/ui/assistant/simple.ts")
-    const { getBufferedSections } = await import("../src/ui/render/collapse.ts")
+    const { collapsedSectionsSnapshot } = await import("../src/ui/render/collapse.ts")
     setCompactMode(true)
     process.env.MINICODE_MINIMIZE_TOOL = "1"
     tty = installFakeTty({ columns: 80, rows: 24 })
@@ -185,7 +185,7 @@ describe("terminal contract: tidak ada tulis setelah detach/endTurn", () => {
     expect(tty!.all()).toBe("")
     expect(tty!.allErr()).toBe("")
     expect(getLastTurnText()).toContain("jawaban model")
-    expect(getBufferedSections().length).toBeGreaterThan(0)
+    expect(collapsedSectionsSnapshot().length).toBeGreaterThan(0)
   }, 4000)
 })
 

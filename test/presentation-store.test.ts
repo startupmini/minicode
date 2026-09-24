@@ -10,20 +10,14 @@
 // · expand() resolve — buka-ulang identik (bukan sekali-habis)
 // · miss → durable fallback → retensi message
 // · restart: store kosong (durability = sqlite, bukan store)
-// · presentationV2Enabled() flag lazy dari env
 
-import { afterEach, describe, expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import {
   contentKey,
   createContentStore,
   MAX_BUFFER_TOTAL,
   MAX_SECTION_CHARS,
-  presentationV2Enabled,
 } from "../src/presentation/store.ts"
-
-afterEach(() => {
-  delete process.env.MINICODE_PRESENTATION_V2
-})
 
 const meta = {
   kind: "output" as const,
@@ -160,9 +154,14 @@ describe("content store: expand — buka-ulang identik", () => {
     expect(out.map((e) => e.text)).toEqual(["a", "b"])
   })
 
-  test("expand id tak dikenal → []", () => {
+  test("expandAll mengembalikan entry hidup dengan ref", () => {
     const store = createContentStore()
-    expect(store.expand("nope")).toEqual([])
+    store.put({ toolCallId: "t1", idx: 0 }, "satu", meta)
+    store.put({ toolCallId: "t2", idx: 0 }, "dua", meta)
+    expect(store.expandAll().map((entry) => [entry.ref?.toolCallId, entry.text])).toEqual([
+      ["t1", "satu"],
+      ["t2", "dua"],
+    ])
   })
 })
 
@@ -216,17 +215,6 @@ describe("content store: clear + stats", () => {
     store.markDead({ toolCallId: "t2", idx: 0 })
     store.clear()
     expect(store.stats()).toEqual({ entries: 0, totalChars: 0, dead: 0 })
-  })
-})
-
-describe("presentationV2Enabled flag", () => {
-  test("unset / 0 = false; 1 = true (lazy env)", () => {
-    delete process.env.MINICODE_PRESENTATION_V2
-    expect(presentationV2Enabled()).toBe(false)
-    process.env.MINICODE_PRESENTATION_V2 = "0"
-    expect(presentationV2Enabled()).toBe(false)
-    process.env.MINICODE_PRESENTATION_V2 = "1"
-    expect(presentationV2Enabled()).toBe(true)
   })
 })
 

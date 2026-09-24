@@ -1,5 +1,5 @@
-// Labeler tunggal presentasi — gabungan formatArgsPreview + toolSummary +
-// toolLabel + ledgerTarget (§13/§34 plan). Murni, tanpa IO/clock.
+// Labeler tunggal presentasi — satu sumber untuk target, preview, dan ringkasan
+// tool. Murni, tanpa IO/clock.
 //
 // Kenapa di sini: 4 labeler lama + 3 angka cap berbeda; reducer (summary) dan
 // proyeksi (label) harus berbagi satu sumber. Fase 3: fungsi siap pakai +
@@ -12,7 +12,11 @@
 
 import type { ArgsSummary, ToolIdentity } from "./events.ts"
 
-/** Cap target ledger (kolom, bukan UTF-16) — sinkron paritas formatArgsPreview. */
+/** Predikat nama tool ter-namespace; dipanggil policy/session tanpa parse string. */
+export function isMcpToolName(name: string): boolean {
+  return name.indexOf(".") > 0
+}
+
 export const MAX_TARGET = 80
 /** Cap preview args di label satu-baris. */
 export const MAX_PREVIEW = 60
@@ -44,7 +48,7 @@ function clip(s: string, max: number): string {
 }
 
 /**
- * Target utama argumen — urutan mengikuti ledgerTarget + formatArgsPreview:
+ * Target utama argumen — urutan mengikuti konvensi ledger:
  * path/from-to → cmd/command → pattern → query → prompt-slice.
  */
 export function targetOf(args: unknown): string | undefined {
@@ -101,7 +105,7 @@ export function labelTool(identity: ToolIdentity, args: ArgsSummary): ToolLabel 
   return { target, summary: clip(summary, MAX_SUMMARY) }
 }
 
-/** Label status-bar (turn-status.toolLabel) — nama + target, cap MAX_LABEL. */
+/** Label status-bar — nama + target, cap MAX_LABEL. */
 export function statusLabel(identity: ToolIdentity, args: ArgsSummary): string {
   const { target } = labelTool(identity, args)
   const line = target ? `${identity.qualified} ${target}` : identity.qualified

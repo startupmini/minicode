@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createPermissionHandler, type PermissionMode } from "../src/policy/permission.ts"
+import { isMcpToolName } from "../src/presentation/label.ts"
 import { allTools } from "../src/tools/index.ts"
 
 // Cerminan src/policy/permission.ts — duplikasi sadar agar perubahan set
@@ -123,7 +124,7 @@ function expected(mode: PermissionMode, ask: boolean, name: string): "allow" | "
       : "deny"
   if (mode === "allowlist") {
     if (name === "bash") return "allow" // "echo hi" cocok "echo *", lolos guard
-    if (GATED.has(name) || name.includes(".")) return "deny"
+    if (GATED.has(name) || isMcpToolName(name)) return "deny"
     if (FILE_WRITE.has(name) || INTERNAL_WRITE.has(name)) return "allow"
     return READONLY.has(name) ? "allow" : "deny" // sisa = code_run → deny
   }
@@ -135,7 +136,7 @@ function expected(mode: PermissionMode, ask: boolean, name: string): "allow" | "
   }
   // auto headless, tanpa MINICODE_SANDBOX
   if (READONLY.has(name)) return "allow"
-  if (GATED.has(name) || name.includes(".")) return "deny"
+  if (GATED.has(name) || isMcpToolName(name)) return "deny"
   if (FILE_WRITE.has(name) || INTERNAL_WRITE.has(name)) return "allow"
   if (name === "code_run") return "deny"
   if (name === "bash") return "allow"

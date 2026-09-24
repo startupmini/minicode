@@ -4,7 +4,6 @@ import { createInterface } from "node:readline"
 import { LIMITS } from "../../src/constants.ts"
 import { scrubSecrets } from "../../src/policy/scrub.ts"
 import { budgetStatus } from "../../src/policy/usage.ts"
-import { presentationV2Enabled } from "../../src/presentation/store.ts"
 import { clearSubmittedResult, getSubmittedResult } from "../../src/tools/submit_result.ts"
 import { formatError } from "../../src/ui/assistant/simple.ts"
 import type { UiPresentationEvent, UiPresentationSnapshot } from "../../src/ui/contract.ts"
@@ -279,8 +278,7 @@ export async function runAcpSession(
       onPresentationEvent?: (handler: (event: UiPresentationEvent) => void) => () => void
       getPresentationSnapshot?: () => UiPresentationSnapshot
     }
-    const lifecycle =
-      presentationV2Enabled() && typeof projection.onPresentationEvent === "function"
+    const lifecycle = typeof projection.onPresentationEvent === "function"
     let unsubPresentation = (): void => {}
     if (lifecycle) {
       unsubPresentation = projection.onPresentationEvent!((event) => {

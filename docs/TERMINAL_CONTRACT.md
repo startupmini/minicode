@@ -141,10 +141,10 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
 10. (Dilebur ke I3 — nomor dipertahankan agar referensi lama tak patah.)
 11. Resize memakai lebar/tinggi SAAT PAINT (bukan saat event) — termasuk
     geometri popup, dialog, dan viewport TUI.
-12. Long session tetap readable (cap 5000 baris, tertua dibuang). Dengan
-    `MINICODE_PRESENTATION_V2=1`, cap yang sama dipertahankan dan satu marker
-    `… N baris awal di luar viewport — riwayat penuh di model` track jumlah
-    baris yang di-evict; `total()` tetap monotonik.
+12. Long session tetap readable (cap 5000 baris, tertua dibuang). Proyeksi
+    presentasi mempertahankan cap yang sama dan menambahkan satu marker
+    `… N baris awal di luar viewport — riwayat penuh di model` yang melacak
+    jumlah baris yang di-evict; `total()` tetap monotonik.
 
 13. Status bar: 1 baris dasar (`✦ mode • model • cwd … ctx`) dari sumber yang
     sama dengan angka sesi; spark pulse saat busy; `MINICODE_MOTION=0`
@@ -167,12 +167,12 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     + batal.
 17. Transkrip append-only di memori (cap 5000), viewport ikut ekor otomatis;
     ketikan baru kembali ke ekor; stream turn TIDAK merampas posisi baca;
-    repaint live coalesce 30ms (layar tak buta saat turn). Dengan
-    `MINICODE_PRESENTATION_V2=1`, baris running di-pin dari snapshot,
-    elapsed tampil setelah ≥2s, status tool final memakai glyph + kata
+    repaint live coalesce 30ms (layar tak buta saat turn). Proyeksi
+    presentasi: baris running di-pin dari snapshot, elapsed tampil setelah
+    ≥2s, status tool final memakai glyph + kata
     (`completed`/`failed`/`denied`/`cancelled`/`interrupted`), retry dan
     grup anak mengikuti model, serta ringkasan turn masuk sebagai system
-    entry. Flag OFF tetap memakai ledger legacy.
+    entry.
 
 18. Prompt multiline (Ctrl+J newline), histori memori-sesi (tak persist ke
     berkas histori lama).
@@ -194,12 +194,11 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      terlihat sebelum menjawab; non-TTY = deny/null fail-closed; stdout
      di-pipe tanpa sink TUI = deny/null (prompt tak terlihat + mencemari
      output program bila dipaksa).
-24. `/expand` membuka buffer isi tool (sekali ambil habis); dengan
-     `MINICODE_PRESENTATION_V2=1`, `/expand <toolCallId>` query Content
-     Store (buka-ulang identik, tidak sekali-habis; miss → durable sqlite
-     → penanda retensi); pilihan `/model` persist antar sesi + struk
-     `model: x`; `/help` ringkas (penuh via `/help tombol`). Flag OFF =
-     bit-identik lama (abaikan arg id).
+24. `/expand` query Content Store (buka-ulang identik, tidak sekali-habis);
+     dengan id membaca satu tool, tanpa id membaca seluruh entry store yang
+     masih hidup; miss → durable sqlite → penanda retensi. Pilihan `/model`
+     persist antar sesi + struk `model: x`; `/help` ringkas (penuh via
+     `/help tombol`).
 25. Keybinding konsisten: Esc dua-tahap (isi tak hilang sekali tekan);
     backspace/delete edit-teks (hapus-data = confirm); navigasi daftar
     (`↑↓`, pgup/pgdn, home/end) di semua popup; hint footer akurat
@@ -214,16 +213,14 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     `run()` dan dilepas di cleanup; tanpa sesi TUI, sinyal tak disentuh.
     (Temuan audit TUI-001: handler `exit` Node tak jalan pada SIGTERM
     default — terminal tertinggal alt-screen + raw.)
-32. Proyeksi Presentasi V2.1 TUI hanya aktif dengan
-    `MINICODE_PRESENTATION_V2=1`; sumbernya snapshot struktural dari
-    composition root, bukan parser string. `view`, cap, scroll, approval,
-    transient, resize, cursor, dan PTY path tetap memakai kontrak lama.
-33. Proyeksi linear dan ACP dengan `MINICODE_PRESENTATION_V2=1` memakai
-    snapshot/event presentasi yang sama: linear menambahkan status/duration/
-    receipt/retry tanpa mengubah stdout/stderr split, sedangkan ACP mengirim
-    lifecycle `turn.*`, `tool.*`, dan `approval.*` terstruktur plus teks delta.
-    Flag OFF mempertahankan golden linear dan notifikasi ACP legacy; exit code,
-    pipe safety, dan determinisme non-TTY tetap sama.
+32. Proyeksi Presentasi V2.1 TUI memakai snapshot struktural dari composition
+    root, bukan parser string. `view`, cap, scroll, approval, transient,
+    resize, cursor, dan PTY path tetap memakai kontrak lama.
+33. Proyeksi linear dan ACP memakai snapshot/event presentasi yang sama:
+    linear menambahkan status/duration/receipt/retry tanpa mengubah
+    stdout/stderr split, sedangkan ACP mengirim lifecycle `turn.*`, `tool.*`,
+    dan `approval.*` terstruktur plus teks delta. Exit code, pipe safety, dan
+    determinisme non-TTY tetap sama.
 
 27. Painter transient stderr (spinner setup/cek-update, garis status turn)
      DITAHAN selama layar interaktif memegang terminal: `beginInteractiveScreen`

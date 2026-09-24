@@ -2,6 +2,7 @@ import { resolve } from "node:path"
 import { cwd } from "node:process"
 import type { PermissionHandler, ToolCall } from "#minicore"
 import type { ApprovalEventHook, ApprovalHookEvent } from "../presentation/events.ts"
+import { isMcpToolName } from "../presentation/label.ts"
 import { loadAllowlist, matchAllowlist, saveAllowlist } from "./allowlist.ts"
 import { inspectBashCommand } from "./bash-guard.ts"
 import {
@@ -206,7 +207,7 @@ export function createPermissionHandler(
   function isGated(name: string): boolean {
     // Semua tool bertitik (MCP — terdaftar maupun tidak) = gated. Server jahat
     // tidak boleh mendapat auto-allow hanya karena namanya terdaftar.
-    return GATED_TOOLS.has(name) || name.includes(".")
+    return GATED_TOOLS.has(name) || isMcpToolName(name)
   }
 
   // Alasan deny per-call untuk seam kernel describeDenial (audit #14):

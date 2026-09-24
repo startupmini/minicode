@@ -7,17 +7,12 @@
 // · konten completed → store (adapter put)
 // · receipt file.changed join (paths+journalSeq)
 // · expand buka-ulang identik (bukan sekali-habis)
-// · flag OFF = path lama bit-identik (takeBufferedSections tetap)
+// · expandAll menjadi query tanpa id
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { createPresentationAdapter } from "../src/presentation/adapter.ts"
 import type { DomainEvent, EventBusLike } from "../src/presentation/events.ts"
 import { createContentStore } from "../src/presentation/store.ts"
-import {
-  bufferSection,
-  getBufferedSections,
-  resetBufferedSections,
-} from "../src/ui/render/collapse.ts"
 
 function fakeBus(): EventBusLike & {
   emit: (type: string, payload: unknown) => void
@@ -48,13 +43,10 @@ beforeEach(() => {
   adapter = createPresentationAdapter(bus, { sessionId: "s1", contentStore: store })
   events = []
   adapter.onEvent((e) => events.push(e))
-  resetBufferedSections()
 })
 
 afterEach(() => {
   adapter.dispose()
-  resetBufferedSections()
-  delete process.env.MINICODE_PRESENTATION_V2
 })
 
 const execDone = (id: string, content: string, isError = false) => ({
@@ -157,24 +149,5 @@ describe("receipt: file.changed join", () => {
     expect(a?.receipt?.paths).toEqual(["src/a.ts"])
     expect(a?.receipt?.journalSeq).toBe(7)
     expect(a?.expandRef).toEqual({ toolCallId: "c1", idx: 0 })
-  })
-})
-
-describe("flag OFF: path lama bit-identik", () => {
-  test("bufferSection lama tetap hidup (takeBufferedSections)", () => {
-    // Flag tidak mengubah buffer lama — hanya menambah jalur baru.
-    delete process.env.MINICODE_PRESENTATION_V2
-    bufferSection("read a.ts", "isi buffer", "stderr")
-    const sections = getBufferedSections()
-    expect(sections).toHaveLength(1)
-    expect(sections[0]!.label).toBe("read a.ts")
-    expect(sections[0]!.text).toBe("isi buffer")
-  })
-
-  test("presentationV2Enabled false saat unset", async () => {
-    const { presentationV2Enabled } = await import("../src/presentation/store.ts")
-    expect(presentationV2Enabled()).toBe(false)
-    process.env.MINICODE_PRESENTATION_V2 = "1"
-    expect(presentationV2Enabled()).toBe(true)
   })
 })

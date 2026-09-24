@@ -2,6 +2,7 @@ import type { Tool } from "#minicore"
 import type { MinicodeConfig } from "../config.ts"
 import { configureServers as lspConfigure } from "../lsp/client.ts"
 import { connectAll as mcpConnectAll } from "../mcp/client.ts"
+import { isMcpToolName } from "../presentation/label.ts"
 import { allTools, withMcpTools } from "../tools/index.ts"
 import { EXPLORE_TOOL_NAMES } from "../tools/task.ts"
 
@@ -39,7 +40,7 @@ export async function setupToolLayer(
         sessionTools = withMcpTools(sessionTools, mcpTools)
         if (permissionMode === "plan" || permissionMode === "readonly") {
           sessionTools = sessionTools.filter(
-            (t) => !t.name.includes(".") || EXPLORE_TOOL_NAMES.includes(t.name),
+            (t) => !isMcpToolName(t.name) || EXPLORE_TOOL_NAMES.includes(t.name),
           )
         }
       }

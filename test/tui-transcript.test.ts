@@ -66,18 +66,18 @@ describe("Transcript", () => {
     expect(t.view(40, 6, 0)).toEqual(["", "", "a", "b", "c", "d"])
     expect(t.view(40, 2, 2)).toEqual(["a", "b"])
   })
-  test("cap 5000 membuang tertua", () => {
+  test("cap 5000 membuang tertua dan menambahkan marker", () => {
     const { t } = setup()
     const lines = Array.from({ length: 5010 }, (_, i) => `l${i}`)
     t.pushInfo(lines)
-    expect(t.size()).toBe(5000)
-    expect(t.view(40, 1, 4999)[0]).toBe("l10")
+    expect(t.size()).toBe(5001)
+    expect(t.view(100, 1, 5000)[0]).toContain("10 early lines")
   })
   test("total() monotonik kebal evict (basis indikator F-08)", () => {
     // size() menyusut saat cap membuang tertua → newCount negatif/hilang.
     const { t } = setup()
     t.pushInfo(Array.from({ length: 5010 }, (_, i) => `l${i}`))
-    expect(t.size()).toBe(5000)
+    expect(t.size()).toBe(5001)
     expect(t.total()).toBe(5010)
     t.pushInfo(["baru"])
     expect(t.total()).toBe(5011)
@@ -93,32 +93,7 @@ describe("Transcript", () => {
     bus.emit("context:compacted", { reason: "penuh" })
     expect(t.view(40, 2, 0).join("\n")).toContain("compacted")
   })
-  test("/expand: isi tool sukses dibuffer, sekali ambil habis", () => {
-    const { bus, t } = setup()
-    bus.emit("execution:completed", {
-      execution: {
-        call: { name: "read_file", args: { path: "a.ts" } },
-        result: { content: "isi berkas\nbaris dua" },
-      },
-    })
-    const got = t.takeBufferedSections()
-    expect(got).toHaveLength(1)
-    expect(got[0]!.label).toContain("read_file")
-    expect(got[0]!.text).toContain("isi berkas")
-    // Ambil kedua = kosong (arsip dibuka).
-    expect(t.takeBufferedSections()).toHaveLength(0)
-  })
-  test("/expand: error dan konten kosong tak dibuffer", () => {
-    const { bus, t } = setup()
-    bus.emit("execution:completed", {
-      execution: { call: { name: "bash", args: {} }, result: { isError: true, content: "boom" } },
-    })
-    bus.emit("execution:completed", {
-      execution: { call: { name: "x", args: {} }, result: { content: "   " } },
-    })
-    expect(t.takeBufferedSections()).toHaveLength(0)
-  })
-  test("thinking minimized: penanda hidup, isi ke /expand, tanpa baris", () => {
+  test("thinking minimized: penanda hidup lalu commit", () => {
     const { bus, t } = setup()
     bus.emit("provider:extension", { kind: "reasoning", data: { text: "hmm " } })
     bus.emit("provider:extension", { kind: "reasoning", data: { text: "mikirmodelrahasia" } })
@@ -126,12 +101,7 @@ describe("Transcript", () => {
     expect(live).toContain("thinking")
     expect(live).not.toContain("mikirmodelrahasia")
     bus.emit("turn:completed", {})
-    // Penanda hilang, isi masuk buffer expand.
     expect(t.view(40, 3, 0).join("\n")).not.toContain("thinking")
-    const got = t.takeBufferedSections()
-    expect(got).toHaveLength(1)
-    expect(got[0]!.label).toBe("thinking")
-    expect(got[0]!.text).toContain("mikirmodelrahasia")
   })
   test("thinking expanded: mengalir redup per baris", async () => {
     const { setReasoningVisible } = await import("../src/ui/render/reasoning.ts")

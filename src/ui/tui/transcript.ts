@@ -21,10 +21,6 @@ import { chunkByWidth, truncateToWidth } from "../render/width.ts"
 
 /** Cap memori: baris logis tertua dibuang diam-diam (kontrak I12). */
 export const TRANSCRIPT_CAP = 5000
-/** Isi tool per section untuk /expand: maks 10 section × 2000 char. */
-const EXPAND_MAX_SECTIONS = 10
-const EXPAND_MAX_CHARS = 2000
-
 /**
  * Sink approval TUI: pemilik layar (cli/tui.ts) mendaftarkan transkrip +
  * repaint + suspend/resume agar prompt persetujuan tercatat di transkrip dan
@@ -51,11 +47,6 @@ export function getApprovalSink(): ApprovalSink | null {
   return approvalSink
 }
 
-export interface BufferedSection {
-  label: string
-  text: string
-}
-
 export interface TranscriptMeta {
   seq?: number
   kind: "user" | "assistant" | "activity" | "approval" | "system" | "diagnostic"
@@ -67,12 +58,11 @@ export interface TranscriptMeta {
 }
 
 export interface TranscriptOptions {
-  presentationV2?: boolean
   getSnapshot?: () => UiPresentationSnapshot | null
   onPresentationEvent?: (handler: (event: UiPresentationEvent) => void) => () => void
 }
 
-function ledgerTarget(args: Record<string, unknown>): string | undefined {
+function targetForFallback(args: Record<string, unknown>): string | undefined {
   if (typeof args.path === "string" && args.path) return args.path
   const cmd = args.cmd ?? args.command
   if (typeof cmd === "string" && cmd) return `$ ${cmd}`
@@ -90,18 +80,16 @@ function formatElapsed(ms: number): string {
 export class Transcript {
   private lines: string[] = []
   private pending = ""
-  private sections: BufferedSection[] = []
   /** Hitung monotonik baris yang pernah ditambah — basis indikator "baru"
    * yang kebal evict cap 5000 (size() menyusut saat tertua dibuang). */
   private totalAppended = 0
-  /** Thinking terakumulasi (tersanitasi). Minimized: penanda hidup + buffer
-   * /expand; expanded: mengalir redup seperti teks. */
+  /** Thinking terakumulasi (tersanitasi). Minimized: penanda hidup;
+   * expanded: mengalir redup seperti teks. */
   private thinkingBuf = ""
   private thinkingTail = ""
   private meta: TranscriptMeta[] = []
   private evicted = 0
   private hasEvictMarker = false
-  private presentationV2 = false
   private getSnapshot: (() => UiPresentationSnapshot | null) | undefined
   private presentationEvents = false
   private presentationUnsub: (() => void) | null = null
@@ -110,7 +98,6 @@ export class Transcript {
   private unsubs: (() => void)[] = []
 
   constructor(bus: UiBus, opts: TranscriptOptions = {}) {
-    this.presentationV2 = opts.presentationV2 === true
     this.getSnapshot = opts.getSnapshot
     // Gagal subscribe = transcript mati total; biarkan throw (fail-closed).
     this.unsubs = [
@@ -135,7 +122,7 @@ export class Transcript {
         this.push(c.muted(t("ts.compacted", { reason: sanitizeAnsiLine(e.reason ?? "") }))),
       ),
     ]
-    if (this.presentationV2 && opts.onPresentationEvent) {
+    if (opts.onPresentationEvent) {
       this.presentationEvents = true
       this.presentationUnsub = opts.onPresentationEvent((event) => this.presentationEvent(event))
     }
@@ -165,23 +152,17 @@ export class Transcript {
 
       this.thinkingTail = parts[parts.length - 1] ?? ""
     } else {
-      // Minimized: penanda hidup + buffer untuk /expand (cap 20k).
+      // Minimized: penanda hidup; isi disimpan di collapsed view linear.
       this.thinkingBuf = (this.thinkingBuf + clean).slice(-20000)
     }
   }
 
-  /** Selesaikan fase thinking: minimized → buffer /expand (tanpa baris
-   * transkrip, tetap bersih); expanded → flush ekor redup. */
+  /** Selesaikan fase thinking: minimized → penanda hilang; expanded → flush
+   * ekor redup. */
   private commitThinking(): void {
     if (this.thinkingTail) {
       this.append(c.muted(this.thinkingTail), { kind: "diagnostic" })
       this.thinkingTail = ""
-    }
-    if (this.thinkingBuf.trim()) {
-      this.sections.push({ label: "thinking", text: this.thinkingBuf.trim() })
-      if (this.sections.length > EXPAND_MAX_SECTIONS) {
-        this.sections.splice(0, this.sections.length - EXPAND_MAX_SECTIONS)
-      }
     }
     this.thinkingBuf = ""
   }
@@ -214,23 +195,12 @@ export class Transcript {
     this.lines = []
     this.meta = []
     this.pending = ""
-    this.sections = []
     this.thinkingBuf = ""
     this.thinkingTail = ""
     this.evicted = 0
     this.hasEvictMarker = false
     this.presentedTerminals.clear()
     this.summarizedTurns.clear()
-  }
-
-  /**
-   * Ambil isi tool yang dibuffer untuk `/expand` (sekali ambil = habis,
-   * seperti membuka arsip). Kosong = tak ada yang disembunyikan.
-   */
-  takeBufferedSections(): BufferedSection[] {
-    const out = this.sections
-    this.sections = []
-    return out
   }
 
   /** Jumlah baris logis (untuk test; bukan API paint). */
@@ -258,7 +228,7 @@ export class Transcript {
       }
     }
     // Ekor hidup thinking: expanded = sisa baris redup; minimized = satu
-    // penanda redup (transkrip tetap bersih, isi di /expand).
+    // penanda redup (isi tidak membanjiri transkrip).
     if (this.thinkingTail) {
       for (const chunk of this.thinkingTail.split("\n")) {
         const rows = chunk === "" ? [""] : chunkByWidth(chunk, w)
@@ -267,7 +237,7 @@ export class Transcript {
     } else if (this.thinkingBuf.trim()) {
       wrapped.push(c.muted(t("ts.thinking")))
     }
-    if (this.presentationV2) wrapped.push(...this.runningRows())
+    wrapped.push(...this.runningRows())
     return wrapped
   }
 
@@ -307,7 +277,7 @@ export class Transcript {
   }
 
   private presentationSnapshot(): UiPresentationSnapshot | null {
-    if (!this.presentationV2 || !this.getSnapshot) return null
+    if (!this.getSnapshot) return null
     try {
       return this.getSnapshot()
     } catch {
@@ -474,33 +444,17 @@ export class Transcript {
       this.append(c.error(`  › ${name}: ${msg}`), { kind: "activity" })
       return
     }
-    const target = ledgerTarget(args)
+    const target = targetForFallback(args)
     const label = target ? ` ${truncateToWidth(sanitizeAnsiLine(target), 120, "")}` : ""
     // Glyph ledger memakai arrow tema (› di UTF-8, > di ASCII) — konsisten
     // dengan grammar REPL walau bentuknya disusun manual di sini.
     this.append(c.success(`  ›${name ? ` ${name}` : ""}${label}`), { kind: "activity" })
-    // Isi tool sukses dibuffer untuk /expand (compact default: isi milik
-    // model untuk dibaca, bukan untuk membanjiri viewport).
-    if (typeof r?.content === "string" && r.content.trim()) {
-      const text = sanitizeAnsi(r.content.trim()).slice(0, EXPAND_MAX_CHARS)
-      this.sections.push({ label: `${name}${label}`, text })
-      if (this.sections.length > EXPAND_MAX_SECTIONS) {
-        this.sections.splice(0, this.sections.length - EXPAND_MAX_SECTIONS)
-      }
-    }
   }
 
   private append(line: string, meta: TranscriptMeta = { kind: "system" }): void {
     this.lines.push(line)
     this.meta.push(meta)
     this.totalAppended++
-    if (!this.presentationV2) {
-      if (this.lines.length > TRANSCRIPT_CAP) {
-        this.lines.splice(0, this.lines.length - TRANSCRIPT_CAP)
-        this.meta.splice(0, this.meta.length - TRANSCRIPT_CAP)
-      }
-      return
-    }
     if (!this.hasEvictMarker && this.lines.length > TRANSCRIPT_CAP) {
       const overflow = this.lines.length - TRANSCRIPT_CAP
       this.lines.splice(0, overflow)

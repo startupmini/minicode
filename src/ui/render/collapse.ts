@@ -15,7 +15,7 @@ export type CollapseSection = "thinking" | "tool" | "answer"
 let activeSection: CollapseSection | null = null
 
 // Buffer konten yang dikecilkan pada turn terakhir — dibuka via /expand.
-export interface BufferedSection {
+export interface CollapsedSectionView {
   label: string
   text: string
   /** Stream asal konten (kontrak Unix dipertahankan saat /expand mencetak). */
@@ -23,7 +23,7 @@ export interface BufferedSection {
 }
 const MAX_SECTION_CHARS = 200_000
 const MAX_BUFFER_TOTAL = 500_000
-const bufferedSections: BufferedSection[] = []
+const collapsedSectionViews: CollapsedSectionView[] = []
 
 export const collapse = {
   /** Section yang sedang aktif — keputusan tombol + / - saat turn berjalan. */
@@ -57,10 +57,10 @@ export function setSectionMinimized(section: CollapseSection, next?: boolean): b
 }
 
 /** Simpan isi section yang dikecilkan (cap per-entry + total). */
-export function bufferSection(
+export function rememberCollapsedSection(
   label: string,
   text: string,
-  stream: BufferedSection["stream"] = "stderr",
+  stream: CollapsedSectionView["stream"] = "stderr",
 ): void {
   if (!text) return
   // Cap jangan belah surrogate pair (U+FFFD di /expand) dan jangan sisakan
@@ -69,23 +69,23 @@ export function bufferSection(
   const last = cut.charCodeAt(cut.length - 1)
   if (cut.length > 0 && last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1)
   cut = splitTrailingEscape(cut).head
-  bufferedSections.push({ label, text: cut, stream })
+  collapsedSectionViews.push({ label, text: cut, stream })
   // Buang yang tertua sampai total dalam budget — terbaru selalu dipertahankan.
   let total = 0
-  let keepFrom = bufferedSections.length
-  for (let i = bufferedSections.length - 1; i >= 0; i--) {
-    total += bufferedSections[i]!.text.length
+  let keepFrom = collapsedSectionViews.length
+  for (let i = collapsedSectionViews.length - 1; i >= 0; i--) {
+    total += collapsedSectionViews[i]!.text.length
     if (total > MAX_BUFFER_TOTAL) break
     keepFrom = i
   }
-  if (keepFrom > 0) bufferedSections.splice(0, keepFrom)
+  if (keepFrom > 0) collapsedSectionViews.splice(0, keepFrom)
 }
 
-export function resetBufferedSections(): void {
-  bufferedSections.length = 0
+export function clearCollapsedSections(): void {
+  collapsedSectionViews.length = 0
 }
 
 /** Konten section yang dikecilkan pada turn terakhir (untuk /expand). */
-export function getBufferedSections(): BufferedSection[] {
-  return bufferedSections
+export function collapsedSectionsSnapshot(): CollapsedSectionView[] {
+  return [...collapsedSectionViews]
 }

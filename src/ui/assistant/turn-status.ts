@@ -223,7 +223,9 @@ export function attachTurnStatus(
   }
   registerStatusLine(handle)
 
-  const toolLabel = (e: { execution: { call: { name: string; args?: unknown } } }): string => {
+  const statusToolLabel = (e: {
+    execution: { call: { name: string; args?: unknown } }
+  }): string => {
     const name = e.execution.call.name
     const args = (e.execution.call.args ?? {}) as Record<string, unknown>
     let target = ""
@@ -301,7 +303,7 @@ export function attachTurnStatus(
       textOn = false
       textSeen = false
       toolStartMs = Date.now()
-      startPaint(toolLabel(e))
+      startPaint(statusToolLabel(e))
     }),
     bus.on("execution:completed", () => {
       // Tool selesai: kembali ke "Thinking" selama model belum mengeluarkan teks.

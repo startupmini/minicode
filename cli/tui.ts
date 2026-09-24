@@ -17,14 +17,18 @@
 // - busy = input beku total kecuali abort (Esc/Ctrl+C) dan scroll.
 import { expandMentions } from "../src/app/mentions.ts"
 import { budgetStatus } from "../src/policy/usage.ts"
-import { presentationV2Enabled } from "../src/presentation/store.ts"
 import { redoLastCheckpoint, undoLastCheckpoint } from "../src/session/checkpoint.ts"
 import { renderSkill } from "../src/skills/loader.ts"
 import { getLastTurnText, writeClipboardOsc52 } from "../src/ui/assistant/simple.ts"
 import type { UiBus } from "../src/ui/contract.ts"
 import { t } from "../src/ui/i18n/locale.ts"
 import { loadHistory } from "../src/ui/input/input.ts"
-import { sectionMinimized, setSectionMinimized } from "../src/ui/render/collapse.ts"
+import {
+  clearCollapsedSections,
+  collapsedSectionsSnapshot,
+  sectionMinimized,
+  setSectionMinimized,
+} from "../src/ui/render/collapse.ts"
 import { setCompactMode } from "../src/ui/render/detail.ts"
 import { formatUsd } from "../src/ui/render/money.ts"
 import { setReasoningVisible } from "../src/ui/render/reasoning.ts"
@@ -42,8 +46,7 @@ import {
 import type { CliSession } from "./setup.ts"
 
 const MODES = ["auto", "ask", "plan", "allowlist", "allow-all"] as const
-// /expand [id]: tanpa arg = buffer sekali-habis lama; dengan id = store
-// (flag MINICODE_PRESENTATION_V2=1). Arg di DRIVER_COMMANDS untuk discovery.
+// /expand [id]: tanpa arg = semua entry store; dengan id = satu tool.
 const DRIVER_COMMANDS = ["/compact", "/thinking", "/expand [id]", "/minimize"]
 
 function fmtCtx(n: number): string | undefined {
@@ -107,6 +110,10 @@ export async function runTui(ctx: CliSession): Promise<void> {
     close,
   } = ctx
   const { session } = ctx
+  const getPresentationSnapshot = () =>
+    typeof ctx.getPresentationSnapshot === "function"
+      ? ctx.getPresentationSnapshot()
+      : { activities: [], turns: [] }
 
   let mode: string = permissions?.getMode() ?? permissionMode ?? "auto"
   if (process.env.MINICODE_COMPACT === undefined) setCompactMode(true)
@@ -121,11 +128,9 @@ export async function runTui(ctx: CliSession): Promise<void> {
     setConfigLocale((await loadLang().catch(() => undefined)) ?? null)
   } catch {}
 
-  const presentationV2 = presentationV2Enabled()
   const transcript = new Transcript(session.events as unknown as UiBus, {
-    presentationV2,
-    getSnapshot: () => ctx.getPresentationSnapshot(),
-    ...(presentationV2 ? { onPresentationEvent: ctx.onPresentationEvent } : {}),
+    getSnapshot: getPresentationSnapshot,
+    onPresentationEvent: ctx.onPresentationEvent,
   })
 
   const commandCtx: CommandContext = {
@@ -371,38 +376,27 @@ export async function runTui(ctx: CliSession): Promise<void> {
       return
     }
     if (name === "expand") {
-      // Fase 4 V2.1: /expand <toolCallId> = query content store (buka-ulang
-      // identik, tidak sekali-habis). Flag OFF = bit-identik lama (abaikan id).
-      if (args && presentationV2Enabled()) {
-        const sections = ctx.expandContent(args)
-        if (!sections.length) {
-          transcript.pushInfo([c.muted(t("tui.expandEmpty"))])
-          return
-        }
-        const lines: string[] = []
-        for (const s of sections) {
-          if (s.meta.source === "retention") {
-            lines.push(c.muted(t("tui.expandRetention")))
-            continue
-          }
-          const src = s.meta.source === "durable" ? ` [${t("tui.expandDurable")}]` : ""
-          lines.push(c.muted(`  ── ${args}${src} ──`))
-          for (const ln of s.text.split("\n")) lines.push(`    ${ln}`)
-        }
-        transcript.pushInfo(lines)
-        return
-      }
-      // Buka isi tool yang disembunyikan ledger compact. Sekali ambil = habis
-      // (arsip dibuka); butuh buffer baru = turn baru. Tanpa arg / flag OFF.
-      const sections = transcript.takeBufferedSections()
-      if (!sections.length) {
+      const sections = args ? ctx.expandContent(args) : ctx.expandAllContent()
+      const views = args ? [] : collapsedSectionsSnapshot()
+      if (!args) clearCollapsedSections()
+      if (!sections.length && !views.length) {
         transcript.pushInfo([c.muted(t("tui.expandEmpty"))])
         return
       }
       const lines: string[] = []
       for (const s of sections) {
-        lines.push(c.muted(`  ── ${s.label} ──`))
+        if (s.meta.source === "retention") {
+          lines.push(c.muted(t("tui.expandRetention")))
+          continue
+        }
+        const label = args ?? s.ref?.toolCallId ?? t("tui.expandContent")
+        const src = s.meta.source === "durable" ? ` [${t("tui.expandDurable")}]` : ""
+        lines.push(c.muted(`  ── ${label}${src} ──`))
         for (const ln of s.text.split("\n")) lines.push(`    ${ln}`)
+      }
+      for (const view of views) {
+        lines.push(c.muted(`  ── ${view.label} ──`))
+        for (const ln of view.text.split("\n")) lines.push(`    ${ln}`)
       }
       transcript.pushInfo(lines)
       return
@@ -496,8 +490,8 @@ export async function runTui(ctx: CliSession): Promise<void> {
         },
         busy: abort != null,
       }
-      if (!presentationV2) return status
-      const activities = ctx.getPresentationSnapshot().activities
+      const activities = getPresentationSnapshot().activities
+
       return {
         ...status,
         pinnedActivity:

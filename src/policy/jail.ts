@@ -111,8 +111,16 @@ export function isPathOutsideRoot(p: string, root: string): boolean {
 export function isRealPathOutsideRoot(p: string, root: string): boolean {
   if (!p) return false
   const abs = isAbsolute(p) ? resolve(p) : resolve(root, p)
-  // Symlink/hardlink di Windows lolos realpath pre-check TOCTOU — tolak langsung.
-  if (isDangerousLink(abs)) return true
+  if (isHardlink(abs)) return true
+  if (isSymlink(abs)) {
+    try {
+      const real = realpathSync(abs)
+      const realRoot = realpathSync(resolve(root))
+      return isPathOutsideRoot(real, realRoot)
+    } catch {
+      return true
+    }
+  }
   try {
     const real = realpathSync(abs)
     const realRoot = realpathSync(resolve(root))

@@ -64,8 +64,13 @@ export async function ptyAvailable(): Promise<PtyAvailability> {
   }
   try {
     const child = spawn(
-      process.execPath,
-      ["--eval", "setTimeout(() => { console.log('MINICODE-PTY-PROBE'); process.exit(0) }, 150)"],
+      process.platform === "win32" ? process.execPath : "/bin/sh",
+      process.platform === "win32"
+        ? [
+            "--eval",
+            "setTimeout(() => { console.log('MINICODE-PTY-PROBE'); process.exit(0) }, 150)",
+          ]
+        : ["-c", "printf 'MINICODE-PTY-PROBE\\n'"],
       { name: "xterm-256color", cols: 80, rows: 24, env: cleanEnvForChild() },
     )
     let out = ""

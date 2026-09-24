@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed — Audit web: SEO/struktur (2026-09-24) — 8 temuan, semua diverifikasi sebelum diperbaiki
+
+- **PERF-01 — Google Fonts satu request**: tiga `<link>` css2 (Inter, JetBrains Mono, Material Symbols Outlined) digabung jadi satu URL di `web/layout.html` — 3 round-trip jadi 1; `display`/`icon_names` berlaku lintas family dalam satu panggilan css2 (diverifikasi terhadap css2 API Google Fonts).
+- **SERP-01 — JSON-LD Organization**: `organizationJsonld()` (`scripts/web/page.ts`) masuk `@graph` homepage (logo = og-image 1200×630, `sameAs` GitHub + npm) — brand "Minicode" kini terikat ke minicode.fun di mesin pencari, bukan didominasi entitas proyek GitHub yang tak terkait.
+- **STRUCT-01 — Article schema lengkap**: post blog kini mengirim `dateModified`, `image`, `publisher` + logo, `mainEntityOfPage`, dan `author.url` (`scripts/web/blog.ts`) — syarat Article rich-result terpenuhi penuh.
+- **LLMS-01 — llms.txt satu suara dengan SERP**: deskripsi tiap docs di `llms.txt` memakai `docMeta` (sumber identik meta description halaman); `firstPara` mentah yang bisa terpotong/berselip kini hanya fallback (`scripts/web/llms.ts`).
+- **CANNIB-01/02 — meta description anti-kannibal**: 5 deskripsi `DOC_META` didiferensiasi (pasangan terminal/terminal_contract, trio security, policy-sandbox) — sebelumnya halaman-halaman berbagi kalimat sama sehingga saling berebut cuplikan SERP (`scripts/web/nav.ts`).
+- **IDX-01 — robots.txt tak lagi menyembunyikan noindex**: `Disallow: /admin.html` dihapus (`scripts/build-web.ts`) — aturan itu menyaring Google dari halaman sehingga meta noindex-nya tak pernah terbaca; penjaga cukup meta noindex + test.
+- **P2-9 + guard test**: regex test kini sadar URL-gabungan (perbaikan deteksi positif palsu), plus guard baru: Organization pada homepage, tepat 1 request font, `llms.txt` = `docMeta`, Article lengkap, robots tanpa Disallow noindex (`test/web-build.test.ts`); tautan di `docs/ARCHITECTURE.html` kini menunjuk GitHub (`docs/architecture.md`).
+- Verifikasi: `bun x tsc --noEmit`, `bun run lint`, `bun test` (2361 pass / 0 fail), `gate:coverage` (funcs 83,50% / lines 84,65%; 15/15 modul kritis), `gate:pack` (23 pemeriksaan), `web:build` (40 halaman) + `web:check`.
+
 ### Docs — Sinkronisasi dokumentasi & data website (2026-09-24)
 
 - **Kontrak terminal diselaraskan ke v7/I31**: penyebutan "30 invariant (I1–I30)" → **31 invariant (I1–I31)** di `docs/SUMMARY.md`, `docs/terminal.md`, `docs/architecture.md`, `docs/README.md`, deskripsi nav web (`scripts/web/nav.ts`), dan `docs/ARCHITECTURE.html`.

@@ -41,24 +41,91 @@ describe("footer render", () => {
     expect(plain).toContain("14.2k")
   })
 
-  test("activity status tampil dan tetap satu baris", () => {
+  test("activity diabaikan: footer hanya mode, model, cwd, konteks, dan spark", () => {
     tty = installFakeTty({ columns: 80 })
     const [status] = renderFooter(
       {
         mode: "auto",
         model: "m1",
         cwd: "cwd",
+        context: "1k",
         activity: "Working 12s",
         sparkFrame: 2,
       },
       80,
     )
     const plain = stripAnsi(status!)
-    expect(plain).toContain("Working 12s")
     expect(plain).toContain("auto")
+    expect(plain).toContain("m1")
+    expect(plain).toContain("cwd")
+    expect(plain).toContain("1k")
+    expect(plain).not.toMatch(/Working|Thinking|Running|\d+s/)
     expect(displayWidth(plain)).toBeLessThanOrEqual(79)
   })
 
+  test("field footer tetap stabil tanpa activity variable-width", () => {
+    tty = installFakeTty({ columns: 80 })
+    const states = ["Thinking 0s", "Working 10s", "Running tool-with-a-long-name"]
+    const lines = states.map((activity) =>
+      stripAnsi(renderFooter({ mode: "auto", model: "m1", cwd: "cwd", activity }, 80)[0]!),
+    )
+    const modelColumn = lines[0]!.indexOf("m1")
+    const modeColumn = lines[0]!.indexOf("auto")
+    for (const line of lines) {
+      expect(line).toContain("m1")
+      expect(line.indexOf("m1")).toBe(modelColumn)
+      expect(line.indexOf("auto")).toBe(modeColumn)
+      expect(line).not.toMatch(/Thinking|Working|Running|\d+s/)
+      expect(displayWidth(line)).toBeLessThanOrEqual(79)
+    }
+  })
+
+  test("footer tetap stabil di terminal sempit", () => {
+    tty = installFakeTty({ columns: 40 })
+    const lines = ["Thinking 0s", "Working 10s"].map((activity) =>
+      stripAnsi(renderFooter({ mode: "auto", model: "m1", cwd: "cwd", activity }, 40)[0]!),
+    )
+    const modeColumn = lines[0]!.indexOf("auto")
+    const modelColumn = lines[0]!.indexOf("m1")
+    for (const line of lines) {
+      expect(line).toContain("auto")
+      expect(line.indexOf("auto")).toBe(modeColumn)
+      expect(line.indexOf("m1")).toBe(modelColumn)
+      expect(line).not.toMatch(/Thinking|Working|Running|\d+s/)
+      expect(displayWidth(line)).toBeLessThanOrEqual(39)
+    }
+  })
+
+  test("timer di sebelah sparkle, separator bullet hilang, dan level warna naik", () => {
+    tty = installFakeTty({ columns: 80 })
+    const render = (
+      timer: string,
+      timerActive: boolean,
+      timerHighlight?: "seconds" | "minutes" | "hours",
+    ) =>
+      renderFooter(
+        { mode: "auto", model: "m1", cwd: "cwd", timer, timerActive, timerHighlight },
+        80,
+      )[0]!
+    const idle = render("00.00.00", false)
+    const seconds = render("00.00.42", true, "seconds")
+    const minutes = render("00.01.02", true, "minutes")
+    const hours = render("01.00.00", true, "hours")
+    expect(stripAnsi(idle)).toMatch(/✦ {2}00\.00\.00 {2}auto +m1 +cwd/)
+    expect(stripAnsi(seconds)).toMatch(/✦ {2}00\.00\.42 {2}auto +m1 +cwd/)
+    expect(stripAnsi(minutes)).toMatch(/✦ {2}00\.01\.02 {2}auto +m1 +cwd/)
+    expect(stripAnsi(hours)).toMatch(/✦ {2}01\.00\.00 {2}auto +m1 +cwd/)
+    for (const line of [idle, seconds, minutes, hours]) expect(stripAnsi(line)).not.toContain("•")
+    expect(idle).toContain("\x1b[38;2;72;72;72m00.00.00")
+    expect(seconds).toContain("\x1b[37m42\x1b[39m")
+    expect(seconds).toContain("\x1b[38;2;72;72;72m00\x1b[39m")
+    expect(seconds).toContain("\x1b[38;2;72;72;72m.\x1b[39m")
+    expect(minutes).toContain("\x1b[38;2;72;72;72m00\x1b[39m")
+    expect(minutes).toContain("\x1b[37m01\x1b[39m")
+    expect(minutes).toContain("\x1b[37m02\x1b[39m")
+    expect(hours).toContain("\x1b[37m01\x1b[39m")
+    expect(hours).toContain("\x1b[37m00\x1b[39m")
+  })
   test("mode di-pad lebar tetap agar teks kanan tak bergeser saat ganti mode", () => {
     tty = installFakeTty({ columns: 80 })
     const withMode = (mode: string) =>
@@ -68,7 +135,7 @@ describe("footer render", () => {
     // Posisi model (`m1`) identik walau nama mode beda panjang — kolom mode
     // di-pad ke lebar tetap (9 = "allowlist"/"allow-all").
     expect(auto.indexOf("m1")).toBe(allowlist.indexOf("m1"))
-    expect(auto.indexOf("•")).toBe(allowlist.indexOf("•"))
+    expect(auto).not.toContain("•")
   })
 
   test("konteks rata kanan: di ujung kolom target, kiri tetap utuh", () => {

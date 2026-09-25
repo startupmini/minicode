@@ -25,7 +25,7 @@ en. `/lang` tanpa argumen = tampilkan aktif. Semua string lewat kamus i18n
 | `/mode [nama]` | Ganti permission (`auto`, `ask`, `plan`, `allowlist`); tanpa argumen = putar |
 | `/lang [en|id]` | Bahasa UI; tanpa argumen = tampilkan aktif |
 | `/init` | Buat `AGENTS.md` proyek ini |
-| `/copy` | Salin output turn terakhir via OSC 52 |
+| `/copy [n]` | Salin `n` turn terakhir (default `1`, maksimal `10`) via OSC 52 |
 | `/clear` | Kosongkan transkrip (viewport kembali kosong) |
 | `/expand` | Buka isi tool/thinking yang disembunyikan ledger compact (sekali ambil habis) |
 | `/history` | 20 entri prompt terakhir |
@@ -43,6 +43,8 @@ Did-you-mean: typo `/sessoons` → `Did you mean /sessions?` (jarak ≤ 2).
 | `tab` / `shift+tab` | Putar mode izin (di form: pindah field) |
 | `↑` / `↓` | Riwayat prompt, atau navigasi item di picker/manager/form |
 | `pgup` / `pgdn` | Gulir transkrip satu halaman; dengan `shift`: setengah halaman (di picker/manager: gulir daftar) |
+| `mouse drag` | Select teks transkrip; `Ctrl+C` menyalin selection app-level |
+| `mouse wheel` | Gulir transkrip; klik prompt memindahkan kursor |
 | `home` / `end` | Awal/akhir baris; saat baris kosong tanpa dropdown: lompat ke atas transkrip / kembali ke ekor (di picker/manager: lompat atas/bawah daftar) |
 | `←` / `→` | Geser kursor (di form select/confirm: ganti opsi/nilai) |
 | `ctrl+a` / `ctrl+e` | Awal / akhir baris |
@@ -54,7 +56,7 @@ Did-you-mean: typo `/sessoons` → `Did you mean /sessions?` (jarak ≤ 2).
 | `ctrl+o` | Putar tool call compact/expanded (juga `/compact`) |
 | `ctrl+t` | Toggle tampilan thinking expanded/minimized (juga `/thinking`) |
 | `esc` | Tutup dropdown/picker; dua-tahap di form (tekan-1 bersihkan field, tekan-2 batal); busy = batalkan turn |
-| `ctrl+c` | Sama seperti Esc; busy = batalkan turn |
+| `ctrl+c` | Batalkan input/prompt; pada turn TUI gunakan `Esc` untuk abort |
 | `ctrl+d` | Keluar saat baris kosong; busy = abaikan |
 
 ## Aturan konsistensi (kontrak I25)

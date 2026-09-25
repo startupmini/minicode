@@ -29,7 +29,7 @@ Relationship eksplisit:
 |---|---|---|
 | Context size | Kernel loop (`contextTokens`) + `Session.contextTokens` getter (ekspos ke driver/UI) | Kernel: kompaksi + gagal-bila-critical |
 | Compaction | Kernel (pressure + flag) | Kernel: KAPAN + fallback; LLM: ISI ringkasan |
-| Termination | maxSteps/timeout (kernel), budget (driver), abort (user) | Kernel: maxSteps, timeout, post-kompaksi critical; Driver: budget abort; User: Ctrl+C/Esc |
+| Termination | maxSteps/timeout (kernel), budget (driver), abort (user) | Kernel: maxSteps, timeout, post-kompaksi critical; Driver: budget abort; User: Esc (TUI), Ctrl+C/Esc (raw prompt) |
 | Budget | Collector (usage live) + `budgetStatus` | `budgetStatus` (terpusat, seragam REPL/one-shot/exec) + watcher abort |
 | Backpressure | Producer caps + kernel truncate | Cap di producer (sudah benar); kernel truncate terakhir |
 
@@ -93,7 +93,7 @@ valid (tool result raksasa, model gratis); pressure LOW + cost HIGH valid
 | `max_steps_exceeded` | kernel loop | `stepIndex >= maxSteps` |
 | `timeout` | kernel `createTimeout` | `AgentError("timeout")` — dipertahankan |
 | `budget_exceeded` | kernel (post-kompaksi) / driver (watcher abort) | `AgentError("budget_exceeded")` — dipertahankan |
-| `aborted` | user (Ctrl+C/Esc) / `session.abort()` | sinyal tanpa kind AgentError |
+| `aborted` | user (Esc pada TUI; Ctrl+C/Esc pada prompt non-TUI) / `session.abort()` | sinyal tanpa kind AgentError |
 | `provider` | kernel loop | provider error setelah retry habis |
 | busy | kernel | `run()` saat `running` |
 

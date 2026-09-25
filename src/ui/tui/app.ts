@@ -8,7 +8,7 @@
 // Batas lapisan: semua yang berbau sesi/model/turn datang via TuiHost yang
 // di-inject dari cli/ (composition root). src/ui TAK BOLEH impor cli/.
 import type { UiBus, UiPresentationActivity } from "../contract.ts"
-import { type FooterStatus, renderFooter } from "../footer.ts"
+import { type FooterStatus, renderFooter, type TimerHighlight } from "../footer.ts"
 import { t } from "../i18n/locale.ts"
 import {
   applyKey,
@@ -22,18 +22,18 @@ import {
   type PromptState,
   toGraphemes,
 } from "../input/prompt-engine.ts"
-import { sanitizeAnsiLine } from "../render/sanitize.ts"
+import { sanitizeAnsi, sanitizeAnsiLine, stripSgr } from "../render/sanitize.ts"
 import { c } from "../render/theme.ts"
-import { chunkByWidth, displayWidth, truncateToWidth } from "../render/width.ts"
-import { motionReduced } from "../runtime/motion.ts"
 import {
-  type AltScreen,
-  forceRestoreScreenForSignal,
-  openAltScreen,
-  SYNC_UPDATE_END,
-  SYNC_UPDATE_START,
-} from "../runtime/screen.ts"
-import type { Transcript } from "./transcript.ts"
+  charWidth,
+  chunkByWidth,
+  displayWidth,
+  escapeLength,
+  truncateToWidth,
+} from "../render/width.ts"
+import { motionReduced } from "../runtime/motion.ts"
+import { type AltScreen, forceRestoreScreenForSignal, openAltScreen } from "../runtime/screen.ts"
+import type { Transcript, TranscriptPoint, TranscriptRow } from "./transcript.ts"
 
 export interface TuiStatusSnapshot {
   footer: FooterStatus
@@ -53,8 +53,9 @@ export interface TuiHost {
    * sebagai baris error (tak ada jalur diam).
    */
   submit(text: string): Promise<{ quit?: boolean } | undefined>
-  /** Batalkan turn yang berjalan (Esc/Ctrl+C saat busy). */
+  /** Batalkan turn yang berjalan (Esc saat busy). */
   abort(): void
+  copySelection(text: string): boolean
   /** Putar mode permission (Tab / Shift+Tab). */
   cycleMode(dir: 1 | -1): void
   /** Toggle compact / reasoning (Ctrl+O / Ctrl+T). */
@@ -77,14 +78,55 @@ const MIN_COLS = 20
 
 const PROMPT_FIRST = "minicode › "
 const PROMPT_CONT = "  · "
-type ActivityKind = "working" | "thinking" | "tool" | "stopping"
+const TIMER_TEXT = "00.00.00"
+const DOT_INTERVAL_MS = 200
+const DOT_PHASES = ["...", "..", ".", ".."] as const
+const MOUSE_DRAG_ON = "\x1b[?1002h\x1b[?1006h"
+const MOUSE_WHEEL_ON = "\x1b[?1000h\x1b[?1006h"
+const MOUSE_OFF = "\x1b[?1006l\x1b[?1002l\x1b[?1000l"
+const MAX_SELECTION_CHARS = 200_000
+type MouseMode = "off" | "wheel" | "drag"
 
-function formatElapsed(ms: number): string {
+function mouseSelectionEnabled(): boolean {
+  const value = process.env.MINICODE_MOUSE_SELECTION?.toLowerCase()
+  return value !== "0" && value !== "false" && value !== "off" && value !== "no"
+}
+
+export function thinkingDots(now = Date.now(), startedAt = now, reduced = motionReduced()): string {
+  if (reduced) return "..."
+  const elapsed = Math.max(0, now - startedAt)
+  return DOT_PHASES[Math.floor(elapsed / DOT_INTERVAL_MS) % DOT_PHASES.length]!
+}
+
+export function formatTimer(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000))
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m${String(seconds % 60).padStart(2, "0")}s`
-  return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}m`
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const rest = seconds % 60
+  return `${String(hours).padStart(2, "0")}.${String(minutes).padStart(2, "0")}.${String(rest).padStart(2, "0")}`
+}
+
+export function timerHighlight(ms: number): TimerHighlight {
+  const seconds = Math.max(0, Math.floor(ms / 1000))
+  if (seconds >= 3600) return "hours"
+  if (seconds >= 60) return "minutes"
+  return "seconds"
+}
+
+interface FrameLayout {
+  frame: string[]
+  cursor: { row: number; col: number }
+  transcriptRows: TranscriptRow[]
+  transcriptTop: number
+  composerTop: number
+  composerLines: string[]
+  composerOffset: number
+}
+
+interface SelectionState {
+  anchor: TranscriptPoint
+  focus: TranscriptPoint
+  dragging: boolean
 }
 
 interface RawStdin {
@@ -96,19 +138,67 @@ interface RawStdin {
   isTTY?: boolean
 }
 
+function highlightColumns(text: string, start: number, end: number): string {
+  if (end <= start) return text
+  let out = ""
+  let column = 0
+  let active = false
+  let i = 0
+  while (i < text.length) {
+    if (text[i] === "\x1b") {
+      const length = escapeLength(text, i)
+      if (length > 0) {
+        out += text.slice(i, i + length)
+        if (active) out += "\x1b[7m"
+        i += length
+        continue
+      }
+    }
+    const codePoint = text.codePointAt(i)!
+    const char = String.fromCodePoint(codePoint)
+    const width = charWidth(codePoint)
+    const next = column + width
+    const inside = column < end && next > start
+    if (inside && !active) {
+      out += "\x1b[7m"
+      active = true
+    } else if (!inside && active) {
+      out += "\x1b[27m"
+      active = false
+    }
+    out += char
+    column = next
+    i += char.length
+  }
+  if (active) out += "\x1b[27m"
+  return out
+}
+
+function graphemeOffsetAtColumn(text: string, column: number): number {
+  const target = Math.max(0, column)
+  let used = 0
+  const units = toGraphemes(text)
+  for (let i = 0; i < units.length; i++) {
+    const width = displayWidth(units[i]!)
+    if (target <= used + width / 2) return i
+    used += width
+    if (target <= used) return i + 1
+  }
+  return units.length
+}
+
 export class TuiApp {
   private state: PromptState = createState()
   private scrollBack = 0
   private history: string[] = []
   private histIdx = -1
   private draft = ""
+  private editing = true
   private busy = false
-  private tick = 0
+  private thinkingActive = false
   private turnStartedAt = 0
-  private activityKind: ActivityKind = "working"
-  private textSeen = false
   private activityTimer: ReturnType<typeof setTimeout> | undefined
-  /** Timestamp abort terakhir (ms) — deteksi double-tap Esc/Ctrl+C = quit. */
+  /** Timestamp abort terakhir (ms) — deteksi double-tap Esc = quit. */
   private lastAbortAt = 0
   /** Hint "tekan lagi untuk keluar" tampil sekali setelah abort pertama. */
   private abortHintOn = false
@@ -137,6 +227,10 @@ export class TuiApp {
   private stdin: RawStdin | null = null
   /** True setelah releaseTerminal (spawn anak): paint/repaint ditahan. */
   private released = false
+  private mouseMode: MouseMode = "off"
+  private selection: SelectionState | null = null
+  private lastLayout: FrameLayout | null = null
+  private onExit: (() => void) | null = null
   /**
    * Langganan bus untuk repaint live (streaming jawaban, ledger tool,
    * thinking): TANPA ini layar buta selama turn — teks baru hanya tampil
@@ -228,6 +322,7 @@ export class TuiApp {
       try {
         stdin.removeListener("data", this.onData!)
       } catch {}
+      this.setMouseMode("off")
       forceRestoreScreenForSignal()
       // exit() eksplisit memicu handler "exit" yang tersisa (spinner,
       // turn-status) — best-effort sinkron. 128+n = konvensi "mati oleh
@@ -252,6 +347,12 @@ export class TuiApp {
       process.on("SIGINT", this.onSignalInt)
     } catch {
       this.onSignalInt = null
+    }
+    this.onExit = () => this.setMouseMode("off")
+    try {
+      process.on("exit", this.onExit)
+    } catch {
+      this.onExit = null
     }
     // Repaint live mengikuti event bus (stream teks, ledger, thinking).
     // Suspend menahan repaint (popup melukis sendiri); quit menahan semua.
@@ -280,31 +381,29 @@ export class TuiApp {
       } catch {}
     }
     sub("turn:started", () => {
+      this.thinkingActive = false
       this.turnStartedAt = Date.now()
-      if (this.activityKind !== "stopping") this.activityKind = "working"
-      this.textSeen = false
+      this.startActivityClock()
     })
     sub("provider:extension", (event: { kind?: string }) => {
-      if (event?.kind === "reasoning" && !this.textSeen && this.activityKind !== "stopping") {
-        this.activityKind = "thinking"
-      }
+      if (event?.kind === "reasoning") this.thinkingActive = true
     })
     sub("provider:text", () => {
-      if (this.activityKind !== "stopping") this.activityKind = "working"
-      this.textSeen = true
+      this.thinkingActive = false
     })
     sub("execution:started", () => {
-      if (this.activityKind !== "stopping") this.activityKind = "tool"
-      this.textSeen = false
+      this.thinkingActive = false
     })
     sub("execution:completed", () => {
-      if (this.activityKind !== "stopping") this.activityKind = "working"
-      this.textSeen = false
+      this.thinkingActive = false
     })
-    sub("turn:completed")
+    sub("turn:completed", () => {
+      this.thinkingActive = false
+    })
     sub("context:compacted")
     this.tailSize = this.transcript.total()
     this.scrollBase = this.tailSize
+    this.setMouseMode(mouseSelectionEnabled() ? "drag" : "off")
     this.paint(screen)
     await done
     // Cleanup: urutan penting — lepas listener dulu agar byte liar pasca-quit
@@ -342,6 +441,12 @@ export class TuiApp {
       } catch {}
       this.onSignalInt = null
     }
+    if (this.onExit) {
+      try {
+        process.off("exit", this.onExit)
+      } catch {}
+      this.onExit = null
+    }
     this.stdin = null
     this.pump.dispose()
     this.pump = null
@@ -355,6 +460,7 @@ export class TuiApp {
       // Tutup layar AKTIF (bisa diganti reacquireTerminal setelah spawn
       // gagal — menutup handle run() yang basi akan meninggalkan alt-screen
       // yatim; close() idempoten sehingga aman dua kali).
+      this.setMouseMode("off")
       this.currentScreen?.close()
     } catch {}
     this.currentScreen = null
@@ -364,14 +470,13 @@ export class TuiApp {
   // ── Penanganan key ──
 
   private requestAbort(): void {
-    if (!this.busy) return
+    if (!this.isBusy()) return
     try {
       this.host.abort()
     } catch {}
     const now = Date.now()
     const doubleTap = now - this.lastAbortAt < 1500
     if (!doubleTap) {
-      this.activityKind = "stopping"
       this.abortHintOn = true
       this.startActivityClock()
     }
@@ -394,6 +499,14 @@ export class TuiApp {
   }
 
   private handleKey(key: PromptKey): void {
+    if (key.type === "mouse") {
+      this.handleMouse(key)
+      return
+    }
+    if (key.type === "wheelup" || key.type === "wheeldown") {
+      this.scrollBy(key.type === "wheelup" ? 0.5 : -0.5)
+      return
+    }
     // Scroll SELALU tersedia (menu buka/tutup, busy/idle, layar menciut) —
     // di-intercept sebelum engine supaya tak jadi histori maupun teks.
     // Dulu di bawah gate tooSmall: terminal menciut + turn busy = tak bisa
@@ -426,24 +539,34 @@ export class TuiApp {
       this.applyEngine(key)
       return
     }
-    // Abort/batal: Esc & Ctrl+C — berlaku juga saat layar menciut (jalan
-    // keluar saat terminal mengecil di tengah turn busy).
-    // Jalan keluar saat abort macet (provider/tool non-kooperatif abaikan
-    // sinyal): Esc/Ctrl+C KEDUA dalam 1.5 dtk, atau Ctrl+D baris-kosong,
-    // = abort + quit. Tanpa ini sesi hanya bisa dibunuh kill -9 (kontrak I14).
-    if (key.type === "esc" || key.type === "ctrl-c") {
-      if (this.busy) {
+    if (key.type === "ctrl-c") {
+      if (this.selection && !this.selection.dragging) this.copySelection()
+      return
+    }
+    // Abort/batal: Esc — berlaku juga saat layar menciut (jalan keluar saat
+    // terminal mengecil di tengah turn busy). Jalan keluar saat abort macet
+    // (provider/tool non-kooperatif abaikan sinyal): Esc dua kali dalam 1.5 dtk,
+    // atau Ctrl+D baris-kosong, = abort + quit. Tanpa ini sesi hanya bisa
+    // dibunuh kill -9 (kontrak I14).
+    if (key.type === "esc" && this.selection) {
+      this.selection = null
+      this.paintCurrent()
+      return
+    }
+    if (key.type === "esc") {
+      if (this.isBusy()) {
         this.requestAbort()
         return
       }
       if (this.tooSmall()) return
-      if (key.type === "esc" && this.state.menuOpen) {
+      if (this.state.menuOpen) {
         this.applyEngine(key)
         return
       }
-      if (this.state.line) {
+      if (this.state.line || this.editing) {
         this.state = createState()
         this.histIdx = -1
+        this.editing = false
         this.paintCurrent()
       }
       return
@@ -455,10 +578,10 @@ export class TuiApp {
       if (key.type === "ctrl-d") this.quit()
       return
     }
-    // Saat turn berjalan SEMUA input dibekukan kecuali abort (Esc/Ctrl+C),
-    // scroll (PgUp/PgDn di atas), dan Ctrl+D baris-kosong (= abort + quit,
+    // Saat turn berjalan SEMUA input dibekukan kecuali abort (Esc), scroll
+    // (mouse wheel/PgUp/PgDn di atas), dan Ctrl+D baris-kosong (= abort + quit,
     // jalan keluar saat abort macet — kontrak I14).
-    if (this.busy) {
+    if (this.isBusy()) {
       if (key.type === "ctrl-d" && !this.state.line) {
         try {
           this.host.abort()
@@ -530,6 +653,7 @@ export class TuiApp {
   }
 
   private applyEngine(key: PromptKey): void {
+    if (["char", "backspace", "delete", "enter", "ctrl-j"].includes(key.type)) this.selection = null
     const hints = (line: string) => (line.startsWith("/") ? this.host.listCommands(line) : [])
     const { state, action } = applyKey(this.state, key, hints)
     this.state = state
@@ -538,6 +662,7 @@ export class TuiApp {
     } else if (action === "cancel") {
       // Engine cancel (ctrl-c/ctrl-d) sudah ditangani di atas; tak terjangkau.
     } else if (action === "render" || action === "none") {
+      if (action === "render" && key.type === "char") this.editing = true
       // Ketikan baru = kembali ke ekor (I18); stream turn TIDAK me-reset
       // (user yang sedang membaca ke atas tak dirampas).
       if (key.type === "char" || key.type === "backspace" || key.type === "delete") {
@@ -551,6 +676,7 @@ export class TuiApp {
     const line = rawLine.trim()
     this.state = createState()
     this.histIdx = -1
+    this.editing = false
     this.followTail()
     this.abortHintOn = false
     if (!line) {
@@ -560,9 +686,8 @@ export class TuiApp {
     this.rememberHistory(line)
     this.transcript.pushUser(rawLine)
     this.busy = true
+    this.thinkingActive = false
     this.turnStartedAt = Date.now()
-    this.activityKind = "working"
-    this.textSeen = false
     this.lastAbortAt = 0
     this.startActivityClock()
     this.paintCurrent()
@@ -573,9 +698,8 @@ export class TuiApp {
       this.transcript.pushError(e instanceof Error ? e.message : String(e))
     } finally {
       this.busy = false
-      this.activityKind = "working"
+      this.editing = true
       this.turnStartedAt = 0
-      this.textSeen = false
       this.stopActivityClock()
       if (!this.quitRequested) this.paintCurrent()
     }
@@ -607,6 +731,9 @@ export class TuiApp {
   suspend(): void {
     if (!this.currentScreen || this.quitRequested) return
     if (this.suspended++ > 0) return
+    if (this.selection) this.selection.dragging = false
+    this.decoder.pending = []
+    this.setMouseMode("wheel")
     try {
       if (this.onData) this.stdin?.removeListener("data", this.onData)
     } catch {}
@@ -628,7 +755,8 @@ export class TuiApp {
     try {
       if (this.onData) this.stdin?.on("data", this.onData)
     } catch {}
-    if (this.busy) this.startActivityClock()
+    this.setMouseMode(mouseSelectionEnabled() ? "drag" : "off")
+    if (this.isBusy()) this.startActivityClock()
     this.paintCurrent()
   }
 
@@ -648,9 +776,11 @@ export class TuiApp {
       this.stdin?.setRawMode(false)
     } catch {}
     try {
+      this.setMouseMode("off")
       this.currentScreen?.close()
     } catch {}
     this.currentScreen = null
+    this.lastLayout = null
     this.released = true
   }
 
@@ -667,10 +797,11 @@ export class TuiApp {
     if (!screen.ok) return false
     this.currentScreen = screen
     this.released = false
+    this.setMouseMode(!mouseSelectionEnabled() ? "off" : this.suspended > 0 ? "wheel" : "drag")
     try {
       this.stdin?.setRawMode(true)
     } catch {}
-    if (this.busy) this.startActivityClock()
+    if (this.isBusy()) this.startActivityClock()
     this.paintCurrent()
     return true
   }
@@ -702,28 +833,22 @@ export class TuiApp {
     const cols = screen.cols
     const rows = screen.rows
     const snap = this.host.getStatus()
-    const busy = this.busy || snap.busy
-    const statusLine =
-      renderFooter(
-        {
-          ...snap.footer,
-          activity: this.activityText(snap),
-          sparkFrame: busy && !motionReduced() ? this.tick : 0,
-        },
-        cols,
-      )[0] ?? ""
-    const menu = this.menuRows(rows, cols)
-    const inputAll = this.inputRows(cols)
-    const inputH = Math.min(MAX_INPUT_ROWS, Math.max(1, inputAll.length))
-    const viewH = Math.max(1, rows - 1 - inputH - menu.length)
-    const body = this.transcript.view(cols, viewH, this.scrollBack)
-    const frame: string[] = [...body, ...menu, ...inputAll.slice(-inputH), statusLine]
-    while (frame.length < rows) frame.unshift("")
-    const dimmed = frame.slice(-rows).map((ln) => TuiApp.applyBackdropDim(ln))
+    const layout = this.buildLayout(rows, cols, snap)
+    this.lastLayout = layout
+    const dimmed = layout.frame.map((ln) => TuiApp.applyBackdropDim(ln))
     try {
       screen.paint(dimmed)
     } catch {}
     this.frames++
+  }
+
+  private isBusy(): boolean {
+    if (this.busy) return true
+    try {
+      return this.host.getStatus().busy
+    } catch {
+      return false
+    }
   }
 
   // ── Histori prompt (memori sesi; tak persist ke berkas REPL) ──
@@ -775,6 +900,7 @@ export class TuiApp {
       if (r.action !== "render" && r.action !== "none") break
     }
     this.state = s
+    this.editing = true
     this.paintCurrent()
   }
 
@@ -840,11 +966,11 @@ export class TuiApp {
     if (this.activityTimer || this.quitRequested) return
     const tick = () => {
       this.activityTimer = undefined
-      if (!this.busy || this.quitRequested) return
+      if (!this.isBusy() || this.quitRequested) return
       if (this.suspended === 0 && !this.released) this.paintCurrent()
       this.startActivityClock()
     }
-    this.activityTimer = setTimeout(tick, 200)
+    this.activityTimer = setTimeout(tick, DOT_INTERVAL_MS)
     try {
       ;(this.activityTimer as unknown as { unref?: () => void }).unref?.()
     } catch {}
@@ -857,26 +983,54 @@ export class TuiApp {
     }
   }
 
-  private activityText(snap: TuiStatusSnapshot): string | undefined {
-    if (!this.busy && !snap.busy) return undefined
-    const elapsedStart = this.turnStartedAt || Date.now()
-    if (this.activityKind === "stopping") {
-      return `${t("app.stopping")} ${formatElapsed(Date.now() - elapsedStart)}`
-    }
+  private activityStatus(snap: TuiStatusSnapshot): string {
     const activity = snap.pinnedActivity
-    if (activity) {
-      const name = sanitizeAnsiLine(activity.name || "tool")
-      const target = activity.target ? ` ${sanitizeAnsiLine(activity.target)}` : ""
-      const activityStart = Number.isFinite(activity.tsStart) ? activity.tsStart : elapsedStart
-      return `${t("app.running")} ${name}${target} ${formatElapsed(Date.now() - activityStart)}`
+    if (!activity) return ""
+    const name = sanitizeAnsiLine(String(activity.name ?? ""))
+    const target = activity.target ? ` ${sanitizeAnsiLine(String(activity.target))}` : ""
+    return sanitizeAnsiLine(`${name}${target}`)
+  }
+
+  private activityRow(content: string, cols: number): string {
+    const width = Math.max(1, Math.floor(cols) - 1)
+    return truncateToWidth(sanitizeAnsiLine(content), width, "")
+  }
+
+  private composerRows(
+    cols: number,
+    snap: TuiStatusSnapshot,
+    busy: boolean,
+    now: number,
+  ): string[] {
+    if (busy) {
+      const start = this.turnStartedAt || now
+      const status = this.activityStatus(snap)
+      const content = this.thinkingActive ? thinkingDots(now, start) : status
+      return [this.activityRow(content, cols)]
     }
-    const label = this.activityKind === "thinking" ? t("app.thinking") : t("app.working")
-    return `${label} ${formatElapsed(Date.now() - elapsedStart)}`
+    if (!this.editing) return [""]
+    return this.inputRows(cols)
+  }
+
+  private composerHeight(cols: number, busy = this.busy): number {
+    if (busy || !this.editing) return 1
+    return Math.min(MAX_INPUT_ROWS, Math.max(1, this.inputRows(cols).length))
   }
 
   // ── Paint ──
 
   private currentScreen: AltScreen | null = null
+
+  private setMouseMode(mode: MouseMode): void {
+    if (this.mouseMode === mode) return
+    const sequence = mode === "drag" ? MOUSE_DRAG_ON : mode === "wheel" ? MOUSE_WHEEL_ON : MOUSE_OFF
+    try {
+      if (mode === "off" || this.mouseMode === "off") process.stdout.write(sequence)
+      else if (mode === "drag") process.stdout.write(`\x1b[?1000l${sequence}`)
+      else process.stdout.write(`\x1b[?1002l${sequence}`)
+      this.mouseMode = mode
+    } catch {}
+  }
 
   private paintCurrent(): void {
     if (this.currentScreen) this.paint(this.currentScreen)
@@ -892,19 +1046,18 @@ export class TuiApp {
   }
 
   private viewportHeight(rows: number, cols: number): number {
-    const inputH = this.inputHeight(cols)
-    const menuH = this.menuHeight(rows, cols)
-    return Math.max(1, rows - 1 - inputH - menuH)
+    const busy = this.isBusy()
+    const inputH = this.composerHeight(cols, busy)
+    const menuH = this.menuHeight(rows, cols, busy)
+    return Math.max(1, rows - 2 - inputH - menuH)
   }
 
   private inputRows(cols: number): string[] {
+    if (!this.editing) return []
     const w = Math.max(10, cols)
     const out: string[] = []
-    // Baris kosong = placeholder redup (edukasi tanpa banjir): cara keluar
-    // selalu terlihat (Ctrl+D), tanpa menuh-menuhi transkrip.
     if (!this.state.line) {
-      const hint = c.faint(truncateToWidth(t("app.placeholder"), w - PROMPT_FIRST.length))
-      out.push(`${PROMPT_FIRST}${hint}`)
+      out.push(PROMPT_FIRST)
       return out
     }
     const logical = this.state.line.split("\n")
@@ -912,22 +1065,17 @@ export class TuiApp {
       const prefix = idx === 0 ? PROMPT_FIRST : PROMPT_CONT
       const full = `${prefix}${ln}`
       const wrapped = chunkByWidth(full, w)
-      // Baris logis kosong tetap menempati 1 baris visual.
       if (!wrapped.length) out.push(full)
       else for (const r of wrapped) out.push(r)
     })
     return out
   }
 
-  private inputHeight(cols: number): number {
-    return Math.min(MAX_INPUT_ROWS, Math.max(1, this.inputRows(cols).length))
-  }
-
-  private menuRows(rows: number, cols: number): string[] {
-    if (!this.state.menuOpen || !this.state.line.startsWith("/")) return []
+  private menuRows(rows: number, cols: number, busy = this.isBusy()): string[] {
+    if (!this.editing || busy || !this.state.menuOpen || !this.state.line.startsWith("/")) return []
     const hints = this.host.listCommands(this.state.line)
     if (!hints.length) return []
-    const room = Math.max(0, rows - 1 - this.inputHeight(cols) - 3)
+    const room = Math.max(0, rows - 2 - this.composerHeight(cols, busy) - 3)
     const shown = hints.slice(0, Math.min(MAX_DROPDOWN_ROWS, room))
     const w = Math.max(10, cols)
     const out: string[] = [c.muted(t("app.menuHeader"))]
@@ -941,8 +1089,248 @@ export class TuiApp {
     return out.map((l) => chunkByWidth(l, w)[0] ?? "")
   }
 
-  private menuHeight(rows: number, cols: number): number {
-    return this.menuRows(rows, cols).length
+  private menuHeight(rows: number, cols: number, busy = this.isBusy()): number {
+    return this.menuRows(rows, cols, busy).length
+  }
+
+  private selectedRange(row: TranscriptRow): { start: number; end: number } | null {
+    const selection = this.selection
+    if (!selection || !row.selectable || row.sourceId < 0) return null
+    const first =
+      this.transcript.comparePoints(selection.anchor, selection.focus) <= 0
+        ? selection.anchor
+        : selection.focus
+    const last = first === selection.anchor ? selection.focus : selection.anchor
+    const rowStart = { id: row.sourceId, offset: row.sourceStart }
+    const rowEnd = { id: row.sourceId, offset: row.sourceEnd }
+    if (this.transcript.comparePoints(last, rowStart) < 0) return null
+    if (this.transcript.comparePoints(first, rowEnd) > 0) return null
+    const start =
+      first.id === row.sourceId ? Math.max(row.sourceStart, first.offset) : row.sourceStart
+    const end = last.id === row.sourceId ? Math.min(row.sourceEnd, last.offset) : row.sourceEnd
+    if (end <= start) return null
+    return {
+      start: this.transcript.columnAtOffset(row, start),
+      end: this.transcript.columnAtOffset(row, end),
+    }
+  }
+
+  private scheduleSelectionPaint(): void {
+    if (this.repaintTimer !== undefined) return
+    this.repaintTimer = setTimeout(() => {
+      this.repaintTimer = undefined
+      if (!this.quitRequested && this.suspended === 0 && !this.released) this.paintCurrent()
+    }, 16)
+    try {
+      ;(this.repaintTimer as unknown as { unref?: () => void }).unref?.()
+    } catch {}
+  }
+
+  private movePromptCursor(
+    layout: FrameLayout,
+    key: Extract<PromptKey, { type: "mouse" }>,
+  ): boolean {
+    if (this.isBusy() || !this.editing) return false
+    const relativeRow = key.y - 1 - layout.composerTop
+    const targetRow = layout.composerOffset + relativeRow
+    if (relativeRow < 0 || targetRow < 0) return false
+    const w = Math.max(10, process.stdout.columns || 80)
+    const logical = this.state.line.split("\n")
+    let rowIndex = 0
+    let baseCodeUnits = 0
+    for (let lineIndex = 0; lineIndex < logical.length; lineIndex++) {
+      const line = logical[lineIndex] ?? ""
+      const prefix = lineIndex === 0 ? PROMPT_FIRST : PROMPT_CONT
+      const rows = chunkByWidth(`${prefix}${line}`, w)
+      if (targetRow < rowIndex + rows.length) {
+        const row = rows[targetRow - rowIndex] ?? ""
+        const plain = stripSgr(sanitizeAnsi(row))
+        const body = plain.startsWith(prefix) ? plain.slice(prefix.length) : plain
+        const targetColumn = Math.max(
+          0,
+          key.x - 1 - (plain.startsWith(prefix) ? displayWidth(prefix) : 0),
+        )
+        const local = graphemeOffsetAtColumn(body, targetColumn)
+        const base = toGraphemes(this.state.line.slice(0, baseCodeUnits)).length
+        this.state = { ...this.state, cursor: base + local }
+        this.histIdx = -1
+        this.editing = true
+        this.selection = null
+        this.paintCurrent()
+        return true
+      }
+      rowIndex += rows.length
+      baseCodeUnits += line.length + 1
+    }
+    return false
+  }
+
+  private handleMouse(key: Extract<PromptKey, { type: "mouse" }>): void {
+    if (key.action === "move" || (key.action !== "release" && key.button !== 0)) return
+    const layout = this.lastLayout
+    if (!layout) return
+    const rowIndex = key.y - 1 - layout.transcriptTop
+    const row = rowIndex >= 0 ? layout.transcriptRows[rowIndex] : undefined
+    if (key.action === "press") {
+      if (!row) {
+        if (this.movePromptCursor(layout, key)) return
+        this.selection = null
+        this.paintCurrent()
+        return
+      }
+      const point = this.transcript.pointAt(row, key.x - 1)
+      if (!point) {
+        this.selection = null
+        this.paintCurrent()
+        return
+      }
+      this.selection = { anchor: point, focus: point, dragging: true }
+      this.paintCurrent()
+      return
+    }
+    if (key.action === "drag") {
+      if (!this.selection?.dragging || !row) return
+      const point = this.transcript.pointAt(row, key.x - 1)
+      if (!point) return
+      this.selection.focus = point
+      this.scheduleSelectionPaint()
+      return
+    }
+    if (key.action === "release") {
+      if (!this.selection?.dragging) return
+      if (row) {
+        const point = this.transcript.pointAt(row, key.x - 1)
+        if (point) this.selection.focus = point
+      }
+      this.selection.dragging = false
+      this.paintCurrent()
+    }
+  }
+
+  private copySelection(): void {
+    const selection = this.selection
+    if (!selection) return
+    const text = this.transcript.selectionText(selection.anchor, selection.focus).trim()
+    if (!text) {
+      this.selection = null
+      this.paintCurrent()
+      return
+    }
+    if (text.length > MAX_SELECTION_CHARS) {
+      this.transcript.pushInfo([c.warning(t("tui.selectionTooLarge"))])
+      this.paintCurrent()
+      return
+    }
+    let copied = false
+    try {
+      copied = this.host.copySelection(text)
+    } catch {}
+    if (copied) this.transcript.pushInfo([c.muted(t("tui.selectionCopied"))])
+    else this.transcript.pushInfo([c.muted(t("tui.selectionCopyFailed"))])
+    this.paintCurrent()
+  }
+
+  private buildLayout(rows: number, cols: number, snap: TuiStatusSnapshot): FrameLayout {
+    const height = Math.max(1, Math.floor(rows))
+    const width = Math.max(1, Math.floor(cols))
+    const busy = this.busy || snap.busy
+    const now = Date.now()
+    if (busy) {
+      if (!this.turnStartedAt) this.turnStartedAt = now
+      this.startActivityClock()
+    } else {
+      this.thinkingActive = false
+      this.turnStartedAt = 0
+    }
+    const newCount = this.scrollBack > 0 ? this.transcript.total() - this.scrollBase : 0
+    const indicator: string[] = []
+    if (busy && this.abortHintOn) indicator.push(c.warning(t("app.abortHint")))
+    else if (newCount > 0) indicator.push(c.muted(t("app.newBelow", { n: newCount })))
+
+    const allMenu = this.menuRows(height, width, busy)
+    const allComposer = this.composerRows(width, snap, busy, now)
+    const contentBudget = Math.max(1, height - 3 - indicator.length)
+    let menu = allMenu
+    let composerH = Math.min(MAX_INPUT_ROWS, Math.max(1, allComposer.length))
+    if (menu.length + composerH > contentBudget) {
+      menu = menu.slice(0, Math.max(0, contentBudget - 1))
+      composerH = Math.max(1, contentBudget - menu.length)
+    }
+    const viewH = Math.max(1, height - 2 - composerH - menu.length - indicator.length)
+    const curWrapped = this.transcript.wrappedLength(width)
+    if (this.scrollBack > 0 && this.lastWrapped > 0) {
+      this.scrollBack = Math.max(
+        0,
+        Math.min(this.scrollBack + (curWrapped - this.lastWrapped), Math.max(0, curWrapped - 1)),
+      )
+    }
+    this.lastWrapped = curWrapped
+    if (
+      this.selection &&
+      (!this.transcript.hasSource(this.selection.anchor.id) ||
+        !this.transcript.hasSource(this.selection.focus.id) ||
+        (!this.selection.dragging &&
+          !this.transcript.selectionText(this.selection.anchor, this.selection.focus)))
+    ) {
+      this.selection = null
+    }
+    const viewport = this.transcript.viewport(width, viewH, this.scrollBack)
+    const bodyRows = viewport.rows
+    const body = bodyRows.map((row) => {
+      const selected = this.selectedRange(row)
+      return selected ? highlightColumns(row.text, selected.start, selected.end) : row.text
+    })
+
+    let shownComposer: string[]
+    let cursorRow: number
+    let cursorCol = 1
+    let composerOffset = 0
+    if (!busy && this.editing) {
+      const cursor = this.cursorIndex(width)
+      const winStart = Math.max(0, Math.min(allComposer.length - composerH, cursor.visIdx))
+      composerOffset = winStart
+      shownComposer = allComposer.slice(winStart, winStart + composerH)
+      cursorRow = viewH + menu.length + indicator.length + (cursor.visIdx - winStart) + 1
+      cursorCol = cursor.col
+    } else {
+      shownComposer = allComposer.slice(0, composerH)
+      cursorRow = viewH + menu.length + indicator.length + 1
+    }
+
+    const started = this.turnStartedAt || now
+    const sparkFrame =
+      busy && !motionReduced() ? Math.max(1, Math.floor((now - started) / DOT_INTERVAL_MS) + 1) : 0
+    const elapsed = now - started
+    const timer = busy ? formatTimer(elapsed) : TIMER_TEXT
+    const footer =
+      renderFooter(
+        {
+          ...snap.footer,
+          sparkFrame,
+          timer,
+          timerActive: busy,
+          timerHighlight: timerHighlight(elapsed),
+        },
+        width,
+      )[0] ?? ""
+    const frame = [...body, ...menu, ...indicator, ...shownComposer, "", footer]
+    const rawLength = frame.length
+    const crop = Math.max(0, rawLength - height)
+    const topPad = Math.max(0, height - rawLength)
+    while (frame.length < height) frame.unshift("")
+    const out = frame.slice(-height)
+    return {
+      frame: out,
+      cursor: {
+        row: Math.max(1, Math.min(height, cursorRow + topPad - crop)),
+        col: Math.max(1, cursorCol),
+      },
+      transcriptRows: bodyRows,
+      transcriptTop: topPad - crop,
+      composerTop: topPad - crop + body.length + menu.length + indicator.length,
+      composerLines: allComposer,
+      composerOffset,
+    }
   }
 
   /** True bila terminal menciut di bawah minimum TUI (MIN_ROWS/MIN_COLS). */
@@ -956,10 +1344,8 @@ export class TuiApp {
     this.currentScreen = screen
     const cols = screen.cols
     const rows = screen.rows
-    // Layar menciut tengah sesi: satu bingkai pesan jujur (tepat `rows`
-    // baris), bukan layout rusak. Kembali normal otomatis saat resize
-    // (onResize → paint). Gagal-di-kode-lama: wrap pecah + kursor liar.
     if (this.tooSmall()) {
+      this.lastLayout = null
       const w = Math.max(1, cols)
       const frame = [c.warning(truncateToWidth(t("tui.tooSmall"), w))]
       while (frame.length < Math.max(1, rows)) frame.push("")
@@ -969,67 +1355,10 @@ export class TuiApp {
       this.frames++
       return
     }
-    const snap = this.host.getStatus()
-    const busy = this.busy || snap.busy
-    // MINICODE_MOTION=0 (temuan audit TUI-006): spark statis redup — status
-    // busy tak boleh bergantung pada animasi (aksesibilitas / rec / SSH lambat).
-    this.tick = busy ? this.tick + 1 : 0
-    const statusLine =
-      renderFooter(
-        {
-          ...snap.footer,
-          activity: this.activityText(snap),
-          sparkFrame: busy && !motionReduced() ? this.tick : 0,
-        },
-        cols,
-      )[0] ?? ""
-    const menu = this.menuRows(rows, cols)
-    const inputAll = this.inputRows(cols)
-    const inputH = Math.min(MAX_INPUT_ROWS, Math.max(1, inputAll.length))
-    // Indikator "output baru di bawah": user membaca ke atas saat stream
-    // masuk — tanpa ini output baru lewat diam-diam. Makan 1 baris viewport.
-    // total() monotonik: evict cap tak membuat hitungan negatif/hilang.
-    const newCount = this.scrollBack > 0 ? this.transcript.total() - this.scrollBase : 0
-    // Indikator + hint abort saling eksklusif (satu slot): scroll memakai slot
-    // untuk "baris baru"; abort memakainya untuk petunjuk keluar.
-    const indicator: string[] = []
-    if (this.busy && this.abortHintOn) indicator.push(c.warning(t("app.abortHint")))
-    else if (newCount > 0) indicator.push(c.muted(t("app.newBelow", { n: newCount })))
-    const viewH = Math.max(1, rows - 1 - inputH - menu.length - indicator.length)
-    // Kunci posisi baca: stream yang menambah baris saat user scroll ke atas
-    // ikut menggeser scrollBack agar jendela menunjuk baris absolut yang sama
-    // (dulu viewport merayap mengikuti ekor — kontrak I17).
-    const curWrapped = this.transcript.wrappedLength(cols)
-    if (this.scrollBack > 0 && this.lastWrapped > 0) {
-      this.scrollBack = Math.max(
-        0,
-        Math.min(this.scrollBack + (curWrapped - this.lastWrapped), Math.max(0, curWrapped - 1)),
-      )
-    }
-    this.lastWrapped = curWrapped
-    const body = this.transcript.view(cols, viewH, this.scrollBack)
-    // Jendela input mengikuti kursor: bila kursor di atas jendela ekor
-    // (mis. paste 10 baris lalu Home), gulir ke atas agar kursor terlihat.
-    // Tanpa ini baris atas tak terjangkau visual tapi kursor diparkir di
-    // baris yang salah (dulu selalu slice ekor).
-    const cursor = this.cursorIndex(cols)
-    const winStart = Math.max(0, Math.min(inputAll.length - inputH, cursor.visIdx))
-    const shownInput = inputAll.slice(winStart, winStart + inputH)
-    const frame: string[] = [...body, ...menu, ...indicator, ...shownInput, statusLine]
-    while (frame.length < rows) frame.unshift("")
-    const out = frame.slice(-rows)
+    const layout = this.buildLayout(rows, cols, this.host.getStatus())
+    this.lastLayout = layout
     try {
-      screen.paint(out)
-    } catch {}
-    // Parkir kursor di posisi ketik (kolom terminal, bukan karakter).
-    // Di dalam blok sync-update yang SAMA dengan frame (temuan audit TUI-007):
-    // kursor yang ditulis setelah SYNC_END berpotensi tearing di emulator
-    // tanpa ?2026 (frame tampil, kursor satu posisi lama).
-    const cursorRow = viewH + menu.length + indicator.length + (cursor.visIdx - winStart) + 1
-    try {
-      process.stdout.write(
-        `${SYNC_UPDATE_START}\x1b[?25l\x1b[${Math.max(1, cursorRow)};${Math.max(1, cursor.col)}H\x1b[?25h${SYNC_UPDATE_END}`,
-      )
+      screen.paint(layout.frame, layout.cursor)
     } catch {}
     this.frames++
   }

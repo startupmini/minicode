@@ -1,5 +1,6 @@
 // Unit Transcript: koleksi event → baris logis → viewport.
 import { describe, expect, test } from "bun:test"
+import { displayWidth } from "../src/ui/render/width.ts"
 import { Transcript } from "../src/ui/tui/transcript.ts"
 import { createFakeBus } from "./helpers/tui-harness.ts"
 
@@ -82,6 +83,44 @@ describe("Transcript", () => {
     t.pushInfo(["baru"])
     expect(t.total()).toBe(5011)
   })
+  test("projection selection menyalin logical text tanpa wrap/prefix", () => {
+    const { t } = setup()
+    t.pushInfo(["alpha beta", "gamma"])
+    t.pushUser("prompt\nnext")
+    const rows = t.viewport(40, 8, 0).rows
+    const alpha = rows.find((row) => row.text.includes("alpha"))!
+    const prompt = rows.find((row) => row.text.includes("minicode"))!
+    const alphaStart = t.pointAt(alpha, 0)!
+    const alphaEnd = t.pointAt(alpha, 5)!
+    expect(t.selectionText(alphaStart, alphaEnd)).toBe("alpha")
+    const promptStart = t.pointAt(prompt, 11)!
+    expect(t.selectionText(promptStart, promptStart)).toBe("")
+  })
+  test("selection wrapped tetap satu logical source tanpa newline artefaktual", () => {
+    const { t } = setup()
+    t.pushInfo(["abcdefghijklmnopqrst"])
+    const rows = t.viewport(10, 4, 0).rows.filter((row) => row.selectable)
+    const start = t.pointAt(rows[0]!, 1)!
+    const end = t.pointAt(rows[1]!, 10)!
+    expect(t.selectionText(start, end)).toBe("bcdefghijklmnopqrst")
+  })
+  test("user prompt wrapped tetap copy tanpa prefix chrome", () => {
+    const { t } = setup()
+    t.pushUser("abcdefghijkl")
+    const rows = t.viewport(10, 4, 0).rows.filter((row) => row.selectable)
+    const start = t.pointAt(rows[0]!, 0)!
+    const last = rows[rows.length - 1]!
+    const end = t.pointAt(last, displayWidth(last.text))!
+    expect(t.selectionText(start, end)).toBe("abcdefghijkl")
+  })
+  test("tabel selection memakai TSV tanpa border/padding", () => {
+    const { t } = setup()
+    t.pushInfo(["| A | B |\n| --- | --- |\n| x | y |"])
+    const rows = t.viewport(40, 8, 0).rows.filter((row) => row.selectable)
+    const start = t.pointAt(rows[0]!, 0)!
+    const end = t.pointAt(rows[rows.length - 1]!, 40)!
+    expect(t.selectionText(start, end)).toBe("A\tB\nx\ty")
+  })
   test("wrappedLength = jumlah baris visual view (kunci scroll)", () => {
     const { t } = setup()
     t.pushInfo(["a", "b", "c"])
@@ -93,12 +132,12 @@ describe("Transcript", () => {
     bus.emit("context:compacted", { reason: "penuh" })
     expect(t.view(40, 2, 0).join("\n")).toContain("compacted")
   })
-  test("thinking minimized: penanda hidup lalu commit", () => {
+  test("thinking minimized: transcript bersih, indikator dots dimiliki App", () => {
     const { bus, t } = setup()
     bus.emit("provider:extension", { kind: "reasoning", data: { text: "hmm " } })
     bus.emit("provider:extension", { kind: "reasoning", data: { text: "mikirmodelrahasia" } })
     const live = t.view(40, 3, 0).join("\n")
-    expect(live).toContain("thinking")
+    expect(live).not.toContain("thinking")
     expect(live).not.toContain("mikirmodelrahasia")
     bus.emit("turn:completed", {})
     expect(t.view(40, 3, 0).join("\n")).not.toContain("thinking")

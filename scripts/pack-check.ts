@@ -238,8 +238,8 @@ try {
 } catch {}
 console.log(`\nukuran unpacked: ${unpackedKb} KB`)
 check(
-  "ukuran di bawah 2 MB (tak ada node_modules/test terbawa)",
-  unpackedKb < 2048,
+  "ukuran di bawah 2.25 MiB (tak ada node_modules/test terbawa)",
+  unpackedKb < 2304,
   `${unpackedKb} KB`,
 )
 

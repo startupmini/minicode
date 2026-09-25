@@ -31,6 +31,7 @@ function bootApp() {
     getStatus: () => ({ footer: { mode: "auto", model: "m", cwd: "/k" }, busy: false }),
     listCommands: () => [],
     submit: async () => undefined,
+    copySelection: () => true,
     abort: () => {},
     cycleMode: () => {},
     toggleCompact: () => {},
@@ -76,7 +77,7 @@ describe("TUI-001: sinyal fatal me-restore terminal", () => {
   test("SIGTERM saat TUI hidup: raw off + alt-screen exit + exit 143", async () => {
     const runP = bootApp()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     const { exits, restore } = stubExit()
     try {
       process.emit("SIGTERM")
@@ -87,6 +88,8 @@ describe("TUI-001: sinyal fatal me-restore terminal", () => {
     expect(exits).toEqual([143])
     // Restore: buffer alt dikembalikan + raw mode mati.
     expect(tty!.all()).toContain("\x1b[?1049l")
+    expect(tty!.all()).toContain("\x1b[?1002l")
+    expect(tty!.all()).toContain("\x1b[?1006l")
     expect(tty!.isRaw()).toBe(false)
     // Terakhir: quit normal memastikan cleanup melepas handler (count 0)
     // — pasangan ketat, sinyal berikutnya kembali ke default proses.
@@ -108,7 +111,7 @@ describe("TUI-001: sinyal fatal me-restore terminal", () => {
       expect(sentinel).toBe(true)
       bootApp()
       await tty!.ready()
-      await tty!.waitForOutput((o) => o.includes("minicode"))
+      await tty!.waitForOutput((o) => o.includes("00.00.00"))
       const { exits, restore } = stubExit()
       try {
         process.emit("SIGHUP")

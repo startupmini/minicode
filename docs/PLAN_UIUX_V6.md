@@ -123,7 +123,7 @@ Aman untuk emoji: `backspace` sudah code-point aware (`prompt-engine.ts:80`); lo
 | # | Masalah | Berkas | Perbaikan |
 |---|---|---|---|
 | 7 | Overlay meluber melewati tinggi terminal dan tidak bisa di-scroll — 30 baris dirender penuh di terminal 20 baris, header terguling keluar | `fullscreen.ts:287, 344` | Slice ke `overlayLines`, state `overlayScroll`, panah/PgUp/PgDn, indikator `n/total`. Pinjam logika `cli/panel.ts:64-82` yang sudah benar |
-| 8 | Byte mouse bocor jadi teks (`teks` → `teks 00` saat diklik) | `screen.ts:30`, `prompt-engine.ts:225` | Hapus `enableMouse()`/`disableMouse()` — tidak ada konsumennya. `decodeKey` mengenali dan **membuang** `ESC[M`+3 byte serta SGR `ESC[<…M/m` untuk terminal yang mengirimnya sendiri |
+| 8 | Byte mouse bocor jadi teks (`teks` → `teks 00` saat diklik) | `screen.ts:30`, `prompt-engine.ts:225` | Decoder mengenali `ESC[M`+3 byte serta SGR `ESC[<…M/m`; klik dibuang, wheel dinormalisasi menjadi scroll transkrip, dan mouse tracking hanya aktif selama TUI |
 | 9 | `/resume` di TUI hanya mencetak instruksi manual | `fullscreen-driver.ts:114` | Respawn dengan `--resume <id>` seperti jalur klasik (`commands.ts:326`) |
 | 9b | Tiap slash command menembak `onPicker` → `onOverlay` → `onLine` berurutan | `fullscreen.ts:218-241` | Satu tabel dispatch: `builtin(picker) | builtin(overlay) | skill | prompt`, diputuskan sebelum eksekusi, bukan dengan mencoba tiga jalur |
 | 10 | Panah atas menggabungkan history ke teks yang ada (`halo` → `halo audit dong…`) | `cli/input.ts:198` | Ganti baris, jangan gabungkan — sejajar dengan perilaku shell dan dengan jalur fullscreen |
@@ -204,6 +204,6 @@ Agar cakupan jelas dan tidak melebar:
 
 - **Tidak ada framework TUI baru.** Pure ANSI tetap. Ink/blessed akan membuang seluruh `fullscreen.ts` demi masalah yang perbaikannya berukuran satu baris sampai satu fungsi.
 - **Tidak ada wrap/scroll transcript virtual.** `RING_MAX 60` dan `tail.slice(-bodyH)` memadai; sisa PLAN_UIUX soal virtual scroll ditunda sampai ada keluhan nyata.
-- **Tidak ada mouse click-to-copy** (PLAN_UIUX P3). Mouse tracking justru dimatikan di fase 5 — ia hanya merusak input.
+- **Tidak ada mouse click-to-copy** (PLAN_UIUX P3). Mouse wheel dipakai untuk scroll transkrip; klik mouse tetap diabaikan agar tidak merusak input.
 - **Tidak ada tema baru.** Empat preset yang ada dibuat bekerja lebih dulu.
 - **Repo-map, OAuth live, resolve-rate, publish npm** tetap di daftar tertunda PLAN_V5 — bukan UI/UX.

@@ -410,17 +410,74 @@ test("decodeKey: home/end/delete dalam bentuk CSI dan VT", () => {
   }
 })
 
-test("decodeKey: byte mouse dibuang, tidak jadi teks", () => {
-  // X10: ESC [ M + 3 byte. Tanpa penanganan, "00" bocor sebagai karakter biasa.
-  const x10 = decodeKeys(new TextEncoder().encode("\x1b[M\x20\x30\x30"))
-  expect(x10.map((k) => k.key.type)).toEqual(["ignore"])
+test("decodeKey: mouse press/drag/release dan wheel ternormalisasi", () => {
+  const x10Press = decodeKeys(new TextEncoder().encode("\x1b[M\x20\x30\x30"))[0]!.key
+  expect(x10Press).toMatchObject({ type: "mouse", action: "press", button: 0, x: 17, y: 17 })
+  expect(decodeKeys(new TextEncoder().encode("\x1b[M\x60\x30\x30")).map((k) => k.key.type)).toEqual(
+    ["wheelup"],
+  )
+  expect(decodeKeys(new TextEncoder().encode("\x1b[M\x61\x30\x30")).map((k) => k.key.type)).toEqual(
+    ["wheeldown"],
+  )
 
-  const sgr = decodeKeys(new TextEncoder().encode("\x1b[<0;12;34M"))
-  expect(sgr.map((k) => k.key.type)).toEqual(["ignore"])
+  const sgrPress = decodeKeys(new TextEncoder().encode("\x1b[<0;12;34M"))[0]!.key
+  expect(sgrPress).toMatchObject({ type: "mouse", action: "press", button: 0, x: 12, y: 34 })
+  expect(decodeKeys(new TextEncoder().encode("\x1b[<32;12;34M"))[0]?.key).toMatchObject({
+    type: "mouse",
+    action: "drag",
+    button: 0,
+  })
+  expect(decodeKeys(new TextEncoder().encode("\x1b[<0;12;34m"))[0]?.key).toMatchObject({
+    type: "mouse",
+    action: "release",
+    button: 0,
+  })
+  expect(decodeKeys(new TextEncoder().encode("\x1b[<35;12;34M"))[0]?.key).toMatchObject({
+    type: "mouse",
+    action: "move",
+    button: null,
+  })
+  expect(decodeKeys(new TextEncoder().encode("\x1b[<64;12;34M")).map((k) => k.key.type)).toEqual([
+    "wheelup",
+  ])
+  expect(decodeKeys(new TextEncoder().encode("\x1b[<65;12;34M")).map((k) => k.key.type)).toEqual([
+    "wheeldown",
+  ])
+  expect(decodeKeys(new TextEncoder().encode("\x1b[<66;12;34M")).map((k) => k.key.type)).toEqual([
+    "ignore",
+  ])
 
   const mixed = decodeKeys(new TextEncoder().encode("ab\x1b[M\x20\x30\x30cd"))
   const chars = mixed.map((k) => (k.key.type === "char" ? k.key.ch : "")).join("")
   expect(chars).toBe("abcd")
+})
+
+test("decodeKeysStream: mouse malformed dibuang dan teks berikutnya pulih", () => {
+  const samples = [
+    "\x1b[<0;1Mafter",
+    "\x1b[<0;1;xMafter",
+    "\x1b[<0;1;2;3Mafter",
+    "\x1b[<999999999999999999999;1;1Mafter",
+  ]
+  for (const sample of samples) {
+    const keys = decodeKeysStream(new TextEncoder().encode(sample), createDecoderState())
+    expect(keys.some((k) => k.key.type === "char" && k.key.ch === "a")).toBe(true)
+  }
+})
+
+test("decodeKeysStream: mouse tetap utuh di setiap split boundary", () => {
+  const bytes = new TextEncoder().encode("\x1b[<32;12;34M")
+  for (let split = 0; split <= bytes.length; split++) {
+    const state = createDecoderState()
+    const first = decodeKeysStream(bytes.slice(0, split), state)
+    if (split < bytes.length) expect(first).toEqual([])
+    else expect(first.map((k) => k.key.type)).toEqual(["mouse"])
+    const out = decodeKeysStream(bytes.slice(split), state)
+    if (split < bytes.length) {
+      expect(out.map((k) => k.key.type)).toEqual(["mouse"])
+      expect(out[0]?.key).toMatchObject({ action: "drag", button: 0, x: 12, y: 34 })
+    } else expect(out).toEqual([])
+  }
 })
 
 test("applyKey: ignore tidak mengubah state", () => {

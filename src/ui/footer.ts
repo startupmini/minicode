@@ -4,16 +4,18 @@
 // Frame animasi spark dan angka konteks DIKIRIM pemanggil lewat FooterStatus,
 // jadi render tetap deterministik dan bisa diuji tanpa menunggu waktu.
 //
-// Gaya (keputusan produk): footer hampir tak terlihat — garis + teks status
-// abu-abu gelap; SATU-SATUNYA yang berwarna adalah token mode (mapping sama
-// dengan prompt lama: plan kuning, ask biru, sisanya hijau).
+// Gaya (keputusan produk): footer hampir tak terlihat; field dipisahkan
+// dengan spasi dan warna, tanpa bullet separator. Mode memakai mapping warna
+// yang sama dengan prompt lama: plan kuning, ask biru, sisanya hijau.
 //
-// Tata letak: `✦ mode • model • cwd ……… 14.2k` — konteks rata kanan. Mode
-// di-pad ke lebar tetap agar teks di kanannya TIDAK bergeser saat mode berganti
-// (Shift+Tab): tanpa padding, `auto`→`allowlist` menggeser seluruh baris.
+// Tata letak: `✦ 00.00.00 mode  model  cwd ……… 14.2k` — konteks rata kanan.
+// Mode di-pad ke lebar tetap agar teks di kanannya TIDAK bergeser saat mode
+// berganti (Shift+Tab): tanpa padding, `auto`→`allowlist` menggeser seluruh baris.
 import { sanitizeAnsiLine } from "./render/sanitize.ts"
 import { c, glyphs } from "./render/theme.ts"
 import { displayWidth, padToWidth, truncateToWidth } from "./render/width.ts"
+
+export type TimerHighlight = "seconds" | "minutes" | "hours"
 
 export interface FooterStatus {
   mode: string
@@ -28,6 +30,9 @@ export interface FooterStatus {
    */
   sparkFrame?: number
   activity?: string
+  timer?: string
+  timerActive?: boolean
+  timerHighlight?: TimerHighlight
 }
 
 /** Lebar tetap kolom mode — `allowlist`/`allow-all` (9) adalah yang terpanjang. */
@@ -60,6 +65,17 @@ function sparkGlyph(frame: number): string {
   return frame % 2 === 0 ? c.white(g) : c.gray(g)
 }
 
+function paintTimer(text: string, active: boolean, highlight: TimerHighlight = "seconds"): string {
+  if (!active) return c.faint(text)
+  const parts = text.split(".")
+  if (parts.length !== 3) return c.white(text)
+  const rank: Record<TimerHighlight, number> = { seconds: 1, minutes: 2, hours: 3 }
+  const level = rank[highlight]
+  const part = (value: string, required: number): string =>
+    level >= required ? c.white(value) : c.faint(value)
+  return `${part(parts[0]!, 3)}${c.faint(".")}${part(parts[1]!, 2)}${c.faint(".")}${part(parts[2]!, 1)}`
+}
+
 /**
  * Perpendek path agar muat di terminal sedang tanpa membuang CWD sepenuhnya.
  * Mis. "D:\git\minicode\src\ui" -> "...\src\ui"
@@ -85,21 +101,23 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
   const cols = Math.max(10, Math.floor(columns) || 80)
 
   const spark = sparkGlyph(s.sparkFrame ?? 0)
-  const activity = s.activity ? `  ${c.info(sanitizeAnsiLine(s.activity))}` : ""
-  const lead = `${spark}${activity}  `
+  const timerText = s.timer ? sanitizeAnsiLine(s.timer) : ""
+  const timer = timerText
+    ? `${paintTimer(timerText, s.timerActive === true, s.timerHighlight)}  `
+    : ""
+  const lead = `${spark}  ${timer}`
   const mode = paintFooterMode(s.mode)
-  const dot = c.gray("•")
-  const sep = `    ${dot}    `
+  const fieldGap = "  "
   // Satu-baris: cwd/model bisa berisi newline (nama dir) — sanitizeAnsiLine
   // agar \n tak memecah frame lengket ke scrollback (displayWidth menghitung
   // \n = 0 sehingga align mengira muat).
   const model = c.gray(sanitizeAnsiLine(shortModel(s.model)))
-  const cwdTxt = c.gray(sanitizeAnsiLine(s.cwd))
-  const shortCwdTxt = c.gray(sanitizeAnsiLine(shortenPath(s.cwd)))
+  const cwdTxt = c.muted(sanitizeAnsiLine(s.cwd))
+  const shortCwdTxt = c.muted(sanitizeAnsiLine(shortenPath(s.cwd)))
 
-  const full = `${lead}${mode}${sep}${model}${sep}${cwdTxt}`
-  const shortened = `${lead}${mode}${sep}${model}${sep}${shortCwdTxt}`
-  const mid = `${lead}${mode}${sep}${model}`
+  const full = `${lead}${mode}${fieldGap}${model}${fieldGap}${cwdTxt}`
+  const shortened = `${lead}${mode}${fieldGap}${model}${fieldGap}${shortCwdTxt}`
+  const mid = `${lead}${mode}${fieldGap}${model}`
   const lean = `${lead}${mode}`
 
   const target = Math.max(4, cols - 1)
@@ -118,7 +136,8 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
     return `${left}${" ".repeat(gap)}${c.gray(ctx)}`
   }
 
-  // Tangga prioritas buang saat sempit: cwd penuh → cwd diperpendek → model (spark+mode+context kekal).
+  // Tangga prioritas buang saat sempit: cwd penuh → cwd diperpendek → model
+  // (spark + timer + mode + context tetap punya ruang).
   const candidates = shortCwdTxt !== cwdTxt ? [full, shortened, mid, lean] : [full, mid, lean]
   for (const left of candidates) {
     const line = align(left)

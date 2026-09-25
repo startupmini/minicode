@@ -138,9 +138,13 @@ export function createContentStore(): ContentStore {
       if (prev) totalChars -= prev.text.length
       const cut = trimToCap(text)
       entries.set(key, {
-        ref: { toolCallId: ref.toolCallId, idx: ref.idx },
+        ref: { toolCallId: ref.toolCallId, idx: ref.idx, ...(ref.kind ? { kind: ref.kind } : {}) },
         text: cut,
-        meta: { ...meta, truncated: meta.truncated || cut.length < text.length },
+        meta: {
+          ...meta,
+          kind: ref.kind ?? meta.kind,
+          truncated: meta.truncated || cut.length < text.length,
+        },
       })
       totalChars += cut.length
       dead.delete(key)
@@ -167,14 +171,13 @@ export function createContentStore(): ContentStore {
       const local = entries.get(contentKey(ref))
       if (local)
         return { ref: local.ref, text: local.text, meta: { ...local.meta, source: "store" } }
-      // Fallback durable HANYA untuk output (reasoning di luar retensi = hilang).
-      if (durable) {
+      if (durable && (ref.kind === undefined || ref.kind === "output" || ref.kind === "diff")) {
         const text = durable(ref.toolCallId)
         if (text != null && text !== "") {
           return {
             text,
             meta: {
-              kind: "output",
+              kind: ref.kind === "diff" ? "diff" : "output",
               stream: "stderr",
               truncated: false,
               source: "durable",
@@ -186,7 +189,7 @@ export function createContentStore(): ContentStore {
         return {
           text: "",
           meta: {
-            kind: "output",
+            kind: ref.kind ?? "output",
             stream: "stderr",
             truncated: false,
             source: "retention",
@@ -197,7 +200,9 @@ export function createContentStore(): ContentStore {
     },
     expand(toolCallId, durable) {
       const prefix = `${toolCallId}#`
-      const keys = [...entries.keys()].filter((k) => k.startsWith(prefix)).sort()
+      const keys = [...entries.keys()]
+        .filter((k) => k.startsWith(prefix))
+        .sort((a, b) => Number(a.slice(prefix.length)) - Number(b.slice(prefix.length)))
       const out: ContentEntry[] = []
       for (const k of keys) {
         const hit = entries.get(k)

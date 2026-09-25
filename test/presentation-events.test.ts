@@ -11,7 +11,11 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { createPermissionHandler } from "../src/policy/permission.ts"
-import { createPresentationAdapter, parseQualifiedName } from "../src/presentation/adapter.ts"
+import {
+  createPresentationAdapter,
+  findingsFromSubmitResult,
+  parseQualifiedName,
+} from "../src/presentation/adapter.ts"
 import type { ApprovalHookEvent, DomainEvent, EventBusLike } from "../src/presentation/events.ts"
 import { askUserTool, setAskApprovalHook, setAskTextFn } from "../src/tools/ask_user.ts"
 
@@ -83,6 +87,19 @@ test("parseQualifiedName: builtin tanpa titik, MCP ber-namespace", () => {
   // String kosong ≠ null/undefined: default "tool" hanya untuk nullish —
   // kontrak parse SEKALI, renderer menerima apa adanya.
   expect(parseQualifiedName("")).toEqual({ origin: "builtin", name: "", qualified: "" })
+})
+
+test("noteUserMessage menerbitkan user.message semantic dengan turnId eksplisit", () => {
+  const bus = fakeBus()
+  const a = createPresentationAdapter(bus, { sessionId: "s1" })
+  const events = collect(a)
+  a.noteUserMessage({ text: "perbaiki parser", promptRef: "prompt-1", turnId: 7 })
+  const event = events.find((e) => e.type === "user.message")
+  expect(event?.type === "user.message" && event.text).toBe("perbaiki parser")
+  expect(event?.type === "user.message" && event.turnId).toBe(7)
+  expect(event?.type === "user.message" && event.promptRef).toBe("prompt-1")
+  expect(a.getDiagnostics().userMessages).toBe(1)
+  a.dispose()
 })
 
 // ── Lifecycle tool ──
@@ -198,9 +215,44 @@ test("turn:started + turn:completed → turn.* + model.completed(finalText)", ()
   const events = collect(a)
   bus.emit("turn:started", { turn: 3 })
   bus.emit("turn:completed", { result: { finalText: "jawaban final" } })
-  expect(events.some((e) => e.type === "turn.started" && e.turnId === 3)).toBe(true)
+  expect(
+    events.some((e) => e.type === "turn.started" && e.turnId === 3 && e.promptRef === "turn:3"),
+  ).toBe(true)
   expect(events.some((e) => e.type === "model.completed" && e.text === "jawaban final")).toBe(true)
   expect(events.some((e) => e.type === "turn.completed")).toBe(true)
+  a.dispose()
+})
+
+test("turn summary memakai provider canonical dan checkpoint evidence", () => {
+  const bus = fakeBus()
+  const a = createPresentationAdapter(bus, { sessionId: "s1" })
+  const events = collect(a)
+  a.setTurnSummaryProvider(({ turnId, fallback }) => ({
+    ...fallback,
+    filesChanged: 2,
+    checkpointId: `cp-${turnId}`,
+  }))
+  bus.emit("turn:started", { turn: 3 })
+  a.noteFileChanged({ toolCallId: "w1", paths: ["a.ts"], turnId: 3 })
+  a.noteCheckpoint({ checkpointId: "cp-3", turnId: 3 })
+  bus.emit("turn:completed", { result: { finalText: "done" } })
+  const completed = events.find((event) => event.type === "turn.completed")
+  expect(completed?.type === "turn.completed" && completed.summary.filesChanged).toBe(2)
+  expect(completed?.type === "turn.completed" && completed.summary.checkpointId).toBe("cp-3")
+  expect(events.some((event) => event.type === "checkpoint.created")).toBe(true)
+  a.dispose()
+})
+
+test("noteTestCompleted menerbitkan evidence test terstruktur", () => {
+  const bus = fakeBus()
+  const a = createPresentationAdapter(bus, { sessionId: "s1" })
+  const events = collect(a)
+  a.noteTestCompleted({ toolCallId: "t1", passed: 2, failed: 0, summary: "2 pass" })
+  expect(events.find((event) => event.type === "test.completed")).toMatchObject({
+    toolCallId: "t1",
+    passed: 2,
+    failed: 0,
+  })
   a.dispose()
 })
 
@@ -288,6 +340,150 @@ test("provider:text → model.delta; provider:extension reasoning → reasoning.
   expect(events.some((e) => e.type === "model.delta" && e.delta === "halo")).toBe(true)
   expect(events.some((e) => e.type === "reasoning.delta" && e.delta === "pikir")).toBe(true)
   expect(events.some((e) => e.type === "model.delta" && e.delta === "")).toBe(false)
+  a.dispose()
+})
+
+test("reasoning delta dipromosikan menjadi completed dan result final", () => {
+  const bus = fakeBus()
+  const a = createPresentationAdapter(bus, { sessionId: "s1" })
+  const events = collect(a)
+  bus.emit("turn:started", { turn: 1 })
+  bus.emit("provider:extension", { kind: "reasoning", data: { text: "think" } })
+  bus.emit("turn:completed", { result: { finalText: "answer" } })
+  expect(events.find((event) => event.type === "reasoning.completed")).toMatchObject({
+    truncated: false,
+    expandRef: { kind: "reasoning" },
+  })
+  expect(events.find((event) => event.type === "result.produced")).toMatchObject({
+    status: "completed",
+    summary: "answer",
+  })
+  a.dispose()
+})
+
+test("submit_result memancarkan result semantic dari tool sukses", () => {
+  const bus = fakeBus()
+  const a = createPresentationAdapter(bus, { sessionId: "s1" })
+  const events = collect(a)
+  bus.emit("execution:started", {
+    execution: { call: { id: "submit1", name: "submit_result", args: { summary: "done" } } },
+  })
+  bus.emit("execution:completed", {
+    execution: {
+      call: { id: "submit1", name: "submit_result", args: { summary: "done" } },
+      result: { isError: false, content: "submitted" },
+    },
+  })
+  expect(events.find((event) => event.type === "result.produced")).toMatchObject({
+    resultId: "submit:submit1",
+    summary: "done",
+  })
+  a.dispose()
+})
+
+test("submit_result dengan findings eksplisit memancarkan finding.detected", () => {
+  const bus = fakeBus()
+  const a = createPresentationAdapter(bus, { sessionId: "s1" })
+  const events = collect(a)
+  const args = {
+    summary: "done",
+    result: {
+      status: "ok",
+      findings: [
+        {
+          category: "security",
+          severity: "warning",
+          summary: "Hardcoded credential",
+          evidence: ["src/a.ts", 42, ""],
+        },
+        { category: "", severity: "warning", summary: "tanpa kategori" },
+        { category: "security", severity: "unknown", summary: "severity tak valid" },
+      ],
+    },
+  }
+  bus.emit("execution:started", {
+    execution: { call: { id: "submit2", name: "submit_result", args } },
+  })
+  bus.emit("execution:completed", {
+    execution: {
+      call: { id: "submit2", name: "submit_result", args },
+      result: { isError: false, content: "submitted" },
+    },
+  })
+  const findings = events.filter((event) => event.type === "finding.detected")
+  expect(findings).toHaveLength(1)
+  expect(findings[0]).toMatchObject({
+    findingId: "finding:submit2:1",
+    category: "security",
+    severity: "warning",
+    summary: "Hardcoded credential",
+    evidence: ["src/a.ts"],
+  })
+  expect(
+    findingsFromSubmitResult(
+      {
+        result: {
+          findings: Array.from({ length: 7 }, (_, i) => ({
+            category: "c",
+            severity: "info",
+            summary: `s${i}`,
+          })),
+        },
+      },
+      "submit3",
+    ),
+  ).toHaveLength(5)
+  expect(
+    findingsFromSubmitResult(
+      {
+        result: {
+          findings: [{ category: "c", severity: "info", summary: "s", evidence: "e" }],
+        },
+      },
+      "submit4",
+    )[0]?.evidence,
+  ).toEqual(["e"])
+  a.dispose()
+})
+
+test("todo_write memancarkan plan.updated dari args semantic", () => {
+  const bus = fakeBus()
+  const a = createPresentationAdapter(bus, { sessionId: "s1" })
+  const events = collect(a)
+  bus.emit("execution:started", {
+    execution: {
+      call: {
+        id: "todo1",
+        name: "todo_write",
+        args: {
+          todos: [
+            { content: "Inspect", status: "in_progress" },
+            { content: "Ship", status: "pending" },
+          ],
+        },
+      },
+    },
+  })
+  expect(events.find((event) => event.type === "plan.updated")).toMatchObject({
+    status: "open",
+    steps: [
+      { stepId: "1", status: "active" },
+      { stepId: "2", status: "pending" },
+    ],
+  })
+  a.dispose()
+})
+
+test("provider extension error menjadi diagnostic semantic", () => {
+  const bus = fakeBus()
+  const a = createPresentationAdapter(bus, { sessionId: "s1" })
+  const events = collect(a)
+  bus.emit("provider:extension", { kind: "error", data: { message: "rate limited" } })
+  expect(events.find((event) => event.type === "diagnostic.raised")).toMatchObject({
+    category: "PROVIDER_ERROR",
+    severity: "error",
+    message: "rate limited",
+  })
   a.dispose()
 })
 

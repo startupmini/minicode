@@ -7,6 +7,7 @@ import { join } from "node:path"
 import type { CliSession } from "../cli/setup.ts"
 import { runTui } from "../cli/tui.ts"
 import { loadLang } from "../src/config.ts"
+import { attachSimpleLogger } from "../src/ui/assistant/simple.ts"
 import { currentLocale, resetLocaleState } from "../src/ui/i18n/locale.ts"
 import { createFakeBus, installFakeTty, KEY } from "./helpers/tui-harness.ts"
 
@@ -38,10 +39,13 @@ afterEach(() => {
   for (const d of tmpRoots.splice(0)) rmSync(d, { recursive: true, force: true })
 })
 
-function fakeSession() {
+type FakeSession = CliSession & { bus: ReturnType<typeof createFakeBus> }
+
+function fakeSession(): FakeSession {
   const bus = createFakeBus()
   const noop = async () => {}
   return {
+    bus,
     session: { events: bus, contextTokens: 0 },
     cfg: { providers: [] },
     cwd: tmpdir(),
@@ -62,7 +66,7 @@ function fakeSession() {
     persistCurrent: noop,
     runPromptWithVerify: noop,
     close: noop,
-  } as unknown as CliSession
+  } as unknown as FakeSession
 }
 
 describe("/lang end-to-end", () => {
@@ -70,7 +74,7 @@ describe("/lang end-to-end", () => {
     tty = installFakeTty({ columns: 80, rows: 24 })
     const runP = runTui(fakeSession())
     await tty.ready()
-    await tty.waitForOutput((o) => o.includes("minicode"))
+    await tty.waitForOutput((o) => o.includes("00.00.00"))
     expect(currentLocale()).toBe("en")
     await tty.send("/lang id")
     await tty.send(KEY.enter)
@@ -85,7 +89,7 @@ describe("/lang end-to-end", () => {
     tty = installFakeTty({ columns: 80, rows: 24 })
     const runP = runTui(fakeSession())
     await tty.ready()
-    await tty.waitForOutput((o) => o.includes("minicode"))
+    await tty.waitForOutput((o) => o.includes("00.00.00"))
     await tty.send("/lang")
     await tty.send(KEY.enter)
     await tty.waitForOutput((o) => o.includes("lang: en"))
@@ -98,12 +102,35 @@ describe("/lang end-to-end", () => {
     await tty.send(KEY.enter)
     await runP
   })
+  test("/copy 2 menyalin dua turn terakhir", async () => {
+    const s = fakeSession()
+    const detach = attachSimpleLogger(s.bus as never, { quiet: true })
+    tty = installFakeTty({ columns: 80, rows: 24 })
+    const runP = runTui(s)
+    await tty.ready()
+    await tty.waitForOutput((o) => o.includes("00.00.00"))
+    s.bus.emit("turn:started", { turn: 1 })
+    s.bus.emit("provider:text", { text: "jawaban satu\n" })
+    s.bus.emit("turn:completed", {})
+    s.bus.emit("turn:started", { turn: 2 })
+    s.bus.emit("provider:text", { text: "jawaban dua\n" })
+    s.bus.emit("turn:completed", {})
+    await tty.send("/copy 2")
+    await tty.send(KEY.enter)
+    await tty.waitForOutput((o) => o.includes("copied 2 turns"))
+    expect(tty.all()).toContain("\x1b]52;c;")
+    await tty.send("/exit")
+    await tty.send(KEY.enter)
+    await runP
+    detach()
+  })
+
   test("/help ringkas memuat semua perintah terdaftar (satu sumber)", async () => {
     const { BUILTIN_COMMANDS } = await import("../cli/commands.ts")
     tty = installFakeTty({ columns: 80, rows: 24 })
     const runP = runTui(fakeSession())
     await tty.ready()
-    await tty.waitForOutput((o) => o.includes("minicode"))
+    await tty.waitForOutput((o) => o.includes("00.00.00"))
     await tty.send("/help")
     await tty.send(KEY.enter)
     const out = await tty.waitForOutput((o) => o.includes("Commands:"))

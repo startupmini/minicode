@@ -23,11 +23,21 @@ reasoning/usage/error, `context:compacted` reason `pressure:*`/`recovery`,
 `step:started/completed`), `executor.ts` (`execution:started/completed`),
 `session.ts` (`turn:completed` HANYA di jalur sukses).
 
-Tahap C — tidak ada penerjemah `AgentEvent → UiEvent`: `src/ui/contract.ts:33`
-`UiEvent` identik struktural dengan `AgentEvent` kernel; `cli/setup.ts`
-menyerahkan `session.events` apa adanya ke `attachSimpleLogger` +
-`attachTurnStatus` (dipasang segar per turn, dilepas di `finally` agar event
-telat hening).
+Tahap C — raw runtime contract: `src/ui/contract.ts:33` `UiEvent` masih
+mencerminkan bentuk event kernel dan `cli/setup.ts` menyerahkan `session.events`
+apa adanya ke `attachSimpleLogger` + `attachTurnStatus` (dipasang segar per
+turn, dilepas di `finally` agar event telat hening).
+
+Tahap C2 — semantic presentation bridge: `cli/setup.ts` membuat
+`PresentationAdapter`, mengurangi event ke `PresentationState` lengkap
+(conversation, reasoning, system, plan, finding, result, diagnostic), menghitung
+summary dari evidence, dan memuat ulang `presentation_events` saat resume. Bridge
+memprojection seluruh `DomainEventType` melalui `toPresentationEvent()`;
+`src/presentation/projection.ts` menyediakan keputusan policy murni (deskripsi
+activity/turn, running pin, envelope machine) yang di-inject ke renderer sebagai
+`PresentationPolicy`. Consumer legacy (raw bus) hanya untuk rollback
+`MINICODE_PRESENTATION_V2=0`. Lihat `docs/OUTPUT_ARCHITECTURE_AUDIT.md` dan
+`docs/OUTPUT_EVENT_MODEL.md`.
 
 Tahap D — logger utama `src/ui/assistant/simple.ts:104`: append-only
 scrollback, tanpa alternate screen. `provider:text` → `sanitizeAnsi` PER CHUNK
@@ -48,20 +58,37 @@ Tahap F — arbitrator `src/ui/runtime/statusline.ts`: satu pemilik transient
 bukan crash. `paintWrite` tak pernah melempar (fail-closed Bun Windows).
 
 Tahap G — status bar `src/ui/footer.ts` dirender `src/ui/tui/app.ts` sebagai
-baris dasar frame fullscreen. `TuiApp` memiliki clock activity 200ms,
-`Working`/`Thinking`/tool status, elapsed, dan konfirmasi `Stopping`
-tanpa menunggu event provider. Footer/chrome lama
-(`src/ui/runtime/chrome.ts`, DECSTBM scroll-region, `MINICODE_FOOTER`) DIHAPUS
-bersama lapisan TUI lama — alternate screen menggantikannya; nol byte di
-non-TTY. Footer baca `session.contextTokens` kernel (bukan spend kumulatif).
+baris dasar frame fullscreen. `TuiApp` memiliki clock activity 200ms untuk
+menggambar `✦`, timer `HH.MM.SS` di sebelah sparkle, dan dots reasoning
+`...` → `..` → `.` tanpa label `Working`/`Thinking`/`Running`. Timer redup saat
+idle dan putih saat aktif. Composer hanya menampilkan `minicode ›` setelah
+Prompt tampil saat boot/idle, hilang saat busy, dan kembali otomatis setelah
+turn selesai; aksi edit/histori tetap dapat membuka composer. Bullet separator
+footer dihapus; field dipisahkan dengan spasi dan warna. Satu baris kosong memisahkan composer
+dari footer; layout normal dan popup memakai helper geometri yang sama.
+`TuiApp` mengaktifkan mouse tracking `?1002h + ?1006h` selama TUI; wheel
+menggeser viewport transkrip, drag kiri membuat selection app-level, dan
+`Ctrl+C` menyalin selection melalui DI/OSC52. Popup menurunkan ke mode
+`?1000h`; tracking dimatikan pada quit, release, dan sinyal fatal.
+Footer/chrome lama (`src/ui/runtime/chrome.ts`, DECSTBM scroll-region,
+`MINICODE_FOOTER`) DIHAPUS bersama lapisan TUI lama — alternate screen
+menggantikannya; nol byte di non-TTY. Footer baca `session.contextTokens` kernel
+(bukan spend kumulatif).
 
 Tahap H — primitif render `src/ui/render/`: `sanitize.ts` (hanya SGR lolos),
 `markdown.ts` + `highlight.ts` (fence-state per baris, konten utuh),
 `width.ts` (kolom: CJK/emoji 2, potong aman-SGR), `wrap.ts` (lebar dibaca
 per baris → aman resize), `theme.ts` (getter warna/glyph, jangan di-`const`),
 `errors.ts` (pesan actionable + redact), `collapse.ts` (buffer `/expand`
-200KB/entry, 500KB total), `diff.ts`/`table.ts`/`money.ts`/`format.ts`.
+200KB/entry, 500KB total), `markdown-table.ts`/`table-grid.ts` (pipe-table
+model), `diff.ts`/`table.ts`/`money.ts`/`format.ts`.
 
+Tahap H2 — tabel Markdown model: `src/ui/render/markdown-table.ts` memvalidasi
+header/delimiter, escaped pipe, code span, alignment, dan fence; stream block
+di-buffer sampai batas tabel. `table-grid.ts` menghitung lebar kolom dan budget
+terminal, sedangkan linear/TUI me-render semantic block yang sama pada TTY dan
+mempertahankan source sanitized pada non-TTY. `exec --json`/ACP tidak melewati
+renderer ini.
 Tahap I — view murni vs controller: `src/ui/screens/` (props + callback,
 tanpa IO) digerakkan `cli/` (`repl.ts`, `commands.ts`, `wizard.ts`,
 `provider/model-manager.ts`, `approval/prompt.ts` via DI `ask`,
@@ -74,10 +101,10 @@ I = bisa diinterupsi, L = bisa tiba setelah completion.
 
 | Event | Producer | Representasi UI | S | D | O | I | L |
 |---|---|---|---|---|---|---|---|
-| assistant text | provider stream | stdout wrap + fence 2-spasi | ya | tidak (E1) | tidak | ya (abort) | tidak (detach flush 1x, E6) |
+| assistant text | provider stream | stdout wrap + fence 2-spasi; pipe-table-aligned di TTY, source sanitized di non-TTY | ya | tidak (E1) | tidak | ya (abort) | tidak (detach flush 1x, E6) |
 | tool call | model → kernel | `› nama target` muted (compact: diam) | tidak | tidak | tidak | ya | tidak |
 | tool result | tool → executor | ledger hijau/merah; minimize → `+ label` + buffer | tidak | tidak | tidak | ya | tidak |
-| reasoning | provider extension | expanded: live per baris; minimized: `+ thinking` + buffer | ya | tidak | tidak | ya | tidak |
+| reasoning | provider extension | TUI composer: dots clock tanpa marker transcript; expanded transcript/linear tetap live per baris; minimized tetap buffer untuk `/expand` | ya | tidak | tidak | ya | tidak |
 | thinking effort | picker `/model` | badge + level per model | tidak | tidak | tidak | tidak | tidak |
 | usage | provider extension | verbose saja; masuk budget watcher | ya | tidak | ya (tail pasca-finish) | ya | ya (diabaikan aman) |
 | compaction | kernel loop | `── compacted: <reason>` kuning, reason verbatim | tidak | tidak | tidak | tidak | tidak |
@@ -87,16 +114,22 @@ I = bisa diinterupsi, L = bisa tiba setelah completion.
 | error provider | provider extension | `pendingError` consume-once → satu `✗` oleh driver | tidak | tidak (E15) | tidak | ya | tidak |
 | warning | budget/recovery/verify | `[budget]`/`[recovery]`/`[verify]` kuning stderr | tidak | tidak (warned80 sekali) | tidak | tidak | tidak |
 | completion | kernel loop | flush + `finalizeAnswer` + footer idle | tidak | tidak | tidak | tidak | tidak |
-| abort | user/Ctrl+C/Esc | `(stopped)` + cleanup `finally` | tidak | tidak | tidak | — | tidak |
+| abort | user/Esc | `(stopped)` + cleanup `finally` | tidak | tidak | tidak | — | tidak |
 | timeout | kernel `createTimeout` | `✗ timeout` + turn dibuang transaksional | tidak | tidak | tidak | — | ya (late work ke turnStore privat, dibuang) |
 | budget exceeded | watcher/driver | `[budget] … stopping turn` + abort ber-kind | tidak | tidak (fire-once) | tidak | — | tidak |
 | provider failure | recovery policy | retry/compact/throw deterministik; cap retryAfter 30 dtk | tidak | tidak | tidak | tidak | tidak |
 
-Mismatch yang dicari, hasil: tidak ada event runtime yang diabaikan UI secara
-diam-diam (`bus-debug.ts` hanya subscribe 7 tipe untuk debug, bukan render).
-Satu-satunya state turunan yang disengaja: footer memakai `contextTokens`
-(estimasi jendela) sementara `/status` memisahkan Context/Input/Output/Total/
-Cost/Budget — didokumentasikan di `docs/CONTROL-PLANE-MAP.md`, bukan mismatch.
+Mismatch yang dicari, hasil: raw EventBus tidak hilang (rollback flag), tetapi
+consumer user-facing kini membaca keputusan policy yang sama.
+`cli/setup.ts:172-376` memproyeksikan seluruh `DomainEventType` secara
+exhaustive; TUI memakai `describeActivity`/`matchTurn`/`elapsedVisible` via
+injeksi, linear memakai deskripsi + `activityFor` untuk label turn-status, dan
+machine memakai `toMachineEnvelope`. `bus-debug.ts` hanya debug subscription.
+Lihat `docs/OUTPUT_ARCHITECTURE_AUDIT.md` OAP-001/OAP-006 dan
+`docs/OUTPUT_IMPLEMENTATION_PLAN.md` Phase 3–7. State turunan yang disengaja
+tetap footer memakai `contextTokens` (estimasi jendela), sedangkan `/status`
+memisahkan Context/Input/Output/Total/Cost/Budget di
+`docs/CONTROL-PLANE-MAP.md`.
 
 ## 3. State machine REPL (tidak eksplisit)
 

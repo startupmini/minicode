@@ -83,7 +83,7 @@ Batas `BASH_BACKGROUND_MAX_JOBS`; semua job mati saat CLI keluar.
 | `write_memory` | Tulis + vector store | `{category?, tags?}`, default `fact`. Kategori `fact|decision|preference|snippet|summary`, boost `decision` +0.1 |
 | `forget_memory` | Hapus cocok query | Menghapus vector + baris file di scope lokal DAN global (keduanya di-search; `MEMORY.md` root/`CLAUDE.md` tak ikut). Hitung-dulu-sebelum-DELETE (trigger FTS mengacaukan `sqlite3_changes`) |
 | `todo_write` / `todo_read` | Rencana per sesi (3+ langkah) | Kirim **seluruh daftar** tiap kali. Status `pending|in_progress|completed|cancelled`, satu `in_progress` dipertahankan. Disimpan `.minicode/todos/<session>.json` + artifact `.minicode/plans/<id>.md` |
-| `submit_result` | Hasil akhir JSON terstruktur 1× | NO_PROMPT, `exec --json` verbatim. Pengganti `response_format` |
+| `submit_result` | Hasil akhir JSON terstruktur 1× | NO_PROMPT, `exec --json` verbatim. `result.findings` eksplisit diproyeksikan sebagai `finding.detected`. Pengganti `response_format` |
 | `ask_user` | Tanya klarifikasi mid-run | Gated + render via injeksi `promptAskText` (fail-closed non-TTY) |
 
 ## Agents

@@ -28,10 +28,10 @@ afterEach(() => {
 
 const err = () => stripAnsi(tty!.allErr())
 
-function setup(cols = 80) {
+function setup(cols = 80, opts?: Parameters<typeof attachTurnStatus>[1]) {
   tty = installFakeTty({ columns: cols, rows: 24 })
   const bus = createFakeBus()
-  const status = attachTurnStatus(bus as never)
+  const status = attachTurnStatus(bus as never, opts)
   return { bus, status }
 }
 
@@ -47,6 +47,32 @@ describe("turn-status: lifecycle deterministik", () => {
     })
     await sleep(60)
     expect(err()).toContain("read_file src/auth.ts")
+    status.detach()
+  }, 4000)
+
+  test("activityFor kanonik menang atas parse raw args", async () => {
+    const { bus, status } = setup(80, {
+      activityFor: (id) =>
+        id === "c1" ? { name: "write_file", target: "src/canonical.ts" } : undefined,
+    })
+    bus.emit("turn:started", { turn: 1 })
+    bus.emit("execution:started", {
+      execution: { call: { id: "c1", name: "write_file", args: { path: "src/raw.ts" } } },
+    })
+    await sleep(60)
+    expect(err()).toContain("write_file src/canonical.ts")
+    expect(err()).not.toContain("src/raw.ts")
+    status.detach()
+  }, 4000)
+
+  test("tanpa activityFor: fallback raw args tetap jalan", async () => {
+    const { bus, status } = setup()
+    bus.emit("turn:started", { turn: 1 })
+    bus.emit("execution:started", {
+      execution: { call: { id: "c9", name: "write_file", args: { path: "src/raw.ts" } } },
+    })
+    await sleep(60)
+    expect(err()).toContain("write_file src/raw.ts")
     status.detach()
   }, 4000)
 

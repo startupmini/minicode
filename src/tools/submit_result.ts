@@ -24,7 +24,7 @@ export function clearSubmittedResult(): void {
 export const submitResultTool: Tool = {
   name: "submit_result",
   description:
-    "Submit the final structured result of this task as a JSON object (instead of burying it in prose). Call once when done; exec --json surfaces it verbatim.",
+    "Submit the final structured result of this task as a JSON object (instead of burying it in prose). Call once when done; exec --json surfaces it verbatim. If result.findings is an array of {category, severity, summary, evidence?}, those findings are also surfaced as finding.detected events.",
   parameters: {
     type: "object",
     properties: {

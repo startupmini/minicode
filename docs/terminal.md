@@ -24,7 +24,7 @@ bisa di-pipe, di-grep, dan tinggal di scrollback Anda sendiri.
 
 | Stream | Isi |
 |---|---|
-| stdout | Output program: teks model (wrapped, fence 2-spasi), receipt perubahan (`› write_file …`), artefak perintah. Bersih dari cursor-control saat non-TTY |
+| stdout | Output program: teks model (wrapped, fence 2-spasi; pipe-table menjadi grid selaras di TTY), receipt perubahan (`› write_file …`), artefak perintah. Bersih dari cursor-control saat non-TTY |
 | stderr | Progress/diagnostik: ledger tool (`› …` hijau/merah), reasoning (verbose), warning, error. Boleh transient bila TTY — ditahan saat layar interaktif memegang terminal |
 
 - Warna hanya bila TTY (`stdout.isTTY`); `NO_COLOR` menang; `TERM`/`COLORTERM` tidak menyalakan warna di pipe.
@@ -32,8 +32,8 @@ bisa di-pipe, di-grep, dan tinggal di scrollback Anda sendiri.
 
 ## Primitif tampilan
 
-1. Transkrip fullscreen — prompt `minicode ›` + jawaban model + ledger, viewport ikut ekor otomatis
-2. Status bar satu baris — `✦ mode • model • cwd … ctx` (spark pulse saat busy/redup saat idle; konteks rata kanan)
+1. Transkrip fullscreen — prompt `minicode ›` saat editing + jawaban model + ledger, viewport ikut ekor otomatis; drag mouse membuat selection app-level, `Ctrl+C` menyalin, wheel dan `PgUp/PgDn` menggulir layar
+2. Status bar satu baris — `✦ 00.00.00 mode  model  cwd` (timer `HH.MM.SS` di sebelah sparkle; redup idle, detik putih saat aktif, menit mulai terang di 60 dtk, jam di 1 jam; tanpa bullet separator; konteks rata kanan)
 3. Popup komposit satu kotak — `/model`, `/provider`, `/sessions`, form, approval; Esc dua-tahap, kursor diparkir
 4. Ledger — `  › name target` hijau / `  › name: …` merah
 5. Teks model & thinking — mengalir redup (thinking), di-buffer untuk `/expand`

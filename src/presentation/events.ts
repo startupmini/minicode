@@ -84,12 +84,16 @@ export interface TurnSummary {
   toolsInterrupted: number
   filesChanged: number
   checkpointId?: string
+  testSummary?: { passed: number; failed: number; summary: string }
+  evidenceComplete?: boolean
   durationMs: number
 }
 
 /** Bukti konsekuensi (receipt) — view atas journal/checkpoint, bukan tracker baru. */
 export interface Receipt {
   toolCallId: string
+  sessionId?: string
+  turnId?: number
   journalSeq?: number
   checkpointId?: string
   paths?: string[]
@@ -102,6 +106,7 @@ export interface Receipt {
 export interface ContentRef {
   toolCallId: string
   idx: number
+  kind?: "output" | "diff" | "reasoning" | "diagnostic"
   /** True bila store meng-evict entry (Fase 4): proyeksi tampilkan penanda retensi. */
   dead?: boolean
 }
@@ -124,6 +129,12 @@ interface Base {
   ts: number
   sessionId: string
   turnId: number
+}
+
+export interface UserMessageEvent extends Base {
+  type: "user.message"
+  text: string
+  promptRef: string
 }
 
 export interface TurnStartedEvent extends Base {
@@ -241,7 +252,59 @@ export interface ContextCompactedEvent extends Base {
   reason: string
 }
 
+export type SemanticSeverity = "info" | "warning" | "error" | "critical"
+export type PlanStepStatus = "pending" | "active" | "completed" | "cancelled"
+export interface PlanStep {
+  stepId: string
+  title?: string
+  status: PlanStepStatus
+}
+
+export interface PlanUpdatedEvent extends Base {
+  type: "plan.updated"
+  planId: string
+  status: "open" | "completed" | "cancelled"
+  steps: PlanStep[]
+  expandRef?: ContentRef
+}
+
+export interface FindingDetectedEvent extends Base {
+  type: "finding.detected"
+  findingId: string
+  category: string
+  severity: SemanticSeverity
+  summary: string
+  evidence?: string[]
+  /** Forward anak: taut ke delegate_task pemanggil (absen = finding sesi biasa). */
+  parentLink?: ChildSessionLink
+}
+
+export interface ResultProducedEvent extends Base {
+  type: "result.produced"
+  resultId: string
+  status: "completed" | "failed" | "cancelled"
+  summary: string
+  action?: string
+  expandRef?: ContentRef
+}
+
+export interface DiagnosticRaisedEvent extends Base {
+  type: "diagnostic.raised"
+  category: string
+  severity: SemanticSeverity
+  message: string
+  cause?: string
+  action?: string
+}
+
+export interface CheckpointCreatedEvent extends Base {
+  type: "checkpoint.created"
+  checkpointId: string
+  paths?: string[]
+}
+
 export type DomainEvent =
+  | UserMessageEvent
   | TurnStartedEvent
   | TurnCompletedEvent
   | TurnFailedEvent
@@ -261,11 +324,19 @@ export type DomainEvent =
   | FileChangedEvent
   | TestCompletedEvent
   | ContextCompactedEvent
+  | PlanUpdatedEvent
+  | FindingDetectedEvent
+  | ResultProducedEvent
+  | DiagnosticRaisedEvent
+  | CheckpointCreatedEvent
 
 export type DomainEventType = DomainEvent["type"]
 
+export const PROPOSED_EVENT_TYPES = ["tool.progress"] as const satisfies readonly DomainEventType[]
+
 /** Kebijakan durable vs live (§7 V2.1): restart merekonstruksi tanpa delta. */
 export const DURABILITY: Record<DomainEventType, { durable: boolean; replayable: boolean }> = {
+  "user.message": { durable: true, replayable: true },
   "turn.started": { durable: true, replayable: true },
   "turn.completed": { durable: true, replayable: true },
   "turn.failed": { durable: true, replayable: true },
@@ -285,6 +356,11 @@ export const DURABILITY: Record<DomainEventType, { durable: boolean; replayable:
   "file.changed": { durable: true, replayable: true },
   "test.completed": { durable: true, replayable: true },
   "context.compacted": { durable: true, replayable: true },
+  "plan.updated": { durable: true, replayable: true },
+  "finding.detected": { durable: true, replayable: true },
+  "result.produced": { durable: true, replayable: true },
+  "diagnostic.raised": { durable: true, replayable: true },
+  "checkpoint.created": { durable: true, replayable: true },
 }
 
 /**

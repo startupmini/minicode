@@ -35,8 +35,15 @@ import { createPresentationAdapter, type PresentationAdapter } from "../src/pres
 import type { DomainEvent } from "../src/presentation/events.ts"
 import { createInitialState, type PresentationState } from "../src/presentation/model.ts"
 import {
+  describeActivity,
+  elapsedVisible,
+  matchTurnBySummary,
+} from "../src/presentation/projection.ts"
+import {
   createReducerDiagnostics,
+  deriveTurnSummary,
   type ReducerDiagnostics,
+  rebuildFromDurable,
   reduce,
 } from "../src/presentation/reducer.ts"
 import {
@@ -57,7 +64,13 @@ import {
   finalizeJournal,
   planRecoveryForSession,
 } from "../src/session/journal.ts"
-import { listPersistedTurns, loadSession, saveSession } from "../src/session/persistence.ts"
+import {
+  appendPresentationEvents,
+  listPersistedTurns,
+  loadPresentationEvents,
+  loadSession,
+  saveSession,
+} from "../src/session/persistence.ts"
 import { snapshotTree } from "../src/session/shadow-git.ts"
 import type { Skill } from "../src/skills/loader.ts"
 import {
@@ -74,8 +87,15 @@ import { promptAsk, promptAskText } from "../src/ui/approval/prompt.ts"
 import { attachSimpleLogger } from "../src/ui/assistant/simple.ts"
 import type {
   UiPresentationActivity,
+  UiPresentationDiagnostic,
   UiPresentationEvent,
+  UiPresentationFinding,
+  UiPresentationMessage,
+  UiPresentationPlan,
+  UiPresentationReasoning,
+  UiPresentationResult,
   UiPresentationSnapshot,
+  UiPresentationSystem,
   UiPresentationTurn,
   UiToolStatus,
   UiTurnSummary,
@@ -91,6 +111,7 @@ export interface CliSessionOptions {
   providerOverride?: string
   prompt: string
   enterRepl: boolean
+  machineOutput?: boolean
   verbose: boolean
   allowAll: boolean
   ask: boolean
@@ -159,12 +180,293 @@ export interface CliSession {
     orphanTool: number
     orphanApproval: number
     duplicateTurn: number
+    unknownEvent: number
+    orphanEvidence: number
+    unsupportedProjection: number
   }
   /** Content store untuk /expand [id]. */
   expandContent: (toolCallId: string) => ContentEntry[]
   expandAllContent: () => ContentEntry[]
   getPresentationSnapshot: () => UiPresentationSnapshot
   onPresentationEvent: (handler: (event: UiPresentationEvent) => void) => () => void
+}
+
+export function toPresentationEvent(event: DomainEvent): UiPresentationEvent | null {
+  switch (event.type) {
+    case "user.message":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        text: event.text,
+        promptRef: event.promptRef,
+      }
+    case "turn.started":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        promptRef: event.promptRef,
+      }
+    case "turn.completed":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        summary: event.summary,
+      }
+    case "turn.failed":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        error: event.error.message,
+        cause: event.error.cause,
+      }
+    case "turn.cancelled":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        reason: event.reason,
+      }
+    case "model.delta":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        delta: event.delta,
+      }
+    case "model.completed":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        text: event.text,
+        truncated: event.truncated,
+        ...(event.expandRef ? { expandRef: event.expandRef } : {}),
+      }
+    case "reasoning.delta":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        delta: event.delta,
+      }
+    case "reasoning.completed":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        truncated: event.truncated,
+        expandRef: event.expandRef,
+      }
+    case "tool.started":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        stepId: event.stepId,
+        toolCallId: event.toolCallId,
+        name: event.identity.name,
+        qualified: event.identity.qualified,
+        target: event.argsSummary.target,
+        status: "running",
+        tsStart: event.ts,
+        ...(event.parentLink ? { parentToolCallId: event.parentLink.parentToolCallId } : {}),
+      }
+    case "tool.progress":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        toolCallId: event.toolCallId,
+        status: "running",
+        message: event.message,
+      }
+    case "tool.completed":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        toolCallId: event.toolCallId,
+        status: "completed",
+        durationMs: event.durationMs,
+        toolSummary: event.summary,
+        expandRef: event.expandRef,
+        ...(event.receipt
+          ? {
+              receipt: {
+                ...(event.receipt.paths ? { paths: event.receipt.paths } : {}),
+                ...(event.receipt.checkpointId ? { checkpointId: event.receipt.checkpointId } : {}),
+                ...(event.receipt.stats ? { stats: event.receipt.stats } : {}),
+                ...(event.receipt.test ? { test: event.receipt.test } : {}),
+                ...(event.receipt.cmd ? { cmd: event.receipt.cmd } : {}),
+              },
+            }
+          : {}),
+        ...(event.parentLink ? { parentToolCallId: event.parentLink.parentToolCallId } : {}),
+      }
+    case "tool.failed":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        toolCallId: event.toolCallId,
+        status: "failed",
+        durationMs: event.durationMs,
+        message: event.message,
+        cause: event.cause,
+        ...(event.hint ? { hint: event.hint } : {}),
+        expandRef: event.expandRef,
+        ...(event.parentLink ? { parentToolCallId: event.parentLink.parentToolCallId } : {}),
+      }
+    case "tool.denied":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        toolCallId: event.toolCallId,
+        status: "denied",
+        message: event.message,
+        reason: event.reason,
+        ...(event.parentLink ? { parentToolCallId: event.parentLink.parentToolCallId } : {}),
+      }
+    case "tool.cancelled":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        toolCallId: event.toolCallId,
+        status: "cancelled",
+        reason: event.reason,
+        ...(event.parentLink ? { parentToolCallId: event.parentLink.parentToolCallId } : {}),
+      }
+    case "approval.requested":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        approvalId: event.approvalId,
+        toolCallId: event.toolCallId,
+        name: event.identity.name,
+        qualified: event.identity.qualified,
+        target: event.argsSummary.target,
+        via: event.via,
+      }
+    case "approval.settled":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        approvalId: event.approvalId,
+        toolCallId: event.toolCallId,
+        outcome: event.outcome,
+      }
+    case "file.changed":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        toolCallId: event.toolCallId,
+        paths: event.paths,
+        ...(event.journalSeq !== undefined ? { journalSeq: event.journalSeq } : {}),
+        ...(event.checkpointId ? { checkpointId: event.checkpointId } : {}),
+      }
+    case "test.completed":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        toolCallId: event.toolCallId,
+        test: { passed: event.passed, failed: event.failed, summary: event.summary },
+      }
+    case "context.compacted":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        reason: event.reason,
+        compactionReason: event.reason,
+      }
+    case "plan.updated":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        planId: event.planId,
+        status: event.status === "open" ? "running" : event.status,
+        steps: event.steps,
+        ...(event.expandRef ? { expandRef: event.expandRef } : {}),
+      }
+    case "finding.detected":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        findingId: event.findingId,
+        category: event.category,
+        severity: event.severity,
+        text: event.summary,
+        evidence: event.evidence,
+        ...(event.parentLink ? { parentToolCallId: event.parentLink.parentToolCallId } : {}),
+      }
+    case "result.produced":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        resultId: event.resultId,
+        status: event.status === "completed" ? "completed" : event.status,
+        toolSummary: event.summary,
+        action: event.action,
+        ...(event.expandRef ? { expandRef: event.expandRef } : {}),
+      }
+    case "diagnostic.raised":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        category: event.category,
+        severity: event.severity,
+        message: event.message,
+        cause: event.cause,
+        action: event.action,
+      }
+    case "checkpoint.created":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        checkpointId: event.checkpointId,
+        paths: event.paths,
+      }
+    default: {
+      const exhaustive: never = event
+      void exhaustive
+      return null
+    }
+  }
+}
+
+export function parseVerifyTestEvidence(
+  command: string,
+  output: string,
+): { passed: number; failed: number; summary: string } | undefined {
+  if (!/(?:test|vitest|jest|pytest|cargo\s+test)/i.test(command)) return undefined
+  const passedMatch = /(\d+)\s+(?:pass(?:ed)?|successful?)/i.exec(output)
+  const failedMatch = /(\d+)\s+(?:fail(?:ed|ures?)?|failing)/i.exec(output)
+  if (!passedMatch && !failedMatch) return undefined
+  return {
+    passed: passedMatch ? Number(passedMatch[1]) : 0,
+    failed: failedMatch ? Number(failedMatch[1]) : 0,
+    summary:
+      output
+        .split(/\r?\n/)
+        .find((line) => /(?:pass|fail)/i.test(line))
+        ?.trim()
+        .slice(0, 500) ?? "verify completed",
+  }
 }
 
 export async function createCliSession(opts: CliSessionOptions): Promise<CliSession> {
@@ -176,6 +478,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     providerOverride,
     prompt,
     enterRepl,
+    machineOutput = false,
     verbose,
     allowAll,
     ask,
@@ -194,6 +497,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     sandboxNotice,
   } = opts
   const modelRef = { current: modelOverride }
+  const presentationSessionId = resumeId ?? sessionId
 
   // Diagnosis startup lambat: MINICODE_DEBUG_STARTUP=1 mencetak durasi tiap
   // fase session-setup ke stderr (`[startup] rag 8432ms`). Tanpa env = diam.
@@ -347,6 +651,23 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     process.stderr.write(`[warn] recovery plan failed: ${(e as Error).message}\n`)
   }
 
+  let durablePresentationEvents: DomainEvent[] = []
+  try {
+    durablePresentationEvents = loadPresentationEvents(presentationSessionId, cwd)
+  } catch (e) {
+    process.stderr.write(`[warn] presentation replay load failed: ${(e as Error).message}\n`)
+  }
+  let rebuiltPresentation: ReturnType<typeof rebuildFromDurable> | null = null
+  try {
+    rebuiltPresentation = rebuildFromDurable(
+      durablePresentationEvents,
+      createReducerDiagnostics(),
+      presentationSessionId,
+    )
+  } catch (e) {
+    process.stderr.write(`[warn] presentation replay failed: ${(e as Error).message}\n`)
+  }
+
   // P0-3 — pointer undo/redo basi (crash apply→save): adopsi dari marker
   // jurnal bila valid. Berjalan untuk SEMUA sesi (bukan hanya --resume),
   // karena --session <id> yang dipakai ulang tanpa --resume pun bisa basi.
@@ -368,12 +689,40 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // mengamati bus kernel dan memancarkan DomainEvent ke subscriber-nya sendiri.
   // Dual-subscribe dengan sink lama — perilaku user NOL berubah pada Fase 1.
   let presentation: PresentationAdapter | null = null
+  const presentationV2Enabled = process.env.MINICODE_PRESENTATION_V2 !== "0"
   // Fase 3 dark-launch: reducer berjalan paralel (shadow) — hasil DIBUANG,
   // tidak mengontrol output. Divergensi = reduce melempar (harusnya 0).
-  let shadowState: PresentationState | null = null
-  let shadowDiag: ReducerDiagnostics | null = null
+  let shadowState: PresentationState | null = rebuiltPresentation?.state ?? null
+  let shadowDiag: ReducerDiagnostics | null = rebuiltPresentation
+    ? createReducerDiagnostics()
+    : null
   let shadowDivergence = 0
+  let unsupportedProjection = 0
   let shadowUnsub: (() => void) | null = null
+  let presentationWriteTail: Promise<void> = Promise.resolve()
+  let presentationFlushTimer: ReturnType<typeof setTimeout> | undefined
+  const pendingPresentationEvents: DomainEvent[] = []
+  const flushPresentationEvents = (): void => {
+    if (presentationFlushTimer !== undefined) {
+      clearTimeout(presentationFlushTimer)
+      presentationFlushTimer = undefined
+    }
+    const batch = pendingPresentationEvents.splice(0)
+    if (batch.length === 0) return
+    presentationWriteTail = presentationWriteTail
+      .then(() => appendPresentationEvents(presentationSessionId, cwd, batch))
+      .catch((error) => {
+        process.stderr.write(
+          `[warn] presentation event persist failed: ${(error as Error).message}\n`,
+        )
+      })
+  }
+  const queuePresentationEvent = (event: DomainEvent): void => {
+    pendingPresentationEvents.push(event)
+    if (presentationFlushTimer === undefined) {
+      presentationFlushTimer = setTimeout(flushPresentationEvents, 0)
+    }
+  }
   const presentationSubscribers = new Set<(event: UiPresentationEvent) => void>()
   // Content store in-memory untuk query /expand; presentation V2 adalah jalur
   // production setelah cleanup Fase 7.
@@ -386,6 +735,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     orphanTool: number
     orphanApproval: number
     duplicateTurn: number
+    unknownEvent: number
+    orphanEvidence: number
+    unsupportedProjection: number
   } => ({
     divergence: shadowDivergence,
     eventsIn: shadowDiag?.eventsIn ?? 0,
@@ -394,9 +746,12 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     orphanTool: shadowDiag?.orphanTool ?? 0,
     orphanApproval: shadowDiag?.orphanApproval ?? 0,
     duplicateTurn: shadowDiag?.duplicateTurn ?? 0,
+    unknownEvent: shadowDiag?.unknownEvent ?? 0,
+    orphanEvidence: shadowDiag?.orphanEvidence ?? 0,
+    unsupportedProjection,
   })
   const getPresentationSnapshot = (): UiPresentationSnapshot => {
-    if (!shadowState) return { activities: [], turns: [] }
+    if (!presentationV2Enabled || !shadowState) return { activities: [], turns: [] }
     const activities: UiPresentationActivity[] = [...shadowState.activities.values()].map((a) => ({
       seq: a.seq,
       turnId: a.turnId,
@@ -442,91 +797,75 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       status: turn.status,
       ...(turn.summary ? { summary: turn.summary as UiTurnSummary } : {}),
     }))
-    return { activities, turns }
-  }
-  const toPresentationEvent = (event: DomainEvent): UiPresentationEvent | null => {
-    switch (event.type) {
-      case "turn.started":
-        return { type: event.type, seq: event.eventSeq, turnId: event.turnId }
-      case "turn.completed":
-        return {
-          type: event.type,
-          seq: event.eventSeq,
-          turnId: event.turnId,
-          summary: event.summary,
-        }
-      case "turn.failed":
-        return {
-          type: event.type,
-          seq: event.eventSeq,
-          turnId: event.turnId,
-          error: event.error.message,
-          cause: event.error.cause,
-        }
-      case "turn.cancelled":
-        return {
-          type: event.type,
-          seq: event.eventSeq,
-          turnId: event.turnId,
-          reason: event.reason,
-        }
-      case "tool.started":
-        return {
-          type: event.type,
-          seq: event.eventSeq,
-          turnId: event.turnId,
-          toolCallId: event.toolCallId,
-          name: event.identity.name,
-          qualified: event.identity.qualified,
-          target: event.argsSummary.target,
-          status: "running",
-          tsStart: event.ts,
-        }
-      case "tool.completed":
-      case "tool.failed":
-      case "tool.denied":
-      case "tool.cancelled":
-        return {
-          type: event.type,
-          seq: event.eventSeq,
-          turnId: event.turnId,
-          toolCallId: event.toolCallId,
-          status:
-            event.type === "tool.completed"
-              ? "completed"
-              : event.type === "tool.failed"
-                ? "failed"
-                : event.type === "tool.denied"
-                  ? "denied"
-                  : "cancelled",
-          ...("durationMs" in event ? { durationMs: event.durationMs } : {}),
-          ...("message" in event ? { message: event.message } : {}),
-          ...("cause" in event ? { cause: event.cause } : {}),
-          ...("reason" in event ? { reason: event.reason } : {}),
-        }
-      case "approval.requested":
-        return {
-          type: event.type,
-          seq: event.eventSeq,
-          turnId: event.turnId,
-          approvalId: event.approvalId,
-          toolCallId: event.toolCallId,
-          name: event.identity.name,
-          qualified: event.identity.qualified,
-          target: event.argsSummary.target,
-          via: event.via,
-        }
-      case "approval.settled":
-        return {
-          type: event.type,
-          seq: event.eventSeq,
-          turnId: event.turnId,
-          approvalId: event.approvalId,
-          toolCallId: event.toolCallId,
-          outcome: event.outcome,
-        }
-      default:
-        return null
+    const conversation: UiPresentationMessage[] = shadowState.conversation.map((entry) => ({
+      id: entry.id,
+      sessionId: entry.sessionId,
+      turnId: entry.turnId,
+      role: entry.role,
+      text: entry.text,
+      truncated: entry.truncated,
+      ...(entry.promptRef ? { promptRef: entry.promptRef } : {}),
+    }))
+    const reasoning: UiPresentationReasoning[] = shadowState.reasoning.map((entry) => ({
+      id: entry.id,
+      sessionId: entry.sessionId,
+      turnId: entry.turnId,
+      truncated: entry.truncated,
+      expandRef: { toolCallId: entry.expandRef.toolCallId, idx: entry.expandRef.idx },
+    }))
+    const system: UiPresentationSystem[] = shadowState.system.map((entry) => ({
+      id: entry.id,
+      sessionId: entry.sessionId,
+      turnId: entry.turnId,
+      kind: entry.systemKind,
+      text: entry.text,
+      ...(entry.reason ? { reason: entry.reason } : {}),
+      severity: entry.severity,
+    }))
+    const plans: UiPresentationPlan[] = [...shadowState.plans.values()].map((entry) => ({
+      planId: entry.planId,
+      sessionId: entry.sessionId,
+      turnId: entry.turnId,
+      status: entry.status,
+      steps: entry.steps,
+    }))
+    const findings: UiPresentationFinding[] = [...shadowState.findings.values()].map((entry) => ({
+      findingId: entry.findingId,
+      sessionId: entry.sessionId,
+      turnId: entry.turnId,
+      category: entry.category,
+      severity: entry.severity,
+      summary: entry.summary,
+      evidence: entry.evidence,
+    }))
+    const results: UiPresentationResult[] = [...shadowState.results.values()].map((entry) => ({
+      resultId: entry.resultId,
+      sessionId: entry.sessionId,
+      turnId: entry.turnId,
+      status: entry.status,
+      summary: entry.summary,
+      ...(entry.action ? { action: entry.action } : {}),
+    }))
+    const diagnostics: UiPresentationDiagnostic[] = shadowState.diagnostics.map((entry) => ({
+      id: entry.id,
+      sessionId: entry.sessionId,
+      turnId: entry.turnId,
+      category: entry.category,
+      severity: entry.severity,
+      message: entry.message,
+      ...(entry.cause ? { cause: entry.cause } : {}),
+      ...(entry.action ? { action: entry.action } : {}),
+    }))
+    return {
+      activities,
+      turns,
+      conversation,
+      reasoning,
+      system,
+      plans,
+      findings,
+      results,
+      diagnostics,
     }
   }
   const onPresentationEvent = (handler: (event: UiPresentationEvent) => void): (() => void) => {
@@ -535,7 +874,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   }
   const publishPresentationEvent = (event: Parameters<typeof toPresentationEvent>[0]): void => {
     const projected = toPresentationEvent(event)
-    if (!projected) return
+    if (!projected) {
+      unsupportedProjection++
+      return
+    }
     for (const handler of [...presentationSubscribers]) {
       try {
         handler(projected)
@@ -631,26 +973,40 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // Content store Fase 4: adapter menaruh konten completed ke store (put
   // selalu jalan); expand(id) di tui di belakang flag.
   contentStore = createContentStore()
+  let initialTurn = 0
+  let initialTurnStartTs = 0
+  for (const turn of shadowState?.turns.values() ?? []) {
+    if (turn.turnId > initialTurn) {
+      initialTurn = turn.turnId
+      initialTurnStartTs = turn.tsStart
+    }
+  }
   // Adaptor mulai mengamati sejak bus hidup (closure onApprovalEvent di atas
   // aman: check() pertama selalu terjadi setelah wiring ini, saat run()).
   presentation = createPresentationAdapter(session.events, {
     sessionId,
     ...(contentStore ? { contentStore } : {}),
+    ...(shadowState ? { initialSeq: shadowState.seq, initialTurn, initialTurnStartTs } : {}),
   })
-  // Shadow reducer (Fase 3): consume DomainEvent yang sama, hasil dibuang.
-  // Shadow reducer berjalan paralel (observability), output TUI/linear memakai
-  // proyeksi presentasi yang sama.
   try {
-    shadowState = createInitialState(sessionId)
-    shadowDiag = createReducerDiagnostics()
-    shadowUnsub = presentation.onEvent((e) => {
-      try {
-        if (shadowState && shadowDiag) reduce(shadowState, e, shadowDiag)
-      } catch {
-        shadowDivergence++
-      }
-      publishPresentationEvent(e)
-    })
+    if (presentationV2Enabled) {
+      if (!shadowState) shadowState = createInitialState(presentationSessionId)
+      if (!shadowDiag) shadowDiag = createReducerDiagnostics()
+      presentation.setTurnSummaryProvider(({ sessionId: eventSessionId, turnId, fallback }) => {
+        return shadowState
+          ? deriveTurnSummary(shadowState, eventSessionId, turnId, fallback)
+          : fallback
+      })
+      shadowUnsub = presentation.onEvent((e) => {
+        try {
+          if (shadowState && shadowDiag) reduce(shadowState, e, shadowDiag)
+        } catch {
+          shadowDivergence++
+        }
+        queuePresentationEvent(e)
+        publishPresentationEvent(e)
+      })
+    }
   } catch {
     shadowDivergence++
   }
@@ -700,24 +1056,50 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     preTurnPromise = null
     postEditSnapshots.clear()
     if (!pre) return
-    const turn = e.result.usage.turns
+    const turn =
+      typeof e.result?.usage?.turns === "number" ? e.result.usage.turns : session.state.turnCount
     const desc = `turn ${turn}`
     if (pre.mode === "git") {
-      // Tree post-turn diambil sekarang, setelah semua tool selesai.
       const after = await snapshotTree(cwd ?? ".", sessionId, `post-${turn}`)
-      recordCheckpointFromTrees(sessionId, turn, pre.tree, after?.tree, desc, cwd).catch(() => {})
+      const checkpoint = await recordCheckpointFromTrees(
+        sessionId,
+        turn,
+        pre.tree,
+        after?.tree,
+        desc,
+        cwd,
+      )
+      if (checkpoint) {
+        presentation?.noteCheckpoint({
+          checkpointId: checkpoint.id,
+          turnId: turn,
+          paths: [],
+        })
+      }
       return
     }
     if (pre.snapshots.length === 0) return
-    // Non-git: redo harus menangkap SEMUA perubahan termasuk bash/git,
-    // bukan hanya edit/write_file. Ambil snapshot penuh post-turn.
     let redo = redoSnapshots
     try {
       const { LIMITS } = await import("../src/constants.ts")
       const post = await snapshotWorkspace(cwd ?? ".", LIMITS.WORKSPACE_SNAPSHOT_LIMIT)
       if (post.length) redo = post
     } catch {}
-    recordCheckpointFromSnapshots(sessionId, turn, pre.snapshots, desc, cwd, redo).catch(() => {})
+    const checkpoint = await recordCheckpointFromSnapshots(
+      sessionId,
+      turn,
+      pre.snapshots,
+      desc,
+      cwd,
+      redo,
+    )
+    if (checkpoint) {
+      presentation?.noteCheckpoint({
+        checkpointId: checkpoint.id,
+        turnId: turn,
+        paths: (redo ?? []).map((snapshot) => snapshot.path),
+      })
+    }
   })
 
   // ── Step trace (Harness-P1) ──
@@ -778,6 +1160,18 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     ? (process.env.MINICODE_VERIFY_CMD ?? cfg.verifyCommand ?? detectVerifyCommand(cwd) ?? "")
     : ""
   const verifyActive = verifyCommand.length > 0
+  const runVerifyWithPresentation = async (signal?: AbortSignal) => {
+    const result = await runVerify(verifyCommand, cwd ?? process.cwd(), undefined, signal)
+    const evidence = parseVerifyTestEvidence(verifyCommand, result.output)
+    if (evidence) {
+      presentation?.noteTestCompleted({
+        toolCallId: `verify:${sessionId}`,
+        turnId: session.state.turnCount,
+        ...evidence,
+      })
+    }
+    return result
+  }
   // Audit #10 P2 observability: perintah verify (bisa dari config repo bila
   // opt-in, atau package.json) dieksekusi via shell — tampilkan SEBELUM
   // jalan pertama agar operator tahu persis apa yang dieksekusi.
@@ -809,6 +1203,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   async function runPromptWithVerify(p: string, signal?: AbortSignal): Promise<void> {
     // Listener UI segar tiap turn (pagar turn yatim — lihat attachUI).
     attachUI()
+    try {
+      presentation?.noteUserMessage({ text: p, turnId: session.state.turnCount })
+    } catch {}
     // Tandai turn aktif: bila proses mati di tengah (segfault/kill), sesi
     // berikutnya menemukan marker yatim dan memberi tahu (bukan hilang bisu).
     // Dihapus di finally di bawah pada SEMUA jalur settle.
@@ -901,10 +1298,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     // apa pun, tempelkan catatan agar agen memperbaiki dulu, bukan menumpuk
     // fitur di atas baseline rusak (yang hanya memperparah keadaan).
     let firstPrompt = p
-    const broken = await checkBaseline(
-      (s) => runVerify(verifyCommand, cwd ?? process.cwd(), undefined, s ?? signal),
-      signal,
-    )
+    const broken = await checkBaseline((s) => runVerifyWithPresentation(s ?? signal), signal)
     // Abort saat baseline jalan sudah melempar dari runVerify; cek ini untuk
     // abort yang datang tepat di sela (tanpa ini turn agen jalan padahal user
     // sudah Ctrl+C).
@@ -926,7 +1320,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           // fallback ke signal turn luar.
           await runOnce(prompt, s ?? signal)
         },
-        verify: (s) => runVerify(verifyCommand, cwd ?? process.cwd(), undefined, s ?? signal),
+        verify: (s) => runVerifyWithPresentation(s ?? signal),
         onCycle: (cycle, max, v) => {
           if (cycle === max) {
             process.stderr.write(
@@ -989,9 +1383,18 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     // tetap melukis seperti dulu.
     detachSimple = attachSimpleLogger(session.events, {
       verbose,
-      quiet: enterRepl === true,
+      quiet: enterRepl === true || machineOutput,
       getSnapshot: getPresentationSnapshot,
       onPresentationEvent,
+      ...(presentationV2Enabled
+        ? {
+            policy: {
+              describeActivity,
+              matchTurn: matchTurnBySummary,
+              elapsedVisible,
+            },
+          }
+        : {}),
     })
     if (enterRepl === true) {
       turnStatus = null
@@ -1000,6 +1403,20 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     turnStatus = attachTurnStatus(session.events, {
       initialModel: effectiveInitialModel,
       getModel: () => modelRef.current ?? effectiveInitialModel,
+      ...(presentationV2Enabled
+        ? {
+            activityFor: (toolCallId: string) => {
+              const activity = getPresentationSnapshot().activities.find(
+                (item) => item.toolCallId === toolCallId,
+              )
+              if (!activity) return undefined
+              return {
+                name: activity.name,
+                ...(activity.target ? { target: activity.target } : {}),
+              }
+            },
+          }
+        : {}),
       ...(richStatus
         ? {
             getStats: () => {
@@ -1026,6 +1443,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
 
   async function persistCurrent(usageData: unknown) {
     try {
+      flushPresentationEvents()
+      await presentationWriteTail
       await saveSession(sessionId, cwd, undefined, session.state.history, usageData)
       if (resumeId) await saveSession(resumeId, cwd, undefined, session.state.history, usageData)
       // Riwayat durable → mutasi turn ini boleh di-finalize (sweep record).
@@ -1037,6 +1456,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   }
 
   async function close(): Promise<void> {
+    flushPresentationEvents()
+    await presentationWriteTail
     detachUI()
     detachBusDebug()
     try {

@@ -32,7 +32,7 @@ minicode --interactive
 # minicode › jelaskan isi src/tools/index.ts
 # /model   → picker provider::model, Enter = pilih + atur effort
 # /status  → token + biaya kumulatif sesi
-# /exit    → keluar (Ctrl+C ganda juga bisa)
+# /exit    → keluar (Esc ganda saat abort juga bisa)
 ```
 
 ## 3. Verify otomatis (2 menit)

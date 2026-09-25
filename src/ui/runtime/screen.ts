@@ -55,7 +55,7 @@ export interface AltScreen {
   readonly cols: number
   readonly rows: number
   /** Lukis satu frame penuh (tepat `rows` baris dari dialog.ts). */
-  paint(lines: string[]): void
+  paint(lines: string[], cursor?: { row: number; col: number }): void
   /**
    * Lukis REGION TANPA clear: popup di atas konten pemilik layar (App TUI).
    * Tiap baris ditulis di `topRow+i` (1-based) setelah hapus-baris; baris di
@@ -128,13 +128,18 @@ export function openAltScreen(): AltScreen {
     get rows() {
       return process.stdout.rows || NULL_ROWS
     },
-    paint(lines: string[]): void {
+    paint(lines: string[], cursor?: { row: number; col: number }): void {
       if (closed) return
       try {
         process.stdout.write(SYNC_START)
         process.stdout.write(HOME)
         process.stdout.write(CLEAR_ALL)
         process.stdout.write(lines.join("\r\n"))
+        if (cursor) {
+          const row = Math.max(1, Math.floor(cursor.row))
+          const col = Math.max(1, Math.floor(cursor.col))
+          process.stdout.write(`\x1b[?25l\x1b[${row};${col}H\x1b[?25h`)
+        }
         process.stdout.write(SYNC_END)
       } catch {}
     },

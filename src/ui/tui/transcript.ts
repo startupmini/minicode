@@ -8,16 +8,20 @@
 // Mode compact saja di Fase 1: teks model mengalir, ledger tool satu baris
 // `  › nama target` (grammar sama dengan REPL), error merah satu baris.
 import type {
+  PresentationPolicy,
   UiBus,
   UiPresentationEvent,
   UiPresentationSnapshot,
   UiToolStatus,
 } from "../contract.ts"
 import { t } from "../i18n/locale.ts"
+import { renderInline } from "../render/markdown.ts"
+import { type MarkdownTable, parseMarkdownBlocks } from "../render/markdown-table.ts"
 import { reasoning } from "../render/reasoning.ts"
-import { sanitizeAnsi, sanitizeAnsiLine } from "../render/sanitize.ts"
+import { sanitizeAnsi, sanitizeAnsiLine, stripSgr } from "../render/sanitize.ts"
+import { renderMarkdownTable } from "../render/table-grid.ts"
 import { c, glyphs } from "../render/theme.ts"
-import { chunkByWidth, truncateToWidth } from "../render/width.ts"
+import { chunkByWidth, displayWidth, truncateToWidth } from "../render/width.ts"
 
 /** Cap memori: baris logis tertua dibuang diam-diam (kontrak I12). */
 export const TRANSCRIPT_CAP = 5000
@@ -55,11 +59,35 @@ export interface TranscriptMeta {
   approvalId?: string
   status?: UiToolStatus
   expandRef?: { toolCallId: string; idx: number }
+  table?: MarkdownTable
 }
 
 export interface TranscriptOptions {
   getSnapshot?: () => UiPresentationSnapshot | null
   onPresentationEvent?: (handler: (event: UiPresentationEvent) => void) => () => void
+  /** Kebijakan kanonik dari composition root; absen = logika inline legacy. */
+  policy?: PresentationPolicy
+}
+
+export interface TranscriptPoint {
+  id: number
+  offset: number
+}
+
+export interface TranscriptRow {
+  text: string
+  sourceId: number
+  sourceStart: number
+  sourceEnd: number
+  displayStart: number
+  displayEnd: number
+  selectable: boolean
+}
+
+export interface TranscriptViewport {
+  rows: TranscriptRow[]
+  firstIndex: number
+  totalRows: number
 }
 
 function targetForFallback(args: Record<string, unknown>): string | undefined {
@@ -77,8 +105,41 @@ function formatElapsed(ms: number): string {
   return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}m`
 }
 
+let selectionSegmenter: Intl.Segmenter | undefined
+
+function offsetAtColumn(text: string, start: number, end: number, column: number): number {
+  const from = Math.max(0, Math.min(start, text.length))
+  const to = Math.max(from, Math.min(end, text.length))
+  const target = Math.max(0, column)
+  let used = 0
+  try {
+    selectionSegmenter ??= new Intl.Segmenter("und", { granularity: "grapheme" })
+    for (const part of selectionSegmenter.segment(text.slice(from, to))) {
+      const width = displayWidth(part.segment)
+      if (target <= used + width / 2) return from + part.index
+      used += width
+      if (target <= used) return from + part.index + part.segment.length
+    }
+  } catch {
+    for (const part of text.slice(from, to)) {
+      const width = displayWidth(part)
+      if (target <= used + width / 2) return from + text.indexOf(part, from)
+      used += width
+      if (target <= used) return from + text.indexOf(part, from) + part.length
+    }
+  }
+  return to
+}
+
 export class Transcript {
   private lines: string[] = []
+  private tables: (MarkdownTable | null)[] = []
+  private ids: number[] = []
+  private sourcePrefixes: string[] = []
+  private sourceTexts = new Map<number, string>()
+  private sourceOrders = new Map<number, number>()
+  private nextId = 1
+  private nextOrder = 1
   private pending = ""
   /** Hitung monotonik baris yang pernah ditambah — basis indikator "baru"
    * yang kebal evict cap 5000 (size() menyusut saat tertua dibuang). */
@@ -91,6 +152,7 @@ export class Transcript {
   private evicted = 0
   private hasEvictMarker = false
   private getSnapshot: (() => UiPresentationSnapshot | null) | undefined
+  private policy: PresentationPolicy | undefined
   private presentationEvents = false
   private presentationUnsub: (() => void) | null = null
   private presentedTerminals = new Set<string>()
@@ -99,6 +161,7 @@ export class Transcript {
 
   constructor(bus: UiBus, opts: TranscriptOptions = {}) {
     this.getSnapshot = opts.getSnapshot
+    this.policy = opts.policy
     // Gagal subscribe = transcript mati total; biarkan throw (fail-closed).
     this.unsubs = [
       bus.on("provider:text", (e: { text: string }) => this.stream(e.text)),
@@ -177,8 +240,14 @@ export class Transcript {
   pushUser(prompt: string): void {
     const rows = sanitizeAnsi(prompt).split("\n")
     const [first, ...rest] = rows
-    this.push(`${c.accent("minicode")} ${c.muted("›")} ${first ?? ""}`, { kind: "user" })
-    for (const r of rest) this.append(`  ${r}`, { kind: "user" })
+    this.commit()
+    this.appendWithSource(
+      `${c.accent("minicode")} ${c.muted("›")} ${first ?? ""}`,
+      { kind: "user" },
+      first ?? "",
+      "minicode › ",
+    )
+    for (const r of rest) this.appendWithSource(`  ${r}`, { kind: "user" }, r, "  · ")
   }
 
   pushError(message: string): void {
@@ -187,12 +256,30 @@ export class Transcript {
 
   pushInfo(lines: string[]): void {
     this.commit()
-    for (const l of lines) this.append(l)
+    if (lines.length === 0) return
+    const blocks = parseMarkdownBlocks(sanitizeAnsi(lines.join("\n")))
+    if (blocks.length === 0) {
+      for (const line of lines) this.append(line)
+      return
+    }
+    for (const block of blocks) {
+      if (block.type === "table") this.appendTable(block.table, { kind: "system" })
+      else {
+        for (const line of block.text.split("\n")) this.append(line)
+      }
+    }
   }
 
   /** Kosongkan transkrip (`/clear`): viewport kembali ke layar kosong. */
   clear(): void {
     this.lines = []
+    this.tables = []
+    this.ids = []
+    this.sourcePrefixes = []
+    this.sourceTexts.clear()
+    this.sourceOrders.clear()
+    this.nextId = 1
+    this.nextOrder = 1
     this.meta = []
     this.pending = ""
     this.thinkingBuf = ""
@@ -213,51 +300,233 @@ export class Transcript {
     return this.totalAppended + (this.pending ? 1 : 0)
   }
 
-  /** Baris visual (ter-wrap) untuk lebar kolom — dipakai view + kunci scroll. */
-  private wrapAll(width: number): string[] {
+  private projectText(
+    text: string,
+    sourceText: string,
+    sourceId: number,
+    width: number,
+    selectable: boolean,
+    sourcePrefix = "",
+  ): TranscriptRow[] {
     const w = Math.max(10, width)
-    const wrapped: string[] = []
-    for (const logical of this.lines) {
-      const clean = logical === "" ? [""] : chunkByWidth(logical, w)
-      for (const r of clean) wrapped.push(r)
+    const renderedLines = text.split("\n")
+    const sourceLines = sourceText.split("\n")
+    const out: TranscriptRow[] = []
+    let sourceBase = 0
+    for (let lineIndex = 0; lineIndex < renderedLines.length; lineIndex++) {
+      const rendered = renderedLines[lineIndex] ?? ""
+      const source = sourceLines[lineIndex] ?? stripSgr(sanitizeAnsi(rendered))
+      const renderedRows = rendered === "" ? [""] : chunkByWidth(rendered, w)
+      const sourceRows = sourcePrefix || source ? chunkByWidth(`${sourcePrefix}${source}`, w) : [""]
+      let offset = sourceBase
+      const count = Math.max(renderedRows.length, sourceRows.length)
+      for (let rowIndex = 0; rowIndex < count; rowIndex++) {
+        const renderedRow = renderedRows[rowIndex] ?? ""
+        const rawSourceRow = sourceRows[rowIndex] ?? ""
+        const sourceRow =
+          sourcePrefix && rowIndex === 0 && rawSourceRow.startsWith(sourcePrefix)
+            ? rawSourceRow.slice(sourcePrefix.length)
+            : rawSourceRow
+        out.push({
+          text: renderedRow,
+          sourceId: selectable ? sourceId : -1,
+          sourceStart: offset,
+          sourceEnd: offset + sourceRow.length,
+          displayStart: 0,
+          displayEnd: displayWidth(renderedRow),
+          selectable: selectable && sourceId >= 0,
+        })
+        offset += sourceRow.length
+      }
+      sourceBase += source.length + 1
+    }
+    return out
+  }
+
+  private projectTable(table: MarkdownTable, sourceId: number, width: number): TranscriptRow[] {
+    const rendered = renderMarkdownTable(table, Math.max(1, width), renderInline)
+    if (!rendered) return []
+    const renderedRows = rendered.split("\n")
+    const logicalRows = [table.headers, ...table.rows].map((row) => row.join("\t"))
+    const ranges: Array<{ start: number; end: number }> = []
+    let base = 0
+    for (const row of logicalRows) {
+      ranges.push({ start: base, end: base + row.length })
+      base += row.length + 1
+    }
+    const plainRows = renderedRows.map((row) => stripSgr(sanitizeAnsi(row)))
+    const horizontal = plainRows.some((row) => /^[\s─━┌┐└┘├┤┬┴┼]+$/.test(row))
+    const fields = Math.max(1, table.headers.length)
+    let logicalIndex = 0
+    return renderedRows.map((row, index) => {
+      const plain = plainRows[index] ?? ""
+      const isBorder = /^[\s─━┌┐└┘├┤┬┴┼]+$/.test(plain)
+      let range = ranges[0] ?? { start: 0, end: 0 }
+      if (horizontal) {
+        if (!isBorder) range = ranges[logicalIndex] ?? range
+        if (!isBorder) logicalIndex++
+      } else {
+        const dataIndex = table.rows.length === 0 ? 0 : Math.floor(index / fields) + 1
+        range = ranges[dataIndex] ?? range
+      }
+      return {
+        text: row,
+        sourceId: isBorder ? -1 : sourceId,
+        sourceStart: range.start,
+        sourceEnd: range.end,
+        displayStart: 0,
+        displayEnd: displayWidth(row),
+        selectable: !isBorder && sourceId >= 0,
+      }
+    })
+  }
+
+  private projectAll(width: number): TranscriptRow[] {
+    const w = Math.max(10, width)
+    const rows: TranscriptRow[] = []
+    for (let i = 0; i < this.lines.length; i++) {
+      const table = this.tables[i]
+      const id = this.ids[i] ?? -1
+      if (table) rows.push(...this.projectTable(table, id, w))
+      else
+        rows.push(
+          ...this.projectText(
+            this.lines[i] ?? "",
+            this.sourceTexts.get(id) ?? "",
+            id,
+            w,
+            true,
+            this.sourcePrefixes[i] ?? "",
+          ),
+        )
     }
     if (this.pending) {
-      for (const chunk of sanitizeAnsi(this.pending).split("\n")) {
-        const rows = chunk === "" ? [""] : chunkByWidth(chunk, w)
-        for (const r of rows) wrapped.push(r)
+      for (const block of parseMarkdownBlocks(sanitizeAnsi(this.pending))) {
+        if (block.type === "table") rows.push(...this.projectTable(block.table, -1, w))
+        else
+          rows.push(
+            ...this.projectText(block.text, stripSgr(sanitizeAnsi(block.text)), -1, w, false),
+          )
       }
     }
-    // Ekor hidup thinking: expanded = sisa baris redup; minimized = satu
-    // penanda redup (isi tidak membanjiri transkrip).
     if (this.thinkingTail) {
       for (const chunk of this.thinkingTail.split("\n")) {
-        const rows = chunk === "" ? [""] : chunkByWidth(chunk, w)
-        for (const r of rows) wrapped.push(c.muted(r))
+        const chunkRows = chunk === "" ? [""] : chunkByWidth(chunk, w)
+        for (const row of chunkRows) {
+          rows.push({
+            text: c.muted(row),
+            sourceId: -1,
+            sourceStart: 0,
+            sourceEnd: 0,
+            displayStart: 0,
+            displayEnd: displayWidth(row),
+            selectable: false,
+          })
+        }
       }
-    } else if (this.thinkingBuf.trim()) {
-      wrapped.push(c.muted(t("ts.thinking")))
     }
-    wrapped.push(...this.runningRows())
-    return wrapped
+    for (const row of this.runningRows()) {
+      rows.push({
+        text: row,
+        sourceId: -1,
+        sourceStart: 0,
+        sourceEnd: 0,
+        displayStart: 0,
+        displayEnd: displayWidth(row),
+        selectable: false,
+      })
+    }
+    return rows
   }
 
-  /** Panjang visual viewport (untuk kunci posisi baca App saat stream masuk). */
   wrappedLength(width: number): number {
-    return this.wrapAll(width).length
+    return this.projectAll(width).length
   }
 
-  /**
-   * Baris tampil untuk viewport: wrap ke `width`, ambil `height` baris
-   * terakhir dikurangi `scrollBack` (0 = ikut ekor). Selalu kembalikan
-   * TEPAT `height` string (padding "" bila kurang) supaya frame penuh.
-   */
+  viewport(width: number, height: number, scrollBack: number): TranscriptViewport {
+    const wrapped = this.projectAll(width)
+    const safeHeight = Math.max(1, Math.floor(height))
+    const back = Math.max(0, Math.min(scrollBack, Math.max(0, wrapped.length - safeHeight)))
+    const firstIndex = Math.max(0, wrapped.length - back - safeHeight)
+    const rows = wrapped.slice(firstIndex, firstIndex + safeHeight)
+    while (rows.length < safeHeight) {
+      rows.unshift({
+        text: "",
+        sourceId: -1,
+        sourceStart: 0,
+        sourceEnd: 0,
+        displayStart: 0,
+        displayEnd: 0,
+        selectable: false,
+      })
+    }
+    return { rows, firstIndex, totalRows: wrapped.length }
+  }
+
   view(width: number, height: number, scrollBack: number): string[] {
-    const wrapped = this.wrapAll(width)
-    const back = Math.max(0, Math.min(scrollBack, Math.max(0, wrapped.length - height)))
-    const tail = wrapped.slice(0, wrapped.length - back)
-    const shown = tail.slice(Math.max(0, tail.length - height))
-    while (shown.length < height) shown.unshift("")
-    return shown
+    return this.viewport(width, height, scrollBack).rows.map((row) => row.text)
+  }
+
+  pointAt(row: TranscriptRow, column: number): TranscriptPoint | null {
+    if (!row.selectable || row.sourceId < 0) return null
+    const source = this.sourceTexts.get(row.sourceId)
+    if (source === undefined) return null
+    const relative = Math.max(0, column - row.displayStart)
+    return {
+      id: row.sourceId,
+      offset: offsetAtColumn(source, row.sourceStart, row.sourceEnd, relative),
+    }
+  }
+
+  hasSource(id: number): boolean {
+    return this.sourceTexts.has(id)
+  }
+
+  columnAtOffset(row: TranscriptRow, offset: number): number {
+    const source = this.sourceTexts.get(row.sourceId)
+    if (source === undefined) return 0
+    const clamped = Math.max(row.sourceStart, Math.min(offset, row.sourceEnd))
+    return displayWidth(source.slice(row.sourceStart, clamped))
+  }
+
+  comparePoints(left: TranscriptPoint, right: TranscriptPoint): number {
+    const leftOrder = this.sourceOrders.get(left.id)
+    const rightOrder = this.sourceOrders.get(right.id)
+    if (leftOrder === undefined || rightOrder === undefined) return 0
+    if (leftOrder !== rightOrder) return leftOrder < rightOrder ? -1 : 1
+    return left.offset === right.offset ? 0 : left.offset < right.offset ? -1 : 1
+  }
+
+  selectionText(start: TranscriptPoint, end: TranscriptPoint): string {
+    const startOrder = this.sourceOrders.get(start.id)
+    const endOrder = this.sourceOrders.get(end.id)
+    if (startOrder === undefined || endOrder === undefined) return ""
+    const [first, last] =
+      startOrder <= endOrder
+        ? [
+            { order: startOrder, point: start },
+            { order: endOrder, point: end },
+          ]
+        : [
+            { order: endOrder, point: end },
+            { order: startOrder, point: start },
+          ]
+    if (start.id === end.id) {
+      const source = this.sourceTexts.get(start.id) ?? ""
+      const from = Math.min(start.offset, end.offset)
+      const to = Math.max(start.offset, end.offset)
+      return source.slice(from, to)
+    }
+    const parts: string[] = []
+    for (const id of this.ids) {
+      const order = this.sourceOrders.get(id)
+      if (order === undefined || order < first.order || order > last.order) continue
+      const source = this.sourceTexts.get(id) ?? ""
+      if (order === first.order) parts.push(source.slice(first.point.offset))
+      else if (order === last.order) parts.push(source.slice(0, last.point.offset))
+      else parts.push(source)
+    }
+    return parts.join("\n")
   }
 
   dispose(): void {
@@ -273,7 +542,12 @@ export class Transcript {
     if (!this.pending) return
     const text = this.pending
     this.pending = ""
-    for (const row of sanitizeAnsi(text).split("\n")) this.append(row, { kind: "assistant" })
+    for (const block of parseMarkdownBlocks(sanitizeAnsi(text))) {
+      if (block.type === "table") this.appendTable(block.table, { kind: "assistant" })
+      else {
+        for (const row of block.text.split("\n")) this.append(row, { kind: "assistant" })
+      }
+    }
   }
 
   private presentationSnapshot(): UiPresentationSnapshot | null {
@@ -337,16 +611,22 @@ export class Transcript {
     const activity = this.snapshotActivity(event.toolCallId)
     if (activity?.parentToolCallId) return
     this.commit()
-    const name = sanitizeAnsiLine(activity?.name ?? event.name ?? "tool")
-    const target = activity?.target ?? event.target
-    const targetText = target ? ` ${truncateToWidth(sanitizeAnsiLine(target), 120, "")}` : ""
-    const status = activity?.status ?? event.status ?? "completed"
     const snapshot = this.presentationSnapshot()
     const children = activity
       ? (snapshot?.activities ?? []).filter((a) => a.parentToolCallId === activity.toolCallId)
           .length
       : 0
-    const retry = activity?.supersedes ? ` ${t("ts.retry")}` : ""
+    // Keputusan node dari policy kanonik bila di-inject; paint/sanitasi tetap
+    // di sini. Tanpa policy = logika inline legacy (rollback flag).
+    const desc =
+      this.policy && activity
+        ? this.policy.describeActivity(activity, { childCount: children })
+        : undefined
+    const name = sanitizeAnsiLine(desc?.name ?? activity?.name ?? event.name ?? "tool")
+    const target = desc?.target ?? activity?.target ?? event.target
+    const targetText = target ? ` ${truncateToWidth(sanitizeAnsiLine(target), 120, "")}` : ""
+    const status = desc?.status ?? activity?.status ?? event.status ?? "completed"
+    const retry = (desc ? desc.retryOf : activity?.supersedes) ? ` ${t("ts.retry")}` : ""
     const child = children > 0 ? ` ${t("ts.childGroup", { n: children })}` : ""
     const message =
       status === "failed" && event.message
@@ -366,15 +646,18 @@ export class Transcript {
   private turnSummary(summary: UiPresentationEvent["summary"], event: UiPresentationEvent): void {
     if (!summary) return
     const snapshot = this.presentationSnapshot()
-    const turn = snapshot?.turns.find((candidate) => {
-      const value = candidate.summary
-      return (
-        value?.toolsOk === summary.toolsOk &&
-        value?.toolsFailed === summary.toolsFailed &&
-        value?.toolsDenied === summary.toolsDenied &&
-        value?.filesChanged === summary.filesChanged
-      )
-    })
+    const turn = snapshot
+      ? (this.policy?.matchTurn(snapshot.turns, summary) ??
+        snapshot.turns.find((candidate) => {
+          const value = candidate.summary
+          return (
+            value?.toolsOk === summary.toolsOk &&
+            value?.toolsFailed === summary.toolsFailed &&
+            value?.toolsDenied === summary.toolsDenied &&
+            value?.filesChanged === summary.filesChanged
+          )
+        }))
+      : undefined
     const turnId = turn?.turnId ?? snapshot?.turns[snapshot.turns.length - 1]?.turnId ?? 0
     if (event.turnId !== undefined) {
       if (this.summarizedTurns.has(event.turnId)) return
@@ -410,7 +693,10 @@ export class Transcript {
         ? ` ${truncateToWidth(sanitizeAnsiLine(activity.target), 120, "")}`
         : ""
       const elapsed = Date.now() - activity.tsStart
-      const elapsedText = elapsed >= 2000 ? ` (${formatElapsed(elapsed)})` : ""
+      const showElapsed = this.policy
+        ? this.policy.elapsedVisible(activity.tsStart, Date.now())
+        : elapsed >= 2000
+      const elapsedText = showElapsed ? ` (${formatElapsed(elapsed)})` : ""
       const retry = activity.supersedes ? ` ${t("ts.retry")}` : ""
       const prefix = child ? "    ↳ " : `  ${glyphs.arrow} `
       return c.info(`${prefix}${name}${target} … ${t("ts.statusRunning")}${elapsedText}${retry}`)
@@ -452,21 +738,69 @@ export class Transcript {
   }
 
   private append(line: string, meta: TranscriptMeta = { kind: "system" }): void {
+    this.appendWithSource(line, meta, stripSgr(sanitizeAnsi(line)))
+  }
+
+  private appendWithSource(
+    line: string,
+    meta: TranscriptMeta,
+    sourceText: string,
+    sourcePrefix = "",
+  ): void {
+    this.appendEntry(line, null, meta, sourceText, sourcePrefix)
+  }
+
+  private appendTable(table: MarkdownTable, meta: TranscriptMeta = { kind: "assistant" }): void {
+    const sourceText = [table.headers, ...table.rows].map((row) => row.join("\t")).join("\n")
+    this.appendEntry(table.source, table, { ...meta, table }, sourceText, "")
+  }
+
+  private appendEntry(
+    line: string,
+    table: MarkdownTable | null,
+    meta: TranscriptMeta,
+    sourceText: string,
+    sourcePrefix: string,
+  ): void {
+    const id = this.nextId++
+    const order = this.nextOrder++
     this.lines.push(line)
+    this.tables.push(table)
+    this.ids.push(id)
+    this.sourcePrefixes.push(sourcePrefix)
+    this.sourceTexts.set(id, sourceText)
+    this.sourceOrders.set(id, order)
     this.meta.push(meta)
     this.totalAppended++
     if (!this.hasEvictMarker && this.lines.length > TRANSCRIPT_CAP) {
       const overflow = this.lines.length - TRANSCRIPT_CAP
+      const removed = this.ids.splice(0, overflow)
+      for (const removedId of removed) {
+        this.sourceTexts.delete(removedId)
+        this.sourceOrders.delete(removedId)
+      }
       this.lines.splice(0, overflow)
+      this.tables.splice(0, overflow)
+      this.sourcePrefixes.splice(0, overflow)
       this.meta.splice(0, overflow)
       this.evicted += overflow
       this.lines.unshift(c.muted(t("ts.evictMarker", { n: this.evicted })))
+      this.tables.unshift(null)
+      this.ids.unshift(-1)
+      this.sourcePrefixes.unshift("")
       this.meta.unshift({ kind: "system" })
       this.hasEvictMarker = true
     }
     if (this.hasEvictMarker && this.lines.length > TRANSCRIPT_CAP + 1) {
       const overflow = this.lines.length - (TRANSCRIPT_CAP + 1)
+      const removed = this.ids.splice(1, overflow)
+      for (const removedId of removed) {
+        this.sourceTexts.delete(removedId)
+        this.sourceOrders.delete(removedId)
+      }
       this.lines.splice(1, overflow)
+      this.tables.splice(1, overflow)
+      this.sourcePrefixes.splice(1, overflow)
       this.meta.splice(1, overflow)
       this.evicted += overflow
       this.lines[0] = c.muted(t("ts.evictMarker", { n: this.evicted }))

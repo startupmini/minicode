@@ -26,6 +26,7 @@ function setup() {
     }),
     listCommands: () => [],
     submit: async () => {},
+    copySelection: () => true,
     abort: () => {},
     cycleMode: () => {},
     toggleCompact: () => {},
@@ -39,12 +40,19 @@ describe("popup komposit", () => {
     const { transcript, app } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     transcript.pushUser("halo dunia")
     await tty!.send("x")
     await tty!.waitForOutput((o) => o.includes("halo dunia"))
     // Buka popup seperti controller: suspend App, view melukis region.
+    const beforeSuspend = tty!.all().length
     app.suspend()
+    const suspendOutput = tty!.all().slice(beforeSuspend)
+    expect(suspendOutput).toContain("\x1b[?1002l")
+    expect(suspendOutput).toContain("\x1b[?1000h")
+    const dimmedFrame = tty!.screen()
+    expect(dimmedFrame[dimmedFrame.length - 2]).toBe("")
+    expect(dimmedFrame[dimmedFrame.length - 1]).toContain("auto")
     let picked = ""
     let cancelled = false
     const p = runPicker({
@@ -70,7 +78,9 @@ describe("popup komposit", () => {
     await p
     expect(cancelled).toBe(true)
     expect(picked).toBe("")
+    const beforeResume = tty!.all().length
     app.resume()
+    expect(tty!.all().slice(beforeResume)).toContain("\x1b[?1002h")
     await tty!.send(KEY.backspace)
     const after = tty!.screen().join("\n")
     expect(after).toContain("halo dunia")
@@ -82,7 +92,7 @@ describe("popup komposit", () => {
     const { app } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     app.suspend()
     const p = runPicker({
       title: "T",
@@ -111,7 +121,7 @@ describe("popup komposit", () => {
     const { transcript, app } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     // Transkrip panjang: baris teratas viewport tak pernah tertutup box.
     transcript.pushInfo(Array.from({ length: 20 }, (_, i) => `konteks-${i}`))
     await tty!.send("x")

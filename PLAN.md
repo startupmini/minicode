@@ -14,7 +14,7 @@ Jalankan sendiri, jangan percaya angka di dokumen:
 bun test                  # harapan: semua hijau, 0 fail
 bun x tsc --noEmit        # harapan: tanpa keluaran
 bun run lint              # harapan: exit 0 (warning boleh ada)
-bun run gate:coverage     # harapan: melewati min 82 funcs / 84,5 lines
+bun run gate:coverage     # harapan: melewati min 83 funcs / 84,5 lines
 bun run gate:pack         # harapan: 23 pemeriksaan lulus
 bun run extreme           # harapan: 0 bypass, semua pass
 bun run gate:fast         # gabungan per-commit/CI: tsc+lint+test+coverage+pack+bash+bench smoke+audit harness
@@ -30,6 +30,330 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
 - Error provider tampil ringkas + saran, bukan dump JSON.
 - Semua overlay menghormati ukuran terminal sungguhan.
 - Bahasa UI dwibahasa id/en pada surface UI aktif (kontrak terminal §i18n: `/lang` > MINICODE_LANG > state.json > locale OS > en; literal hardcode dilarang test); glyph tetap punya fallback ASCII.
+
+---
+
+## Rencana aktif berikutnya — UI/UX minimal + output tabel (2026-09-25)
+
+Status: **SELESAI — implementasi dan gate lokal hijau (2026-09-25)**. Working tree
+masih belum di-commit; fix jitter footer sebelumnya menjadi baseline.
+
+### Arah produk
+
+North star MiniCode: **minimalis, bersih, dan tidak redundan**. Status visual
+harus memberi satu informasi per tujuan: prompt hanya saat editing, `✦` menandai
+proses hidup, dots menandai thinking, dan timer hanya memberi state visual—bukan
+sejumlah label yang bertumpuk.
+
+Wireframe target:
+
+```text
+... transcript ...
+
+minicode › draft                          idle / saat editing
+...                                         thinking/proses
+                                         satu baris kosong
+✦ 00.00.00 mode  model  cwd                footer
+```
+
+### Fase 1 — Status, prompt, dan geometry (kerjakan lebih dulu)
+
+- [x] Hapus teks `Working`, `Thinking`, dan `Running` dari footer; pertahankan
+      `✦` sebagai satu-satunya indikator proses hidup.
+- [x] Tambahkan dots thinking dengan fase `... → .. → . → .. → ...`, berbasis
+      clock 200 ms (bukan jumlah paint/event). `MINICODE_MOTION=0` memakai
+      marker dots statis; ASCII fallback tetap aman.
+- [x] Prompt composer `minicode ›` tampil langsung saat boot dan idle, hilang
+      saat submit/proses berjalan, lalu kembali otomatis kosong setelah turn
+      selesai. Aksi edit/histori tetap dapat membuka composer; echo prompt yang
+      sudah dikirim tetap ada di transcript.
+- [x] Tambahkan satu baris spacer langsung di atas footer. Layout harus
+      menghitung ulang tinggi transcript dan memakai helper yang sama untuk
+      frame normal maupun popup/dimmed; footer selalu menjadi baris terakhir.
+- [x] Timer `HH.MM.SS` berada di footer sebelah sparkle: `00.00.00` saat idle
+      dan format elapsed saat turn berjalan; idle redup, aktif hanya detik putih,
+      menit mulai terang di 60 dtk, jam di 1 jam. Bullet separator footer
+      dihapus; field dipisahkan oleh spasi + warna.
+- [x] Pertahankan scroll, dropdown, multiline, cursor, suspend/resume, signal,
+      dan alternate-screen. `rows` kecil harus tetap menyisakan minimal satu
+      baris transcript.
+- [x] Aktifkan mouse tracking hanya selama TUI; wheel X10/SGR menggeser
+      viewport, klik mouse tetap diabaikan, dan `Up`/`Down` tetap histori.
+- [x] Tambahkan `/copy [n]` untuk 1–10 turn terakhir (urutan kronologis) dan
+      jadikan `Esc` satu-satunya abort turn TUI; `Ctrl+C` tidak lagi memicu
+      abort pada composer TUI.
+- [x] Update test geometry/status untuk idle, editing, thinking, tool, resize,
+      motion-off, popup, mouse wheel, copy, abort, PTY, dan signal; update kontrak
+      terminal + peta test.
+
+### Fase 2 — Perbaikan tabel model
+
+Akar masalah terverifikasi: output Markdown pipe dari provider tidak pernah
+diparse sebagai tabel. `src/ui/render/table.ts` hanya melayani data terstruktur
+CLI; `markdown.ts`, `simple.ts`, dan `Transcript` memperlakukan `| ... |` sebagai
+prosa lalu melakukan generic wrap/justify, sehingga cell/row pecah dan kolom
+bergeser.
+
+- [x] Tambahkan parser pure pipe-table di `src/ui/render/markdown-table.ts`:
+      header + delimiter, outer pipe opsional, escaped `\\|`, code span backtick,
+      alignment `:---`/`---:`/`:---:`, malformed fallback, dan fence exclusion.
+- [x] Buat renderer grid bersama yang menghitung lebar per `displayWidth()`,
+     menerapkan budget total terminal, padding/truncation aman ANSI, alignment,
+     dan fallback vertikal tanpa orphan pipe. Jadikan `renderTable()` wrapper
+     agar CLI table ikut memakai layout budget yang sama.
+- [x] Tambahkan state block streaming di linear sink: tahan kandidat header,
+      aktifkan setelah delimiter valid, buffer row, flush pada blank/tool/
+      completed/abort/detach, dan jangan reflow table dengan `formatWrapped()`.
+- [x] Wire semantic table yang sama ke TUI `Transcript`; simpan block/AST dan
+      render ulang pada lebar saat paint supaya resize 80→30→80 tidak stale.
+- [x] Tentukan policy non-TTY: TTY boleh aligned table, sedangkan output
+      machine `exec --json`/ACP dan source Markdown non-TTY tetap sanitized/raw;
+      parser tidak boleh mengubah kontrak delta provider.
+- [x] Tutup gap tool/todo/`/expand` bila sumbernya memakai renderer text yang
+      sama; tabel tidak boleh bocor ke code fence atau parser membelah `|`
+      di dalam code/escape.
+- [x] Perbaiki total-width `renderTable()` dan manual `padEnd()` pada CLI yang
+      bisa melebihi terminal.
+
+### Fase 3 — Test, kontrak, dan rollout
+
+- [x] Parser: optional pipes, escaped/code-span pipe, alignment, malformed
+      table, CJK/emoji/SGR, tabel di dalam dan di luar fence.
+- [x] Streaming: split chunk di `|`, `\\|`, backtick, SGR, newline/CRLF, CJK;
+      hasil chunked harus identik dengan concatenated input.
+- [x] Linear: TTY 80/30/20, tanpa bocor justify, NO_COLOR, tanpa orphan `|`,
+      abort/EOF midway table.
+- [x] TUI: semantic parity, resize, scroll/tail, frame height, cursor, popup,
+      motion-off, dan PTY fake-provider yang mengirim pipe table.
+- [x] CLI structured table: total output ≤ terminal width, narrow fallback,
+      CJK/ANSI, dan callers config/provider/session.
+- [x] Update `docs/TERMINAL_CONTRACT.md`, `docs/UI_RENDER_PIPELINE.md`,
+      `docs/architecture.md`, `docs/ARCHITECTURE.html`, `CHANGELOG.md`, dan peta
+      test. Jangan edit `vendor/minicore/**` atau mengubah provider contract.
+- [x] Jalankan `bun x tsc --noEmit`, `bun run lint`, `bun test`,
+      `bun run gate:coverage`, `bun run gate:pack`, dan web check.
+
+Hasil verifikasi: 2.581 pass / 22 skip / 0 fail; coverage 84,48% funcs /
+85,52% lines; pack 23/23; web build/check lolos. PTY tabel memakai jalur
+skip transparan bila ConPTY tidak tersedia.
+
+### Urutan pengerjaan
+
+1. Kunci wireframe dan semantik timer footer `00.00.00` → elapsed `HH.MM.SS`.
+2. Implementasikan Fase 1 saja; review visual dan regression test.
+3. Implementasikan parser/renderer/streaming table secara bertahap.
+4. Wire TUI + linear + structured CLI, lalu jalankan test end-to-end.
+5. Update docs/contract dan gate penuh; commit hanya setelah setiap fase hijau.
+
+### Keputusan yang masih harus dikunci
+
+- Timer adalah elapsed truthful dengan format fixed `HH.MM.SS`; nilai awal
+  `00.00.00`, idle redup, dan level warna naik: detik → menit → jam.
+- `minicode ›` tampil saat boot/idle, hilang saat busy, dan kembali otomatis
+  setelah turn selesai; echo prompt yang sudah dikirim tetap dipertahankan di
+  transcript.
+
+---
+
+## Rencana aktif berikutnya — TUI mouse selection tanpa mode (2026-09-25)
+
+Status: **SELESAI — implementasi lokal dan gate hijau (2026-09-25)**. Targetnya meniru
+perilaku OpenCode: mouse tetap aktif untuk wheel dan drag, tetapi selection ditangani
+buffer TUI sendiri. Tidak ada `/select`, `/scroll`, atau mode yang harus diketik user.
+
+### Keputusan UX yang dikunci
+
+- Mouse tracking tetap `?1002h` + `?1006h` selama TUI agar motion drag
+  terkirim; popup menurunkan ke `?1000h` + `?1006h`. Klik tidak lagi dibuang,
+  tetapi diubah menjadi state selection.
+- Klik-kiri + drag di area transcript membuat selection; drag yang selesai
+  menyimpan highlight, `Ctrl+C` menyalin selection. Tanpa selection, `Ctrl+C`
+  tetap no-op dan tidak menjadi abort; `Esc` tetap abort.
+- Wheel tetap menggulir transcript saat idle maupun busy, tanpa memindahkan
+  histori prompt. Selection dianchor ke sumber transcript, bukan koordinat layar,
+  sehingga tetap benar saat stream/resize/scroll.
+- Klik prompt memindahkan kursor; paste isi clipboard tetap memakai bracketed
+  paste/shortcut terminal. Event mouse tidak membawa isi clipboard OS, jadi
+  "klik kiri membaca clipboard" tidak akan diklaim sebagai fitur portable.
+- Ini adalah **app-level selection**, sama seperti OpenCode; bukan selection
+  native terminal. `Ctrl+Shift+C` bukan jalur copy selection TUI; jalur
+  acceptance MiniCode adalah `Ctrl+C` saat selection aktif.
+- Popup tetap memiliki pemilik input sendiri; selection transcript tidak
+  bocor ke picker/form, dan `suspend()/resume()` harus meng-route event dengan
+  benar.
+
+### Arsitektur dan aliran data
+
+1. `src/ui/input/prompt-engine.ts` menambah key mouse ter-normalisasi:
+   press/release/move/drag + wheel, X10 dan SGR, termasuk sequence terpotong
+   antar-chunk. Klik non-left dan motion tanpa tombol tetap diabaikan.
+2. `src/ui/tui/transcript.ts` atau modul pure baru mengekspos projection
+   `visual row → source entry + display column → plain logical text`. Mapping
+   harus menangani wrap, CJK/emoji width, SGR, tabel, dan evict; selection
+   tidak boleh menyalin escape atau padding wrap.
+3. `src/ui/tui/app.ts` menyimpan anchor/focus selection, menghitung highlight
+   aman-SGR, dan memvalidasi ulang selection setelah paint. Hitungan koordinat
+   terminal 1-based diklamp ke viewport; prompt/footer/dropdown tidak selectable.
+4. `TuiHost` menerima callback clipboard dari composition root; `cli/tui.ts`
+   memakai `writeClipboardOsc52` yang sudah ada. Selection payload sudah
+   disanitasi, dibatasi ukurannya, dan error/OSC52 fallback ditampilkan jelas.
+5. Mouse tracking install/cleanup tetap berpasangan dengan `run()`, release
+   untuk child, `resume()`, quit, dan SIGTERM/SIGHUP.
+
+### Fase 1 — Kontrak dan model pure
+
+- [x] Tetapkan invariants: anchor source stabil, selection monotonic saat
+      drag, tidak ada byte kontrol ke clipboard, dan mousemove tanpa drag
+      tidak memicu repaint berat.
+- [x] Tambahkan tipe mouse event dan parser SGR/X10 streaming; fuzz byte acak
+      serta split di setiap byte boundary.
+- [x] Tambahkan kill switch rollout `MINICODE_MOUSE_SELECTION=0` hanya untuk
+      emergency/compatibilitas; default production `1`, bukan mode user-facing.
+
+### Fase 2 — Projection transcript selectable
+
+- [x] Refactor view agar setiap visual row membawa source id/range dan kolom
+      display; teks selection direkonstruksi dari logical source, bukan frame
+      ANSI yang sudah di-wrap.
+- [x] Test satu entry, multi-entry, selection bolak-balik, baris kosong,
+      wrapped paragraph, CJK/emoji, SGR, ledger, reasoning, Markdown table,
+      table fallback vertikal, resize, dan transcript eviction.
+- [x] Pastikan area selection tabel tidak mengambil border/padding sebagai data;
+      policy final-copy untuk tabel harus dites dan didokumentasikan.
+
+### Fase 3 — Interaksi TUI
+
+- [x] Press kiri di transcript memulai selection; motion dengan tombol aktif
+      memperluas; release menormalisasi anchor/focus dan mempertahankan highlight.
+- [x] Klik kosong menghapus selection; klik prompt memindahkan kursor tanpa
+      mengubah histori; drag di luar transcript tidak merusak state.
+- [x] Wheel mengubah viewport dan tidak menggeser histori; stream baru saat
+      scroll/selection tidak merebut posisi baca.
+- [x] `Ctrl+C` hanya copy ketika selection valid; tanpa selection tetap no-op.
+      `Esc` membersihkan selection lebih dulu; tanpa selection, `Esc` menjadi
+      abort saat busy dan double-tap tetap quit.
+- [x] Throttle/coalesce motion dan repaint agar drag 100+ event tidak membuat
+      TUI lambat atau input lag.
+
+### Fase 4 — Clipboard, paste, popup, lifecycle
+
+- [x] Copy selection via DI + OSC52; tampilkan status copied/failed, cap
+      payload, dan tidak menulis credential/ANSI mentah.
+- [x] Verifikasi bracketed paste tetap masuk ke prompt; klik kiri hanya fokus/
+      posisi kursor. Jika nanti ingin click-to-paste OS, buat spike terpisah
+      (Windows/macOS/Linux/SSH) dan jangan gabungkan ke fase ini.
+- [x] Popup `suspend()` mengambil listener sendiri; `resume()` mengembalikan
+      selection/scroll state tanpa double-handle; resize dan child release
+      mengoordinasikan mouse tracking.
+- [x] SIGTERM/SIGHUP/quit tetap memulihkan tracking dan alternate screen.
+
+### Fase 5 — Test dan rollout
+
+- [x] `test/prompt-engine.test.ts`: SGR press/release/move, X10, split chunk,
+      malformed sequence, wheel regression.
+- [x] `test/tui-app.test.ts` + test selection baru: drag highlight, exact OSC52
+      payload, reverse drag, click prompt, busy scroll, stream/resize, popup,
+      Ctrl+C no-selection, Esc-only abort, signal cleanup.
+- [x] `test/pty.test.ts`: SGR mouse byte nyata + fake provider; POSIX menjalankan,
+      ConPTY skip transparan bukan hijau palsu.
+- [x] Property/fuzz test: random transcript/width/anchor tidak menghasilkan
+      out-of-range frame, raw escape, clipboard payload, atau memory tak terbatas.
+- [x] Manual matrix: Windows Terminal, conhost/PowerShell, WSL/SSH, tmux/screen,
+      iTerm2/macOSTerminal; catat perilaku drag, wheel, paste, resize, dan
+      clipboard permission.
+- [x] Update `docs/TERMINAL_CONTRACT.md`, `docs/UI_RENDER_PIPELINE.md`,
+      `docs/repl.md`, `docs/architecture.md`, `docs/ARCHITECTURE.html`, dan
+      `CHANGELOG.md`; update peta proteksi.
+- [x] Gate wajib: `bun x tsc --noEmit && bun run lint && bun test &&
+      bun run gate:coverage && bun run gate:pack`; web check bila docs/HTML berubah.
+
+### Risiko dan mitigasi
+
+- **Koordinat vs wrap/CJK/ANSI:** mapping source eksplisit + unit test setiap
+  renderer; tidak pernah mengambil selection dari string frame mentah.
+- **Stream/reflow menghapus anchor:** anchor memakai source entry/range dan
+  fallback aman saat evict; test scroll + provider text serentak.
+- **Selection bocor ke prompt/secret:** allowlist area transcript; payload
+  sanitized; tidak pernah membaca environment/credential.
+- **Clipboard OSC52 diblokir:** status failure jelas, `/copy 2/3` tetap fallback;
+  tidak crash atau freeze.
+- **Mouse tracking merusak terminal selection:** ini keputusan app-level
+  selection; kontrak menyatakan limitation, tidak menjanjikan native drag.
+- **Paste berbeda per terminal:** bracketed paste adalah path aplikasi;
+  click-to-read-clipboard tidak masuk scope tanpa adapter platform terpisah.
+- **Popup/child/sinyal:** ownership test dan cleanup sequence wajib; satu
+  `TuiApp`/listener saja.
+- **Performa:** motion coalesce, selection payload cap, no per-byte full repaint.
+
+### Acceptance criteria
+
+- [x] Tidak ada perintah mode baru; user drag langsung bisa selection.
+- [x] Wheel scroll tetap bekerja saat prompt idle, prompt berisi, dan turn busy.
+- [x] Drag dari transcript menyalin plain text yang sama secara logis dengan
+      history, tanpa padding/ANSI/border artifact.
+- [x] `Ctrl+C` copy selection; tanpa selection tidak abort; `Esc` membersihkan
+      selection, lalu abort saat busy.
+- [x] Click prompt memindahkan kursor dan bracketed paste tetap bekerja.
+- [x] Tidak ada listener/terminal mode orphan pada quit, popup, child, resize,
+      atau sinyal fatal.
+- [x] Semua test/gate hijau; tidak menurunkan coverage floor tanpa bukti.
+
+---
+
+## Rencana aktif berikutnya — Output Architecture Audit (2026-09-25)
+
+Status: **PHASE 2–7 LANDED — Phase 8 (penghapusan raw) menunggu satu rilis hijau**. Audit memakai skill
+`D:\Download\agent-output-architect-SKILL.md` dan tidak mengubah kernel atau
+renderer. Targetnya satu semantic model → policy projection → TUI/linear/exec/ACP,
+sambil mempertahankan kontrak terminal dan fitur selection yang sudah hijau.
+
+### Artefak audit
+
+- `docs/OUTPUT_ARCHITECTURE_AUDIT.md` — pipeline, event/output inventory, temuan OAP-001–OAP-013.
+- `docs/OUTPUT_EVENT_MODEL.md` — envelope, taxonomy, lifecycle, durability, invariant.
+- `docs/OUTPUT_PROTOCOL_SPEC.md` — stream contract, normal/verbose/debug/machine, JSONL/ACP.
+- `docs/OUTPUT_RENDERING_SPEC.md` — boundary renderer dan projection parity.
+- `docs/OUTPUT_UX_RULES.md` — grammar, error/cancel, terminal/copy/Windows rules.
+- `docs/OUTPUT_IMPLEMENTATION_PLAN.md` — fase migration, rollback, tests, dan validation matrix.
+
+### Temuan yang harus carried forward
+
+- OAP-001/OAP-003: raw EventBus masih authoritative di TUI/linear/exec/ACP;
+  bridge presentation sekarang exhaustive, tetapi renderer belum migrated.
+- OAP-002/OAP-007: lifecycle failure/abort dan durable rebuild sudah punya canonical
+  path; contract restart/branch/child/delete/TTL/resume kini diuji.
+- OAP-004/OAP-005/OAP-012: state, summary, user/reasoning/system/plan/finding/result/
+  diagnostic collections dan producer nyata sudah landing; visibility policy Phase 3
+  masih pending.
+- OAP-006/OAP-008/OAP-009/OAP-010/OAP-011/OAP-013: machine protocol, writer routing,
+  visibility, classification, vocabulary, dan docs protection masih perlu diperbaiki.
+- Tidak ada P0 baru; remediation harus staged dan dapat dibalik, tanpa edit vendor.
+
+### Urutan berikutnya
+
+- [x] Phase 0 — audit architecture dan current pipeline.
+- [x] Phase 1 — definisikan event model/protocol/rendering/UX artifacts.
+- [x] Phase 2 — tulis implementation plan dan rekonsiliasi `PLAN.md`.
+- [x] Phase 3 — canonical event coverage/exhaustive bridge selesai:
+      `user.message` durable, `toPresentationEvent()` mencakup seluruh 20
+      `DomainEventType`, proposed marker untuk event tanpa producer, dan
+      `unsupportedProjection` diagnostics. Regression tests seluruh repo:
+      2532 pass / 22 skip / 0 fail.
+- [x] Output Phase 2 core — state replayable, summary derived, durable event log,
+      checkpoint/late evidence, bounded state, child persistence, and rollback flag.
+- [x] Output Phase 2 parity — real `finding.detected` producer, restart/branch/child/
+      delete/TTL/resume contract, dan `eventSeq` unik untuk durable writes.
+- [x] Phase 4–7 — policy proyeksi + migrasi TUI/linear/machine + persist headless,
+      semua di belakang rollback flag dengan parity test.
+- [ ] Phase 8 — hapus jalur raw/flag dalam commit terisolasi setelah satu rilis
+      hijau; jangan campur cleanup dengan perubahan semantik.
+
+### Acceptance audit
+
+- [x] Audit punya current pipeline, event inventory, output inventory, findings table.
+- [x] Temuan punya severity, location, evidence, problem, impact, recommendation.
+- [x] Tidak ada perubahan behavior renderer pada artefak audit ini.
+- [x] Working tree tetap belum di-commit; tidak ada commit/push.
 
 ---
 

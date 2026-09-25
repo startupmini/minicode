@@ -1,6 +1,8 @@
 import { Database } from "bun:sqlite"
 import { LIMITS } from "../constants.ts"
 import { resolveDbPath } from "../lib/db-path.ts"
+import { scrubSecrets } from "../policy/scrub.ts"
+import { type DomainEvent, DURABILITY } from "../presentation/events.ts"
 
 const dbPath = (cwd?: string) => resolveDbPath("sessions.db", cwd)
 
@@ -46,7 +48,17 @@ function open(cwd?: string): Database {
     CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, created_at INTEGER, cwd TEXT, system TEXT);
     CREATE TABLE IF NOT EXISTS messages (session_id TEXT, seq INTEGER, role TEXT, content TEXT, toolCalls TEXT, toolCallId TEXT, name TEXT, ts INTEGER, PRIMARY KEY(session_id, seq));
     CREATE TABLE IF NOT EXISTS turns (session_id TEXT, turn_idx INTEGER, usage TEXT, ts INTEGER, PRIMARY KEY(session_id, turn_idx));
+    CREATE TABLE IF NOT EXISTS presentation_events (
+      session_id TEXT NOT NULL,
+      event_seq INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      turn_id INTEGER NOT NULL,
+      ts INTEGER NOT NULL,
+      payload TEXT NOT NULL,
+      PRIMARY KEY(session_id, event_seq)
+    );
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq);
+    CREATE INDEX IF NOT EXISTS idx_presentation_events_session ON presentation_events(session_id, event_seq);
   `)
   // migration: add updated_at, toolCallId, name jika kolom lama (backward-compat)
   try {
@@ -91,6 +103,159 @@ function safeContent(value: unknown): string {
     return JSON.stringify(value)
   } catch {
     return String(value)
+  }
+}
+
+const MAX_STORED_EVENT_CHARS = 200_000
+const MAX_STORED_STRING_CHARS = 32_000
+
+function stripAnsi(value: string): string {
+  let out = ""
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i)
+    if (code === 27) {
+      const next = value[i + 1]
+      if (next === "[") {
+        i += 2
+        while (i < value.length) {
+          const current = value.charCodeAt(i)
+          if (current >= 0x40 && current <= 0x7e) break
+          i++
+        }
+        continue
+      }
+      if (next === "]" || next === "P" || next === "_" || next === "^" || next === "X") {
+        i += 2
+        while (i < value.length) {
+          if (value.charCodeAt(i) === 7) break
+          if (value.charCodeAt(i) === 27 && value[i + 1] === "\\") {
+            i++
+            break
+          }
+          i++
+        }
+        continue
+      }
+      continue
+    }
+    if ((code < 32 && code !== 9 && code !== 10 && code !== 13) || code === 127) continue
+    out += value[i]
+  }
+  return out
+}
+
+function scrubStoredValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    const clean = stripAnsi(scrubSecrets(value))
+    return clean.length > MAX_STORED_STRING_CHARS
+      ? `${clean.slice(0, MAX_STORED_STRING_CHARS)}…[truncated]`
+      : clean
+  }
+  if (Array.isArray(value)) return value.slice(0, 1000).map((item) => scrubStoredValue(item))
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {}
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = scrubStoredValue(item)
+    }
+    return out
+  }
+  return value
+}
+
+function encodePresentationEvent(event: DomainEvent): string {
+  const value = scrubStoredValue(event) as Record<string, unknown>
+  let encoded = JSON.stringify(value)
+  if (encoded.length > MAX_STORED_EVENT_CHARS) {
+    for (const key of ["message", "summary", "action", "cause", "text", "content"]) {
+      if (typeof value[key] === "string")
+        value[key] = `[omitted: ${String(value[key]).length} chars]`
+    }
+    encoded = JSON.stringify(value)
+  }
+  if (encoded.length > MAX_STORED_EVENT_CHARS) {
+    encoded = JSON.stringify({
+      eventSeq: event.eventSeq,
+      ts: event.ts,
+      sessionId: event.sessionId,
+      turnId: event.turnId,
+      type: event.type,
+      truncated: true,
+    })
+  }
+  return encoded
+}
+
+function rebasePresentationPayload(payload: string, from: string, to: string): string {
+  try {
+    const value = JSON.parse(payload) as Record<string, unknown>
+    if (value.sessionId === from) value.sessionId = to
+    return JSON.stringify(value)
+  } catch {
+    return payload
+  }
+}
+
+function decodePresentationEvent(payload: string): DomainEvent | null {
+  try {
+    const value = JSON.parse(payload) as Partial<DomainEvent>
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      typeof value.type !== "string" ||
+      !DURABILITY[value.type]?.durable ||
+      typeof value.eventSeq !== "number" ||
+      typeof value.ts !== "number" ||
+      typeof value.sessionId !== "string" ||
+      typeof value.turnId !== "number"
+    )
+      return null
+    return value as DomainEvent
+  } catch {
+    return null
+  }
+}
+
+export function loadPresentationEvents(id: string, cwd?: string): DomainEvent[] {
+  const db = open(cwd)
+  try {
+    const rows = db
+      .prepare("SELECT payload FROM presentation_events WHERE session_id = ? ORDER BY event_seq")
+      .all(id) as { payload: string }[]
+    return rows
+      .map((row) => decodePresentationEvent(row.payload))
+      .filter((event): event is DomainEvent => event !== null)
+  } finally {
+    db.close()
+  }
+}
+
+export async function appendPresentationEvents(
+  id: string,
+  cwd: string | undefined,
+  events: readonly DomainEvent[],
+): Promise<void> {
+  const durable = events.filter((event) => DURABILITY[event.type]?.durable)
+  if (durable.length === 0) return
+  const db = open(cwd)
+  const txn = db.transaction(() => {
+    const insert = db.prepare(
+      "INSERT OR IGNORE INTO presentation_events (session_id, event_seq, type, turn_id, ts, payload) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    for (const event of durable) {
+      insert.run(
+        id,
+        event.eventSeq,
+        event.type,
+        event.turnId,
+        event.ts,
+        encodePresentationEvent(event),
+      )
+    }
+  })
+  try {
+    await withBusyRetry(() => txn())
+  } finally {
+    db.close()
   }
 }
 
@@ -254,6 +419,11 @@ export function purgeExpired(db: Database, now = Date.now()): number {
     .run(cutoff)
   db.prepare("DELETE FROM messages WHERE session_id NOT IN (SELECT id FROM sessions)").run()
   db.prepare("DELETE FROM turns WHERE session_id NOT IN (SELECT id FROM sessions)").run()
+  try {
+    db.prepare(
+      "DELETE FROM presentation_events WHERE session_id NOT IN (SELECT id FROM sessions)",
+    ).run()
+  } catch {}
   return gone.changes
 }
 
@@ -336,6 +506,7 @@ export async function deleteSession(id: string, cwd?: string) {
   const txn = db.transaction(() => {
     db.prepare("DELETE FROM messages WHERE session_id = ?").run(id)
     db.prepare("DELETE FROM turns WHERE session_id = ?").run(id)
+    db.prepare("DELETE FROM presentation_events WHERE session_id = ?").run(id)
     db.prepare("DELETE FROM sessions WHERE id = ?").run(id)
   })
   try {
@@ -436,6 +607,30 @@ export async function branchSession(srcId: string, dstId: string, cwd?: string):
       "INSERT INTO turns (session_id, turn_idx, usage, ts) VALUES (?, ?, ?, ?)",
     )
     for (const t of turns) insT.run(dstId, t.turn_idx, t.usage, t.ts)
+    const events = db
+      .prepare(
+        "SELECT event_seq, type, turn_id, ts, payload FROM presentation_events WHERE session_id = ? ORDER BY event_seq",
+      )
+      .all(srcId) as {
+      event_seq: number
+      type: string
+      turn_id: number
+      ts: number
+      payload: string
+    }[]
+    const insE = db.prepare(
+      "INSERT OR IGNORE INTO presentation_events (session_id, event_seq, type, turn_id, ts, payload) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    for (const event of events) {
+      insE.run(
+        dstId,
+        event.event_seq,
+        event.type,
+        event.turn_id,
+        event.ts,
+        rebasePresentationPayload(event.payload, srcId, dstId),
+      )
+    }
   })
   try {
     await withBusyRetry(() => txn())

@@ -1,6 +1,23 @@
 # Changelog
 
-## [Unreleased]
+## [0.12.0] - 2026-09-25
+
+### Changed — Minimal TUI feedback and model tables
+
+- TUI fullscreen sekarang memakai prompt `minicode ›` langsung saat boot/idle, hilang saat proses berjalan, dan kembali otomatis setelah turn selesai; dots thinking berbasis clock tanpa marker `… thinking` di transcript, timer `HH.MM.SS` di sebelah sparkle dengan level warna detik/menit/jam, dan satu spacer sebelum footer; label `Working`/`Thinking`/`Running` serta bullet separator footer dihapus.
+- Pipe-table Markdown dari model kini diparse dan dirender sebagai grid terminal di linear output dan TUI, termasuk streaming, escaped pipe/code span, alignment, CJK/ANSI, resize, dan fallback terminal sempit; output machine tetap raw.
+- Mouse tracking TUI memakai `?1002h + ?1006h`: wheel tetap menggeser viewport, drag-kiri membuat selection app-level, dan `Ctrl+C` menyalin selection; `MINICODE_MOUSE_SELECTION=0` menjadi kill switch emergency.
+- `/copy [n]` sekarang dapat menyalin 1–10 turn terakhir secara kronologis; TUI memakai `Esc` untuk abort, sementara `Ctrl+C` tanpa selection tidak lagi memicu abort turn.
+
+### Added — Output architecture audit
+
+- Audit architecture-first MiniCode ditambahkan sebagai enam artefak di `docs/`: audit, event model, protocol, rendering, UX, dan implementation plan; navigasi docs/web serta `llms-full.txt` sudah disinkronkan.
+- `scripts/pack-check.ts` menaikkan batas ukuran unpacked dari 2 MiB ke 2.25 MiB karena artefak audit wajib ikut paket; guard import, vendor, secret, test, dan relative-link tetap aktif.
+- Temuan utama: raw EventBus masih menjadi jalur utama TUI/linear/exec/ACP, presentation bridge belum exhaustive, dan durable semantic rebuild belum production-wired; remediation sengaja belum dimulai.
+- Phase 1 canonical bridge selesai: `user.message` durable, mapper seluruh 20 `DomainEventType`, proposed marker untuk event tanpa producer, dan regression coverage baru; renderer masih belum dipindahkan.
+- Phase 2 core selesai: semantic state collections, derived summaries, late evidence, bounded retention, durable SQLite event log/replay, checkpoint/structured verify evidence, child event persistence, dan `MINICODE_PRESENTATION_V2=0` rollback flag.
+- Phase 2 parity selesai: producer `finding.detected` dari `result.findings` eksplisit, contract restart/branch/child/delete/TTL/resume, `eventSeq` unik untuk durable writes; hanya `tool.progress` yang masih `proposed` karena live-only.
+- Phase 3–7 selesai: modul policy proyeksi murni `src/presentation/projection.ts` (seleksi node, envelope `minicode.output.v1`, digest divergensi) di-inject ke TUI/linear/machine; `exec --json` + ACP memakai lifecycle kanonik dengan sanitasi ANSI dan persist headless; test inventaris writer (OAP-008); ambang coverage naik ke 84/85. Penghapusan jalur raw (Phase 8) menunggu satu rilis hijau.
 
 ## [0.11.1] - 2026-09-24
 

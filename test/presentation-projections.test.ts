@@ -1,4 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import {
+  describeActivity,
+  elapsedVisible,
+  matchTurnBySummary,
+} from "../src/presentation/projection.ts"
 import type {
   UiPresentationActivity,
   UiPresentationEvent,
@@ -164,6 +169,65 @@ describe("P5 transcript projection", () => {
     })
     transcript.pushInfo(["safe"])
     expect(transcript.view(40, 2, 0).join("\n")).toContain("safe")
+  })
+
+  test("policy bag vs inline legacy: view identik (parity TUI)", () => {
+    setSessionLocale("en")
+    const summary = {
+      toolsOk: 2,
+      toolsFailed: 1,
+      toolsDenied: 0,
+      toolsCancelled: 0,
+      toolsInterrupted: 0,
+      filesChanged: 1,
+      checkpointId: "cp1",
+      durationMs: 41000,
+    }
+    const snapshot: UiPresentationSnapshot = {
+      activities: [
+        activity({
+          toolCallId: "p1",
+          name: "delegate_task",
+          target: undefined,
+          status: "completed",
+          supersedes: "old-1",
+        }),
+        activity({ toolCallId: "c1", name: "read_file", status: "failed", parentToolCallId: "p1" }),
+      ],
+      turns: [{ turnId: 3, status: "completed", summary }],
+    }
+    const events: UiPresentationEvent[] = [
+      { type: "tool.completed", seq: 8, turnId: 3, toolCallId: "p1", status: "completed" },
+      {
+        type: "tool.failed",
+        seq: 9,
+        turnId: 3,
+        toolCallId: "c1",
+        status: "failed",
+        message: "boom",
+      },
+      { type: "turn.completed", seq: 20, turnId: 3, summary },
+    ]
+    const views: string[][] = []
+    for (const policy of [
+      undefined,
+      { describeActivity, matchTurn: matchTurnBySummary, elapsedVisible },
+    ]) {
+      const bus = createFakeBus()
+      const transcript = new Transcript(bus as never, {
+        getSnapshot: () => snapshot,
+        policy,
+      })
+      const handler = (
+        transcript as unknown as {
+          presentationEvent: (e: UiPresentationEvent) => void
+        }
+      ).presentationEvent.bind(transcript)
+      for (const event of events) handler(event)
+      views.push(transcript.view(120, 20, 0))
+    }
+    expect(views[1]).toEqual(views[0])
+    expect(views[0]!.join("\n")).toContain("delegate_task completed")
   })
 
   test("projection metadata tetap terikat pada baris ledger", () => {

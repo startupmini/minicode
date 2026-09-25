@@ -1071,7 +1071,13 @@ export function attachMutationJournal(
      * root memancarkan file.changed (receipt). Opsional — tanpa hook, jurnal
      * tetap berjalan seperti dulu.
      */
-    onCommitted?: (info: { toolCallId: string; paths: string[]; journalSeq: number }) => void
+    onCommitted?: (info: {
+      toolCallId: string
+      paths: string[]
+      journalSeq: number
+      sessionId: string
+      turnId?: number
+    }) => void
   },
 ): void {
   const root = resolve(opts.cwd ?? process.cwd())
@@ -1195,6 +1201,8 @@ export function attachMutationJournal(
               toolCallId: callId,
               paths: found.paths ?? [],
               journalSeq: found.seq,
+              sessionId: opts.sessionId,
+              ...(found.turn != null ? { turnId: found.turn } : {}),
             })
           } catch {}
         }

@@ -1,4 +1,12 @@
-# Kontrak Terminal MiniCode (TUI fullscreen — v7, 2026-09-23)
+# Kontrak Terminal MiniCode (TUI fullscreen — v7.2, 2026-09-25)
+
+Perubahan v7.2 (2026-09-25): mouse tracking `?1002h + ?1006h`, drag selection
+app-level, `Ctrl+C` copy selection, wheel tetap scroll, popup turun ke `?1000h`,
+dan `MINICODE_MOUSE_SELECTION=0` sebagai kill switch.
+
+Perubahan v7.1 (2026-09-25): mouse wheel X10/SGR untuk scroll transkrip; klik
+mouse tetap diabaikan; mouse tracking dibatasi pada lifecycle TUI; `/copy [n]`
+menyalin 1–10 turn terakhir; abort turn TUI memakai Esc.
 
 Perubahan v7 (temuan audit `audit-tui`): penanganan sinyal fatal
 SIGTERM/SIGHUP (I31), navigasi transkrip Home/End + Shift+PgUp/PgDn (I14),
@@ -24,8 +32,9 @@ proteksi").
   (transkrip sesi tidak di-dump ke scrollback).
 - **Non-interaktif** (one-shot prompt, `exec`, pipe/redirect/CI): cetak polos,
   tak pernah membuka TUI.
-- Tanpa panel/sidebar; tanpa mouse; tanpa animasi dekoratif (pulse spark
-  status bar dapat dimatikan `MINICODE_MOTION=0` — I13).
+- Tanpa panel/sidebar; mouse app-level untuk wheel scroll dan drag-selection
+  transkrip (bukan native terminal selection); tanpa animasi dekoratif
+  (pulse spark status bar dapat dimatikan `MINICODE_MOTION=0` — I13).
 
 ## Contract stdout/stderr
 
@@ -64,17 +73,19 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
   Tanpa ini SIGTERM meninggalkan terminal di alt-screen + raw mode (user harus
   `reset`).
 - App me-repaint live mengikuti event bus (stream teks, ledger, thinking;
-  coalesce 30ms) — TANPA ini layar buta selama turn. Suspend menahan repaint
-  (popup melukis sendiri); quit menahan semua.
+  coalesce 30ms) — TANPA ini layar buta selama turn. `?1002h + ?1006h`
+  mengaktifkan tracking drag; `?1000h + ?1006h` saat popup; `?1000l/?1002l/?1006l`
+  pada quit/child/sinyal. Suspend menahan repaint (popup melukis sendiri);
+  quit menahan semua.
 - Popup komposit (`/model`, `/provider`, `/sessions`, form, approval):
   controller/view memanggil `app.suspend()` (lepas listener stdin + redupkan
   layar), view melukis HANYA region kotak via `paintRegion` (tanpa clear —
   transkrip di belakang tetap tampil), `app.resume()` repaint penuh saat tutup.
   Tanpa suspend: byte masuk ke dua tempat (App + popup) dan frame App menimpa
   popup — dilarang.
-- Saat turn berjalan SEMUA input dibekukan kecuali abort (Esc/Ctrl+C) dan
-  scroll (PgUp/PgDn). Enter saat busy = sunyi (bukan antre, bukan petunjuk).
-  Abort pertama menampilkan hint "tekan Esc/Ctrl+C lagi untuk keluar" di slot
+- Saat turn berjalan SEMUA input dibekukan kecuali abort (Esc) dan
+  scroll (mouse wheel, PgUp/PgDn). Enter saat busy = sunyi (bukan antre, bukan petunjuk).
+  Abort pertama menampilkan hint "tekan Esc lagi untuk keluar" di slot
   indikator SEKALI (anti keluar sesi tak sengaja saat double-tap "memastikan"
   — I14); abort kedua dalam 1,5 dtk = quit.
 
@@ -146,41 +157,49 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     `… N baris awal di luar viewport — riwayat penuh di model` yang melacak
     jumlah baris yang di-evict; `total()` tetap monotonik.
 
-13. Status bar: 1 baris dasar (`✦ [status] mode • model • cwd … ctx`) dari
-    sumber yang sama dengan angka sesi. Saat turn aktif, status teks dan
-    elapsed selalu tampil tanpa bergantung pada event provider; `Working`
-    berarti turn hidup, `Thinking` hanya untuk reasoning nyata, dan tool
-    running memakai label/tool target. Spark pulse saat busy;
-    `MINICODE_MOTION=0` mematikan pulse (status textual tetap tampil dan
-    tidak boleh identik dengan idle; aksesibilitas/SSH lambat/rekaman; temuan
-    audit TUI-006), dibaca saat dipakai (bukan beku saat import).
-14. Binding TUI: PgUp/PgDn scroll; **Shift+PgUp/PgDn (ESC[5;2~/6;2,
-     modifier 2) = setengah halaman; Home/End saat prompt KOSONG = lompat
-     baris-teratas/ekor transkrip (baris berisi = editing awal/akhir baris;
-     dropdown terbuka = jalur engine)**; Up/Down histori; Tab/Shift+Tab mode;
-     Ctrl+O/T compact/thinking; Ctrl+D baris-kosong keluar; Esc/Ctrl+C =
-     batal input / abort turn (busy: SEMUA input dibekukan kecuali abort dan
-     scroll — Enter pun sunyi; berlaku juga saat layar MENCIUT: abort+scroll
-     selalu lolos agar turn bisa dibatalkan tanpa kill -9; abort pertama
-     menampilkan status `Stopping` + hint keluar sekali, abort kedua dalam
-     1,5 detik menutup sesi). Baris kosong menampilkan placeholder +
-     cara keluar; scroll ke atas + stream masuk = indikator `↓ N baris baru`.
+13. Status bar: 1 baris dasar (`✦ 00.00.00 mode  model  cwd`) dari sumber
+     yang sama dengan angka sesi. `✦` tetap menjadi indikator proses hidup;
+     timer `HH.MM.SS` berada tepat di sebelahnya. Idle=redup; saat aktif hanya
+     detik putih, menit ikut terang setelah 60 dtk, dan jam setelah 1 jam.
+     Reasoning memakai dots `...` → `..` → `.` → `..` →
+     `...`, sedangkan teks `Working`/`Thinking`/`Running` tidak tampil. Bullet
+     separator dihapus; field dipisahkan oleh spasi dan warna. Prompt `minicode ›`
+     tampil saat boot/idle, hilang saat busy, dan kembali otomatis setelah turn
+     selesai; aksi edit/histori tetap dapat membuka composer.
+     `MINICODE_MOTION=0` membuat dots dan sparkle statis tetapi tidak
+     menghilangkan feedback; satu baris kosong memisahkan composer dari footer.
+14. Binding TUI: mouse wheel (X10/SGR) scroll transkrip; drag kiri app-level
+     membuat selection transkrip dan `Ctrl+C` menyalinnya; PgUp/PgDn scroll;
+     **Shift+PgUp/PgDn (ESC[5;2~/6;2, modifier 2) = setengah halaman; Home/End
+     saat prompt KOSONG = lompat baris-teratas/ekor transkrip (baris berisi =
+     editing awal/akhir baris; dropdown terbuka = jalur engine)**; Up/Down
+     histori; Tab/Shift+Tab mode; Ctrl+O/T compact/thinking; Ctrl+D baris-kosong
+     keluar; Esc membersihkan selection lebih dulu, lalu batal input / abort
+     turn (busy: SEMUA input dibekukan kecuali abort, scroll, dan selection —
+     Enter pun sunyi; berlaku juga saat layar MENCIUT: abort+scroll selalu lolos
+     agar turn bisa dibatalkan tanpa kill -9; abort pertama menampilkan status
+     `Stopping` + hint keluar sekali, abort kedua dalam 1,5 detik menutup sesi).
+     Ini adalah selection buffer TUI, bukan native terminal selection. Idle
+     menampilkan timer redup di footer dan prompt `minicode ›`; prompt hilang
+     saat busy, lalu otomatis muncul kembali kosong setelah turn selesai.
+     Scroll ke atas + stream masuk = indikator `↓ N baris baru`.
 15. (Dihapus bersama jendela info — nomor dipertahankan.)
 16. Popup komposit: region tanpa clear + union-clear anti-hantu + clearRegion
     saat tutup + suspend/resume berpasangan; layar tak mampu = tolak bersuara
     + batal.
 17. Transkrip append-only di memori (cap 5000), viewport ikut ekor otomatis;
-    ketikan baru kembali ke ekor; stream turn TIDAK merampas posisi baca;
-    repaint live coalesce 30ms dan clock activity 200ms (layar tak buta
-    saat turn). Proyeksi
-    presentasi: baris running di-pin dari snapshot, elapsed tampil setelah
-    ≥2s, status tool final memakai glyph + kata
-    (`completed`/`failed`/`denied`/`cancelled`/`interrupted`), retry dan
-    grup anak mengikuti model, serta ringkasan turn masuk sebagai system
-    entry.
+     ketikan baru kembali ke ekor; stream turn TIDAK merampas posisi baca;
+     repaint live coalesce 30ms dan clock activity 200ms (layar tak buta
+     saat turn). Composer memakai tinggi tetap: prompt saat editing, dots saat
+     reasoning, atau tool target; satu baris kosong selalu memisahkannya dari
+     footer. Proyeksi presentasi: baris running di-pin dari snapshot, elapsed
+     tetap pada ledger tool, status tool final memakai glyph + kata
+     (`completed`/`failed`/`denied`/`cancelled`/`interrupted`), retry dan grup
+     anak mengikuti model, serta ringkasan turn masuk sebagai system entry.
 
 18. Prompt multiline (Ctrl+J newline), histori memori-sesi (tak persist ke
-    berkas histori lama).
+    berkas histori lama). `/copy [n]` menyalin 1–10 turn terakhir (default 1,
+    oldest-to-newest) melalui OSC 52.
 19. Dropdown `/` inline berbingkai; Enter pada menu melengkapi + kirim.
 20. Lebar kotak popup TETAP per permukaan (model 64, picker 64, provider 76,
     form 64 — min=max); nama/ID di depan label; seleksi murni warna; search
@@ -193,8 +212,9 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      di footer form ("batal dalam 10 dtk" — bukan countdown hidup), 10 dtk
      berikutnya = auto-batal (cancel), total semantik 90 dtk lama; SATU
      ketikan apa pun me-reset kedua timer.
-22. Thinking terlihat: minimized = penanda `… thinking` + isi di `/expand`;
-    expanded = alir redup; fase berakhir = commit (tak ada thinking yatim).
+22. Thinking terlihat: composer memakai dots clock; transkrip minimized =
+     bersih tanpa marker (`… thinking`), expanded = alir redup; isi tetap
+     tersedia di `/expand`; fase berakhir = commit (tak ada thinking yatim).
 23. Approval & ask_user tercatat di transkrip (pertanyaan + keputusan) dan
      terlihat sebelum menjawab; non-TTY = deny/null fail-closed; stdout
      di-pipe tanpa sink TUI = deny/null (prompt tak terlihat + mencemari
@@ -259,18 +279,22 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
 
 ## Grammar (ringkas)
 
-prompt `minicode ›` (+ placeholder & cara keluar saat kosong; dropdown `/`
-berbingkai di atasnya) · status bar = 1 baris · ledger tool
+prompt `minicode ›` tampil saat boot/idle dan hilang saat busy (dropdown `/`
+berbingkai di atasnya) ·
+status bar `✦ 00.00.00 mode  model  cwd` (timer redup idle; detik putih aktif,
+menit mulai terang di 60 dtk, jam di 1 jam; tanpa bullet separator) + satu
+spacer sebelum footer · ledger tool
 `  › name target` (hijau) / merah saat error · error `✗ pesan` sekali per
-kegagalan · thinking: `… thinking` / alir redup · popup: konten redup di
+kegagalan · thinking: dots clock / alir redup · popup: konten redup di
 belakang + kotak terpusat (form di dalam) + Esc tutup · approval tercatat ·
 `/status`, `/history`, `/help` ringkas & `/expand` mengalir ke transkrip ·
 Projection V2: `› name target … running`, ledger status ber-glyph/kata,
 retry/grup anak, ringkasan turn, dan marker evict sesuai flag ·
 
-`Ctrl+C`/`Esc` saat turn = abort (+ hint sekali); busy = input beku total ·
-PgUp/PgDn = scroll, Shift+PgUp/PgDn = setengah halaman, Home/End (prompt
-kosong) = lompat top/ekor · indikator `↓ N baris baru` · tab dihitung 8 kolom (batas atas stop
+`Esc` saat turn = abort (+ hint sekali); busy = input beku total ·
+Mouse wheel = scroll transkrip, PgUp/PgDn = scroll, Shift+PgUp/PgDn = setengah
+halaman, Home/End (prompt kosong) = lompat top/ekor · indikator `↓ N baris baru` ·
+tab dihitung 8 kolom (batas atas stop
 terminal — tak pernah undercount) · C1/bidi/tag dibuang dari teks
 tak-terpercaya (sanitasi) · truncate/chunk hanya menyalin SGR (non-SGR
 dibuang) · penanda `(aktif)` di luar budget truncasi (tak termakan URL
@@ -291,10 +315,13 @@ panjang).
 
 ## Peta proteksi (test → invariant)
 
-- `test/tui-app.test.ts` — I1/I14/I17-I20 (boot/exit pairing, transcript viewport,
-  scroll + indikator, prompt + placeholder, status bar, quit, suspend/resume,
-  busy-freeze, live repaint; I14: abort/scroll lolos saat menciut; I17: kunci
-  posisi baca + basis monotonik).
+- `test/tui-app.test.ts` — I1/I13/I14/I17-I20 (boot/exit pairing, transcript
+  viewport, mouse-wheel/drag-selection/PgUp/PgDn scroll + indikator, prompt
+  editing, dots/timer, status bar, `/copy [n]`, Esc-only abort, quit,
+  suspend/resume, busy-freeze, live repaint; I14: abort/scroll/selection lolos
+  saat menciut; I17: kunci posisi baca + basis monotonik).
+- `test/prompt-engine.test.ts` — decoder streaming CSI/SGR/X10: wheel menjadi key scroll, klik mouse tidak masuk teks.
+- `test/tui-transcript.test.ts` — projection source-mapped: wrap, CJK/ANSI, user prefix, tabel TSV, dan selection text.
 - `test/screen-buffer.test.ts` — parser frame harness (unit).
 - `test/tui-transcript.test.ts` — I7/I12/I17/I22/I24 (ledger, cap, viewport,
   thinking, buffer /expand; total() monotonik kebal evict).
@@ -302,7 +329,13 @@ panjang).
   snapshot, running/elapsed, status terminal, retry/child grouping, summary,
   marker evict, dan parity flag OFF).
 - `test/presentation-linear-acp.test.ts` — I2/I6/I28/I33 (linear projection
-  status/duration/receipt dan lifecycle ACP terstruktur).
+  status/duration/receipt dan lifecycle ACP terstruktur; parity policy-vs-legacy).
+- `test/presentation-policy.test.ts` — I32/I33 (seleksi node per mode, envelope
+  machine, digest divergensi; purity tanpa clock/IO).
+- `test/writer-inventory.test.ts` — OAP-008 (setiap writer langsung terdaftar
+  dengan owner; jumlah tak boleh naik diam-diam).
+- `test/exec-json-envelope.test.ts` + `test/cli-session.test.ts` (envelope
+  machine) — I28/I33 (summary berversi, tanpa ANSI/secret, tanpa raw kernel).
 
 - `test/tui-popup.test.ts` — I16 (komposit di atas transkrip, anti-bocor,
   anti-hantu).
@@ -310,7 +343,11 @@ panjang).
   Esc-1 kembalikan prefill, Esc-2 batal).
 - `test/approval-tui.test.ts` — I23 (blok + keputusan tercatat, deny;
   stdout-pipe tanpa sink = deny).
-- `test/footer-render.test.ts` — I13.
+- `test/footer-render.test.ts` — I13 (footer minimal tanpa label status).
+- `test/tui-app.test.ts`, `test/tui-popup.test.ts` — I13/I17 (composer
+  editing/busy, dots clock, timer, spacer, cursor, resize, popup).
+- `test/markdown-table.test.ts` — I8/I11/I17 (pipe-table parser, streaming
+  parity, ANSI/CJK width, TTY/non-TTY, TUI resize, machine-output policy).
 - `test/terminal-contract.test.ts` — I2/I3/I5/I7/I8/I9/I12.
 - `test/transient-arbitration.test.ts` — I3/I9/I27 (hold layar interaktif:
   picker/askLine, nesting, delayMs).
@@ -364,9 +401,9 @@ panjang).
   ESC[5;2~; hint abort pertama), I13 (MINICODE_MOTION=0: spark statis,
   env dibaca saat dipakai), I25 (kursor CUP parkir di dalam blok ?2026 yang
   sama), I21 (konstanta idle form 80+10 dtk + teks peringatan).
-- `test/pty.test.ts` — I17/I31/I28 via BYTE STREAM NYATA (harness PTY
+- `test/pty.test.ts` — I13/I17/I31/I28 via BYTE STREAM NYATA (harness PTY
   `test/helpers/pty-harness.ts`, CLI di pseudo-terminal sesungguhan +
-  provider fake hermetic): boot → ?1049h + prompt, turn penuh end-to-end,
-  SIGTERM → restore + exit 143 (POSIX), resize → repaint, exec --json
+  provider fake hermetic): boot → ?1049h + timer idle, turn penuh end-to-end,
+  resize → repaint, SIGTERM → restore + exit 143 (POSIX), dan exec --json
   bersih tanpa ANSI. Platform tak mampu (ConPTY rusak) = SKIP beralasan,
   bukan hijau palsu.

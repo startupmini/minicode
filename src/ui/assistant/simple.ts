@@ -4,6 +4,7 @@
 // MINICODE_COMPACT=1 atau setCompactMode (/compact).
 import { Buffer } from "node:buffer"
 import type {
+  PresentationPolicy,
   UiBus,
   UiPresentationActivity,
   UiPresentationEvent,
@@ -22,7 +23,8 @@ import { renderDiffCard } from "../render/diff.ts"
 import { formatFriendly, friendlyError, friendlyFromCategory } from "../render/errors.ts"
 import { formatArgsPreview, formatProviderError, formatUsage } from "../render/format.ts"
 import { highlightCode } from "../render/highlight.ts"
-import { decorateMarkdown, type FenceMatch, parseFence } from "../render/markdown.ts"
+import { decorateMarkdown, type FenceMatch, parseFence, renderInline } from "../render/markdown.ts"
+import { MarkdownTableStream } from "../render/markdown-table.ts"
 import { reasoning } from "../render/reasoning.ts"
 import {
   cleanUntrusted,
@@ -31,6 +33,7 @@ import {
   sanitizeAnsiLine,
   stripSgr,
 } from "../render/sanitize.ts"
+import { renderMarkdownTable } from "../render/table-grid.ts"
 import { c, glyphs, stripAnsi } from "../render/theme.ts"
 import { displayWidth, truncateToWidth } from "../render/width.ts"
 import { formatWrapped } from "../render/wrap.ts"
@@ -47,6 +50,8 @@ export interface SimpleOptions {
   quiet?: boolean
   getSnapshot?: () => UiPresentationSnapshot | null
   onPresentationEvent?: (handler: (event: UiPresentationEvent) => void) => () => void
+  /** Kebijakan kanonik dari composition root; absen = logika inline legacy. */
+  policy?: PresentationPolicy
 }
 
 // Buffer output turn terakhir untuk /copy: teks model (sudah sanitize, sama
@@ -54,11 +59,28 @@ export interface SimpleOptions {
 // scrollback milik terminal; ini konten yang berguna ditempel ulang. Cap agar
 // sesi panjang tak membengkakkan memori.
 const LAST_TURN_MAX_CHARS = 200_000
+export const MAX_COPY_TURNS = 10
 let lastTurnText = ""
+let previousTurnTexts: string[] = []
+
 /** Isi output turn terakhir (teks model + hasil tool). */
 export function getLastTurnText(): string {
   return lastTurnText
 }
+
+export function getLastTurnTexts(count = 1): string[] {
+  const all = lastTurnText ? [...previousTurnTexts, lastTurnText] : [...previousTurnTexts]
+  const n = Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1
+  return all.slice(-n)
+}
+
+const archiveTurn = (): void => {
+  if (!lastTurnText) return
+  previousTurnTexts.push(lastTurnText)
+  if (previousTurnTexts.length > MAX_COPY_TURNS) previousTurnTexts.shift()
+  lastTurnText = ""
+}
+
 const rememberTurn = (s: string) => {
   if (!s) return
   // Samakan dengan yang terlihat: kebijakan pipa (F2) berlaku juga untuk /copy.
@@ -132,7 +154,10 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   // Shadowing disengaja agar ~20 call-site tak perlu diubah satu per satu.
   const wOut = opts.quiet ? (_: string) => {} : wOutDirect
   const wErr = opts.quiet ? (_: string) => {} : wErrDirect
-  let streamBuffer = ""
+  previousTurnTexts = []
+  lastTurnText = ""
+  const tableStream = new MarkdownTableStream()
+  let plainLineBuffer = ""
   // Sanitizer sadar-stream per aliran teks (temuan F1): ekor escape yang
   // terpotong di batas chunk ditahan dan disambung ke chunk berikut SEBELUM
   // sanitasi — tanpa ini "ESC[" + "32m" tampil literal. Satu instans per
@@ -289,11 +314,31 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     emitAnswer(formatWrapped(decorateMarkdown(line), w, true))
     emitAnswer("\n")
   }
-  const flushBuf = () => {
-    if (!streamBuffer) return
-    const parts = streamBuffer.split("\n")
+  const consumePlainText = (text: string): void => {
+    const combined = plainLineBuffer + text
+    const parts = combined.split("\n")
     for (let i = 0; i < parts.length - 1; i++) flushLine(parts[i]!)
-    streamBuffer = parts[parts.length - 1] ?? ""
+    plainLineBuffer = parts[parts.length - 1] ?? ""
+  }
+  const consumeTableEvents = (events: ReturnType<MarkdownTableStream["push"]>): void => {
+    for (const event of events) {
+      if (event.type === "text") {
+        consumePlainText(event.text)
+        continue
+      }
+      const width = process.stdout.columns || 80
+      const rendered = process.stdout.isTTY
+        ? renderMarkdownTable(event.table, width, renderInline)
+        : event.raw
+      emitAnswer(`${rendered}\n`)
+    }
+  }
+  const flushTableStream = (): void => {
+    consumeTableEvents(tableStream.flush())
+    if (plainLineBuffer) {
+      flushLine(plainLineBuffer)
+      plainLineBuffer = ""
+    }
   }
 
   const presentationEnabled = !!opts.getSnapshot
@@ -320,19 +365,23 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   }
   const linearSuffix = (activity: UiPresentationActivity | undefined): string => {
     if (!activity) return ""
-    const parts: string[] = [statusWord(activity.status)]
-    if (activity.durationMs !== undefined)
-      parts.push(t("one.duration", { v: Math.max(0, Math.round(activity.durationMs)) }))
-    if (activity.denyReason)
-      parts.push(t("one.denyReason", { reason: sanitizeAnsiLine(activity.denyReason) }))
-    const paths = activity.receipt?.paths ?? []
+    // Bagian suffix dipilih policy kanonik bila di-inject; format tetap di sini.
+    const desc = opts.policy ? opts.policy.describeActivity(activity) : undefined
+    const status = desc?.status ?? activity.status
+    const parts: string[] = [statusWord(status)]
+    const durationMs = desc?.durationMs ?? activity.durationMs
+    if (durationMs !== undefined)
+      parts.push(t("one.duration", { v: Math.max(0, Math.round(durationMs)) }))
+    const denyReason = desc?.denyReason ?? activity.denyReason
+    if (denyReason) parts.push(t("one.denyReason", { reason: sanitizeAnsiLine(denyReason) }))
+    const paths = desc ? desc.receiptPaths : (activity.receipt?.paths ?? [])
     if (paths.length > 0) {
       const cleanPaths = paths
         .map((path) => truncateToWidth(sanitizeAnsiLine(path), 80, ""))
         .join(", ")
       parts.push(t("one.receipt", { paths: cleanPaths }))
     }
-    if (activity.supersedes) parts.push(t("ts.retry"))
+    if (desc ? desc.retryOf !== undefined : activity.supersedes) parts.push(t("ts.retry"))
     return parts.length > 0 ? ` ${c.muted(`[${parts.join(" · ")}]`)}` : ""
   }
   const paintTerminal = (status: UiPresentationActivity["status"], line: string): string => {
@@ -343,6 +392,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   }
   const writePresentationTerminal = (event: UiPresentationEvent): void => {
     if (!presentationEnabled) return
+    flushTableStream()
     if (
       event.type !== "tool.failed" &&
       event.type !== "tool.denied" &&
@@ -354,11 +404,12 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     if (presentedTerminals.has(event.toolCallId)) return
     presentedTerminals.add(event.toolCallId)
     const activity = presentationActivity(event.toolCallId)
-    const name = sanitizeAnsiLine(activity?.name ?? event.name ?? "tool")
-    const target = activity?.target ?? event.target
+    const desc = opts.policy && activity ? opts.policy.describeActivity(activity) : undefined
+    const name = sanitizeAnsiLine(desc?.name ?? activity?.name ?? event.name ?? "tool")
+    const target = desc?.target ?? activity?.target ?? event.target
     const targetText = target ? ` ${truncateToWidth(sanitizeAnsiLine(target), 120, "")}` : ""
-    const status = activity?.status ?? event.status ?? "failed"
-    const message = event.message ?? activity?.error?.message
+    const status = desc?.status ?? activity?.status ?? event.status ?? "failed"
+    const message = event.message ?? desc?.message ?? activity?.error?.message
     const detail = message
       ? `: ${truncateToWidth(sanitizeAnsi(String(message)), 200, "…").split("\n")[0] ?? ""}`
       : ""
@@ -372,6 +423,9 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   }
   offs.push(
     bus.on("turn:started", (e) => {
+      flushTableStream()
+      tableStream.reset()
+      fence = null
       // Turn baru: buffer turn sebelumnya dibuang (lihat /copy yang juga
       // reset di sini) — /expand hanya untuk turn yang baru selesai.
       thinkState = "off"
@@ -381,7 +435,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       answerTruncated = false
       clearCollapsedSections()
       collapse.setActiveSection(null)
-      lastTurnText = ""
+      archiveTurn()
       pendingError = null
       presentedTerminals.clear()
 
@@ -390,11 +444,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   )
   offs.push(
     bus.on("turn:completed", () => {
-      flushBuf()
-      if (streamBuffer) {
-        flushLine(streamBuffer)
-        streamBuffer = ""
-      }
+      flushTableStream()
       // Ekor escape yang tertahan (F1) dibuang di sini — deterministik, tak
       // pernah bocor mentah; begitu pula saat detach/abort di bawah.
       textSan.flush()
@@ -421,9 +471,8 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         answerTruncated = false
       }
       const clean = cleanUntrusted(textSan.push(e.text), !!process.stdout.isTTY)
-      streamBuffer += clean
       rememberTurn(clean)
-      flushBuf()
+      consumeTableEvents(tableStream.push(clean))
     }),
   )
   offs.push(
@@ -508,6 +557,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   )
   offs.push(
     bus.on("step:started", (e: { step: UiStep }) => {
+      flushTableStream()
       if (!opts.verbose) return
       const calls = e.step.toolCalls
         // Nama + argumen dari model (tak terpercaya): sanitasi sebelum tampil.
@@ -521,6 +571,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   )
   offs.push(
     bus.on("execution:started", (e) => {
+      flushTableStream()
       // Section aktif = tool yang sedang jalan — target tombol + / - saat busy.
       collapse.setActiveSection("tool")
       // Ganti fase: sisa baris thinking yang belum ber-newline dicetak dulu
@@ -545,6 +596,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   )
   offs.push(
     bus.on("execution:completed", (e) => {
+      flushTableStream()
       const callId = e.execution.call.id
       const activity = presentationActivity(callId)
       if (activity && activity.status !== "completed" && callId && presentedTerminals.has(callId)) {
@@ -554,7 +606,10 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       const name = e.execution.call.name
       const args = (e.execution.call.args ?? {}) as Record<string, unknown>
       const suffix = linearSuffix(activity)
-      const isError = activity ? activity.status !== "completed" : r.isError === true
+      // Keputusan error dari status kanonik bila policy/snapshot ada.
+      const status =
+        opts.policy && activity ? opts.policy.describeActivity(activity).status : activity?.status
+      const isError = status ? status !== "completed" : r.isError === true
       // Hasil string ikut ke buffer /copy (versi sanitize, cap per-add agar
       // satu read_file raksasa tak langsung memenuhi buffer sendirian).
       if (!isError && typeof r.content === "string")
@@ -710,21 +765,19 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     }),
   )
   offs.push(
-    bus.on("context:compacted", (e) =>
+    bus.on("context:compacted", (e) => {
+      flushTableStream()
       wErr(
         c.warning(`${t("ts.compacted", { reason: sanitizeAnsiLine(String(e.reason ?? "")) })}\n`),
-      ),
-    ),
+      )
+    }),
   )
 
   return () => {
     // Sisa parsal di-flush dulu (jangan hilang diam-diam), baru lepas.
     // Tanpa ini detach di tengah baris membuang ekornya — dan di jalur abort
-    // (tanpa turn:completed) sisa streamBuffer bocor ke turn berikutnya.
-    if (streamBuffer) {
-      flushLine(streamBuffer)
-      streamBuffer = ""
-    }
+    // (tanpa turn:completed) sisa stream tabel bocor ke turn berikutnya.
+    flushTableStream()
     // Ekor escape tertahan (F1) dibuang di sini juga: abort/error/budget
     // tanpa turn:completed tak boleh meninggalkan ANSI tail.
     textSan.flush()

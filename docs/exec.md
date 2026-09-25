@@ -6,9 +6,9 @@
 |---|---|
 | `minicode "prompt"` | Sekali jalan; output teks model + ledger ke terminal |
 | `echo "prompt" \| minicode` | Prompt datang dari pipeline/another tool |
-| `minicode exec "prompt" --json` | CI: event JSONL di stdout + baris terakhir `{"type":"summary"}` |
+| `minicode exec "prompt" --json` | CI: envelope `minicode.output.v1` JSONL di stdout + baris terakhir `{"type":"summary"}` berversi |
 
-`exec --json` memancarkan satu JSON per event (langkah tool, output, error) dan **summary** terstruktur di akhir — cukup untuk diparse pipeline tanpa screen-scraping. Kegagalan *setup* (mis. tanpa provider) pun membawa satu baris `{"type":"summary","ok":false,…}` di stdout — stream tak pernah kosong; pesan manusia tetap di stderr, exit `1`.
+`exec --json` memancarkan satu JSON per event lifecycle kanonik (langkah tool, output, error) dengan envelope `minicode.output.v1` (`eventId`, `timestamp`, `sessionId`, `turnId`, `correlationId`, `severity`, `status`, `payload`) dan **summary** terstruktur berversi di akhir — cukup untuk diparse pipeline tanpa screen-scraping. Kegagalan *setup* (mis. tanpa provider) pun membawa satu baris `{"type":"summary","ok":false,…}` di stdout — stream tak pernah kosong; pesan manusia tetap di stderr, exit `1`. Teks model mengalir sebagai record `{type:"text",delta}` terpisah yang sudah di-scrub dan bebas ANSI.
 
 ## Server JSON-RPC untuk IDE: `minicode acp`
 
@@ -17,7 +17,7 @@
 | Method | Params | Balasan |
 |---|---|---|
 | `initialize` | `{client}` | `{server:"minicode-acp", capabilities:{run, streamText, cancel, approval:"deny-headless"}}` |
-| `run` | `{prompt*, cwd?, model?, maxSteps?, timeoutMs?, budget?, mode:"auto"\|"plan"}` | notifikasi `{type:"text",delta}` + `{type:"tool",name}`, lalu `{ok,tokens,steps,turns,text}` atau `{error}` |
+| `run` | `{prompt*, cwd?, model?, maxSteps?, timeoutMs?, budget?, mode:"auto"\|"plan"}` | notifikasi lifecycle (`turn.*`, `tool.*`, `approval.*`, `file.changed`, `test.completed`, `diagnostic.raised`, `checkpoint.created`, `plan.updated`, `finding.detected`, `result.produced`, `context.compacted`) + `{type:"text",delta}`, lalu `{ok,tokens,steps,turns,text}` atau `{error}` (`{type:"tool",name}` hanya legacy bila lifecycle absen) |
 | `cancel` | — | `{cancelled:true/false}` (menggugurkan run berjalan) |
 | `shutdown` | — | keluar 0 |
 
@@ -29,7 +29,9 @@ printf '%s\n' '{"id":1,"method":"initialize"}' '{"id":2,"method":"shutdown"}' | 
 
 ## Hasil terstruktur: `submit_result`
 
-Tool `submit_result` menghasilkan JSON akhir terstruktur, dipanggil paling banyak 1× per run, dengan mode `NO_PROMPT` (tidak minta konfirmasi). Di `exec --json`, isi hasil diteruskan **verbatim** — pengganti `response_format` ala API. Cocok untuk tugas yang hasilnya dikonsumsi program lain, bukan manusia.
+Tool `submit_result` menghasilkan JSON akhir terstruktur, dipanggil paling banyak 1× per run, dengan mode `NO_PROMPT` (tidak minta konfirmasi). Di `exec --json`, isi hasil diteruskan **verbatim** — pengganti `response_format` ala API. Bila `result.findings` berisi daftar eksplisit `{category, severity, summary, evidence?}`, temuan tersebut juga diproyeksikan sebagai event `finding.detected`. Cocok untuk tugas yang hasilnya dikonsumsi program lain, bukan manusia.
+
+Mode `--json` menulis envelope `minicode.output.v1` untuk lifecycle kanonik (`eventId`, `timestamp`, `sessionId`, `turnId`, `correlationId`, `severity`, `status`, `payload`) dan record terminal `summary` berversi (`error` = `{category, message, action?}`); teks model tetap record `{type:"text",delta}` terpisah. Setup failure selalu membawa satu baris summary `ok:false`.
 
 ## Klarifikasi mid-run: `ask_user`
 

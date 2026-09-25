@@ -24,10 +24,12 @@ import type {
   DomainEvent,
   EventBusLike,
   FailCause,
+  PlanStep,
+  SemanticSeverity,
   ToolIdentity,
   TurnSummary,
 } from "./events.ts"
-import type { ContentStore } from "./store.ts"
+import { type ContentStore, MAX_SECTION_CHARS } from "./store.ts"
 
 export interface AdapterDiagnostics {
   eventsIn: number
@@ -40,6 +42,7 @@ export interface AdapterDiagnostics {
   errors: number
   /** Forward anak tanpa pasangan delegate_task yang bisa ditebak (Fase 2). */
   orphanChild: number
+  userMessages: number
   /** Bentuk execution rusak — event dilewati, bukan crash (Fase 2). */
   malformedExecution: number
 }
@@ -51,22 +54,37 @@ export interface RunSettleInfo {
   parentAborted: boolean
 }
 
+export type TurnSummaryProvider = (input: {
+  sessionId: string
+  turnId: number
+  fallback: TurnSummary
+}) => TurnSummary
+
 export interface PresentationAdapter {
   onEvent(handler: (e: DomainEvent) => void): () => void
   /** Dipanggil permission/ask_user via hook DI (bukan event bus). */
   publishApproval(e: ApprovalHookEvent): void
+  noteUserMessage(info: { text: string; promptRef?: string; turnId?: number }): void
   /** Dipanggil driver (runOnce) saat session.run reject — kernel diam di sini. */
   noteRunSettled(error: unknown, info: RunSettleInfo): void
-  /**
-   * Fase 4: jurnal committed → file.changed (receipt paths+seq). Dipanggil
-   * composition root via hook journal — kernel tidak meng-emit event ini.
-   */
   noteFileChanged(info: {
     toolCallId: string
     paths: string[]
     journalSeq?: number
     checkpointId?: string
+    sessionId?: string
+    turnId?: number
   }): void
+  noteTestCompleted(info: {
+    toolCallId: string
+    passed: number
+    failed: number
+    summary: string
+    sessionId?: string
+    turnId?: number
+  }): void
+  noteCheckpoint(info: { checkpointId: string; paths?: string[]; turnId?: number }): void
+  setTurnSummaryProvider(provider: TurnSummaryProvider | undefined): void
   getDiagnostics(): AdapterDiagnostics
   dispose(): void
 }
@@ -155,16 +173,81 @@ export function assertExecutionShape(e: unknown): e is {
   return typeof id === "string" && id.length > 0 && typeof name === "string" && name.length > 0
 }
 
+export interface SubmittedFinding {
+  findingId: string
+  category: string
+  severity: SemanticSeverity
+  summary: string
+  evidence: string[]
+}
+
+// Temuan hanya boleh lahir dari struktur eksplisit `submit_result`, bukan dari
+// menebak teks bebas. Bentuk tak valid dilewati agar kontrak ketat.
+const findingSeverities: readonly SemanticSeverity[] = ["info", "warning", "error", "critical"]
+function cleanFindingText(value: unknown, max: number): string | undefined {
+  if (typeof value !== "string") return undefined
+  const text = value.trim().replace(/\s+/g, " ")
+  if (!text) return undefined
+  return text.length > max ? `${text.slice(0, max)}…` : text
+}
+function cleanFindingEvidence(value: unknown): string[] {
+  const items = Array.isArray(value) ? value : typeof value === "string" ? [value] : []
+  const out: string[] = []
+  for (const item of items.slice(0, 10)) {
+    const text = cleanFindingText(item, 200)
+    if (text) out.push(text)
+  }
+  return out
+}
+export function findingsFromSubmitResult(args: unknown, callId: string): SubmittedFinding[] {
+  if (typeof args !== "object" || args === null || !callId) return []
+  const result = (args as { result?: unknown }).result
+  if (typeof result !== "object" || result === null) return []
+  const raw = (result as { findings?: unknown }).findings
+  if (!Array.isArray(raw)) return []
+  const findings: SubmittedFinding[] = []
+  for (const [index, item] of raw.slice(0, 5).entries()) {
+    if (typeof item !== "object" || item === null) continue
+    const value = item as {
+      category?: unknown
+      severity?: unknown
+      summary?: unknown
+      evidence?: unknown
+    }
+    const category = cleanFindingText(value.category, 80)
+    const summary = cleanFindingText(value.summary, 500)
+    if (!category || !summary) continue
+    if (!findingSeverities.includes(value.severity as SemanticSeverity)) continue
+    findings.push({
+      findingId: `finding:${callId}:${index + 1}`,
+      category,
+      severity: value.severity as SemanticSeverity,
+      summary,
+      evidence: cleanFindingEvidence(value.evidence),
+    })
+  }
+  return findings
+}
+
 export function createPresentationAdapter(
   source: EventBusLike,
-  opts: { sessionId: string; contentStore?: ContentStore },
+  opts: {
+    sessionId: string
+    contentStore?: ContentStore
+    initialSeq?: number
+    initialTurn?: number
+    initialTurnStartTs?: number
+  },
 ): PresentationAdapter {
   const sessionId = opts.sessionId
   const contentStore = opts.contentStore
-  let seq = 0
-  let currentTurn = 0
-  let turnStartTs = 0
+  let seq = opts.initialSeq ?? 0
+  let currentTurn = opts.initialTurn ?? 0
+  let turnStartTs = opts.initialTurnStartTs ?? 0
+  let turnSummaryProvider: TurnSummaryProvider | undefined
   let currentStep = 0
+  let reasoningText = ""
+  let reasoningTruncated = false
   const toolStarts = new Map<string, number>()
   const openTools = new Map<
     string,
@@ -188,6 +271,7 @@ export function createPresentationAdapter(
     anomalies: 0,
     errors: 0,
     orphanChild: 0,
+    userMessages: 0,
     malformedExecution: 0,
   }
 
@@ -210,6 +294,63 @@ export function createPresentationAdapter(
     turnId,
     ...(parentLink ? { parentLink } : {}),
   })
+  const reasoningRef = (): { toolCallId: string; idx: number; kind: "reasoning" } => ({
+    toolCallId: `reasoning:${sessionId}:${currentTurn}`,
+    idx: 0,
+    kind: "reasoning",
+  })
+  const finishReasoning = (): void => {
+    if (!reasoningText) return
+    const ref = reasoningRef()
+    if (contentStore) {
+      try {
+        contentStore.put(ref, reasoningText, {
+          kind: "reasoning",
+          stream: "stderr",
+          truncated: reasoningTruncated,
+        })
+      } catch {
+        diag.errors++
+      }
+    }
+    publish({
+      ...base(currentTurn),
+      type: "reasoning.completed",
+      turnId: currentTurn,
+      truncated: reasoningTruncated,
+      expandRef: ref,
+    })
+    reasoningText = ""
+    reasoningTruncated = false
+  }
+  const planFromTodoArgs = (
+    args: unknown,
+  ): { steps: PlanStep[]; status: "open" | "completed" | "cancelled" } | undefined => {
+    if (typeof args !== "object" || args === null) return undefined
+    const raw = (args as { todos?: unknown }).todos
+    if (!Array.isArray(raw) || raw.length === 0) return undefined
+    const steps: PlanStep[] = []
+    for (const [index, item] of raw.slice(0, 100).entries()) {
+      if (typeof item !== "object" || item === null) continue
+      const value = item as { content?: unknown; status?: unknown }
+      const title = typeof value.content === "string" ? value.content.trim().slice(0, 200) : ""
+      if (!title) continue
+      const status =
+        value.status === "completed" || value.status === "cancelled"
+          ? value.status
+          : value.status === "in_progress"
+            ? "active"
+            : "pending"
+      steps.push({ stepId: String(index + 1), title, status })
+    }
+    if (steps.length === 0) return undefined
+    const status = steps.every((step) => step.status === "completed")
+      ? "completed"
+      : steps.every((step) => step.status === "cancelled")
+        ? "cancelled"
+        : "open"
+    return { steps, status }
+  }
 
   const markTerminal = (id: string): boolean => {
     if (terminalTools.has(id)) {
@@ -291,15 +432,18 @@ export function createPresentationAdapter(
     }
   }
 
-  const turnSummary = (): TurnSummary => ({
-    toolsOk: counts.ok,
-    toolsFailed: counts.failed,
-    toolsDenied: counts.denied,
-    toolsCancelled: counts.cancelled,
-    toolsInterrupted: 0,
-    filesChanged: 0,
-    durationMs: Math.max(0, Date.now() - turnStartTs),
-  })
+  const turnSummary = (): TurnSummary => {
+    const fallback: TurnSummary = {
+      toolsOk: counts.ok,
+      toolsFailed: counts.failed,
+      toolsDenied: counts.denied,
+      toolsCancelled: counts.cancelled,
+      toolsInterrupted: 0,
+      filesChanged: 0,
+      durationMs: Math.max(0, Date.now() - turnStartTs),
+    }
+    return turnSummaryProvider?.({ sessionId, turnId: currentTurn, fallback }) ?? fallback
+  }
 
   const resetTurnCounters = (): void => {
     counts.ok = 0
@@ -335,14 +479,22 @@ export function createPresentationAdapter(
     }
     currentTurn = typeof e?.turn === "number" ? e.turn : currentTurn + 1
     currentStep = 0
+    reasoningText = ""
+    reasoningTruncated = false
     turnStartTs = Date.now()
     resetTurnCounters()
-    publish({ ...base(currentTurn), type: "turn.started", turnId: currentTurn, promptRef: "" })
+    publish({
+      ...base(currentTurn),
+      type: "turn.started",
+      turnId: currentTurn,
+      promptRef: `turn:${currentTurn}`,
+    })
   })
 
   sub("turn:completed", (e: { result?: unknown }) => {
     const r = (e?.result ?? {}) as { finalText?: unknown }
     const text = typeof r.finalText === "string" ? r.finalText : ""
+    finishReasoning()
     if (text) {
       publish({
         ...base(currentTurn),
@@ -352,6 +504,14 @@ export function createPresentationAdapter(
         truncated: false,
       })
     }
+    publish({
+      ...base(currentTurn),
+      type: "result.produced",
+      turnId: currentTurn,
+      resultId: `result:${sessionId}:${currentTurn}`,
+      status: "completed",
+      summary: text || "turn completed",
+    })
     diag.turnsSettled++
     publish({
       ...base(currentTurn),
@@ -433,6 +593,17 @@ export function createPresentationAdapter(
         ...(parentLink ? { parentLink } : {}),
         ...(childId ? { childSessionId: childId } : {}),
       })
+      const plan = call.name === "todo_write" ? planFromTodoArgs(call.args) : undefined
+      if (plan) {
+        const planSessionId = childId ?? sessionId
+        publish({
+          ...(childId ? childBase(currentTurn, childId, parentLink) : base(currentTurn)),
+          type: "plan.updated",
+          planId: `plan:${planSessionId}:${currentTurn}`,
+          status: plan.status,
+          steps: plan.steps,
+        })
+      }
       if (childId) {
         publish({
           ...childBase(currentTurn, childId, parentLink),
@@ -482,7 +653,10 @@ export function createPresentationAdapter(
       // Anak tidak menghitung ke summary parent — ledger parent = 1 baris
       // delegasi (delegate_task sendiri), bukan N tool anak.
       const count = !childId
-      const emitBase = childId ? childBase(currentTurn, childId, parentLink) : base(currentTurn)
+      // Setiap event terminal butuh eventSeq sendiri: basis bersama membuat
+      // INSERT OR IGNORE durable melewatkan event berikutnya dengan seq sama.
+      const nextBase = () =>
+        childId ? childBase(currentTurn, childId, parentLink) : base(currentTurn)
       const withLink = <T extends DomainEvent>(ev: T): T =>
         parentLink ? { ...ev, parentLink } : ev
       // Fase 4: konten completed → store (put selalu jalan — zero user-visible
@@ -503,9 +677,32 @@ export function createPresentationAdapter(
       }
       if (!result.isError) {
         if (count) counts.ok++
+        if (call.name === "submit_result") {
+          const args = call.args as { summary?: unknown }
+          publish(
+            withLink({
+              ...nextBase(),
+              type: "result.produced",
+              resultId: `submit:${call.id}`,
+              status: "completed",
+              summary:
+                typeof args.summary === "string" ? args.summary : "structured result submitted",
+            }),
+          )
+          for (const finding of findingsFromSubmitResult(call.args, call.id)) {
+            publish(
+              withLink({
+                ...nextBase(),
+                type: "finding.detected",
+                turnId: currentTurn,
+                ...finding,
+              }),
+            )
+          }
+        }
         publish(
           withLink({
-            ...emitBase,
+            ...nextBase(),
             type: "tool.completed" as const,
             toolCallId: call.id,
             durationMs,
@@ -522,7 +719,7 @@ export function createPresentationAdapter(
         diag.deniedReconstructed++
         publish(
           withLink({
-            ...emitBase,
+            ...nextBase(),
             type: "tool.denied" as const,
             toolCallId: call.id,
             reason: denyReasonOf({ isError: true, content: result.content }) ?? "unknown",
@@ -534,7 +731,7 @@ export function createPresentationAdapter(
       if (count) counts.failed++
       publish(
         withLink({
-          ...emitBase,
+          ...nextBase(),
           type: "tool.failed" as const,
           toolCallId: call.id,
           durationMs,
@@ -552,9 +749,34 @@ export function createPresentationAdapter(
   })
 
   sub("provider:extension", (e: { kind?: unknown; data?: unknown }) => {
+    if (e?.kind === "error") {
+      const data = e.data as { message?: unknown; error?: unknown } | null
+      const message =
+        typeof data?.message === "string"
+          ? data.message
+          : typeof data?.error === "string"
+            ? data.error
+            : "provider extension error"
+      publish({
+        ...base(currentTurn),
+        type: "diagnostic.raised",
+        turnId: currentTurn,
+        category: "PROVIDER_ERROR",
+        severity: "error",
+        message: message.slice(0, 500),
+      })
+      return
+    }
     if (e?.kind !== "reasoning") return
     const text = (e.data as { text?: unknown } | null)?.text
     if (typeof text !== "string" || !text) return
+    if (reasoningText.length < MAX_SECTION_CHARS) {
+      const remaining = MAX_SECTION_CHARS - reasoningText.length
+      reasoningText += text.slice(0, remaining)
+      if (text.length > remaining) reasoningTruncated = true
+    } else {
+      reasoningTruncated = true
+    }
     publish({ ...base(currentTurn), type: "reasoning.delta", turnId: currentTurn, delta: text })
   })
 
@@ -565,6 +787,22 @@ export function createPresentationAdapter(
       reason: typeof e?.reason === "string" ? e.reason : "",
     })
   })
+
+  const noteUserMessage: PresentationAdapter["noteUserMessage"] = ({ text, promptRef, turnId }) => {
+    try {
+      if (!text) return
+      diag.userMessages++
+      const resolvedTurn = turnId ?? currentTurn
+      publish({
+        ...base(resolvedTurn),
+        type: "user.message",
+        text,
+        promptRef: promptRef ?? `turn:${resolvedTurn}`,
+      })
+    } catch {
+      diag.errors++
+    }
+  }
 
   const publishApproval: PresentationAdapter["publishApproval"] = (e) => {
     try {
@@ -603,12 +841,42 @@ export function createPresentationAdapter(
   const noteFileChanged: PresentationAdapter["noteFileChanged"] = (info) => {
     try {
       publish({
-        ...base(currentTurn),
+        ...base(info.turnId ?? currentTurn),
+        ...(info.sessionId ? { sessionId: info.sessionId } : {}),
         type: "file.changed",
         toolCallId: info.toolCallId,
         paths: info.paths,
         ...(info.journalSeq !== undefined ? { journalSeq: info.journalSeq } : {}),
         ...(info.checkpointId !== undefined ? { checkpointId: info.checkpointId } : {}),
+      })
+    } catch {
+      diag.errors++
+    }
+  }
+
+  const noteTestCompleted: PresentationAdapter["noteTestCompleted"] = (info) => {
+    try {
+      publish({
+        ...base(info.turnId ?? currentTurn),
+        ...(info.sessionId ? { sessionId: info.sessionId } : {}),
+        type: "test.completed",
+        toolCallId: info.toolCallId,
+        passed: info.passed,
+        failed: info.failed,
+        summary: info.summary,
+      })
+    } catch {
+      diag.errors++
+    }
+  }
+
+  const noteCheckpoint: PresentationAdapter["noteCheckpoint"] = (info) => {
+    try {
+      publish({
+        ...base(info.turnId ?? currentTurn),
+        type: "checkpoint.created",
+        checkpointId: info.checkpointId,
+        ...(info.paths ? { paths: info.paths } : {}),
       })
     } catch {
       diag.errors++
@@ -692,9 +960,15 @@ export function createPresentationAdapter(
         handlers.delete(handler)
       }
     },
+    noteUserMessage,
     publishApproval,
     noteRunSettled,
     noteFileChanged,
+    noteTestCompleted,
+    noteCheckpoint,
+    setTurnSummaryProvider(provider) {
+      turnSummaryProvider = provider
+    },
     getDiagnostics() {
       return { ...diag }
     },
@@ -714,6 +988,7 @@ export function createPresentationAdapter(
       toolStarts.clear()
       openApprovals.clear()
       terminalTools.clear()
+      turnSummaryProvider = undefined
     },
   }
 }

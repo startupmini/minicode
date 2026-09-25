@@ -659,7 +659,10 @@ export const KEY = {
   ctrlT: "\x14",
   ctrlU: "\x15",
   ctrlW: "\x17",
-  /** Klik mouse mode X10: ESC [ M + tombol + kolom + baris. */
   mouseClick: "\x1b[M\x20\x30\x30",
+  mouseWheelUpX10: "\x1b[M\x60\x30\x30",
+  mouseWheelDownX10: "\x1b[M\x61\x30\x30",
+  mouseWheelUpSgr: "\x1b[<64;10;10M",
+  mouseWheelDownSgr: "\x1b[<65;10;10M",
   paste: (text: string) => `\x1b[200~${text}\x1b[201~`,
 } as const

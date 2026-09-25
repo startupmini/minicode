@@ -302,6 +302,35 @@ describe("cli: sesi one-shot dasar", () => {
   }, 30_000)
 })
 
+describe("cli: exec --json machine envelope", () => {
+  test("stream kanonik berversi, bersih secret/ANSI, summary terakhir", async () => {
+    const secret = `sk-${"k".repeat(24)}`
+    const { run: r } = await runWithProvider(
+      [
+        { kind: "tool", name: "read_file", args: { path: "a.ts" } },
+        { kind: "text", text: `isi ${secret} \x1b[2Jbersih` },
+      ],
+      ["exec", "--json", "baca a.ts"],
+    )
+    expect(r.code).toBe(0)
+    const lines = r.stdout.split("\n").filter(Boolean)
+    expect(lines.length).toBeGreaterThan(1)
+    const records = lines.map((l) => JSON.parse(l) as Record<string, unknown>)
+    const ESC = String.fromCharCode(27)
+    for (const rec of records) {
+      expect(r.stdout).not.toContain(ESC)
+      expect(JSON.stringify(rec)).not.toContain(secret)
+      // Kontrak machine: tanpa raw kernel shape (tipe bertitik-dua).
+      if (typeof rec.type === "string" && rec.type !== "text") expect(rec.type).not.toContain(":")
+      if (typeof rec.type === "string" && rec.type !== "text" && rec.type !== "summary")
+        expect(rec.schema).toBe("minicode.output.v1")
+    }
+    const last = records[records.length - 1]!
+    expect(last).toMatchObject({ schema: "minicode.output.v1", type: "summary", ok: true })
+    expect(String(r.stdout)).not.toContain(ESC)
+  })
+})
+
 describe("cli: --budget", () => {
   test("melewati batas -> pesan [budget] dan exit 1", async () => {
     const { run: r } = await runWithProvider(

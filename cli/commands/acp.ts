@@ -4,10 +4,17 @@ import { createInterface } from "node:readline"
 import { LIMITS } from "../../src/constants.ts"
 import { scrubSecrets } from "../../src/policy/scrub.ts"
 import { budgetStatus } from "../../src/policy/usage.ts"
+import {
+  correlationId,
+  machineError,
+  machineSeverity,
+  machineStatus,
+} from "../../src/presentation/projection.ts"
 import { clearSubmittedResult, getSubmittedResult } from "../../src/tools/submit_result.ts"
 import { formatError } from "../../src/ui/assistant/simple.ts"
 import type { UiPresentationEvent, UiPresentationSnapshot } from "../../src/ui/contract.ts"
 import { formatUsd } from "../../src/ui/render/money.ts"
+import { cleanUntrusted } from "../../src/ui/render/sanitize.ts"
 import { createCliSession } from "../setup.ts"
 
 // minicode acp — server JSON-RPC via stdio untuk IDE (Fase 5, subset minimal).
@@ -26,6 +33,8 @@ import { createCliSession } from "../setup.ts"
 //   <- {"type":"tool.completed|failed|denied|cancelled",...} ...
 //   <- {"type":"approval.requested|settled",...} ...
 //   <- {"type":"turn.started|completed|failed|cancelled",...} ...
+//   <- {"type":"file.changed|test.completed|diagnostic.raised|checkpoint.created",...} ...
+//   <- {"type":"plan.updated|finding.detected|result.produced|context.compacted",...} ...
 //   <- {"id":2,"result":{"ok":true,"tokens":123,"steps":4,"turns":1,"text":"..."}}
 //   -> {"id":3,"method":"cancel"}  (menggugurkan run yang berjalan)
 //   -> {"id":4,"method":"shutdown"} (keluar 0 setelah run selesai/dibatalkan)
@@ -60,8 +69,19 @@ export function acpOk(id: number | string | undefined, result: unknown): string 
   return JSON.stringify({ id: id ?? null, result })
 }
 
-export function acpErr(id: number | string | undefined, message: string): string {
-  return JSON.stringify({ id: id ?? null, error: { message } })
+export function acpErr(
+  id: number | string | undefined,
+  message: string,
+  detail?: { category?: string; action?: string },
+): string {
+  return JSON.stringify({
+    id: id ?? null,
+    error: {
+      message,
+      ...(detail?.category ? { category: detail.category } : {}),
+      ...(detail?.action ? { action: detail.action } : {}),
+    },
+  })
 }
 
 export interface AcpRunParams {
@@ -184,6 +204,66 @@ function projectAcpLifecycle(
       ...(activity?.receipt ? { receipt: activity.receipt } : {}),
     }
   }
+  if (event.type === "file.changed")
+    return {
+      ...base,
+      ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+      ...(event.paths ? { paths: event.paths } : {}),
+      ...(event.journalSeq !== undefined ? { journalSeq: event.journalSeq } : {}),
+      ...(event.checkpointId ? { checkpointId: event.checkpointId } : {}),
+    }
+  if (event.type === "test.completed")
+    return {
+      ...base,
+      ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+      ...(event.test ? { test: event.test } : {}),
+    }
+  if (event.type === "diagnostic.raised")
+    return {
+      ...base,
+      ...(event.category ? { category: event.category } : {}),
+      severity: machineSeverity(event),
+      ...(event.message ? { message: event.message } : {}),
+      ...(event.cause ? { cause: event.cause } : {}),
+      ...(event.action ? { action: event.action } : {}),
+    }
+  if (event.type === "checkpoint.created")
+    return {
+      ...base,
+      ...(event.checkpointId ? { checkpointId: event.checkpointId } : {}),
+      ...(event.paths ? { paths: event.paths } : {}),
+    }
+  if (event.type === "plan.updated")
+    return {
+      ...base,
+      ...(event.planId ? { planId: event.planId } : {}),
+      status: machineStatus(event),
+      ...(event.steps ? { steps: event.steps } : {}),
+    }
+  if (event.type === "finding.detected")
+    return {
+      ...base,
+      ...(event.findingId ? { findingId: event.findingId } : {}),
+      ...(event.category ? { category: event.category } : {}),
+      ...(event.severity ? { severity: event.severity } : {}),
+      ...(event.text ? { text: event.text } : {}),
+      ...(event.evidence ? { evidence: event.evidence } : {}),
+      ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
+    }
+  if (event.type === "result.produced")
+    return {
+      ...base,
+      ...(event.resultId ? { resultId: event.resultId } : {}),
+      status: machineStatus(event),
+      ...(event.toolSummary ? { toolSummary: event.toolSummary } : {}),
+      ...(event.action ? { action: event.action } : {}),
+      ...(correlationId(event) ? { correlationId: correlationId(event) } : {}),
+    }
+  if (event.type === "context.compacted")
+    return {
+      ...base,
+      ...(event.compactionReason ? { compactionReason: event.compactionReason } : {}),
+    }
   return null
 }
 
@@ -263,6 +343,7 @@ export async function runAcpSession(
       modelOverride: rp.model,
       prompt: rp.prompt,
       enterRepl: false,
+      machineOutput: true,
       verbose: false,
       allowAll: false,
       ask: false,
@@ -283,7 +364,7 @@ export async function runAcpSession(
     if (lifecycle) {
       unsubPresentation = projection.onPresentationEvent!((event) => {
         const note = projectAcpLifecycle(event, projection.getPresentationSnapshot?.())
-        if (note) write(scrubSecrets(JSON.stringify(note)))
+        if (note) write(cleanUntrusted(scrubSecrets(JSON.stringify(note)), false))
       })
     }
     const unsub = ctx.session.events.on("*", (ev) => {
@@ -293,7 +374,20 @@ export async function runAcpSession(
           // Cap akumulasi juga (bukan hanya slice akhir): run panjang bisa
           // menumpuk megabyte di memori sebelum result dirakit.
           if (text.length < LIMITS.MCP_OUTPUT_MAX_CHARS) text += e.text
-          write(scrubSecrets(JSON.stringify({ type: "text", delta: e.text })))
+          const max = LIMITS.MCP_OUTPUT_MAX_CHARS
+          const delta = e.text.length > max ? e.text.slice(0, max) : e.text
+          write(
+            cleanUntrusted(
+              scrubSecrets(
+                JSON.stringify({
+                  type: "text",
+                  delta,
+                  ...(e.text.length > max ? { truncated: true } : {}),
+                }),
+              ),
+              false,
+            ),
+          )
         } else if (e.type === "execution:started" && !lifecycle) {
           const name = e.execution?.call?.name ?? "?"
           write(JSON.stringify({ type: "tool", name }))
@@ -309,7 +403,7 @@ export async function runAcpSession(
           bStatus === "over" && ue.cost != null && rp.budget != null
             ? `[budget] ${formatUsd(ue.cost)} > ${formatUsd(rp.budget)} - over budget, stopping.`
             : `[budget] cost unknown (model without pricing) with ${ue.totalTokens} tokens spent - over budget, stopping.`
-        write(acpErr(id, msg))
+        write(acpErr(id, msg, machineError(new Error(msg))))
       } else {
         const submitted = getSubmittedResult()
         // submitted verbatim seperti exec --json (pipeline tak menebak
@@ -334,6 +428,13 @@ export async function runAcpSession(
     } finally {
       unsub()
       unsubPresentation()
+      // Headless run tetap durable: flush presentation events + saveSession +
+      // finalize journal agar --resume berikutnya melihat run ini.
+      try {
+        const persist = (ctx as { persistCurrent?: (usage: unknown) => Promise<void> })
+          .persistCurrent
+        if (typeof persist === "function") await persist(ctx.usage.getSession(ctx.modelRef.current))
+      } catch {}
       await ctx.close()
     }
   } catch (e) {
@@ -341,7 +442,7 @@ export async function runAcpSession(
     // provider — koneksi tetap hidup untuk request berikut), run gagal,
     // atau dibatalkan user. formatError menutupi NoProviderError juga.
     const msg = ac.signal.aborted ? "run cancelled" : formatError(e)
-    write(acpErr(id, msg))
+    write(acpErr(id, msg, machineError(ac.signal.aborted ? new Error("run cancelled") : e)))
   } finally {
     deps.onDone()
     if (deps.shouldExit()) deps.exit(0)

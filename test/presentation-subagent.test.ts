@@ -166,6 +166,36 @@ test("forward anak sequential: parentLink lengkap di started+completed", () => {
   a.dispose()
 })
 
+test("forward submit_result anak membawa finding + parentLink", () => {
+  const bus = fakeBus()
+  const a = createPresentationAdapter(bus, { sessionId: "parent-1" })
+  const events = collect(a)
+  bus.emit("execution:started", startedPayload("dt_1", "delegate_task", { prompt: "x" }))
+  const args = {
+    result: {
+      findings: [
+        { category: "security", severity: "error", summary: "Injeksi prompt", evidence: ["child"] },
+      ],
+    },
+  }
+  bus.emit("execution:started", {
+    execution: { call: { id: "submit_child", name: "submit_result", args }, result: {} },
+    forwardedChild: "sub_aa11",
+  })
+  bus.emit("execution:completed", {
+    execution: {
+      call: { id: "submit_child", name: "submit_result", args },
+      result: { isError: false, content: "submitted" },
+    },
+    forwardedChild: "sub_aa11",
+  })
+  const finding = events.find((e) => e.type === "finding.detected")
+  expect(finding?.type === "finding.detected" && finding.sessionId).toBe("sub_aa11")
+  expect(finding?.type === "finding.detected" && finding.parentLink?.parentToolCallId).toBe("dt_1")
+  expect(finding?.type === "finding.detected" && finding.findingId).toBe("finding:submit_child:1")
+  a.dispose()
+})
+
 test("forward anak gagal (deny) tetap membawa parentLink", () => {
   const bus = fakeBus()
   const a = createPresentationAdapter(bus, { sessionId: "p" })

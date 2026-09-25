@@ -54,10 +54,11 @@ describe("exec --json: kegagalan setup membawa envelope", () => {
       const lines = r.stdout.split("\n").filter(Boolean)
       expect(lines.length).toBe(1)
       const summary = JSON.parse(lines[0]!) as Record<string, unknown>
+      expect(summary.schema).toBe("minicode.output.v1")
       expect(summary.type).toBe("summary")
       expect(summary.ok).toBe(false)
-      expect(typeof summary.error).toBe("string")
-      expect(String(summary.error).length).toBeGreaterThan(0)
+      expect(summary.error).toMatchObject({ category: "CONFIGURATION_ERROR" })
+      expect(String((summary.error as { message: string }).message).length).toBeGreaterThan(0)
       expect(summary.prompt).toBe("halo")
       // Jalur manusia tidak berubah: pesan tetap di stderr.
       expect(r.stderr).toContain("no provider configured")

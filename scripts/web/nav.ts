@@ -124,6 +124,30 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
   },
   // Dokumen internal kontributor (SUMMARY grup "Internal & Arsitektur",
   // audit docs 2026-09-18: sebelumnya orphan dari nav web/llms).
+  output_architecture_audit: {
+    desc: "Audit output/presentation MiniCode: pipeline, event, mode, dan temuan semantik.",
+    src: "docs/OUTPUT_ARCHITECTURE_AUDIT.md",
+  },
+  output_event_model: {
+    desc: "Model event output MiniCode: envelope, lifecycle, durability, dan invariant.",
+    src: "docs/OUTPUT_EVENT_MODEL.md",
+  },
+  output_protocol_spec: {
+    desc: "Kontrak output MiniCode untuk TUI, linear, debug, exec JSONL, dan ACP.",
+    src: "docs/OUTPUT_PROTOCOL_SPEC.md",
+  },
+  output_rendering_spec: {
+    desc: "Spesifikasi boundary renderer MiniCode: semantic projection dan parity.",
+    src: "docs/OUTPUT_RENDERING_SPEC.md",
+  },
+  output_ux_rules: {
+    desc: "Grammar UX output MiniCode: status, error, progress, terminal, dan copyability.",
+    src: "docs/OUTPUT_UX_RULES.md",
+  },
+  output_implementation_plan: {
+    desc: "Rencana migrasi output architecture MiniCode secara bertahap dan dapat dibalik.",
+    src: "docs/OUTPUT_IMPLEMENTATION_PLAN.md",
+  },
   terminal_contract: {
     desc: "Kontrak terminal FROZEN untuk kontributor: 30 invariant dan peta test proteksinya.",
     src: "docs/TERMINAL_CONTRACT.md",

@@ -3,8 +3,12 @@
 // Inline: **bold**, *italic*, `code`, ~~strike~~, [text](url) -> teks accent (no underline).
 
 import { highlightCode } from "./highlight.ts"
+import { type MarkdownTable, parseMarkdownBlocks } from "./markdown-table.ts"
 import { sanitizeAnsi } from "./sanitize.ts"
+import { renderMarkdownTable } from "./table-grid.ts"
 import { c } from "./theme.ts"
+
+export { renderMarkdownTable, renderMarkdownTableLines } from "./table-grid.ts"
 
 export interface FenceMatch {
   char: string
@@ -64,13 +68,30 @@ export function decorateMarkdown(text: string): string {
   // renderInline, dan highlight tak pernah melihat escape mentah. Urutan ini
   // juga melindungi placeholder `\u0000` (sanitize membuang null model).
   const lines = sanitizeAnsi(text).split("\n")
+  const tableStarts = new Map<number, MarkdownTable>()
+  for (const block of parseMarkdownBlocks(lines.join("\n"))) {
+    if (block.type === "table") tableStarts.set(block.startLine, block.table)
+  }
   const out: string[] = []
   let inFence = false
   let fenceLang = ""
   let fenceChar = ""
   let fenceLen = 0
 
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const table = tableStarts.get(lineIndex)
+    if (table) {
+      if (process.stdout.isTTY)
+        out.push(
+          ...renderMarkdownTable(table, process.stdout.columns || 80, renderInline).split("\n"),
+        )
+      else
+        for (let tableLine = lineIndex; tableLine <= table.endLine; tableLine++)
+          out.push(lines[tableLine]!)
+      lineIndex = table.endLine
+      continue
+    }
+    const line = lines[lineIndex]!
     // Code fence handling — catat char & panjang pembuka, hanya tutup bila cocok.
     const fence = parseFence(line)
     if (fence) {

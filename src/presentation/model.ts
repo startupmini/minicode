@@ -1,24 +1,21 @@
-// Bentuk state presentasi V2.1 (§14 plan) — murni tipe + konstruktor.
-//
-// Kenapa terpisah dari reducer: proyeksi dan cli boleh mengimpor tipe tanpa
-// menarik logika reduce; coverage floor reducer diuji terpisah. Tanpa IO/
-// clock/env — jam hanya di adapter (tepi).
-
 import type {
   ApprovalOutcome,
   ContentRef,
   DenyReason,
   FailCause,
+  PlanStep,
   Receipt,
+  SemanticSeverity,
   ToolIdentity,
   TurnSummary,
 } from "./events.ts"
 
-/** Status final tool — `running` hanya live; `interrupted` disimpulkan saat rebuild. */
 export type ToolStatus = "running" | "completed" | "failed" | "denied" | "cancelled" | "interrupted"
-
-/** Status final turn — `interrupted` = proses mati tanpa turn-settle durable. */
 export type TurnStatus = "running" | "completed" | "failed" | "cancelled" | "interrupted"
+export type PlanStatus = "open" | "completed" | "cancelled"
+export type ResultStatus = "completed" | "failed" | "cancelled"
+export type SystemKind = "context_compacted" | "recovery" | "checkpoint" | "notice"
+export const MAX_STATE_ENTRIES = 4096
 
 export interface ActivityEntry {
   kind: "tool"
@@ -34,7 +31,6 @@ export interface ActivityEntry {
   tsStart: number
   tsEnd?: number
   durationMs?: number
-  /** eventSeq terminal — dasar aturan supersedes (old terminal < new started). */
   endSeq?: number
   progress?: string
   summary?: string
@@ -44,7 +40,6 @@ export interface ActivityEntry {
   approvalId?: string
   expandRef?: ContentRef
   receipt?: Receipt
-  /** Terminal tanpa tool.started (race/crash) — observability, jangan throw. */
   incomplete?: boolean
 }
 
@@ -53,17 +48,21 @@ export interface TurnEntry {
   seq: number
   turnId: number
   sessionId: string
+  promptRef?: string
   status: TurnStatus
   tsStart: number
   tsEnd?: number
   summary?: TurnSummary
   error?: string
+  checkpointId?: string
+  evidenceComplete?: boolean
 }
 
 export interface ApprovalEntry {
   kind: "approval"
   seq: number
   turnId: number
+  sessionId: string
   approvalId: string
   toolCallId: string
   identity: ToolIdentity
@@ -73,17 +72,23 @@ export interface ApprovalEntry {
 
 export interface ConversationEntry {
   kind: "message"
+  id: string
   seq: number
+  sessionId: string
   turnId: number
   role: "user" | "assistant"
   text: string
   truncated: boolean
+  promptRef?: string
+  sourceRef?: string
   expandRef?: ContentRef
 }
 
 export interface ReasoningEntry {
   kind: "reasoning"
+  id: string
   seq: number
+  sessionId: string
   turnId: number
   truncated: boolean
   expandRef: ContentRef
@@ -91,9 +96,63 @@ export interface ReasoningEntry {
 
 export interface SystemEntry {
   kind: "system"
+  id: string
   seq: number
+  sessionId: string
   turnId: number
+  systemKind: SystemKind
   text: string
+  reason?: string
+  severity: SemanticSeverity
+}
+
+export interface PlanEntry {
+  kind: "plan"
+  planId: string
+  seq: number
+  sessionId: string
+  turnId: number
+  status: PlanStatus
+  steps: PlanStep[]
+  expandRef?: ContentRef
+}
+
+export interface FindingEntry {
+  kind: "finding"
+  findingId: string
+  seq: number
+  sessionId: string
+  turnId: number
+  category: string
+  severity: SemanticSeverity
+  summary: string
+  evidence: string[]
+}
+
+export interface ResultEntry {
+  kind: "result"
+  resultId: string
+  seq: number
+  sessionId: string
+  turnId: number
+  status: ResultStatus
+  summary: string
+  action?: string
+  expandRef?: ContentRef
+  receipt?: Receipt
+}
+
+export interface DiagnosticEntry {
+  kind: "diagnostic"
+  id: string
+  seq: number
+  sessionId: string
+  turnId: number
+  category: string
+  severity: SemanticSeverity
+  message: string
+  cause?: string
+  action?: string
 }
 
 export type PresentationEntry =
@@ -103,30 +162,41 @@ export type PresentationEntry =
   | ConversationEntry
   | ReasoningEntry
   | SystemEntry
+  | PlanEntry
+  | FindingEntry
+  | ResultEntry
+  | DiagnosticEntry
 
-/** Penunjuk urutan tampil — resolve ke entry via Map/array pemilik. */
+export type PresentationEntryKind = PresentationEntry["kind"]
+
 export interface EntryRef {
-  kind: PresentationEntry["kind"]
-  /** toolCallId | approvalId | `${sessionId}:${turnId}` | `${kind}:${seq}` */
+  kind: PresentationEntryKind
   id: string
   seq: number
 }
 
-/**
- * Core state presentasi — kecil, replayable; konten besar hanya via ContentRef
- * (ContentStore sibling Fase 4, bukan nested di sini).
- */
+export interface EvictionMarker {
+  kind: PresentationEntryKind
+  id: string
+  seq: number
+  reason: "bounded"
+}
+
 export interface PresentationState {
   sessionId: string
-  /** eventSeq terakhir yang diterapkan — basis replay/determinisme. */
   seq: number
-  /** key = `${sessionId}:${turnId}` (anak numbering sendiri). */
   turns: Map<string, TurnEntry>
-  /** key = `${sessionId}:${toolCallId}`. */
   activities: Map<string, ActivityEntry>
   approvals: Map<string, ApprovalEntry>
   conversation: ConversationEntry[]
+  reasoning: ReasoningEntry[]
+  system: SystemEntry[]
+  plans: Map<string, PlanEntry>
+  findings: Map<string, FindingEntry>
+  results: Map<string, ResultEntry>
+  diagnostics: DiagnosticEntry[]
   order: EntryRef[]
+  evicted: EvictionMarker[]
 }
 
 export function turnKey(sessionId: string, turnId: number): string {
@@ -137,6 +207,33 @@ export function activityKey(sessionId: string, toolCallId: string): string {
   return `${sessionId}:${toolCallId}`
 }
 
+export function approvalKey(sessionId: string, approvalId: string): string {
+  return `${sessionId}:${approvalId}`
+}
+
+export function conversationKey(
+  sessionId: string,
+  turnId: number,
+  role: "user" | "assistant",
+): string {
+  return `${sessionId}:${turnId}:${role}`
+}
+
+function copyRef(ref: ContentRef | undefined): ContentRef | undefined {
+  return ref ? { ...ref } : undefined
+}
+
+function copyReceipt(receipt: Receipt | undefined): Receipt | undefined {
+  if (!receipt) return undefined
+  return {
+    ...receipt,
+    ...(receipt.paths ? { paths: [...receipt.paths] } : {}),
+    ...(receipt.stats ? { stats: { ...receipt.stats } } : {}),
+    ...(receipt.test ? { test: { ...receipt.test } } : {}),
+    ...(receipt.cmd ? { cmd: { ...receipt.cmd } } : {}),
+  }
+}
+
 export function createInitialState(sessionId: string): PresentationState {
   return {
     sessionId,
@@ -145,28 +242,81 @@ export function createInitialState(sessionId: string): PresentationState {
     activities: new Map(),
     approvals: new Map(),
     conversation: [],
+    reasoning: [],
+    system: [],
+    plans: new Map(),
+    findings: new Map(),
+    results: new Map(),
+    diagnostics: [],
     order: [],
+    evicted: [],
   }
 }
 
-/** Snapshot deep-equal-friendly (test determinisme/replay; bukan jalur panas). */
 export function cloneState(s: PresentationState): PresentationState {
   return {
     sessionId: s.sessionId,
     seq: s.seq,
-    turns: new Map([...s.turns].map(([k, v]) => [k, { ...v }])),
+    turns: new Map(
+      [...s.turns].map(([k, v]) => [
+        k,
+        {
+          ...v,
+          ...(v.summary ? { summary: { ...v.summary } } : {}),
+        },
+      ]),
+    ),
     activities: new Map(
       [...s.activities].map(([k, v]) => [
         k,
         {
           ...v,
-          error: v.error ? { ...v.error } : undefined,
-          receipt: v.receipt ? { ...v.receipt } : undefined,
+          identity: { ...v.identity },
+          ...(v.error ? { error: { ...v.error } } : {}),
+          ...(v.expandRef ? { expandRef: copyRef(v.expandRef) } : {}),
+          receipt: copyReceipt(v.receipt),
         },
       ]),
     ),
-    approvals: new Map([...s.approvals].map(([k, v]) => [k, { ...v }])),
-    conversation: s.conversation.map((m) => ({ ...m })),
+    approvals: new Map(
+      [...s.approvals].map(([k, v]) => [
+        k,
+        {
+          ...v,
+          identity: { ...v.identity },
+          ...(v.outcome ? { outcome: { ...v.outcome } } : {}),
+        },
+      ]),
+    ),
+    conversation: s.conversation.map((m) => ({
+      ...m,
+      ...(m.expandRef ? { expandRef: copyRef(m.expandRef) } : {}),
+    })),
+    reasoning: s.reasoning.map((r) => ({ ...r, expandRef: { ...r.expandRef } })),
+    system: s.system.map((e) => ({ ...e })),
+    plans: new Map(
+      [...s.plans].map(([k, v]) => [
+        k,
+        {
+          ...v,
+          steps: v.steps.map((step) => ({ ...step })),
+          ...(v.expandRef ? { expandRef: copyRef(v.expandRef) } : {}),
+        },
+      ]),
+    ),
+    findings: new Map([...s.findings].map(([k, v]) => [k, { ...v, evidence: [...v.evidence] }])),
+    results: new Map(
+      [...s.results].map(([k, v]) => [
+        k,
+        {
+          ...v,
+          ...(v.expandRef ? { expandRef: copyRef(v.expandRef) } : {}),
+          receipt: copyReceipt(v.receipt),
+        },
+      ]),
+    ),
+    diagnostics: s.diagnostics.map((d) => ({ ...d })),
     order: s.order.map((o) => ({ ...o })),
+    evicted: s.evicted.map((e) => ({ ...e })),
   }
 }

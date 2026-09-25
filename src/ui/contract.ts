@@ -86,6 +86,8 @@ export interface UiTurnSummary {
   toolsInterrupted: number
   filesChanged: number
   checkpointId?: string
+  testSummary?: { passed: number; failed: number; summary: string }
+  evidenceComplete?: boolean
   durationMs: number
 }
 
@@ -96,6 +98,8 @@ export interface UiPresentationError {
 }
 
 export interface UiPresentationReceipt {
+  sessionId?: string
+  turnId?: number
   paths?: string[]
   checkpointId?: string
   stats?: { added?: number; removed?: number }
@@ -130,9 +134,122 @@ export interface UiPresentationTurn {
   summary?: UiTurnSummary
 }
 
+export interface UiPresentationMessage {
+  id: string
+  sessionId: string
+  turnId: number
+  role: "user" | "assistant"
+  text: string
+  truncated: boolean
+  promptRef?: string
+}
+
+export interface UiPresentationReasoning {
+  id: string
+  sessionId: string
+  turnId: number
+  truncated: boolean
+  expandRef: { toolCallId: string; idx: number }
+}
+
+export interface UiPresentationSystem {
+  id: string
+  sessionId: string
+  turnId: number
+  kind: "context_compacted" | "recovery" | "checkpoint" | "notice"
+  text: string
+  reason?: string
+  severity: "info" | "warning" | "error" | "critical"
+}
+
+export interface UiPresentationPlan {
+  planId: string
+  sessionId: string
+  turnId: number
+  status: "open" | "completed" | "cancelled"
+  steps: Array<{
+    stepId: string
+    title?: string
+    status: "pending" | "active" | "completed" | "cancelled"
+  }>
+}
+
+export interface UiPresentationFinding {
+  findingId: string
+  sessionId: string
+  turnId: number
+  category: string
+  severity: "info" | "warning" | "error" | "critical"
+  summary: string
+  evidence: string[]
+}
+
+export interface UiPresentationResult {
+  resultId: string
+  sessionId: string
+  turnId: number
+  status: "completed" | "failed" | "cancelled"
+  summary: string
+  action?: string
+}
+
+export interface UiPresentationDiagnostic {
+  id: string
+  sessionId: string
+  turnId: number
+  category: string
+  severity: "info" | "warning" | "error" | "critical"
+  message: string
+  cause?: string
+  action?: string
+}
+
+/** Deskripsi activity dari policy kanonik (tanpa paint/sanitasi/truncate). */
+export interface ActivityPolicyDescription {
+  toolCallId: string
+  name: string
+  target?: string
+  status: UiToolStatus
+  summary?: string
+  message?: string
+  durationMs?: number
+  denyReason?: string
+  receiptPaths: string[]
+  testSummary?: { passed: number; failed: number; summary: string }
+  retryOf?: string
+  childCount: number
+  isChild: boolean
+  expandRef?: { toolCallId: string; idx: number }
+  error?: { cause?: string; message: string; hint?: string }
+  tsStart: number
+  tsEnd?: number
+}
+
+/**
+ * Kumpulan keputusan proyeksi kanonik untuk renderer. Di-inject composition
+ * root dari `src/presentation/`; absen = jalur raw legacy (rollback
+ * `MINICODE_PRESENTATION_V2=0`). Renderer tidak boleh mengimpor
+ * `src/presentation` langsung — batas lapisan.
+ */
+export interface PresentationPolicy {
+  describeActivity: (
+    activity: UiPresentationActivity,
+    opts?: { childCount?: number },
+  ) => ActivityPolicyDescription
+  matchTurn: (turns: UiPresentationTurn[], summary: UiTurnSummary) => UiPresentationTurn | undefined
+  elapsedVisible: (tsStart: number, now: number) => boolean
+}
+
 export interface UiPresentationSnapshot {
   activities: UiPresentationActivity[]
   turns: UiPresentationTurn[]
+  conversation?: UiPresentationMessage[]
+  reasoning?: UiPresentationReasoning[]
+  system?: UiPresentationSystem[]
+  plans?: UiPresentationPlan[]
+  findings?: UiPresentationFinding[]
+  results?: UiPresentationResult[]
+  diagnostics?: UiPresentationDiagnostic[]
 }
 
 export interface UiApprovalOutcome {
@@ -143,19 +260,34 @@ export interface UiApprovalOutcome {
 
 export interface UiPresentationEvent {
   type:
+    | "user.message"
     | "turn.started"
     | "turn.completed"
     | "turn.failed"
     | "turn.cancelled"
+    | "model.delta"
+    | "model.completed"
+    | "reasoning.delta"
+    | "reasoning.completed"
     | "tool.started"
+    | "tool.progress"
     | "tool.completed"
     | "tool.failed"
     | "tool.denied"
     | "tool.cancelled"
     | "approval.requested"
     | "approval.settled"
+    | "file.changed"
+    | "test.completed"
+    | "context.compacted"
+    | "plan.updated"
+    | "finding.detected"
+    | "result.produced"
+    | "diagnostic.raised"
+    | "checkpoint.created"
   seq?: number
   turnId?: number
+  stepId?: number
   toolCallId?: string
   approvalId?: string
   name?: string
@@ -171,4 +303,30 @@ export interface UiPresentationEvent {
   outcome?: UiApprovalOutcome
   via?: "prompt" | "system"
   summary?: UiTurnSummary
+  promptRef?: string
+  delta?: string
+  text?: string
+  truncated?: boolean
+  toolSummary?: string
+  hint?: string
+  expandRef?: { toolCallId: string; idx: number }
+  receipt?: UiPresentationReceipt
+  parentToolCallId?: string
+  paths?: string[]
+  journalSeq?: number
+  checkpointId?: string
+  test?: { passed: number; failed: number; summary: string }
+  compactionReason?: string
+  planId?: string
+  findingId?: string
+  resultId?: string
+  category?: string
+  severity?: "info" | "warning" | "error" | "critical"
+  action?: string
+  steps?: Array<{
+    stepId: string
+    title?: string
+    status: "pending" | "active" | "completed" | "cancelled"
+  }>
+  evidence?: string[]
 }

@@ -121,7 +121,7 @@ export const DRIVER_HELP_COMMANDS: BuiltinCommand[] = [
   { name: "undo", descKey: "help.desc.undo" },
   { name: "redo", descKey: "help.desc.redo" },
   { name: "clear", descKey: "help.desc.clear" },
-  { name: "copy", descKey: "help.desc.copy" },
+  { name: "copy", args: "[n]", descKey: "help.desc.copy" },
   { name: "history", descKey: "help.desc.history" },
 ]
 
@@ -130,6 +130,7 @@ const KEYBOARD_HELP: [string, MsgKey][] = [
   ["enter", "help.k.submit"],
   ["tab / shift+tab", "help.k.cycleMode"],
   ["up / down", "help.k.history"],
+  ["mouse wheel", "help.k.mouse"],
   ["pgup / pgdn", "help.k.scroll"],
   ["home / end (prompt)", "help.k.jumpTop"],
   ["left / right", "help.k.move"],

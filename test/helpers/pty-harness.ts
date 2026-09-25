@@ -205,6 +205,8 @@ export interface TuiPtyHandle {
 export interface SpawnTuiOptions {
   cols?: number
   rows?: number
+  /** Balasan fake pertama; defaultnya teks turn biasa. */
+  reply?: import("./fake-provider.ts").FakeReply
   /** Seed provider fake ke config global (default true) → boot TUI tanpa wizard. */
   seedProvider?: boolean
   /** Env tambahan / penimpaan untuk subprocess. */
@@ -237,7 +239,7 @@ export async function spawnTui(opts: SpawnTuiOptions = {}): Promise<TuiPtyHandle
   let closeFake: (() => void) | null = null
   if (opts.seedProvider !== false) {
     const { startFakeProvider } = await import("./fake-provider.ts")
-    const fake = startFakeProvider([{ kind: "text", text: "PTJ-TURN-OK" }])
+    const fake = startFakeProvider([opts.reply ?? { kind: "text", text: "PTJ-TURN-OK" }])
     writeFileSync(
       join(home, ".minicode", "config.json"),
       JSON.stringify({

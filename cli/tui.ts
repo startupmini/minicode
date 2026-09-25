@@ -14,12 +14,21 @@
 //   modal) — transkrip fullscreen SUDAH permukaan baca; modal untuk info
 //   statis hanya menambah langkah. /model & /provider & /sessions = popup
 //   komposit (butuh interaksi pilih).
-// - busy = input beku total kecuali abort (Esc/Ctrl+C) dan scroll.
+// - busy = input beku total kecuali abort (Esc) dan scroll.
 import { expandMentions } from "../src/app/mentions.ts"
 import { budgetStatus } from "../src/policy/usage.ts"
+import {
+  describeActivity,
+  elapsedVisible,
+  matchTurnBySummary,
+} from "../src/presentation/projection.ts"
 import { redoLastCheckpoint, undoLastCheckpoint } from "../src/session/checkpoint.ts"
 import { renderSkill } from "../src/skills/loader.ts"
-import { getLastTurnText, writeClipboardOsc52 } from "../src/ui/assistant/simple.ts"
+import {
+  getLastTurnTexts,
+  MAX_COPY_TURNS,
+  writeClipboardOsc52,
+} from "../src/ui/assistant/simple.ts"
 import type { UiBus } from "../src/ui/contract.ts"
 import { t } from "../src/ui/i18n/locale.ts"
 import { loadHistory } from "../src/ui/input/input.ts"
@@ -128,9 +137,21 @@ export async function runTui(ctx: CliSession): Promise<void> {
     setConfigLocale((await loadLang().catch(() => undefined)) ?? null)
   } catch {}
 
+  // Kebijakan proyeksi kanonik di-inject di sini (batas lapisan: src/ui
+  // tidak boleh impor src/presentation). Absen = jalur raw legacy
+  // (rollback MINICODE_PRESENTATION_V2=0).
+  const presentationPolicy =
+    process.env.MINICODE_PRESENTATION_V2 === "0"
+      ? undefined
+      : {
+          describeActivity,
+          matchTurn: matchTurnBySummary,
+          elapsedVisible,
+        }
   const transcript = new Transcript(session.events as unknown as UiBus, {
     getSnapshot: getPresentationSnapshot,
     onPresentationEvent: ctx.onPresentationEvent,
+    ...(presentationPolicy ? { policy: presentationPolicy } : {}),
   })
 
   const commandCtx: CommandContext = {
@@ -295,14 +316,26 @@ export async function runTui(ctx: CliSession): Promise<void> {
     ])
   }
 
-  async function copyLastTurn(): Promise<void> {
-    const txt = getLastTurnText().trim()
+  function parseCopyCount(raw: string): number | null {
+    if (!raw) return 1
+    if (!/^\d+$/.test(raw)) return null
+    const count = Number(raw)
+    return count >= 1 && count <= MAX_COPY_TURNS ? count : null
+  }
+
+  async function copyLastTurn(count: number): Promise<void> {
+    const turns = getLastTurnTexts(count)
+      .map((turn) => turn.trim())
+      .filter(Boolean)
+    const txt = turns.join("\n\n").trim()
     if (!txt) {
       transcript.pushInfo([c.muted(t("tui.copyNone"))])
       return
     }
-    if (writeClipboardOsc52(txt)) transcript.pushInfo([c.muted(t("tui.copyOk", { n: txt.length }))])
-    else transcript.pushInfo([c.muted(t("tui.copyNeedTty"))])
+    if (writeClipboardOsc52(txt)) {
+      const key = turns.length > 1 ? "tui.copyOkMany" : "tui.copyOk"
+      transcript.pushInfo([c.muted(t(key, { n: txt.length, turns: turns.length }))])
+    } else transcript.pushInfo([c.muted(t("tui.copyNeedTty"))])
   }
 
   async function submit(line: string): Promise<{ quit?: boolean } | undefined> {
@@ -427,7 +460,12 @@ export async function runTui(ctx: CliSession): Promise<void> {
       return
     }
     if (name === "copy") {
-      await copyLastTurn()
+      const count = parseCopyCount(args)
+      if (count === null) {
+        transcript.pushInfo([c.muted(t("tui.copyInvalid", { n: args, max: MAX_COPY_TURNS }))])
+        return
+      }
+      await copyLastTurn(count)
       return
     }
     if (name === "cost" || name === "usage") return delegateBuiltin("/status")
@@ -502,6 +540,7 @@ export async function runTui(ctx: CliSession): Promise<void> {
     },
     listCommands: (prefix) => suggestions(prefix),
     submit,
+    copySelection: (text) => writeClipboardOsc52(text),
     abort: () => {
       abort?.abort()
     },

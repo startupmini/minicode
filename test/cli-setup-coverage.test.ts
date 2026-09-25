@@ -8,6 +8,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createCliSession } from "../cli/setup.ts"
+import { loadPresentationEvents } from "../src/session/persistence.ts"
 
 const tmpRoots: string[] = []
 
@@ -278,6 +279,7 @@ describe("cli/setup: permissionMode & timeout & budget", () => {
     expect(d.eventsIn).toBeGreaterThanOrEqual(0)
     expect(d.duplicateTerminal).toBe(0)
     expect(d.orphanTool).toBe(0)
+    expect(d.unsupportedProjection).toBe(0)
     // close bersihkan shadow (unsubscribe + null state) tanpa throw
     await s.close()
     await s.close()
@@ -317,6 +319,105 @@ describe("cli/setup: permissionMode & timeout & budget", () => {
     expect(seen).toEqual(["turn.started", "tool.started", "tool.completed"])
     unsubscribe()
     await s.close()
+  })
+
+  test("resume memuat durable presentation events termasuk finding", async () => {
+    const cwd = makeWorkspace()
+    const baseOpts = {
+      cwd,
+      allowLocalConfig: true,
+      prompt: "hi",
+      enterRepl: false,
+      verbose: false,
+      allowAll: false,
+      ask: false,
+      plan: false,
+      allowlist: false,
+      verify: false,
+    }
+    const first = await createCliSession({ ...baseOpts, sessionId: "resume-findings" })
+    const call = {
+      id: "submit-resume",
+      name: "submit_result",
+      args: {
+        summary: "done",
+        result: {
+          status: "ok",
+          findings: [
+            {
+              category: "security",
+              severity: "warning",
+              summary: "Hardcoded credential",
+              evidence: ["src/a.ts"],
+            },
+          ],
+        },
+      },
+    }
+    const seen: { seq?: number; type: string }[] = []
+    const unsubscribe = first.onPresentationEvent((event) =>
+      seen.push({ seq: event.seq, type: event.type }),
+    )
+    first.session.events.emit({ type: "turn:started", turn: 1 })
+    first.session.events.emit({
+      type: "execution:started",
+      execution: {
+        call,
+        result: { role: "tool", toolCallId: call.id, name: call.name, content: "" },
+      },
+    })
+    first.session.events.emit({
+      type: "execution:completed",
+      execution: {
+        call,
+        result: {
+          role: "tool",
+          toolCallId: call.id,
+          name: call.name,
+          isError: false,
+          content: "submitted",
+        },
+      },
+    })
+    first.session.events.emit({
+      type: "turn:completed",
+      result: { steps: [], finalText: "done", usage: { turns: 1, steps: 1 } },
+    })
+    expect(
+      (first.getPresentationSnapshot().findings ?? []).map((finding) => finding.findingId),
+    ).toEqual(["finding:submit-resume:1"])
+    expect(seen.map((event) => event.type)).toEqual([
+      "turn.started",
+      "tool.started",
+      "result.produced",
+      "finding.detected",
+      "tool.completed",
+      "model.completed",
+      "result.produced",
+      "turn.completed",
+    ])
+    expect(seen.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+    unsubscribe()
+    await first.persistCurrent({})
+    await first.close()
+    const stored = loadPresentationEvents("resume-findings", cwd)
+    expect(stored.some((event) => event.type === "finding.detected")).toBe(true)
+
+    const second = await createCliSession({
+      ...baseOpts,
+      sessionId: "resume-findings-2",
+      resumeId: "resume-findings",
+    })
+    expect(second.getPresentationSnapshot().findings).toMatchObject([
+      {
+        findingId: "finding:submit-resume:1",
+        category: "security",
+        severity: "warning",
+        summary: "Hardcoded credential",
+      },
+    ])
+    expect(second.getShadowDiagnostics().divergence).toBe(0)
+    await second.close()
   })
 })
 

@@ -8,6 +8,8 @@ import {
   attachSimpleLogger,
   formatError,
   getLastTurnText,
+  getLastTurnTexts,
+  MAX_COPY_TURNS,
   takePendingError,
   writeClipboardOsc52,
 } from "../src/ui/assistant/simple.ts"
@@ -799,6 +801,24 @@ describe("simple logger (one-shot)", () => {
     expect(getLastTurnText()).toContain("hi")
     bus.emit("turn:started", { turn: 2 })
     expect(getLastTurnText()).toBe("")
+    detach()
+  })
+
+  test("copy: beberapa turn terakhir tersimpan oldest-to-newest", () => {
+    const { bus, detach } = attach()
+    for (const [turn, text] of [
+      [1, "satu"],
+      [2, "dua"],
+      [3, "tiga"],
+    ] as const) {
+      bus.emit("turn:started", { turn })
+      bus.emit("provider:text", { text: `${text}\n` })
+      bus.emit("turn:completed", {})
+    }
+    expect(getLastTurnTexts(2)).toEqual(["dua\n", "tiga\n"])
+    expect(getLastTurnTexts(3)).toEqual(["satu\n", "dua\n", "tiga\n"])
+    expect(getLastTurnTexts(MAX_COPY_TURNS + 5)).toHaveLength(3)
+    expect(getLastTurnText()).toBe("tiga\n")
     detach()
   })
 

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import type { UiPresentationActivity } from "../src/ui/contract.ts"
 import { resetLocaleState, setSessionLocale } from "../src/ui/i18n/locale.ts"
 import { resetAltScreenDepth } from "../src/ui/runtime/screen.ts"
-import { TuiApp, type TuiHost } from "../src/ui/tui/app.ts"
+import { formatTimer, TuiApp, type TuiHost, thinkingDots } from "../src/ui/tui/app.ts"
 import { Transcript } from "../src/ui/tui/transcript.ts"
 import { createFakeBus, installFakeTty, KEY } from "./helpers/tui-harness.ts"
 
@@ -31,6 +31,7 @@ function setup(opts: { columns?: number; rows?: number; isTTY?: boolean } = {}) 
   const bus = createFakeBus()
   const transcript = new Transcript(bus as never)
   const calls: string[] = []
+  const copied: string[] = []
   let slowGate: (() => void) | null = null
   let pinnedActivity: UiPresentationActivity | undefined
   const host: TuiHost = {
@@ -46,6 +47,10 @@ function setup(opts: { columns?: number; rows?: number; isTTY?: boolean } = {}) 
       if (text === "/exit") return { quit: true }
       if (text === "/boom") throw new Error("gagal disengaja")
       if (text === "/slow") await new Promise<void>((r) => (slowGate = r))
+    },
+    copySelection: (text) => {
+      copied.push(text)
+      return true
     },
     abort: () => {},
     cycleMode: () => {},
@@ -67,6 +72,7 @@ function setup(opts: { columns?: number; rows?: number; isTTY?: boolean } = {}) 
     transcript,
     app,
     calls,
+    copied,
     releaseSlow,
     screenText,
     setPinnedActivity: (next: UiPresentationActivity | undefined) => {
@@ -79,25 +85,45 @@ describe("TuiApp", () => {
     const { app } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     expect(tty!.screen()).toHaveLength(14)
     expect(tty!.all()).toContain("\x1b[?1049h")
+    expect(tty!.all()).toContain("\x1b[?1002h")
+    expect(tty!.all()).toContain("\x1b[?1006h")
     await tty!.send(KEY.ctrlD)
     const res = await runP
     expect(res.started).toBe(true)
     expect(res.frames).toBeGreaterThan(0)
     expect(tty!.all()).toContain("\x1b[?1049l")
+    expect(tty!.all()).toContain("\x1b[?1006l")
+    expect(tty!.all()).toContain("\x1b[?1002l")
+    expect(tty!.all()).toContain("\x1b[?1000l")
+  })
+  test("MINICODE_MOUSE_SELECTION=0 mematikan tracking TUI", async () => {
+    const previous = process.env.MINICODE_MOUSE_SELECTION
+    process.env.MINICODE_MOUSE_SELECTION = "0"
+    const { app } = setup()
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
+    expect(tty!.all()).not.toContain("\x1b[?1002h")
+    await tty!.send(KEY.ctrlD)
+    await runP
+    if (previous === undefined) delete process.env.MINICODE_MOUSE_SELECTION
+    else process.env.MINICODE_MOUSE_SELECTION = previous
   })
   test("ketik + Enter: submit terpanggil + gema di transkrip", async () => {
     const { app, calls, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("halo")
     await tty!.send(KEY.enter)
     await tty!.waitForOutput((o) => o.includes("› halo"))
     expect(calls).toEqual(["halo"])
     expect(screenText()).toContain("› halo")
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screenText()).toMatch(/^minicode ›$/m)
     await tty!.send(KEY.ctrlD)
     await runP
   })
@@ -105,7 +131,7 @@ describe("TuiApp", () => {
     const { app, calls } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/boom")
     await tty!.send(KEY.enter)
     await tty!.waitForOutput((o) => o.includes("gagal disengaja"))
@@ -123,7 +149,7 @@ describe("TuiApp", () => {
     const { app } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/exit")
     await tty!.send(KEY.enter)
     const res = await runP
@@ -134,7 +160,7 @@ describe("TuiApp", () => {
     const { app, calls } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("x")
     await tty!.send(KEY.ctrlD)
     expect(tty!.all()).not.toContain("\x1b[?1049l")
@@ -144,48 +170,91 @@ describe("TuiApp", () => {
     await runP
     expect(tty!.all()).toContain("\x1b[?1049l")
   })
+  test("timer idle redup dan timer turn putih", async () => {
+    const { app, releaseSlow } = setup()
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
+    expect(tty!.all()).toContain("\x1b[38;2;72;72;72m00.00.00")
+    await tty!.send("/slow")
+    await tty!.send(KEY.enter)
+    await tty!.waitForOutput((o) => o.includes("› /slow"))
+    expect(tty!.all()).toContain("\x1b[37m00\x1b[39m")
+    expect(tty!.all()).toContain("\x1b[38;2;72;72;72m00\x1b[39m")
+    await releaseSlow()
+    await tty!.send(KEY.ctrlD)
+    await runP
+  })
   test("status bar: mode + model + konteks di baris dasar (I20)", async () => {
     const { app } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     const frame = tty!.screen()
     const last = frame[frame.length - 1]!
     expect(last).toContain("auto")
     expect(last).toContain("test-model")
     expect(last).toContain("1k")
+    expect(frame[frame.length - 2]).toBe("")
+    expect(last).toContain("00.00.00")
+    expect(last).not.toContain("•")
     await tty!.send(KEY.ctrlD)
     await runP
   })
-  test("busy tanpa event: Working tampil dan elapsed bergerak", async () => {
+  test("busy tanpa event: timer fixed-format tanpa dots sebelum reasoning", async () => {
     const { app, releaseSlow, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
-    await tty!.waitForOutput((o) => o.includes("Working"))
     await tty!.waitForOutput((o) => o.includes("› /slow"))
-    expect(screenText()).toContain("Working 0s")
+    const footer = () => tty!.screen().find((line) => /\d{2}\.\d{2}\.\d{2}/.test(line)) ?? ""
+    expect(footer()).not.toMatch(/\.{1,3}\s+00.00.00/)
+    expect(screenText()).not.toMatch(/\b(Working|Thinking|Running)\b/)
+    expect(screenText()).not.toMatch(/^minicode ›$/m)
     await new Promise((r) => setTimeout(r, 1100))
-    expect(screenText()).toMatch(/Working [1-9]\d*s/)
+    expect(footer()).toMatch(/\d{2}\.\d{2}\.\d{2}/)
+    expect(footer()).not.toMatch(/\d+s/)
+    expect(screenText()).not.toMatch(/\b(Working|Thinking|Running)\b/)
     await releaseSlow()
     await tty!.send(KEY.ctrlD)
     await runP
   })
-  test("busy + motion off tetap menampilkan status tekstual", async () => {
+  test("timer format fixed HH.MM.SS", () => {
+    expect(formatTimer(0)).toBe("00.00.00")
+    expect(formatTimer(1_999)).toBe("00.00.01")
+    expect(formatTimer(60_000)).toBe("00.01.00")
+    expect(formatTimer(3_600_000)).toBe("01.00.00")
+  })
+  test("thinking dots mengikuti clock, bukan paint count", () => {
+    expect(thinkingDots(0, 0, false)).toBe("...")
+    expect(thinkingDots(200, 0, false)).toBe("..")
+    expect(thinkingDots(400, 0, false)).toBe(".")
+    expect(thinkingDots(600, 0, false)).toBe("..")
+    expect(thinkingDots(800, 0, false)).toBe("...")
+    expect(thinkingDots(9999, 0, true)).toBe("...")
+  })
+  test("busy + motion off: marker dots statis tanpa label", async () => {
     const previous = process.env.MINICODE_MOTION
     process.env.MINICODE_MOTION = "0"
     try {
-      const { app, releaseSlow, screenText } = setup()
+      const { app, bus, releaseSlow, screenText } = setup()
       const runP = app.run()
       await tty!.ready()
-      await tty!.waitForOutput((o) => o.includes("minicode"))
+      await tty!.waitForOutput((o) => o.includes("00.00.00"))
       await tty!.send("/slow")
       await tty!.send(KEY.enter)
-      await tty!.waitForOutput((o) => o.includes("Working"))
       await tty!.waitForOutput((o) => o.includes("› /slow"))
-      expect(screenText()).toContain("Working 0s")
+      bus.emit("provider:extension", { kind: "reasoning", data: { text: "hmm" } })
+      await new Promise((r) => setTimeout(r, 40))
+      const composer = () => tty!.screen().find((line) => line.trim().startsWith(".")) ?? ""
+      const first = composer()
+      expect(first).toBe("...")
+      await new Promise((r) => setTimeout(r, 500))
+      expect(composer()).toBe(first)
+      expect(tty!.screen().some((line) => /\d{2}\.\d{2}\.\d{2}/.test(line))).toBe(true)
+      expect(screenText()).not.toMatch(/\b(Working|Thinking|Running)\b/)
       await releaseSlow()
       await tty!.send(KEY.ctrlD)
       await runP
@@ -194,33 +263,35 @@ describe("TuiApp", () => {
       else process.env.MINICODE_MOTION = previous
     }
   })
-  test("reasoning event menunjukkan Thinking, text kembali Working", async () => {
+  test("reasoning dan text: hanya dots yang berubah, label tidak pernah tampil", async () => {
     const { app, bus, releaseSlow, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
     await tty!.waitForOutput((o) => o.includes("› /slow"))
     bus.emit("provider:extension", { kind: "reasoning", data: { text: "hmm" } })
-    await tty!.waitForOutput((o) => o.includes("Thinking"))
-    expect(screenText()).toContain("Thinking")
+    await new Promise((r) => setTimeout(r, 40))
+    expect(tty!.screen().some((line) => /^\s*\.{1,3}\s*$/.test(line))).toBe(true)
+    expect(screenText()).not.toContain("… thinking")
+    expect(screenText()).not.toMatch(/\b(Working|Thinking|Running)\b/)
     tty!.clear()
     bus.emit("provider:text", { text: "jawaban" })
-    await tty!.waitForOutput((o) => o.includes("Working"))
-    expect(screenText()).toContain("Working")
+    await tty!.waitForOutput((o) => o.includes("00"))
+    expect(tty!.screen().some((line) => /^\s*\.{1,3}\s*$/.test(line))).toBe(false)
+    expect(screenText()).not.toMatch(/\b(Working|Thinking|Running)\b/)
     await releaseSlow()
     await tty!.send(KEY.ctrlD)
     await runP
   })
-  test("activity snapshot tampil sebagai status tool", async () => {
+  test("activity snapshot tampil sebagai status tool tanpa label atau elapsed", async () => {
     const { app, releaseSlow, screenText, setPinnedActivity } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
-    await tty!.waitForOutput((o) => o.includes("Working"))
     await tty!.waitForOutput((o) => o.includes("› /slow"))
     setPinnedActivity({
       toolCallId: "call-1",
@@ -230,7 +301,11 @@ describe("TuiApp", () => {
       tsStart: Date.now() - 3000,
     })
     app.repaint()
-    expect(screenText()).toContain("Running read_file src/server.ts 3s")
+    const composer = tty!.screen().find((line) => line.includes("read_file src/server.ts")) ?? ""
+    const footer = tty!.screen().find((line) => /\d{2}\.\d{2}\.\d{2}/.test(line)) ?? ""
+    expect(composer).toContain("read_file src/server.ts")
+    expect(footer).toMatch(/\d{2}\.\d{2}\.\d{2}/)
+    expect(screenText()).not.toMatch(/\b(Working|Thinking|Running)\b|\d+s/)
     await releaseSlow()
     await tty!.send(KEY.ctrlD)
     await runP
@@ -239,7 +314,7 @@ describe("TuiApp", () => {
     const { app, transcript, screenText } = setup({ rows: 12 })
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     transcript.pushInfo(Array.from({ length: 30 }, (_, i) => `baris-${i}`))
     await tty!.send("x")
     await tty!.waitForOutput((o) => o.includes("baris-29"))
@@ -263,11 +338,100 @@ describe("TuiApp", () => {
     await tty!.send(KEY.ctrlD)
     await runP
   })
+  test("mouse wheel scroll transkrip tanpa memindahkan histori", async () => {
+    const { app, transcript, screenText } = setup({ rows: 12 })
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
+    transcript.pushInfo(Array.from({ length: 30 }, (_, i) => `baris-${i}`))
+    await tty!.send("x")
+    await tty!.waitForOutput((o) => o.includes("baris-29"))
+    await tty!.send(KEY.mouseWheelUpSgr)
+    expect(screenText()).not.toContain("baris-29")
+    expect(screenText()).toContain("minicode › x")
+    await tty!.send(KEY.mouseWheelDownSgr)
+    expect(screenText()).toContain("baris-29")
+    await tty!.send(KEY.backspace)
+    await tty!.send(KEY.ctrlD)
+    await runP
+  })
+
+  test("drag transcript + Ctrl+C menyalin selection logis", async () => {
+    const { app, transcript, copied, screenText } = setup({ rows: 12 })
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
+    transcript.pushInfo(Array.from({ length: 30 }, (_, i) => `baris-${i}`))
+    await tty!.send("x")
+    await tty!.waitForOutput((o) => o.includes("baris-29"))
+    const screen = tty!.screen()
+    const visible = screen
+      .map((line, index) => ({ line, row: index + 1 }))
+      .filter((item) => item.line.startsWith("baris-"))
+    expect(visible.length).toBeGreaterThan(1)
+    const start = visible[0]!.row
+    const end = visible[Math.min(2, visible.length - 1)]!.row
+    const endX = (visible[Math.min(2, visible.length - 1)]!.line.length ?? 0) + 1
+    await tty!.send(`\x1b[<0;1;${start}M`)
+    await tty!.send(`\x1b[<32;${endX};${end}M`)
+    await tty!.send(`\x1b[<0;${endX};${end}m`)
+    expect(tty!.all()).toContain("\x1b[7m")
+    await tty!.send(KEY.ctrlC)
+    expect(copied[0]).toBe("baris-21\nbaris-22\nbaris-23")
+    expect(screenText()).toContain("selection copied")
+    await tty!.send(KEY.backspace)
+    await tty!.send(KEY.ctrlD)
+    await runP
+  })
+
+  test("drag selection tetap bisa dipakai saat turn busy", async () => {
+    const { app, transcript, copied, releaseSlow } = setup({ rows: 12 })
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
+    transcript.pushInfo(Array.from({ length: 20 }, (_, i) => `busy-${i}`))
+    await tty!.send("/slow")
+    await tty!.send(KEY.enter)
+    await tty!.waitForOutput((o) => o.includes("› /slow"))
+    const visible = tty!
+      .screen()
+      .map((line, index) => ({ line, row: index + 1 }))
+      .filter((item) => item.line.startsWith("busy-"))
+    const start = visible[0]!.row
+    const end = visible[1]!.row
+    const endX = visible[1]!.line.length + 1
+    await tty!.send(`\x1b[<0;1;${start}M`)
+    await tty!.send(`\x1b[<32;${endX};${end}M`)
+    await tty!.send(`\x1b[<0;${endX};${end}m`)
+    await tty!.send(KEY.ctrlC)
+    expect(copied[0]).toContain("busy-")
+    await releaseSlow()
+    await tty!.send(KEY.ctrlD)
+    await runP
+  })
+
+  test("klik prompt memindahkan kursor tanpa mengubah histori", async () => {
+    const { app, copied } = setup({ rows: 14 })
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
+    await tty!.send("hello")
+    const promptRow = tty!.screen().findIndex((line) => line.includes("minicode › hello")) + 1
+    expect(promptRow).toBeGreaterThan(0)
+    await tty!.send(`\x1b[<0;14;${promptRow}M\x1b[<0;14;${promptRow}m`)
+    await tty!.send("X")
+    expect(tty!.screen().join("\n")).toContain("minicode › heXllo")
+    expect(copied).toEqual([])
+    await tty!.send(KEY.ctrlU)
+    await tty!.send(KEY.ctrlD)
+    await runP
+  })
+
   test("Up/Down = histori (bukan scroll) (I18)", async () => {
     const { app, calls } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("satu")
     await tty!.send(KEY.enter)
     await tty!.waitForOutput((o) => o.includes("› satu"))
@@ -287,7 +451,7 @@ describe("TuiApp", () => {
     const { app, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/")
     await tty!.waitForOutput((o) => o.includes("commands"))
     expect(screenText()).toContain("/model")
@@ -302,7 +466,7 @@ describe("TuiApp", () => {
     const { app, calls, releaseSlow } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
     await tty!.waitForOutput((o) => o.includes("› /slow"))
@@ -339,7 +503,7 @@ describe("TuiApp", () => {
     const { app, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("x")
     await tty!.send(KEY.esc, 10)
     app.suspend()
@@ -354,10 +518,13 @@ describe("TuiApp", () => {
     const { app, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     expect(app.isSuspended()).toBe(false)
     app.suspend()
     expect(app.isSuspended()).toBe(true)
+    const dimmedFrame = tty!.screen()
+    expect(dimmedFrame[dimmedFrame.length - 2]).toBe("")
+    expect(dimmedFrame[dimmedFrame.length - 1]).toContain("auto")
     // Backdrop redup tertulis sebagai frame (bukan hitam polos).
     expect(tty!.all()).toContain("\x1b[2m")
     // Ketikan selama suspend TIDAK masuk baris input (anti double-handling
@@ -376,7 +543,7 @@ describe("TuiApp", () => {
     const { app } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     app.suspend()
     app.suspend()
     expect(app.isSuspended()).toBe(true)
@@ -393,12 +560,12 @@ describe("TuiApp", () => {
     const { app, releaseSlow, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
     await tty!.waitForOutput((o) => o.includes("› /slow"))
     // Ketikan + Enter + Tab saat busy: semua sunyi (bukan antre, bukan quit,
-    // bukan pindah mode). Hanya Esc/Ctrl+C (abort) + PgUp/PgDn + Ctrl+D kosong.
+    // bukan pindah mode). Hanya Esc (abort) + wheel/PgUp/PgDn + Ctrl+D kosong.
     await tty!.send("zzz")
     await tty!.send(KEY.enter)
     await tty!.send(KEY.tab)
@@ -416,7 +583,7 @@ describe("TuiApp", () => {
     const { app, calls } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
     await tty!.waitForOutput((o) => o.includes("› /slow"))
@@ -431,7 +598,7 @@ describe("TuiApp", () => {
     const { app, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
     await tty!.waitForOutput((o) => o.includes("› /slow"))
@@ -439,25 +606,27 @@ describe("TuiApp", () => {
     await tty!.send(KEY.esc, 90)
     await new Promise((r) => setTimeout(r, 100))
     expect(tty!.all()).not.toContain("\x1b[?1049l")
-    expect(screenText()).toContain("Stopping")
     expect(screenText()).toContain("abort sent")
+    expect(screenText()).not.toMatch(/\b(Working|Thinking|Running|Stopping)\b/)
     // Esc kedua <1.5 dtk: quit.
     await tty!.send(KEY.esc, 90)
     await runP
     expect(tty!.all()).toContain("\x1b[?1049l")
   })
-  test("busy + Ctrl+C tunggal menampilkan acknowledgement, ganda menutup", async () => {
+  test("busy + Ctrl+C diabaikan; Esc yang abort", async () => {
     const { app, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
     await tty!.waitForOutput((o) => o.includes("› /slow"))
     await tty!.send(KEY.ctrlC, 90)
-    expect(screenText()).toContain("Stopping")
+    expect(screenText()).not.toContain("abort sent")
+    await tty!.send(KEY.esc, 90)
     expect(screenText()).toContain("abort sent")
-    await tty!.send(KEY.ctrlC, 90)
+    expect(screenText()).not.toMatch(/\b(Working|Thinking|Running|Stopping)\b/)
+    await tty!.send(KEY.esc, 90)
     await runP
     expect(tty!.all()).toContain("\x1b[?1049l")
   })
@@ -465,7 +634,7 @@ describe("TuiApp", () => {
     const { app, bus } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     tty!.clear()
     bus.emit("provider:text", { text: "token-live" })
     bus.emit("turn:completed", {})
@@ -478,7 +647,7 @@ describe("TuiApp", () => {
     const { app, bus, transcript, screenText } = setup({ rows: 12 })
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     transcript.pushInfo(Array.from({ length: 20 }, (_, i) => `lama-${i}`))
     await tty!.send("x")
     await tty!.waitForOutput((o) => o.includes("lama-19"))
@@ -505,7 +674,7 @@ describe("TuiApp", () => {
     const { app } = setup({ columns: 30, rows: 14 })
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("a".repeat(50))
     for (let i = 0; i < 20; i++) await tty!.send(KEY.left)
     expect(tty!.all()).toContain("\x1b[12;12H")
@@ -520,7 +689,7 @@ describe("TuiApp", () => {
     const { app, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("l0\nl1\nl2\nl3\nl4\nl5\nl6\nl7")
     expect(screenText()).toContain("l7")
     expect(screenText()).toContain("l3")
@@ -533,16 +702,22 @@ describe("TuiApp", () => {
     await runP
     void app
   })
-  test("baris kosong menampilkan placeholder + cara keluar", async () => {
+  test("idle awal: prompt langsung tampil; Esc menutup, karakter membuka lagi", async () => {
     const { app, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
-    expect(screenText()).toContain("Ctrl+D")
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
+    expect(screenText()).toMatch(/^minicode ›$/m)
+    expect(screenText()).toContain("00.00.00")
+    await tty!.send(KEY.left)
+    expect(screenText()).toMatch(/^minicode ›$/m)
+    await tty!.send(KEY.esc, 90)
+    expect(screenText()).not.toMatch(/^minicode ›$/m)
     await tty!.send("a")
-    expect(screenText()).not.toContain("Ctrl+D")
+    expect(screenText()).toContain("minicode › a")
     await tty!.send(KEY.backspace)
-    expect(screenText()).toContain("Ctrl+D")
+    expect(screenText()).toContain("minicode ›")
+    expect(screenText()).not.toContain("ask anything")
     await tty!.send(KEY.ctrlD)
     await runP
   })
@@ -550,7 +725,7 @@ describe("TuiApp", () => {
     const { app, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     // Simulasi view popup tutup: cleanup view mematikan raw mode.
     app.suspend()
     ;(process.stdin as unknown as { setRawMode(v: boolean): void }).setRawMode(false)
@@ -572,7 +747,7 @@ describe("TuiApp", () => {
     const { app } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     tty!.resize(60, 5)
     await tty!.waitForOutput((o) => o.includes("too small"))
     // Ketikan normal diabakan saat menciut.
@@ -588,7 +763,7 @@ describe("TuiApp", () => {
     const { app, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     app.suspend()
     app.releaseTerminal()
     expect(tty!.all()).toContain("\x1b[?1049l")

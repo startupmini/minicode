@@ -321,3 +321,18 @@ describe("put: truncated flag pada cut < asli", () => {
     expect(hit!.text.length).toBeLessThanOrEqual(MAX_SECTION_CHARS)
   })
 })
+
+describe("content kind dan urutan numerik", () => {
+  test("ref reasoning tidak memakai durable output fallback", () => {
+    const store = createContentStore()
+    const hit = store.resolve({ toolCallId: "r1", idx: 0, kind: "reasoning" }, () => "durable")
+    expect(hit).toBeUndefined()
+  })
+
+  test("expand mengurutkan idx numerik", () => {
+    const store = createContentStore()
+    store.put({ toolCallId: "t1", idx: 10 }, "10", meta)
+    store.put({ toolCallId: "t1", idx: 2 }, "2", meta)
+    expect(store.expand("t1").map((entry) => entry.text)).toEqual(["2", "10"])
+  })
+})

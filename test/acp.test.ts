@@ -151,9 +151,11 @@ describe("acp: runAcpSession (sesi injeksi, tanpa provider)", () => {
   const fakeFactory = (opts: FakeOpts = {}) => {
     const handlers: ((ev: unknown) => void)[] = []
     let factoryCalls = 0
+    let factoryOptions: unknown
     const usageTokens = opts.tokens ?? { inputTokens: 10, outputTokens: 5, totalTokens: 15 }
-    const createSession = (async () => {
+    const createSession = (async (options: unknown) => {
       factoryCalls++
+      factoryOptions = options
       return {
         session: {
           events: {
@@ -180,7 +182,12 @@ describe("acp: runAcpSession (sesi injeksi, tanpa provider)", () => {
       }
     }) as never
     let abortNow: (() => void) | null = null
-    return { createSession, calls: () => factoryCalls, setAbort: (f: () => void) => (abortNow = f) }
+    return {
+      createSession,
+      calls: () => factoryCalls,
+      options: () => factoryOptions,
+      setAbort: (f: () => void) => (abortNow = f),
+    }
   }
   const depsOf = (
     f: ReturnType<typeof fakeFactory>,
@@ -207,6 +214,7 @@ describe("acp: runAcpSession (sesi injeksi, tanpa provider)", () => {
     await runAcpSession(11, { prompt: "kerjakan" }, depsOf(f, out))
     const notes = out.map((l) => JSON.parse(l))
     const byType = (t: string): Record<string, unknown> => notes.find((n) => n.type === t) ?? {}
+    expect(f.options()).toMatchObject({ machineOutput: true })
     expect(byType("text")).toMatchObject({ type: "text", delta: "halo dunia" })
     expect(byType("tool")).toMatchObject({ type: "tool", name: "read_file" })
     const res = notes[notes.length - 1] as { id: number; result: Record<string, unknown> }

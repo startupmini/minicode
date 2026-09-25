@@ -63,6 +63,12 @@ export function attachTurnStatus(
      * (default hemat: shell tetap bersih).
      */
     getStats?: () => string | undefined
+    /**
+     * Label activity kanonik (di-inject composition root dari snapshot
+     * presentasi). Dipakai untuk nama+target garis status bila ada; absen =
+     * parse raw legacy dari args model.
+     */
+    activityFor?: (toolCallId: string) => { name: string; target?: string } | undefined
   } = {},
 ): TurnStatusHandle {
   if (!process.stderr.isTTY) return { detach: () => {}, endTurn: () => {} }
@@ -224,10 +230,18 @@ export function attachTurnStatus(
   registerStatusLine(handle)
 
   const statusToolLabel = (e: {
-    execution: { call: { name: string; args?: unknown } }
+    execution: { call: { id?: string; name: string; args?: unknown } }
   }): string => {
-    const name = e.execution.call.name
-    const args = (e.execution.call.args ?? {}) as Record<string, unknown>
+    // Sumber kanonik dulu (snapshot presentasi via DI); fallback raw legacy.
+    // Bentuk args dinormalisasi agar logika cap/sanitasi di bawah identik.
+    const canonical = e.execution.call.id ? opts.activityFor?.(e.execution.call.id) : undefined
+    const name = canonical?.name ?? e.execution.call.name
+    const args = canonical
+      ? ((canonical.target !== undefined ? { path: canonical.target } : {}) as Record<
+          string,
+          unknown
+        >)
+      : ((e.execution.call.args ?? {}) as Record<string, unknown>)
     let target = ""
     if (typeof args.path === "string") target = args.path
     else if (typeof args.file === "string") target = args.file

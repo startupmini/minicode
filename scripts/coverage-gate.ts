@@ -63,11 +63,13 @@ function getArg(name: string, fallback: number): number {
 // dikunci 84,6 (berisiko flaky); kunci tetap 84,5; funcs tetap 80.
 // Audit menyeluruh 2026-09-23 (F1 skip PTY nyata, F5 lantai per-berkas, F9
 // env docs, F13 batas lapisan): 83,42 funcs / 84,64 lines, 2350 pass / 20 skip
-// (run penuh 259 dtk). Funcs NAIK dikunci 82 (margin 1,4 pp — sebelumnya 80
+// (run penuh 259 dtk). Funcs NAIK dikunci 83 (margin 1,2 pp — sebelumnya 80
 // dibiarkan 3,4 pp di bawah hasil terukur, jadi tak pernah menangkap regresi);
 // lines tetap 84,5 (margin 0,14 pp sudah disengaja anti-flaky sejak 0.10.x).
-const MIN_LINES = getArg("--lines", 84.5)
-const MIN_FUNCS = getArg("--funcs", 82)
+// Phase 2 parity: 84,46 funcs / 85,46 lines, 2559 pass / 22 skip. Kunci di
+// 84/85 sesuai aturan repo (naikkan minimum bila coverage naik).
+const MIN_LINES = getArg("--lines", 85)
+const MIN_FUNCS = getArg("--funcs", 84)
 
 // ── lantai per-berkas modul kritis (audit F5) ──
 // Gate agregat BUTA terhadap modul tunggal yang jatuh: policy/jail 97% → 5%
@@ -144,7 +146,7 @@ if (savedReport) {
   }
 }
 
-const failCount = Number(/(\d+) fail/.exec(output)?.[1] ?? "0")
+const failCount = Number(/^\s*(\d+) fail\s*$/m.exec(output)?.[1] ?? "0")
 if (failCount > 0) {
   console.error(`[coverage-gate] ${failCount} test failing — gate tidak dievaluasi`)
   // Cetak nama test yang gagal — tanpa ini, reporter dots menelan nama dan

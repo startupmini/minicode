@@ -70,8 +70,8 @@ Options:
   --tui               deprecated no-op (interactive mode is always the fullscreen TUI)
 
 TUI: /help /provider /model /sync /status /sessions /init /exit /mode /undo /redo /clear /copy /history /compact /thinking /minimize
-Keys: Enter submit · Tab/Shift+Tab mode · Up/Down history · PgUp/PgDn scroll (Shift = half page)
-      Home/End jump to transcript top/tail · Ctrl+R search · Esc/Ctrl+C abort turn (twice = quit) · Ctrl+D exit
+Keys: Enter submit · Tab/Shift+Tab mode · Up/Down history · Mouse wheel/PgUp/PgDn scroll (Shift = half page)
+      Home/End jump to transcript top/tail · Ctrl+R search · Esc abort turn (twice = quit) · Ctrl+D exit
 Subcommand flags (config/mcp/sessions/skills/exec/...): see 'minicode <cmd> --help'.
 `
 
@@ -128,10 +128,24 @@ setSubAgentSessionFactory(async (spec) => {
   const { journal, ...coreSpec } = spec
   const session = await createMinicodeSession(coreSpec)
   if (journal) {
+    const childPresentation = (
+      await import("../src/presentation/adapter.ts")
+    ).createPresentationAdapter(session.events, { sessionId: journal.sessionId })
+    const { appendPresentationEvents } = await import("../src/session/persistence.ts")
+    let childWrite = Promise.resolve()
+    childPresentation.onEvent((event) => {
+      childWrite = childWrite
+        .then(() => appendPresentationEvents(journal.sessionId, spec.cwd, [event]))
+        .catch(() => {})
+    })
+    session.events.on("turn:completed", () => {
+      void childWrite.finally(() => childPresentation.dispose())
+    })
     attachMutationJournal(session, {
       sessionId: journal.sessionId,
       cwd: spec.cwd,
       childOf: journal.parentSessionId,
+      onCommitted: (info) => childPresentation.noteFileChanged(info),
     })
   }
   return session

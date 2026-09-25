@@ -40,6 +40,7 @@ function setup(opts: { columns?: number; rows?: number } = {}) {
       if (text === "/slow") await new Promise<void>((r) => (slowGate = r))
       return undefined
     },
+    copySelection: () => true,
     abort: () => {},
     cycleMode: () => {},
     toggleCompact: () => {},
@@ -52,7 +53,7 @@ function setup(opts: { columns?: number; rows?: number } = {}) {
   const boot = async () => {
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("minicode"))
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
     return { runP }
   }
   // Ekspos gate submit /slow agar test bisa menyelesaikannya (tanpa promise
@@ -171,7 +172,7 @@ describe("TUI-005: hint abort pertama saat busy", () => {
     // Esc pertama: abort + hint muncul di layar.
     await tty!.send(KEY.esc, 90)
     await new Promise((r) => setTimeout(r, 80))
-    expect(tty!.screen().join("\n")).toContain("press Esc/Ctrl+C again")
+    expect(tty!.screen().join("\n")).toContain("press Esc again")
     // Esc kedua: quit (jalan keluar terjaga — hint tak mengubah semantik).
     await tty!.send(KEY.esc, 90)
     await runP
@@ -235,12 +236,12 @@ describe("TUI-007: kursor di dalam blok sync-update", () => {
     const { runP } = await boot()
     await tty!.send("halo")
     const out = tty!.all()
-    // Satu penulisan App: SYNC_START, sembunyikan kursor, CUP parkir,
-    // tampilkan kursor, SYNC_END — kursor tidak pernah di luar blok sync
-    // (temuan audit TUI-007: tearing di emulator tanpa ?2026).
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: pola escape ANSI sengaja
-    const re = /\x1b\[\?2026h\x1b\[\?25l\x1b\[\d+;\d+H\x1b\[\?25h\x1b\[\?2026l/
-    expect(re.test(out)).toBe(true)
+    const syncStart = out.lastIndexOf("\x1b[?2026h")
+    const cursor = out.indexOf("\x1b[?25l\x1b[", syncStart)
+    const syncEnd = out.indexOf("\x1b[?2026l", cursor)
+    expect(syncStart).toBeGreaterThanOrEqual(0)
+    expect(cursor).toBeGreaterThan(syncStart)
+    expect(syncEnd).toBeGreaterThan(cursor)
     // Kosongkan baris dulu — Ctrl+D saat baris berisi diabaikan (I19).
     await tty!.send(KEY.backspace)
     await tty!.send(KEY.backspace)

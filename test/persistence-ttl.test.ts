@@ -33,6 +33,7 @@ test("purgeExpired: menghapus sesi basi, menyimpan yang muda", async () => {
     CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, created_at INTEGER, cwd TEXT, system TEXT, updated_at INTEGER);
     CREATE TABLE IF NOT EXISTS messages (session_id TEXT, seq INTEGER, role TEXT, content TEXT, toolCalls TEXT, toolCallId TEXT, name TEXT, ts INTEGER, PRIMARY KEY(session_id, seq));
     CREATE TABLE IF NOT EXISTS turns (session_id TEXT, turn_idx INTEGER, usage TEXT, ts INTEGER, PRIMARY KEY(session_id, turn_idx));
+    CREATE TABLE IF NOT EXISTS presentation_events (session_id TEXT NOT NULL, event_seq INTEGER NOT NULL, type TEXT NOT NULL, turn_id INTEGER NOT NULL, ts INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(session_id, event_seq));
   `)
   const now = Date.now()
   db.prepare(
@@ -41,11 +42,21 @@ test("purgeExpired: menghapus sesi basi, menyimpan yang muda", async () => {
   db.prepare(
     "INSERT INTO sessions (id, created_at, cwd, system, updated_at) VALUES (?, ?, ?, ?, ?)",
   ).run("new-1", now, tmp, "", now)
+  db.prepare(
+    "INSERT INTO presentation_events (session_id, event_seq, type, turn_id, ts, payload) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run("old-1", 1, "user.message", 1, now, "{}")
+  db.prepare(
+    "INSERT INTO presentation_events (session_id, event_seq, type, turn_id, ts, payload) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run("new-1", 1, "user.message", 1, now, "{}")
   process.env.MINICODE_SESSION_TTL_DAYS = "30"
   const removed = purgeExpired(db, now)
   expect(removed).toBe(1)
   const remaining = db.prepare("SELECT id FROM sessions").all() as { id: string }[]
   expect(remaining.map((r) => r.id)).toEqual(["new-1"])
+  const remainingEvents = db.prepare("SELECT session_id FROM presentation_events").all() as {
+    session_id: string
+  }[]
+  expect(remainingEvents.map((r) => r.session_id)).toEqual(["new-1"])
   db.close()
   // WAL/shm handle terkadang masih terkunci sesaat setelah close di Windows —
   // retry kecil sebelum rm, jangan menjadikan buserror sebagai test failure.

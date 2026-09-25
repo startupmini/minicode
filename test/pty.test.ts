@@ -52,11 +52,12 @@ async function withTui(
 }
 
 describe("PTY: boot & kontrak layar", () => {
-  ptyTest("boot TUI → alt-screen enter + prompt terlihat", async () => {
+  ptyTest("boot TUI → alt-screen enter + timer idle terlihat", async () => {
     await withTui({}, async (tui) => {
-      // Prompt memakai bullet ✦ di status bar; teks model muncul via turn.
-      await tui.waitFor((raw) => raw.includes("minicode ›") && raw.includes("\x1b[?1049h"))
-      // Exit bersih: Ctrl+D pada prompt kosong.
+      await tui.waitFor(
+        (raw) =>
+          raw.includes("00.00.00") && raw.includes("\x1b[?1049h") && raw.includes("\x1b[?1002h"),
+      )
       tui.send("\x04")
       await tui.waitFor((raw) => raw.includes("\x1b[?1049l"), 10000)
       const { exitCode } = await tui.exit()
@@ -65,12 +66,39 @@ describe("PTY: boot & kontrak layar", () => {
     })
   })
 
-  ptyTest("turn penuh: prompt → submit → jawaban model → prompt lagi", async () => {
+  ptyTest("turn penuh: submit → jawaban model → idle timer", async () => {
     await withTui({}, async (tui) => {
-      await tui.waitFor((raw) => raw.includes("minicode ›"))
+      await tui.waitFor((raw) => raw.includes("00.00.00"))
       tui.send("halo\r")
       // Jawaban provider fake (seed PTJ-TURN-OK) harus mengalir ke layar.
       await tui.waitFor((raw) => raw.includes("PTJ-TURN-OK"), 30000)
+      tui.send("\x04")
+      await tui.waitFor((raw) => raw.includes("\x1b[?1049l"), 10000)
+      expect((await tui.exit()).exitCode).toBe(0)
+    })
+  })
+
+  ptyTest("SGR drag selection + Ctrl+C OSC52 melewati byte stream nyata", async () => {
+    await withTui({ reply: { kind: "text", text: "selected line\n" } }, async (tui) => {
+      await tui.waitFor((raw) => raw.includes("00.00.00"))
+      tui.send("copy\r")
+      await tui.waitFor((raw) => raw.includes("selected line"), 30000)
+      tui.send("\x1b[<0;1;1M\x1b[<32;14;1M\x1b[<0;14;1m\x03")
+      await tui.waitFor((raw) => raw.includes("\x1b]52;c;"), 10000)
+      expect(tui.raw()).toContain(Buffer.from("selected line", "utf8").toString("base64"))
+      tui.send("\x04")
+      await tui.waitFor((raw) => raw.includes("\x1b[?1049l"), 10000)
+      expect((await tui.exit()).exitCode).toBe(0)
+    })
+  })
+
+  ptyTest("pipe-table model tampil sebagai grid, bukan Markdown mentah", async () => {
+    const table = ["| Name | Value |", "| :--- | ---: |", "| alpha | 01 |"].join("\n")
+    await withTui({ reply: { kind: "text", text: table } }, async (tui) => {
+      await tui.waitFor((raw) => raw.includes("00.00.00"))
+      tui.send("tabel\r")
+      await tui.waitFor((raw) => raw.includes("Name") && raw.includes("Value"), 30000)
+      expect(tui.raw()).not.toContain("| :--- |")
       tui.send("\x04")
       await tui.waitFor((raw) => raw.includes("\x1b[?1049l"), 10000)
       expect((await tui.exit()).exitCode).toBe(0)
@@ -146,10 +174,10 @@ describe("PTY: sinyal & resize", () => {
 
   ptyTest("resize → layar menggambar ulang tanpa merusak state", async () => {
     await withTui({ cols: 100, rows: 30 }, async (tui) => {
-      await tui.waitFor((raw) => raw.includes("minicode ›"))
+      await tui.waitFor((raw) => raw.includes("00.00.00"))
       tui.resize(70, 20)
-      // Setelah resize, App repaint (listener resize) — prompt tetap ada.
-      await tui.waitFor((raw) => raw.includes("minicode ›"), 10000)
+      // Setelah resize, App repaint (listener resize) — timer idle tetap ada.
+      await tui.waitFor((raw) => raw.includes("00.00.00"), 10000)
       tui.send("\x04")
       await tui.waitFor((raw) => raw.includes("\x1b[?1049l"), 10000)
       expect((await tui.exit()).exitCode).toBe(0)

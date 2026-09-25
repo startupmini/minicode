@@ -43,11 +43,18 @@ export type PromptKey =
   | { type: "end" }
   | { type: "up" }
   | { type: "down" }
-  // PgUp/PgDn (ESC[5~/[6~) — di TUI scroll viewport transkrip, bukan histori.
-  // modifier (kode xterm, 0 = polos): 2 = shift — Shift+PgUp/PgDn = setengah
-  // halaman (temuan audit TUI-002).
   | { type: "pageup"; modifier?: number }
   | { type: "pagedown"; modifier?: number }
+  | { type: "wheelup" }
+  | { type: "wheeldown" }
+  | {
+      type: "mouse"
+      action: "press" | "release" | "drag" | "move"
+      button: 0 | 1 | 2 | null
+      x: number
+      y: number
+      modifiers: number
+    }
   | { type: "tab" }
   | { type: "enter" }
   | { type: "esc" }
@@ -278,7 +285,7 @@ export function applyKey(
     case "ctrl-t": // toggle expand/minimize reasoning di REPL (onKey)
     case "ctrl-n": // tambah model — ditangani view yang membutuhkan (model-manager); di prompt teks diabaikan
     case "shift-tab": // cycle mode — ditangani REPL lewat onKey askLine
-    case "ignore": // byte mouse dsb: dibuang, tidak boleh jadi teks
+    case "ignore":
       return { state, action: "none" }
     case "ctrl-u": {
       if (!state.line.length) return { state, action: "none" }
@@ -288,8 +295,9 @@ export function applyKey(
     // applyKey; engine netral (tanpa ini switch tak exhaustive → tsc merah).
     case "pageup":
     case "pagedown":
-      // Scroll ditangani App TUI SEBELUM applyKey (I18); engine netral
-      // (tanpa ini switch tak exhaustive → tsc merah).
+    case "wheelup":
+    case "wheeldown":
+    case "mouse":
       return { state, action: "none" }
     case "ctrl-w": {
       if (state.cursor === 0) return { state, action: "none" }
@@ -345,15 +353,10 @@ export function buildRenderSpec(
 // ── Binari dari chunk stdin -> keystroke stream ──
 // Rust-style manual parsing: ESC [ A/B/C/D = arrows, ESC = esc, dsb.
 export function decodeKeys(buf: Uint8Array): DecodedKey[] {
-  const out: DecodedKey[] = []
-  const s = new TextDecoder("utf-8").decode(buf)
-  let i = 0
-  while (i < s.length) {
-    const d = decodeKey(s, i)
-    d && out.push(d)
-    i += d?.width ?? 1
-  }
-  return out
+  return decodeKeysStream(buf, createDecoderState()).map((decoded) => ({
+    ...decoded,
+    width: Math.max(1, decoded.width),
+  }))
 }
 
 export interface DecodedKey {
@@ -486,17 +489,41 @@ export function decodeKeysStream(chunk: Uint8Array, state: DecoderState): Decode
       }
       // Mouse X10: ESC[M + 3 byte koordinat MENTAH (bukan UTF-8).
       if (n1 === 0x5b && buf[i + 2] === 0x4d) {
-        if (i + 6 > buf.length) break // byte koordinat terpotong — tahan
-        out.push({ key: { type: "ignore" }, width: 0 })
+        if (i + 6 > buf.length) break
+        const button = buf[i + 3]! - 0x20
+        const x = buf[i + 4]! - 31
+        const y = buf[i + 5]! - 31
+        out.push({
+          key: mouseKeyForReport(button, mouseActionForButton(button), x, y),
+          width: 6,
+        })
         i += 6
         continue
       }
-      // Mouse SGR: ESC[< … M|m
       if (n1 === 0x5b && buf[i + 2] === 0x3c) {
         let j = i + 3
         while (j < buf.length && buf[j] !== 0x4d && buf[j] !== 0x6d) j++
-        if (j >= buf.length) break // terminator belum tiba — tahan
-        out.push({ key: { type: "ignore" }, width: 0 })
+        if (j >= buf.length) {
+          if (buf.length - i <= MAX_MOUSE_REPORT_BYTES) break
+          out.push({ key: { type: "ignore" }, width: MAX_MOUSE_REPORT_BYTES })
+          i += MAX_MOUSE_REPORT_BYTES
+          continue
+        }
+        const first = buf.indexOf(0x3b, i + 3)
+        const second = first >= 0 ? buf.indexOf(0x3b, first + 1) : -1
+        const valid =
+          first > i + 3 &&
+          second > first + 1 &&
+          second < j &&
+          !buf.slice(second + 1, j).includes(0x3b)
+        const button = valid ? parseDecimalBytes(buf, i + 3, first) : null
+        const x = valid ? parseDecimalBytes(buf, first + 1, second) : null
+        const y = valid ? parseDecimalBytes(buf, second + 1, j) : null
+        const key =
+          button === null || x === null || y === null
+            ? ({ type: "ignore" } as const)
+            : mouseKeyForReport(button, mouseActionForButton(button, buf[j] === 0x6d), x, y)
+        out.push({ key, width: j - i + 1 })
         i = j + 1
         continue
       }
@@ -628,6 +655,58 @@ export function createKeyStreamPump(opts: {
   }
 }
 
+type MouseAction = Extract<PromptKey, { type: "mouse" }>["action"]
+
+function mouseActionForButton(button: number, release = false): MouseAction {
+  if (release) return "release"
+  if ((button & 0x20) !== 0) return (button & 0x03) <= 2 ? "drag" : "move"
+  return (button & 0x03) <= 2 ? "press" : "move"
+}
+
+function mouseKeyForReport(button: number, action: MouseAction, x: number, y: number): PromptKey {
+  if (
+    !Number.isSafeInteger(button) ||
+    button < 0 ||
+    !Number.isSafeInteger(x) ||
+    !Number.isSafeInteger(y) ||
+    x < 1 ||
+    y < 1
+  ) {
+    return { type: "ignore" }
+  }
+  const modifiers = button & 0x1c
+  if ((button & 0xc0) === 0x40) {
+    const vertical = button & 0x1f
+    if (vertical === 0) return { type: "wheelup" }
+    if (vertical === 1) return { type: "wheeldown" }
+    return { type: "ignore" }
+  }
+  const rawButton = button & 0x03
+  const normalizedButton = rawButton <= 2 ? (rawButton as 0 | 1 | 2) : null
+  if (action === "release") {
+    return { type: "mouse", action, button: normalizedButton, x, y, modifiers }
+  }
+  if (action === "drag" || action === "move") {
+    return { type: "mouse", action, button: normalizedButton, x, y, modifiers }
+  }
+  if (normalizedButton === null) return { type: "ignore" }
+  return { type: "mouse", action: "press", button: normalizedButton, x, y, modifiers }
+}
+
+function parseDecimalBytes(bytes: number[], from: number, to: number): number | null {
+  if (from >= to) return null
+  let value = 0
+  for (let i = from; i < to; i++) {
+    const digit = bytes[i]! - 0x30
+    if (digit < 0 || digit > 9) return null
+    value = value * 10 + digit
+    if (!Number.isSafeInteger(value)) return null
+  }
+  return value
+}
+
+const MAX_MOUSE_REPORT_BYTES = 64
+
 export function decodeKey(s: string, i: number): DecodedKey | null {
   const c = s[i]!
   const code = c.charCodeAt(0)
@@ -645,14 +724,30 @@ export function decodeKey(s: string, i: number): DecodedKey | null {
         return { key: { type: "char", ch: s.slice(i + 6, endIdx) }, width: endIdx + 6 - i }
       }
     }
-    // Laporan mouse. X10: ESC [ M + 3 byte mentah (yang BUKAN huruf final, jadi
-    // scanCsi tidak bisa mengukurnya). SGR: ESC [ < … M/m. Keduanya dibuang —
-    // tanpa ini byte koordinat masuk sebagai teks ("teks" jadi "teks 00").
-    if (s[i + 1] === "[" && s[i + 2] === "M") return { key: { type: "ignore" }, width: 6 }
+    if (s[i + 1] === "[" && s[i + 2] === "M") {
+      const button = s.charCodeAt(i + 3) - 0x20
+      const x = s.charCodeAt(i + 4) - 31
+      const y = s.charCodeAt(i + 5) - 31
+      return {
+        key: mouseKeyForReport(button, mouseActionForButton(button), x, y),
+        width: 6,
+      }
+    }
     if (s[i + 1] === "[" && s[i + 2] === "<") {
       let j = i + 3
       while (j < s.length && s[j] !== "M" && s[j] !== "m") j++
-      return { key: { type: "ignore" }, width: j - i + 1 }
+      const first = s.indexOf(";", i + 3)
+      const second = first >= 0 ? s.indexOf(";", first + 1) : -1
+      const valid =
+        first > i + 3 && second > first + 1 && second < j && !s.slice(second + 1, j).includes(";")
+      const button = valid ? Number.parseInt(s.slice(i + 3, first), 10) : Number.NaN
+      const x = valid ? Number.parseInt(s.slice(first + 1, second), 10) : Number.NaN
+      const y = valid ? Number.parseInt(s.slice(second + 1, j), 10) : Number.NaN
+      const release = s[j] === "m"
+      return {
+        key: mouseKeyForReport(button, mouseActionForButton(button, release), x, y),
+        width: j - i + 1,
+      }
     }
     if (s[i + 1] === "[" || s[i + 1] === "O") {
       const kind = s[i + 2]

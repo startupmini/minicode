@@ -5,14 +5,13 @@
 ### Fixed — Context long-horizon (agent-context-architect)
 
 - Ringkasan hasil kompaksi LLM sekarang dipagu keras di `LIMITS.COMPACTION_SUMMARY_MAX_CHARS` (1.500 char, sebelumnya konstanta ini ada tapi tak pernah dipakai). Sebelumnya prior summary dibawa verbatim lalu digabung dengan summary baru, sehingga tiap siklus kompaksi menambah ~2.700 char ke pesan pertama yang selalu ikut dikirim: 30 siklus terukur tumbuh jadi 80.838 char (~20rb token sia-sia per request) dan jendela penuh karena summary-nya sendiri. Sesudah pagu: datar di 1.500 char sejak siklus ke-2, pertumbuhan 30 siklus +0 char (53,9× lebih kecil di siklus ke-30). Arah pemotongan disengaja: summary baru dipangkas dari akhir (fakta terstruktur model ditulis di awal), summary lama dari awal (ekornya = siklus terakhir); yang dipangkas ditandai eksplisit agar model tak menyimpulkan ringkasan lengkap. Jalur mechanical sudah self-limiting (head 400 char/garis) dan tidak diubah.
-- `purgeExpired` sekarang juga membersihkan baris `context_generations`, jadi sidecar tidak lagi melatonin melewati TTL sesi.
+- Anggaran jawaban di prompt kompaksi diturunkan dari pagu yang sama, supaya model tidak menulis 600 token yang sebagian besar dibuang diam-diam.
 
-### Added — Durable context generations
+### Fixed — Fidelity resume
 
-- Sidecar `context_generations` (tabel + index di `sessions.db`) menyimpan snapshot konteks lengkap per turn: `generation`, `parent_generation`, checksum SHA-256, trigger, model/provider, dan payload pesan. Ini menutup fidelity gap yang tak bisa ditutup tabel `messages` lama — kolomnya `session_id, seq, role, content, toolCalls, toolCallId, name, ts` **tanpa** `reasoning` dan **tanpa** `isError`, sehingga resume lama merekonstruksi konteks buta.
-- `commitContextGeneration()` dipanggil setelah `session.run()` sukses (trigger `turn`, atau `compaction` bila `context:compacted` menyala selama turn) dan tidak pernah menggagalkan turn — kegagalan sidecar hanya `[warn]` di stderr, ditulis di modul pemilik kegagalan agar pagu writer OAP-008 di `cli/setup.ts` tidak naik diam-diam.
-- Resume memakai sidecar sebagai sumber utama hanya bila generasinya valid (checksum cocok, payload tak exceed `MAX_CONTEXT_GENERATION_CHARS` = 4 jt char, tak ditandai truncated); selain itu jatuh ke `loadSession()` lalu ke sesi baru. Aturan precedence satu arah dan deterministik: sidecar → `messages` → baru.
-- Pagu retensi 2 generasi (current + parent): 40 turn / 120 pesan terukur tetap 2 baris, payload 20,5 KB, berkas DB 4,0 KB. Simpan ulang turn yang identik bersifat idempoten (checksum + turn_count) dan tak menambah baris. Sidecar additive — DB lama tanpa tabel ini tetap bisa resume lewat jalur legacy.
+- `reasoning` (thinking) dan `is_error` (tool gagal) adalah field kernel `Message` yang ikut dibawa ke history, tapi tabel `messages` tidak punya kolomnya — resume lama menghasilkan konteks buta dan model kehilangan konteks kegagalannya. Keduanya kini menjadi kolom `messages` (addeditive, DB lama tetap terbaca) dan dipulihkan di `loadSession`.
+- Kedua field baru itu **wajib ikut prefix comparison** di `saveSession`: kalau tidak, perubahan hanya pada `reasoning`/`isError` dianggap "tak berubah" dan incremental append melewatkannya — kelas bug F-05 yang sama.
+- Field absen tetap absen saat reload (`reasoning: ""` / `isError: false` tidak disetel), agar bentuk pesan tidak berubah saat kernel membandingkan.
 
 ### Removed — Phase 8 shadow cleanup
 

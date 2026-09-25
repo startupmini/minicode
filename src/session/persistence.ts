@@ -1,5 +1,4 @@
 import { Database } from "bun:sqlite"
-import { createHash } from "node:crypto"
 import { LIMITS } from "../constants.ts"
 import { resolveDbPath } from "../lib/db-path.ts"
 import { scrubSecrets } from "../policy/scrub.ts"
@@ -47,7 +46,7 @@ function open(cwd?: string): Database {
   }
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, created_at INTEGER, cwd TEXT, system TEXT);
-    CREATE TABLE IF NOT EXISTS messages (session_id TEXT, seq INTEGER, role TEXT, content TEXT, toolCalls TEXT, toolCallId TEXT, name TEXT, ts INTEGER, PRIMARY KEY(session_id, seq));
+    CREATE TABLE IF NOT EXISTS messages (session_id TEXT, seq INTEGER, role TEXT, content TEXT, toolCalls TEXT, toolCallId TEXT, name TEXT, reasoning TEXT, is_error INTEGER, ts INTEGER, PRIMARY KEY(session_id, seq));
     CREATE TABLE IF NOT EXISTS turns (session_id TEXT, turn_idx INTEGER, usage TEXT, ts INTEGER, PRIMARY KEY(session_id, turn_idx));
     CREATE TABLE IF NOT EXISTS presentation_events (
       session_id TEXT NOT NULL,
@@ -60,23 +59,6 @@ function open(cwd?: string): Database {
     );
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq);
     CREATE INDEX IF NOT EXISTS idx_presentation_events_session ON presentation_events(session_id, event_seq);
-    CREATE TABLE IF NOT EXISTS context_generations (
-      session_id TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      parent_generation INTEGER,
-      turn_count INTEGER NOT NULL,
-      step_count INTEGER NOT NULL,
-      trigger TEXT NOT NULL,
-      model TEXT,
-      provider TEXT,
-      checksum TEXT NOT NULL,
-      messages TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      truncated INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY(session_id, generation)
-    );
-    CREATE INDEX IF NOT EXISTS idx_context_generations_session
-      ON context_generations(session_id, generation);
   `)
   // migration: add updated_at, toolCallId, name jika kolom lama (backward-compat)
   try {
@@ -96,6 +78,18 @@ function open(cwd?: string): Database {
     if (!msgCols.some((c) => c.name === "toolCallId")) {
       db.exec("ALTER TABLE messages ADD COLUMN toolCallId TEXT")
       db.exec("ALTER TABLE messages ADD COLUMN name TEXT")
+    }
+    // Fidelity resume: `reasoning` (thinking DeepSeek-style) dan `is_error`
+    // (tool gagal) adalah bagian dari kernel Message dan ikut dibawa ke
+    // history, tapi kolomnya tak pernah ada — resume lama sewajarnya buta dan
+    // model kehilangan konteks kegagalannya. Additive, jadi DB lama tetap
+    // terbaca dan turn lama (tanpa kolom ini) tetap resume dengan isError
+    // diperlakukan absen.
+    if (!msgCols.some((c) => c.name === "reasoning")) {
+      db.exec("ALTER TABLE messages ADD COLUMN reasoning TEXT")
+    }
+    if (!msgCols.some((c) => c.name === "is_error")) {
+      db.exec("ALTER TABLE messages ADD COLUMN is_error INTEGER")
     }
   } catch (e) {
     process.stderr.write(
@@ -126,23 +120,6 @@ function safeContent(value: unknown): string {
 
 const MAX_STORED_EVENT_CHARS = 200_000
 const MAX_STORED_STRING_CHARS = 32_000
-const MAX_CONTEXT_GENERATION_CHARS = 4_000_000
-const MAX_CONTEXT_GENERATIONS = 2
-
-export interface ContextGeneration {
-  sessionId: string
-  generation: number
-  parentGeneration: number | null
-  turnCount: number
-  stepCount: number
-  trigger: string
-  model?: string
-  provider?: string
-  checksum: string
-  createdAt: number
-  truncated: boolean
-  messages: unknown[]
-}
 
 function stripAnsi(value: string): string {
   let out = ""
@@ -330,7 +307,7 @@ export async function saveSession(
       "INSERT OR REPLACE INTO sessions (id, created_at, updated_at, cwd, system) VALUES (?, ?, ?, ?, ?)",
     ).run(id, createdAt, now, cwd ?? "", system ?? "")
     const ins = db.prepare(
-      "INSERT INTO messages (session_id, seq, role, content, toolCalls, toolCallId, name, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO messages (session_id, seq, role, content, toolCalls, toolCallId, name, reasoning, is_error, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     type StoredMsg = {
       role: string
@@ -338,13 +315,21 @@ export async function saveSession(
       toolCalls?: unknown
       toolCallId?: string
       name?: string
+      reasoning?: string
+      isError?: boolean
     }
-    const norm = (m: StoredMsg): [string, string, string, string | null, string | null] => [
+    type Norm = [string, string, string, string | null, string | null, string | null, number]
+    const norm = (m: StoredMsg): Norm => [
       m.role,
       safeContent(m.content),
       safeContent(m.toolCalls ?? null),
       (m.toolCallId ?? null) as string | null,
       (m.name ?? null) as string | null,
+      // reasoning & is_error WAJIB ikut prefix comparison di bawah. Kalau tidak,
+      // perubahan HANYA pada kedua field itu dianggap "tak berubah" dan
+      // incremental append melewatkannya — persis kelas bug F-05.
+      typeof m.reasoning === "string" ? safeContent(m.reasoning) : null,
+      m.isError === true ? 1 : 0,
     ]
     // F-05: JANGAN pakai messages.length sebagai proksi perubahan. Kompaksi
     // (atau replace apa pun) bisa mengganti N pesan dengan N pesan BERBEDA —
@@ -354,7 +339,7 @@ export async function saveSession(
     // prefix sama + tumbuh = append; selain itu = rewrite penuh.
     const stored = db
       .prepare(
-        "SELECT seq, role, content, toolCalls, toolCallId, name FROM messages WHERE session_id = ? ORDER BY seq",
+        "SELECT seq, role, content, toolCalls, toolCallId, name, reasoning, is_error FROM messages WHERE session_id = ? ORDER BY seq",
       )
       .all(id) as {
       seq: number
@@ -363,6 +348,8 @@ export async function saveSession(
       toolCalls: string
       toolCallId: string | null
       name: string | null
+      reasoning: string | null
+      is_error: number | null
     }[]
     const known = stored.length
     let prefixSame = stored.length <= messages.length
@@ -376,7 +363,9 @@ export async function saveSession(
           got.content !== want[1] ||
           got.toolCalls !== want[2] ||
           (got.toolCallId ?? null) !== want[3] ||
-          (got.name ?? null) !== want[4]
+          (got.name ?? null) !== want[4] ||
+          (got.reasoning ?? null) !== want[5] ||
+          (got.is_error ?? 0) !== want[6]
         ) {
           prefixSame = false
           break
@@ -389,7 +378,7 @@ export async function saveSession(
       for (let i = known; i < messages.length; i++) {
         const m = messages[i] as StoredMsg
         const w = norm(m)
-        ins.run(id, i, w[0], w[1], w[2], w[3], w[4], now)
+        ins.run(id, i, w[0], w[1], w[2], w[3], w[4], w[5], w[6], now)
       }
     } else if (changed) {
       // history menyusut (compaction/reset) ATAU prefix berubah dengan panjang
@@ -399,7 +388,7 @@ export async function saveSession(
       for (let i = 0; i < messages.length; i++) {
         const m = messages[i] as StoredMsg
         const w = norm(m)
-        ins.run(id, i, w[0], w[1], w[2], w[3], w[4], now)
+        ins.run(id, i, w[0], w[1], w[2], w[3], w[4], w[5], w[6], now)
       }
     }
     if (usage) {
@@ -436,196 +425,6 @@ export async function saveSession(
   }
 }
 
-function scrubContextValue(value: unknown): unknown {
-  if (value instanceof Uint8Array) return `[binary: ${value.byteLength} bytes]`
-  return scrubStoredValue(value)
-}
-
-function encodeContextMessages(messages: readonly unknown[]): {
-  payload: string
-  truncated: boolean
-} {
-  const safe = messages.map(scrubContextValue)
-  let used = 2
-  const kept: unknown[] = []
-  for (let i = safe.length - 1; i >= 0; i--) {
-    const item = safe[i]
-    const size = JSON.stringify(item).length + 1
-    if (used + size > MAX_CONTEXT_GENERATION_CHARS) break
-    kept.push(item)
-    used += size
-  }
-  kept.reverse()
-  if (kept.length === 0 && safe.length > 0) {
-    return {
-      payload: JSON.stringify([
-        { role: "user", content: "[context generation omitted: message exceeded storage budget]" },
-      ]),
-      truncated: true,
-    }
-  }
-  return { payload: JSON.stringify(kept), truncated: kept.length !== safe.length }
-}
-
-function contextChecksum(payload: string): string {
-  return createHash("sha256").update(payload).digest("hex")
-}
-
-interface ContextGenerationRow {
-  session_id: string
-  generation: number
-  parent_generation: number | null
-  turn_count: number
-  step_count: number
-  trigger: string
-  model: string | null
-  provider: string | null
-  checksum: string
-  messages: string
-  created_at: number
-  truncated: number
-}
-
-function decodeContextGeneration(row: ContextGenerationRow): ContextGeneration | null {
-  try {
-    const messages = JSON.parse(row.messages) as unknown
-    if (!Array.isArray(messages)) return null
-    if (contextChecksum(row.messages) !== row.checksum) return null
-    return {
-      sessionId: row.session_id,
-      generation: row.generation,
-      parentGeneration: row.parent_generation,
-      turnCount: row.turn_count,
-      stepCount: row.step_count,
-      trigger: row.trigger,
-      ...(row.model ? { model: row.model } : {}),
-      ...(row.provider ? { provider: row.provider } : {}),
-      checksum: row.checksum,
-      createdAt: row.created_at,
-      truncated: row.truncated === 1,
-      messages,
-    }
-  } catch {
-    return null
-  }
-}
-
-export async function saveContextGeneration(
-  id: string,
-  cwd: string | undefined,
-  input: {
-    messages: readonly unknown[]
-    turnCount: number
-    stepCount: number
-    trigger?: string
-    model?: string
-  },
-): Promise<ContextGeneration | null> {
-  const encoded = encodeContextMessages(input.messages)
-  const checksum = contextChecksum(encoded.payload)
-  const now = Date.now()
-  const db = open(cwd)
-  try {
-    const txn = db.transaction(() => {
-      const latest = db
-        .prepare(
-          "SELECT * FROM context_generations WHERE session_id = ? ORDER BY generation DESC LIMIT 1",
-        )
-        .get(id) as ContextGenerationRow | null
-      if (latest && latest.checksum === checksum && latest.turn_count === input.turnCount) {
-        return decodeContextGeneration(latest)
-      }
-      const generation = (latest?.generation ?? 0) + 1
-      const parentGeneration = latest?.generation ?? null
-      const model = input.model ?? null
-      const provider = model?.includes("::") ? (model.split("::")[0] ?? null) : null
-      db.prepare(
-        "INSERT INTO context_generations (session_id, generation, parent_generation, turn_count, step_count, trigger, model, provider, checksum, messages, created_at, truncated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      ).run(
-        id,
-        generation,
-        parentGeneration,
-        input.turnCount,
-        input.stepCount,
-        input.trigger ?? "turn",
-        model,
-        provider,
-        checksum,
-        encoded.payload,
-        now,
-        encoded.truncated ? 1 : 0,
-      )
-      db.prepare("DELETE FROM context_generations WHERE session_id = ? AND generation < ?").run(
-        id,
-        generation - MAX_CONTEXT_GENERATIONS + 1,
-      )
-      return {
-        sessionId: id,
-        generation,
-        parentGeneration,
-        turnCount: input.turnCount,
-        stepCount: input.stepCount,
-        trigger: input.trigger ?? "turn",
-        ...(model ? { model } : {}),
-        ...(provider ? { provider } : {}),
-        checksum,
-        createdAt: now,
-        truncated: encoded.truncated,
-        messages: JSON.parse(encoded.payload) as unknown[],
-      }
-    })
-    return await withBusyRetry(() => txn())
-  } finally {
-    db.close()
-  }
-}
-
-export function loadLatestContextGeneration(id: string, cwd?: string): ContextGeneration | null {
-  const db = open(cwd)
-  try {
-    const rows = db
-      .prepare(
-        "SELECT * FROM context_generations WHERE session_id = ? ORDER BY generation DESC LIMIT ?",
-      )
-      .all(id, MAX_CONTEXT_GENERATIONS) as ContextGenerationRow[]
-    for (const row of rows) {
-      const decoded = decodeContextGeneration(row)
-      if (decoded) return decoded
-    }
-    return null
-  } finally {
-    db.close()
-  }
-}
-
-/**
- * Best-effort commit untuk hot-path: kegagalan sidecar TIDAK boleh
- * menggagalkan turn yang sudah sukses (sidecar adalah peningkatan
- * recoverability, bukan syarat kebenaran).
- *
- * Diagnostik sengaja ditulis di modul pemilik kegagalan, bukan di pemanggil:
- * menambah `process.stderr.write` di `cli/setup.ts` akan menaikkan writer
- * ke-27 dan melanggar pagu invaris OAP-008 (test/writer-inventory.test.ts)
- * yang melarang penambahan writer tak terdaftar.
- */
-export async function commitContextGeneration(
-  id: string,
-  cwd: string | undefined,
-  input: {
-    messages: readonly unknown[]
-    turnCount: number
-    stepCount: number
-    trigger?: string
-    model?: string
-  },
-): Promise<void> {
-  try {
-    await saveContextGeneration(id, cwd, input)
-  } catch (e) {
-    process.stderr.write(`[warn] context generation persist failed: ${(e as Error).message}\n`)
-  }
-}
-
 // TTL default 30 hari; MINICODE_SESSION_TTL_DAYS=0 = simpan selamanya.
 export function getSessionTtlDays(): number {
   const raw = process.env.MINICODE_SESSION_TTL_DAYS
@@ -647,11 +446,6 @@ export function purgeExpired(db: Database, now = Date.now()): number {
   try {
     db.prepare(
       "DELETE FROM presentation_events WHERE session_id NOT IN (SELECT id FROM sessions)",
-    ).run()
-  } catch {}
-  try {
-    db.prepare(
-      "DELETE FROM context_generations WHERE session_id NOT IN (SELECT id FROM sessions)",
     ).run()
   } catch {}
   return gone.changes
@@ -684,14 +478,30 @@ export function loadSession(
       toolCalls: string
       toolCallId: string | null
       name: string | null
+      reasoning: string | null
+      is_error: number | null
     }[]
-    const messages = rows.map((r) => ({
-      role: r.role,
-      content: parseContent(r.content),
-      ...(r.toolCalls && r.toolCalls !== "null" ? { toolCalls: parseContent(r.toolCalls) } : {}),
-      ...(r.toolCallId ? { toolCallId: r.toolCallId } : {}),
-      ...(r.name ? { name: r.name } : {}),
-    }))
+    // `reasoning` ditulis lewat safeContent (JSON) supaya ikut scrub + cap
+    // seperti `content`, jadi dibalik simetris di sini. String kosong
+    // diperlakukan absen: menyetel `reasoning: ""` / `isError: false` di setiap
+    // pesan akan mengubah bentuk pesan saat kernel membandingkan.
+    const readReasoning = (raw: string | null): string | undefined => {
+      if (!raw) return undefined
+      const parsed = parseContent(raw)
+      return typeof parsed === "string" && parsed.length > 0 ? parsed : undefined
+    }
+    const messages = rows.map((r) => {
+      const reasoning = readReasoning(r.reasoning)
+      return {
+        role: r.role,
+        content: parseContent(r.content),
+        ...(r.toolCalls && r.toolCalls !== "null" ? { toolCalls: parseContent(r.toolCalls) } : {}),
+        ...(r.toolCallId ? { toolCallId: r.toolCallId } : {}),
+        ...(r.name ? { name: r.name } : {}),
+        ...(reasoning ? { reasoning } : {}),
+        ...(r.is_error === 1 ? { isError: true } : {}),
+      }
+    })
     const turnRow = db
       .prepare("SELECT MAX(turn_idx) as m FROM turns WHERE session_id = ?")
       .get(id) as { m: number | null } | null

@@ -6,6 +6,7 @@ import type { Message } from "#minicore/core/types.ts"
 import { LIMITS } from "../src/constants.ts"
 import {
   compactWithLlm,
+  composeBoundedSummary,
   createLlmCompaction,
   parseCompactKeepTurns,
 } from "../src/policy/compaction.ts"
@@ -168,6 +169,37 @@ describe("compactWithLlm", () => {
     await compactWithLlm(storeOf(messages), { keepRecentTurns: 1, provider: spy })
     expect(seenPrompt).toContain("ERROR")
     expect(seenPrompt).toContain("gagal total")
+  })
+
+  // `String.slice` memotong per code unit UTF-16 sehingga bisa menyisakan
+  // surrogate TUNGGAL, yang tidak valid di JSON provider (risiko 400) dan
+  // berubah jadi U+FFFD. Sweep seluruh posisi batas yang mungkin, langsung ke
+  // fungsi murni (lewat compactWithLlm 101× menembus batas 5 dtk).
+  test("pemotongan pagu tidak pernah menyisakan surrogate tunggal", () => {
+    const LONE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+    for (let pad = 1300; pad <= 1400; pad++) {
+      const fresh = `${"a".repeat(pad)}${"👍👍👍👍👍"}${"b".repeat(200)}`
+      for (const composed of [
+        composeBoundedSummary("", fresh),
+        composeBoundedSummary("PRIOR ".repeat(300), fresh),
+      ]) {
+        expect(composed.length).toBeLessThanOrEqual(LIMITS.COMPACTION_SUMMARY_MAX_CHARS)
+        expect(LONE.test(composed)).toBe(false)
+      }
+    }
+  })
+
+  // Penjaga: pagu yang berlaku di jalur nyata, bukan hanya fungsi murni.
+  test("jalur compactWithLlm juga bebas surrogate tunggal", async () => {
+    const LONE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+    const summary = `${"a".repeat(1326)}${"👍👍👍👍👍"}${"b".repeat(200)}`
+    const out = await compactWithLlm(storeOf(convo(6)), {
+      keepRecentTurns: 1,
+      provider: fakeProvider(summary),
+    })
+    const head = String(out[0]!.content)
+    expect(head.length).toBeLessThanOrEqual(LIMITS.COMPACTION_SUMMARY_MAX_CHARS)
+    expect(LONE.test(head)).toBe(false)
   })
 
   test("anggaran di prompt = pagu simpan, bukan angka lepas", async () => {

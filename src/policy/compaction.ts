@@ -169,7 +169,7 @@ const SUMMARY_ELISION =
  * pekerjaan agen.
  *
  * Ringkasan ini working memory, BUKAN state: sejarah penuh tetap durable di
- * `context_generations`/riwayat sesi. Karena itu memangkas yang lama adalah
+ * tabel `messages`/riwayat sesi. Karena itu memangkas yang lama adalah
  * eviction yang aman.
  *
  * Arah pemotongan beda per sumber, dan itu disengaja:
@@ -180,19 +180,36 @@ const SUMMARY_ELISION =
  *   (siklus terakhir yang dicatat).
  * Yang dipangkas ditandai eksplisit supaya model tak menyimpulkan ringkasan
  * ini lengkap.
+ *
+ * Diekspor untuk pengujian batas: sweep 100+ posisi potong terlalu lambat
+ * melalui `compactWithLlm` (tiap panggilan melakukan dynamic import sehingga
+ * menembus batas 5 dtk per test).
  */
-function composeBoundedSummary(priorText: string, fresh: string): string {
+export function composeBoundedSummary(priorText: string, fresh: string): string {
   const cap = LIMITS.COMPACTION_SUMMARY_MAX_CHARS
+  // `String.slice` memotong per code unit UTF-16, jadi bisa memelah surrogate
+  // pair dan menyisakan surrogate TUNGGAL. Itu bukan sekadar kosmetik: teks
+  // summary dikirim ke provider sebagai JSON, dan lone surrogate bisa
+  // menggagalkan serialisasi (400) atau berubah jadi U+FFFD. Sweep 101 posisi
+  // batas terukur 5 memunculkan lone surrogate sebelum diperbaiki. Kedua
+  // helper berikut membuangnya di sisi yang terpotong.
+  const dropLoneHigh = (s: string): string =>
+    s.length > 0 && s.charCodeAt(s.length - 1) >= 0xd800 && s.charCodeAt(s.length - 1) <= 0xdbff
+      ? s.slice(0, -1)
+      : s
+  const dropLoneLow = (s: string): string =>
+    s.length > 0 && s.charCodeAt(0) >= 0xdc00 && s.charCodeAt(0) <= 0xdfff ? s.slice(1) : s
+
   const keepHead = (body: string, budget: number): string =>
     body.length <= budget
       ? body
-      : `${body.slice(0, Math.max(0, budget - SUMMARY_ELISION.length))}${SUMMARY_ELISION}`
+      : `${dropLoneHigh(body.slice(0, Math.max(0, budget - SUMMARY_ELISION.length)))}${SUMMARY_ELISION}`
   const keepTail = (body: string, budget: number): string =>
     body.length <= budget
       ? body
       : budget <= SUMMARY_ELISION.length
-        ? body.slice(body.length - Math.max(0, budget))
-        : `${SUMMARY_ELISION}${body.slice(body.length - (budget - SUMMARY_ELISION.length))}`
+        ? dropLoneLow(body.slice(body.length - Math.max(0, budget)))
+        : `${SUMMARY_ELISION}${dropLoneLow(body.slice(body.length - (budget - SUMMARY_ELISION.length)))}`
 
   const body = fresh.trim()
   const bodyKept = keepHead(body, Math.max(0, cap - SUMMARY_HEADER.length))

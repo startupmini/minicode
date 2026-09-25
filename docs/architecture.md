@@ -23,25 +23,33 @@ L3 vendor/minicore  → kernel STATE/MODEL/ACTION/LOOP (freeze, zero-dep, via #m
 
 ## Konteks & state durable
 
-Konteks model adalah **working memory**, bukan state. Tiga lapis yang berbedaduty-nya:
+Konteks model adalah **working memory**, bukan state. Tiga lapis yang berbeda
+dutinya:
 
 | Lapis | Isi | Authoritatif untuk |
 |---|---|---|
 | Kernel `ContextStore` | history yang dikirim ke model, bisa lossy saat kompaksi | window berjalan |
-| `context_generations` (sidecar) | snapshot konteks lengkap per turn + checksum + `parent_generation` | recovery/continuity |
-| `messages` (tabel legacy) | `role, content, toolCalls, toolCallId, name` | kompatibilitas DB lama |
+| Tabel `messages` (durable) | `role, content, toolCalls, toolCallId, name, reasoning, is_error` | continuity/resume |
+| Vektor memory + `presentation_events` | ringkasan compaction, evento semantik | RAG & audit UI |
 
-`context_eviction ≠ state_loss`: memangkas yang working boleh, hilang dari sidecar tidak. Karena itu pagu summary kompaksi (`LIMITS.COMPACTION_SUMMARY_MAX_CHARS`) aman_apply — fakta penuh tetap ada di sidecar dan vector memory.
+`context_eviction ≠ state_loss`: memangkas yang working boleh, hilang dari
+durable tidak. Karena itu pagu summary kompaksi
+(`LIMITS.COMPACTION_SUMMARY_MAX_CHARS`) aman dipakai — fakta penuh tetap ada di
+`messages` dan vektor memory.
 
-Aturan precedence resume (satu arah, deterministik, di `cli/setup.ts`):
+Fidelity resume: `reasoning` (thinking) dan `is_error` (tool gagal) adalah
+field kernel `Message` yang ikut dibawa ke history. Semula keduanya tidak punya
+kolom, sehingga resume menghasilkan konteks buta. Keduanya kini jadi kolom
+`messages` dan **wajib ikut prefix comparison** di `saveSession` — kalau tidak,
+perubahan hanya pada `reasoning`/`is_error` dianggap "tak berubah" dan
+incremental append melewatkannya (kelas bug F-05). Kolom ditambahkan additive,
+jadi DB lama tetap terbaca dan turn lama resume dengan field absen.
 
-```text
-context_generations (valid: checksum cocok, payload ≤ 4 jt char, tak truncated)
-  → messages (loadSession)
-    → sesi baru
-```
-
-Generasi korup **tidak** memblokir resume: `loadLatestContextGeneration()` mencoba current lalu parent, dan `truncated` langsung fellback ke legacy. Sidecar bersifat additive — DB lama tanpa tabel ini tetap resume. Retensi 2 generasi (current + parent), idempoten per (checksum, turn_count), dan ikut dibersihkan `purgeExpired`.
+Penulisan tetap incremental: `saveSession` hanya insert baris baru saat prefix
+sama, bukan menulis ulang seluruh history. Ini alasannya sidecar JSON per-turn
+pernah ditolak — history 400 pesan terukur 62 ms encode + 53 ms blob write tiap
+turn (O(history)), jadi ~115 ms per turn, sementara jalur `messages` bersama
+prefix-compare 10 ms.
 
 ## UI/UX terminal (kontrak FROZEN)
 
@@ -60,7 +68,7 @@ Enam primitif tampilan (semuanya di dalam TUI fullscreen saat interaktif): trans
 ## Modul kunci
 
 - `src/ui/render/`: `theme.ts` (getter `c`/`glyphs`), `width.ts` (kolom), `sanitize.ts` (hanya SGR lewat), `markdown.ts`, `markdown-table.ts` (parser pipe-table streaming), `table-grid.ts` (grid budget terminal), `highlight.ts diff.ts table.ts wrap.ts money.ts errors.ts`.
-- `src/presentation/`: `events.ts` (25 semantic event types + proposed marker), `adapter.ts` (runtime → DomainEvent), `reducer.ts`/`model.ts` (replayable bounded state + derived summary), `store.ts` (content refs), `projection.ts` (policy node/mode + envelope `minicode.output.v1` + kategori error machine, murni), dan `src/session/persistence.ts` (`presentation_events` durable log + `context_generations` sidecar). `cli/setup.ts` memiliki exhaustive `toPresentationEvent()` bridge; renderer TUI/linear/machine memakai keputusan policy via injeksi `PresentationPolicy` (rollback flag dihapus di Phase 8).
+- `src/presentation/`: `events.ts` (25 semantic event types + proposed marker), `adapter.ts` (runtime → DomainEvent), `reducer.ts`/`model.ts` (replayable bounded state + derived summary), `store.ts` (content refs), `projection.ts` (policy node/mode + envelope `minicode.output.v1` + kategori error machine, murni), dan `src/session/persistence.ts` (`presentation_events` durable log + `messages` dengan fidelity `reasoning`/`is_error`). `cli/setup.ts` memiliki exhaustive `toPresentationEvent()` bridge; renderer TUI/linear/machine memakai keputusan policy via injeksi `PresentationPolicy` (rollback flag dihapus di Phase 8).
 - `src/ui/input/`: `askLine`, `prompt-engine` (grapheme `Intl.Segmenter`, streaming decoder, bracket-paste, mouse X10/SGR press/drag/release + wheel dinormalisasi; selection app-level di TUI).
 - `src/ui/screens/`: view murni `picker/overlay/wizard/model-manager/provider-manager`.
 - `src/ui/assistant/simple.ts`: printer linier + clipboard OSC52. `turn-status.ts`: garis transient. `approval/prompt.ts`: `promptAsk/promptAskText`.

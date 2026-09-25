@@ -66,9 +66,7 @@ import {
 } from "../src/session/journal.ts"
 import {
   appendPresentationEvents,
-  commitContextGeneration,
   listPersistedTurns,
-  loadLatestContextGeneration,
   loadPresentationEvents,
   loadSession,
   saveSession,
@@ -609,31 +607,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   let recoveryAppendix = ""
   if (resumeId) {
     try {
-      // Sidecar context generation lebih kaya daripada tabel `messages` lama
-      // (menyimpan reasoning + isError + toolCalls utuh), jadi jadi sumber
-      // utama bila valid. Fallback ke `loadSession` menjaga kompatibilitas DB
-      // yang belum punya sidecar, dan generation korup tidak pernah memblokir
-      // resume — parent atau legacy history yang dipakai.
-      const generation = loadLatestContextGeneration(resumeId, cwd)
       const prev = loadSession(resumeId, cwd)
-      const source =
-        generation && !generation.truncated && generation.messages.length > 0
-          ? {
-              messages: generation.messages as readonly Message[],
-              turnCount: generation.turnCount,
-              label: `context generation ${generation.generation}`,
-            }
-          : prev?.messages.length
-            ? {
-                messages: prev.messages as readonly Message[],
-                turnCount: prev.turnCount,
-                label: `${prev.messages.length} messages`,
-              }
-            : undefined
-      if (source) {
-        initialMessages = source.messages
-        resumeTurnCount = source.turnCount
-        console.error(c.dim(`[resumed session ${resumeId} (${source.label})]\n`))
+      if (prev?.messages.length) {
+        initialMessages = prev.messages as readonly Message[]
+        resumeTurnCount = prev.turnCount
+        console.error(c.dim(`[resumed session ${resumeId} (${prev.messages.length} messages)]\n`))
         // P3 — validasi resume: bukan replay buta. Bila workspace berubah
         // sejak checkpoint terakhir (edit manual / run lain), beri tahu —
         // /undo tersedia bila perlu kembali. Best-effort, tak menggagalkan resume.
@@ -1046,11 +1024,6 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     },
   })
 
-  let contextCompactionSinceCommit = false
-  session.events.on("context:compacted", () => {
-    contextCompactionSinceCommit = true
-  })
-
   // ── Shadow checkpoint ──
   // Repo git: simpan SHA tree pre/post turn (O(delta), tanpa cap file, tidak
   // menyentuh index/HEAD user). Non-repo: fallback snapshot isi file seperti
@@ -1289,16 +1262,6 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       try {
         try {
           await session.run(prompt, { model: modelRef.current, signal: ctl.signal })
-          const trigger = contextCompactionSinceCommit ? "compaction" : "turn"
-          contextCompactionSinceCommit = false
-          const snapshot = session.state
-          await commitContextGeneration(presentationSessionId, cwd, {
-            messages: snapshot.history,
-            turnCount: snapshot.turnCount,
-            stepCount: snapshot.stepCount,
-            trigger,
-            ...(modelRef.current ? { model: modelRef.current } : {}),
-          })
         } catch (e) {
           // Kernel diam pada gagal/abort/timeout (turn:completed hanya sukses):
           // adaptor merekonstruksi turn.failed/cancelled dari sini. Error asli

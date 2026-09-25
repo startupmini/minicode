@@ -630,7 +630,7 @@ footer.site .spacer { flex: 1; }
     </div></div>
     <div class="step"><div class="dot">7</div><div class="card-b"><b>Persistensi</b>
       <span class="where">src/session/{persistence,shadow-git,checkpoint}.ts · src/telemetry/trace.ts</span>
-      <span class="what">Pesan dan semantic event durable disimpan inkremental ke sqlite (WAL, TTL 30 hari); tree per turn dicatat shadow-git di refs/minicode/*; trace jsonl untuk diagnostik &amp; biaya. Sidecar <code>context_generations</code> menyimpan snapshot konteks lengkap per turn (generation, parent, checksum SHA-256, reasoning/isError yang tak ada di tabel <code>messages</code>) dengan retensi 2 generasi; precedence resume satu arah: sidecar valid → messages → sesi baru.</span>
+      <span class="what">Pesan dan semantic event durable disimpan inkremental ke sqlite (WAL, TTL 30 hari); tree per turn dicatat shadow-git di refs/minicode/*; trace jsonl untuk diagnostik &amp; biaya. Tabel <code>messages</code> kini menyimpan <code>reasoning</code> + <code>is_error</code> (field kernel yang sebelumnya hilang saat resume) dan keduanya ikut prefix comparison agar append incremental tidak melewatkannya.</span>
     </div></div>
   </div>
 </section>

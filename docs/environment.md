@@ -21,7 +21,6 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | `MINICODE_TELEMETRY` | `0`/`false`/`off` → matikan penulisan traces.jsonl |
 | `MINICODE_VERIFY_CMD` | Custom verify command (ganti `detectVerifyCommand`) |
 | `MINICODE_BASH_ALLOWLIST` | Kustom allowlist bash (koma-pisah, ganti DEFAULT) |
-| `MINICODE_PRESENTATION_V2` | `0` → matikan shadow presentation/replay; raw event bus tetap menjadi sink utama |
 
 ## Bahasa, diagnosis & kunci
 

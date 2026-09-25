@@ -223,6 +223,19 @@ test("turn:started + turn:completed → turn.* + model.completed(finalText)", ()
   a.dispose()
 })
 
+test("result generic tidak menyalin finalText besar", () => {
+  const bus = fakeBus()
+  const a = createPresentationAdapter(bus, { sessionId: "s1" })
+  const events = collect(a)
+  const finalText = `ringkasan\n${"x".repeat(100_000)}`
+  bus.emit("turn:started", { turn: 1 })
+  bus.emit("turn:completed", { result: { finalText } })
+  const result = events.find((event) => event.type === "result.produced")
+  expect(result?.type === "result.produced" && result.summary).toBe("ringkasan")
+  expect(result?.type === "result.produced" && result.summary.length).toBeLessThanOrEqual(200)
+  a.dispose()
+})
+
 test("turn summary memakai provider canonical dan checkpoint evidence", () => {
   const bus = fakeBus()
   const a = createPresentationAdapter(bus, { sessionId: "s1" })

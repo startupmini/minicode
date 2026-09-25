@@ -155,7 +155,9 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
 12. Long session tetap readable (cap 5000 baris, tertua dibuang). Proyeksi
     presentasi mempertahankan cap yang sama dan menambahkan satu marker
     `… N baris awal di luar viewport — riwayat penuh di model` yang melacak
-    jumlah baris yang di-evict; `total()` tetap monotonik.
+    jumlah baris yang di-evict; `total()` tetap monotonik. Buffer jawaban
+    live dibatasi 1.000.000 karakter dan menampilkan marker truncasi; satu
+    layout paint tidak boleh memproyeksikan transcript dua kali.
 
 13. Status bar: 1 baris dasar (`✦ 00.00.00 mode  model  cwd`) dari sumber
      yang sama dengan angka sesi. `✦` tetap menjadi indikator proses hidup;
@@ -321,7 +323,7 @@ panjang).
   suspend/resume, busy-freeze, live repaint; I14: abort/scroll/selection lolos
   saat menciut; I17: kunci posisi baca + basis monotonik).
 - `test/prompt-engine.test.ts` — decoder streaming CSI/SGR/X10: wheel menjadi key scroll, klik mouse tidak masuk teks.
-- `test/tui-transcript.test.ts` — projection source-mapped: wrap, CJK/ANSI, user prefix, tabel TSV, dan selection text.
+- `test/tui-transcript.test.ts` — projection source-mapped: wrap, CJK/ANSI, user prefix, tabel TSV, selection text, cap buffer live, dan render markdown inline jawaban model (heading/bold/code; delimiter fence disembunyikan, isi fence dan gema user tetap literal).
 - `test/screen-buffer.test.ts` — parser frame harness (unit).
 - `test/tui-transcript.test.ts` — I7/I12/I17/I22/I24 (ledger, cap, viewport,
   thinking, buffer /expand; total() monotonik kebal evict).

@@ -15,7 +15,7 @@ import type {
   UiToolStatus,
 } from "../contract.ts"
 import { t } from "../i18n/locale.ts"
-import { renderInline } from "../render/markdown.ts"
+import { parseFence, renderInline } from "../render/markdown.ts"
 import { type MarkdownTable, parseMarkdownBlocks } from "../render/markdown-table.ts"
 import { reasoning } from "../render/reasoning.ts"
 import { sanitizeAnsi, sanitizeAnsiLine, stripSgr } from "../render/sanitize.ts"
@@ -25,6 +25,8 @@ import { chunkByWidth, displayWidth, truncateToWidth } from "../render/width.ts"
 
 /** Cap memori: baris logis tertua dibuang diam-diam (kontrak I12). */
 export const TRANSCRIPT_CAP = 5000
+export const TRANSCRIPT_TEXT_MAX_CHARS = 1_000_000
+const TRANSCRIPT_TRUNCATION_MARKER = "… [transcript truncated: turn cap exceeded]"
 /**
  * Sink approval TUI: pemilik layar (cli/tui.ts) mendaftarkan transkrip +
  * repaint + suspend/resume agar prompt persetujuan tercatat di transkrip dan
@@ -67,6 +69,7 @@ export interface TranscriptOptions {
   onPresentationEvent?: (handler: (event: UiPresentationEvent) => void) => () => void
   /** Kebijakan kanonik dari composition root; absen = logika inline legacy. */
   policy?: PresentationPolicy
+  maxPendingChars?: number
 }
 
 export interface TranscriptPoint {
@@ -90,19 +93,23 @@ export interface TranscriptViewport {
   totalRows: number
 }
 
-function targetForFallback(args: Record<string, unknown>): string | undefined {
-  if (typeof args.path === "string" && args.path) return args.path
-  const cmd = args.cmd ?? args.command
-  if (typeof cmd === "string" && cmd) return `$ ${cmd}`
-  return undefined
-}
-
 function formatElapsed(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000))
   if (seconds < 60) return `${seconds}s`
   const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return `${minutes}m${String(seconds % 60).padStart(2, "0")}s`
   return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}m`
+}
+
+type FenceState = "outside" | "inside" | "boundary"
+
+function renderAssistantLine(line: string, fenceState: FenceState): string | null {
+  if (fenceState === "boundary") return null
+  if (fenceState === "inside") return line
+  if (!/(?:\*{1,2}|`|^#{1,6}\s|~~|\[[^\]]+\]\()/.test(line)) return line
+  const heading = /^(#{1,6})\s+(.*)$/.exec(line)
+  if (heading) return c.bold(renderInline(heading[2] ?? ""))
+  return renderInline(line)
 }
 
 let selectionSegmenter: Intl.Segmenter | undefined
@@ -138,9 +145,12 @@ export class Transcript {
   private sourcePrefixes: string[] = []
   private sourceTexts = new Map<number, string>()
   private sourceOrders = new Map<number, number>()
+  private assistantDisplay = new Map<number, string | null>()
   private nextId = 1
   private nextOrder = 1
   private pending = ""
+  private pendingTruncated = false
+  private maxPendingChars: number
   /** Hitung monotonik baris yang pernah ditambah — basis indikator "baru"
    * yang kebal evict cap 5000 (size() menyusut saat tertua dibuang). */
   private totalAppended = 0
@@ -153,7 +163,6 @@ export class Transcript {
   private hasEvictMarker = false
   private getSnapshot: (() => UiPresentationSnapshot | null) | undefined
   private policy: PresentationPolicy | undefined
-  private presentationEvents = false
   private presentationUnsub: (() => void) | null = null
   private presentedTerminals = new Set<string>()
   private summarizedTurns = new Set<number>()
@@ -162,6 +171,7 @@ export class Transcript {
   constructor(bus: UiBus, opts: TranscriptOptions = {}) {
     this.getSnapshot = opts.getSnapshot
     this.policy = opts.policy
+    this.maxPendingChars = Math.max(1, opts.maxPendingChars ?? TRANSCRIPT_TEXT_MAX_CHARS)
     // Gagal subscribe = transcript mati total; biarkan throw (fail-closed).
     this.unsubs = [
       bus.on("provider:text", (e: { text: string }) => this.stream(e.text)),
@@ -177,27 +187,34 @@ export class Transcript {
         this.commit()
         this.commitThinking()
       }),
-      bus.on("execution:completed", (e) => {
-        if (!this.presentationEvents) this.ledger(e)
-      }),
       bus.on("provider:extension", (e: { kind: string; data: unknown }) => this.extension(e)),
       bus.on("context:compacted", (e: { reason: string }) =>
         this.push(c.muted(t("ts.compacted", { reason: sanitizeAnsiLine(e.reason ?? "") }))),
       ),
     ]
     if (opts.onPresentationEvent) {
-      this.presentationEvents = true
       this.presentationUnsub = opts.onPresentationEvent((event) => this.presentationEvent(event))
     }
   }
 
   /** Teks model mengalir — ditahan sebagai ekor hidup sampai commit. */
   stream(text: string): void {
-    if (text) {
-      // Jawaban dimulai = fase thinking selesai.
-      this.commitThinking()
-      this.pending += text
+    if (!text) return
+    this.commitThinking()
+    const remaining = this.maxPendingChars - this.pending.length
+    if (remaining <= 0) {
+      this.pendingTruncated = true
+      return
     }
+    if (text.length <= remaining) {
+      this.pending += text
+      return
+    }
+    let keep = text.slice(0, remaining)
+    const last = keep.charCodeAt(keep.length - 1)
+    if (last >= 0xd800 && last <= 0xdbff) keep = keep.slice(0, -1)
+    this.pending += keep
+    this.pendingTruncated = true
   }
 
   /** Chunk reasoning (`provider:extension` kind reasoning, data {text}). */
@@ -278,10 +295,12 @@ export class Transcript {
     this.sourcePrefixes = []
     this.sourceTexts.clear()
     this.sourceOrders.clear()
+    this.assistantDisplay.clear()
     this.nextId = 1
     this.nextOrder = 1
     this.meta = []
     this.pending = ""
+    this.pendingTruncated = false
     this.thinkingBuf = ""
     this.thinkingTail = ""
     this.evicted = 0
@@ -307,6 +326,8 @@ export class Transcript {
     width: number,
     selectable: boolean,
     sourcePrefix = "",
+    markdown = false,
+    fenceState: FenceState = "outside",
   ): TranscriptRow[] {
     const w = Math.max(10, width)
     const renderedLines = text.split("\n")
@@ -314,8 +335,20 @@ export class Transcript {
     const out: TranscriptRow[] = []
     let sourceBase = 0
     for (let lineIndex = 0; lineIndex < renderedLines.length; lineIndex++) {
-      const rendered = renderedLines[lineIndex] ?? ""
-      const source = sourceLines[lineIndex] ?? stripSgr(sanitizeAnsi(rendered))
+      const raw = renderedLines[lineIndex] ?? ""
+      const source = sourceLines[lineIndex] ?? stripSgr(sanitizeAnsi(raw))
+      let rendered: string | null
+      if (!markdown) rendered = raw
+      else if (sourceId >= 0 && this.assistantDisplay.has(sourceId))
+        rendered = this.assistantDisplay.get(sourceId)!
+      else {
+        rendered = renderAssistantLine(raw, fenceState)
+        if (sourceId >= 0) this.assistantDisplay.set(sourceId, rendered)
+      }
+      if (rendered === null) {
+        sourceBase += source.length + 1
+        continue
+      }
       const renderedRows = rendered === "" ? [""] : chunkByWidth(rendered, w)
       const sourceRows = sourcePrefix || source ? chunkByWidth(`${sourcePrefix}${source}`, w) : [""]
       let offset = sourceBase
@@ -381,33 +414,77 @@ export class Transcript {
     })
   }
 
+  /**
+   * Pelacak code fence per aliran teks: baris DI DALAM fence tidak kena
+   * render markdown (kode harus literal). Marker pembuka/penutup sendiri
+   * juga dilewati agar state tetap sinkron dengan decorateMarkdown.
+   */
+  private fenceTracker(): (line: string) => FenceState {
+    let open = false
+    let char = ""
+    let len = 0
+    return (line: string): FenceState => {
+      const fence = parseFence(line)
+      if (!open && fence) {
+        open = true
+        char = fence.char
+        len = fence.len
+        return "boundary"
+      }
+      if (open && fence && fence.char === char && fence.len >= len) {
+        open = false
+        return "boundary"
+      }
+      return open ? "inside" : "outside"
+    }
+  }
+
   private projectAll(width: number): TranscriptRow[] {
     const w = Math.max(10, width)
     const rows: TranscriptRow[] = []
+    const committedFence = this.fenceTracker()
     for (let i = 0; i < this.lines.length; i++) {
       const table = this.tables[i]
       const id = this.ids[i] ?? -1
+      const raw = this.lines[i] ?? ""
+      const assistant = this.meta[i]?.kind === "assistant"
+      const fenceState = assistant ? committedFence(raw) : "outside"
       if (table) rows.push(...this.projectTable(table, id, w))
       else
         rows.push(
           ...this.projectText(
-            this.lines[i] ?? "",
+            raw,
             this.sourceTexts.get(id) ?? "",
             id,
             w,
             true,
             this.sourcePrefixes[i] ?? "",
+            assistant,
+            fenceState,
           ),
         )
     }
     if (this.pending) {
+      const pendingFence = this.fenceTracker()
       for (const block of parseMarkdownBlocks(sanitizeAnsi(this.pending))) {
         if (block.type === "table") rows.push(...this.projectTable(block.table, -1, w))
         else
-          rows.push(
-            ...this.projectText(block.text, stripSgr(sanitizeAnsi(block.text)), -1, w, false),
-          )
+          for (const line of block.text.split("\n")) {
+            const clean = stripSgr(sanitizeAnsi(line))
+            rows.push(...this.projectText(line, clean, -1, w, false, "", true, pendingFence(line)))
+          }
       }
+    }
+    if (this.pendingTruncated) {
+      rows.push({
+        text: c.muted(TRANSCRIPT_TRUNCATION_MARKER),
+        sourceId: -1,
+        sourceStart: 0,
+        sourceEnd: 0,
+        displayStart: 0,
+        displayEnd: displayWidth(TRANSCRIPT_TRUNCATION_MARKER),
+        selectable: false,
+      })
     }
     if (this.thinkingTail) {
       for (const chunk of this.thinkingTail.split("\n")) {
@@ -540,8 +617,11 @@ export class Transcript {
 
   private commit(): void {
     if (!this.pending) return
-    const text = this.pending
+    const text = this.pendingTruncated
+      ? `${this.pending}\n${TRANSCRIPT_TRUNCATION_MARKER}`
+      : this.pending
     this.pending = ""
+    this.pendingTruncated = false
     for (const block of parseMarkdownBlocks(sanitizeAnsi(text))) {
       if (block.type === "table") this.appendTable(block.table, { kind: "assistant" })
       else {
@@ -713,30 +793,6 @@ export class Transcript {
     return out
   }
 
-  private ledger(e: {
-    execution: {
-      call: { name: string; args?: unknown }
-      result: { isError?: boolean; content?: unknown }
-    }
-  }): void {
-    this.commit()
-    const rawName = e.execution.call.name ?? "tool"
-    const name = sanitizeAnsiLine(String(rawName))
-    const args = (e.execution.call.args ?? {}) as Record<string, unknown>
-    const r = e.execution.result
-    if (r?.isError) {
-      const msg =
-        truncateToWidth(sanitizeAnsi(String(r.content ?? "")), 200, "…").split("\n")[0] ?? ""
-      this.append(c.error(`  › ${name}: ${msg}`), { kind: "activity" })
-      return
-    }
-    const target = targetForFallback(args)
-    const label = target ? ` ${truncateToWidth(sanitizeAnsiLine(target), 120, "")}` : ""
-    // Glyph ledger memakai arrow tema (› di UTF-8, > di ASCII) — konsisten
-    // dengan grammar REPL walau bentuknya disusun manual di sini.
-    this.append(c.success(`  ›${name ? ` ${name}` : ""}${label}`), { kind: "activity" })
-  }
-
   private append(line: string, meta: TranscriptMeta = { kind: "system" }): void {
     this.appendWithSource(line, meta, stripSgr(sanitizeAnsi(line)))
   }
@@ -777,6 +833,7 @@ export class Transcript {
       const removed = this.ids.splice(0, overflow)
       for (const removedId of removed) {
         this.sourceTexts.delete(removedId)
+        this.assistantDisplay.delete(removedId)
         this.sourceOrders.delete(removedId)
       }
       this.lines.splice(0, overflow)
@@ -796,6 +853,7 @@ export class Transcript {
       const removed = this.ids.splice(1, overflow)
       for (const removedId of removed) {
         this.sourceTexts.delete(removedId)
+        this.assistantDisplay.delete(removedId)
         this.sourceOrders.delete(removedId)
       }
       this.lines.splice(1, overflow)

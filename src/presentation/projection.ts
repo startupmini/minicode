@@ -16,6 +16,7 @@ import type {
   FindingEntry,
   PlanEntry,
   PresentationState,
+  ReasoningEntry,
   ResultEntry,
   SystemEntry,
   ToolStatus,
@@ -234,7 +235,7 @@ export interface ProjectionNode {
     | SystemEntry
     | PlanEntry
     | { kind: "message"; text: string; role: "user" | "assistant" }
-    | { kind: "reasoning" }
+    | ReasoningEntry
     | { kind: "approval" }
 }
 
@@ -269,7 +270,7 @@ export function selectNodes(state: PresentationState, mode: ProjectionMode): Pro
     }
     if (ref.kind === "message") {
       if (mode === "machine") continue
-      const entry = state.conversation.find((m) => `msg:${m.seq}` === ref.id)
+      const entry = state.conversation.find((m) => m.id === ref.id)
       if (!entry) continue
       out.push({
         kind: "message",
@@ -281,7 +282,9 @@ export function selectNodes(state: PresentationState, mode: ProjectionMode): Pro
     }
     if (ref.kind === "reasoning") {
       if (mode === "normal") continue
-      out.push({ kind: "reasoning", id: ref.id, seq: ref.seq, data: { kind: "reasoning" } })
+      const entry = state.reasoning.find((r) => r.id === ref.id)
+      if (!entry) continue
+      out.push({ kind: "reasoning", id: ref.id, seq: ref.seq, data: entry })
       continue
     }
     if (ref.kind === "system") {

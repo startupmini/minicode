@@ -21,6 +21,28 @@ L3 vendor/minicore  → kernel STATE/MODEL/ACTION/LOOP (freeze, zero-dep, via #m
 
 `prompt → permission check → validateArgs (kernel) → executor (order/cap/abort-aware) → tool realpath+atomic → execute → checkpoint shadow-git + journal + step-trace → compaction (mekanikal sinkron; LLM async via seam `compactAsync`) → usage/pricing per-segmen longest-key → trace`.
 
+## Konteks & state durable
+
+Konteks model adalah **working memory**, bukan state. Tiga lapis yang berbedaduty-nya:
+
+| Lapis | Isi | Authoritatif untuk |
+|---|---|---|
+| Kernel `ContextStore` | history yang dikirim ke model, bisa lossy saat kompaksi | window berjalan |
+| `context_generations` (sidecar) | snapshot konteks lengkap per turn + checksum + `parent_generation` | recovery/continuity |
+| `messages` (tabel legacy) | `role, content, toolCalls, toolCallId, name` | kompatibilitas DB lama |
+
+`context_eviction ≠ state_loss`: memangkas yang working boleh, hilang dari sidecar tidak. Karena itu pagu summary kompaksi (`LIMITS.COMPACTION_SUMMARY_MAX_CHARS`) aman_apply — fakta penuh tetap ada di sidecar dan vector memory.
+
+Aturan precedence resume (satu arah, deterministik, di `cli/setup.ts`):
+
+```text
+context_generations (valid: checksum cocok, payload ≤ 4 jt char, tak truncated)
+  → messages (loadSession)
+    → sesi baru
+```
+
+Generasi korup **tidak** memblokir resume: `loadLatestContextGeneration()` mencoba current lalu parent, dan `truncated` langsung fellback ke legacy. Sidecar bersifat additive — DB lama tanpa tabel ini tetap resume. Retensi 2 generasi (current + parent), idempoten per (checksum, turn_count), dan ikut dibersihkan `purgeExpired`.
+
 ## UI/UX terminal (kontrak FROZEN)
 
 Sesi interaktif (`minicode` di TTY mampu) SELALU membuka TUI **fullscreen alternate screen**: transkrip ala shell + status bar satu baris + popup komposit di atas transkrip yang tetap terlihat (redup). Jalur non-interaktif (one-shot prompt, `exec`, pipe/redirect/CI, `TERM=dumb`, layar < 10 baris) tetap shell-first: cetak polos append-only ke scrollback tanpa cursor control.
@@ -38,7 +60,7 @@ Enam primitif tampilan (semuanya di dalam TUI fullscreen saat interaktif): trans
 ## Modul kunci
 
 - `src/ui/render/`: `theme.ts` (getter `c`/`glyphs`), `width.ts` (kolom), `sanitize.ts` (hanya SGR lewat), `markdown.ts`, `markdown-table.ts` (parser pipe-table streaming), `table-grid.ts` (grid budget terminal), `highlight.ts diff.ts table.ts wrap.ts money.ts errors.ts`.
-- `src/presentation/`: `events.ts` (25 semantic event types + proposed marker), `adapter.ts` (runtime → DomainEvent), `reducer.ts`/`model.ts` (replayable bounded state + derived summary), `store.ts` (content refs), `projection.ts` (policy node/mode + envelope `minicode.output.v1` + kategori error machine, murni), dan `src/session/persistence.ts` (`presentation_events` durable log). `cli/setup.ts` memiliki exhaustive `toPresentationEvent()` bridge; renderer TUI/linear/machine memakai keputusan policy via injeksi `PresentationPolicy`; jalur raw legacy hanya untuk rollback flag.
+- `src/presentation/`: `events.ts` (25 semantic event types + proposed marker), `adapter.ts` (runtime → DomainEvent), `reducer.ts`/`model.ts` (replayable bounded state + derived summary), `store.ts` (content refs), `projection.ts` (policy node/mode + envelope `minicode.output.v1` + kategori error machine, murni), dan `src/session/persistence.ts` (`presentation_events` durable log + `context_generations` sidecar). `cli/setup.ts` memiliki exhaustive `toPresentationEvent()` bridge; renderer TUI/linear/machine memakai keputusan policy via injeksi `PresentationPolicy` (rollback flag dihapus di Phase 8).
 - `src/ui/input/`: `askLine`, `prompt-engine` (grapheme `Intl.Segmenter`, streaming decoder, bracket-paste, mouse X10/SGR press/drag/release + wheel dinormalisasi; selection app-level di TUI).
 - `src/ui/screens/`: view murni `picker/overlay/wizard/model-manager/provider-manager`.
 - `src/ui/assistant/simple.ts`: printer linier + clipboard OSC52. `turn-status.ts`: garis transient. `approval/prompt.ts`: `promptAsk/promptAskText`.

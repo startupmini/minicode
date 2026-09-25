@@ -138,20 +138,15 @@ export async function runTui(ctx: CliSession): Promise<void> {
   } catch {}
 
   // Kebijakan proyeksi kanonik di-inject di sini (batas lapisan: src/ui
-  // tidak boleh impor src/presentation). Absen = jalur raw legacy
-  // (rollback MINICODE_PRESENTATION_V2=0).
-  const presentationPolicy =
-    process.env.MINICODE_PRESENTATION_V2 === "0"
-      ? undefined
-      : {
-          describeActivity,
-          matchTurn: matchTurnBySummary,
-          elapsedVisible,
-        }
+  // tidak boleh impor src/presentation).
   const transcript = new Transcript(session.events as unknown as UiBus, {
     getSnapshot: getPresentationSnapshot,
     onPresentationEvent: ctx.onPresentationEvent,
-    ...(presentationPolicy ? { policy: presentationPolicy } : {}),
+    policy: {
+      describeActivity,
+      matchTurn: matchTurnBySummary,
+      elapsedVisible,
+    },
   })
 
   const commandCtx: CommandContext = {

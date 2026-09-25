@@ -183,6 +183,20 @@ describe("selectNodes", () => {
     expect(debug).toContain("approval")
   })
 
+  test("message user/assistant ikut node normal/verbose/debug, bukan machine", () => {
+    seq = 0
+    const state = createInitialState("s1")
+    feed(state, [
+      base({ type: "user.message", text: "halo", promptRef: "p" }),
+      base({ type: "model.completed", text: "jawab", truncated: false }),
+    ])
+    for (const mode of ["normal", "verbose", "debug"] as const) {
+      const kinds = selectNodes(state, mode).map((n) => n.kind)
+      expect(kinds.filter((k) => k === "message")).toHaveLength(2)
+    }
+    expect(selectNodes(state, "machine").map((n) => n.kind)).not.toContain("message")
+  })
+
   test("machine hanya lifecycle durable berurutan", () => {
     const nodes = selectNodes(richState(), "machine")
     const seqs = nodes.map((n) => n.seq)

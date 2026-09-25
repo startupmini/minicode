@@ -1,6 +1,6 @@
 # Output Rendering Specification
 
-**Status:** target renderer boundary; terminal primitives existing  
+**Status:** implemented renderer boundary; canonical policy active, with streaming content transport and one ACP compatibility window.
 **Tanggal:** 2026-09-25  
 **Audit sumber:** `docs/OUTPUT_ARCHITECTURE_AUDIT.md`
 
@@ -37,15 +37,15 @@ Renderer tidak boleh:
 
 | Module | Tanggung jawab sekarang | Keterkaitan | Target |
 |---|---|---|---|
-| `src/ui/tui/transcript.ts` | Koleksi raw event, source map, markdown table, ledger, evict, selection | Raw bus + presentation callback | Projection model + view adapter |
-| `src/ui/tui/app.ts` | Input, viewport, layout, screen ownership, popup lifecycle, clipboard | Controller + painter | Controller; painter behind `TuiHost` |
-| `src/ui/assistant/simple.ts` | Stream sanitizer, answer/tool state, collapse, table, copy, stdout/stderr | Policy + state + writer | Normal/verbose projection writer |
-| `src/ui/assistant/turn-status.ts` | Infer phase dari raw bus dan heartbeat | Independent semantic state | Derived active-task projection |
+| `src/ui/tui/transcript.ts` | Streaming content buffer, source map, markdown table, canonical tool ledger, evict, selection | Raw content bus + presentation snapshot/events + policy DI | View adapter; no semantic status parsing |
+| `src/ui/tui/app.ts` | Input, viewport, layout, screen ownership, popup lifecycle, clipboard | Controller + painter | Controller/painter boundary unchanged |
+| `src/ui/assistant/simple.ts` | Stream sanitizer, answer/tool state, collapse, table, copy, stdout/stderr | Presentation events + policy DI + streaming text | Normal/verbose projection writer |
+| `src/ui/assistant/turn-status.ts` | Infer active phase dan heartbeat | Policy-derived activity label | Transient view only |
 | `src/ui/runtime/screen.ts` | Alternate screen, atomic paint, region | Terminal primitive | Tetap dipertahankan |
 | `src/ui/runtime/statusline.ts` | Arbitrasi transient stderr | Transport owner | Tetap, plus writer policy |
-| `cli/commands/exec.ts` | Raw event JSONL dan summary | Transport/raw semantics | Canonical machine projection |
-| `cli/commands/acp.ts` | Text/tool/lifecycle ACP | Partial semantic + raw fallback | Canonical lifecycle projection |
-| `src/ui/approval/prompt.ts` | Human prompt/decision | DI/sink + direct fallback | Projection-fed prompt, same decision event |
+| `cli/commands/exec.ts` | Canonical lifecycle JSONL, text delta, versioned summary | Presentation events + text transport | Canonical machine projection |
+| `cli/commands/acp.ts` | Canonical lifecycle ACP, sanitized text delta | Presentation events + compatibility fallback | Canonical lifecycle projection |
+| `src/ui/approval/prompt.ts` | Human prompt/decision | DI/sink + policy-compatible fallback | Same decision event |
 
 ## 3. Kontrak input renderer
 
@@ -181,8 +181,9 @@ Exec tidak memakai human renderer. Mapper canonical:
 
 ACP juga tidak mengurai terminal text. Lifecycle projection menggunakan event
 canonical, sedangkan `text` delta tetap transport-compatible. Jika lifecycle
-subscription tidak tersedia, fail loudly pada diagnostic contract; jangan
-diam-diam kembali ke bentuk raw yang tidak lengkap.
+subscription tidak tersedia dalam compatibility window, hanya `tool.started`
+diemit sebagai `type:"tool"` legacy; consumer harus menandainya sebagai
+fallback dan tidak boleh menyusun status terminal dari raw text.
 
 ## 8. Diagnostics dan direct writes
 
@@ -229,12 +230,13 @@ untuk regressions visual dan protocol.
 ## 11. Migration seams
 
 1. `PresentationAdapter` dapat tetap emit raw-compatible events.
-2. `ProjectionBridge` baru diaktifkan per surface dengan flag `MINICODE_PRESENTATION_V2`.
+2. `ProjectionBridge` aktif untuk semua surface; flag `MINICODE_PRESENTATION_V2` dihapus di Phase 8.
 3. TUI/linear dapat membandingkan canonical projection dengan legacy output pada test.
 4. Exec/ACP memakai canonical projection lebih dulu karena machine parity paling mudah
    diukur.
-5. Setelah satu release flag-on dan test golden hijau, raw user-facing subscriptions
-   dihapus; raw bus tetap untuk diagnostics/trace.
+5. After one release and green golden tests, raw semantic subscriptions were
+   removed from user-facing TUI. Raw EventBus remains for streaming content and
+   diagnostics/trace only.
 
 ## 12. Definition of done renderer
 

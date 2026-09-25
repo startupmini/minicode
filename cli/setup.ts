@@ -32,7 +32,7 @@ import {
   runWithSelfHeal,
 } from "../src/policy/verifier.ts"
 import { createPresentationAdapter, type PresentationAdapter } from "../src/presentation/adapter.ts"
-import type { DomainEvent } from "../src/presentation/events.ts"
+import { type DomainEvent, DURABILITY } from "../src/presentation/events.ts"
 import { createInitialState, type PresentationState } from "../src/presentation/model.ts"
 import {
   describeActivity,
@@ -66,7 +66,9 @@ import {
 } from "../src/session/journal.ts"
 import {
   appendPresentationEvents,
+  commitContextGeneration,
   listPersistedTurns,
+  loadLatestContextGeneration,
   loadPresentationEvents,
   loadSession,
   saveSession,
@@ -171,7 +173,7 @@ export interface CliSession {
   /** Kontrol mode permission saat runtime (Shift+Tab / /mode di REPL). */
   permissions?: PermissionControl
   close: () => Promise<void>
-  /** Fase 3 dark-launch: counter shadow reducer (divergensi harus 0). */
+  /** Counter reducer presentasi (divergensi harus 0). */
   getShadowDiagnostics: () => {
     divergence: number
     eventsIn: number
@@ -607,11 +609,31 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   let recoveryAppendix = ""
   if (resumeId) {
     try {
+      // Sidecar context generation lebih kaya daripada tabel `messages` lama
+      // (menyimpan reasoning + isError + toolCalls utuh), jadi jadi sumber
+      // utama bila valid. Fallback ke `loadSession` menjaga kompatibilitas DB
+      // yang belum punya sidecar, dan generation korup tidak pernah memblokir
+      // resume — parent atau legacy history yang dipakai.
+      const generation = loadLatestContextGeneration(resumeId, cwd)
       const prev = loadSession(resumeId, cwd)
-      if (prev?.messages.length) {
-        initialMessages = prev.messages as readonly Message[]
-        resumeTurnCount = prev.turnCount
-        console.error(c.dim(`[resumed session ${resumeId} (${prev.messages.length} messages)]\n`))
+      const source =
+        generation && !generation.truncated && generation.messages.length > 0
+          ? {
+              messages: generation.messages as readonly Message[],
+              turnCount: generation.turnCount,
+              label: `context generation ${generation.generation}`,
+            }
+          : prev?.messages.length
+            ? {
+                messages: prev.messages as readonly Message[],
+                turnCount: prev.turnCount,
+                label: `${prev.messages.length} messages`,
+              }
+            : undefined
+      if (source) {
+        initialMessages = source.messages
+        resumeTurnCount = source.turnCount
+        console.error(c.dim(`[resumed session ${resumeId} (${source.label})]\n`))
         // P3 — validasi resume: bukan replay buta. Bila workspace berubah
         // sejak checkpoint terakhir (edit manual / run lain), beri tahu —
         // /undo tersedia bila perlu kembali. Best-effort, tak menggagalkan resume.
@@ -689,9 +711,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // mengamati bus kernel dan memancarkan DomainEvent ke subscriber-nya sendiri.
   // Dual-subscribe dengan sink lama — perilaku user NOL berubah pada Fase 1.
   let presentation: PresentationAdapter | null = null
-  const presentationV2Enabled = process.env.MINICODE_PRESENTATION_V2 !== "0"
-  // Fase 3 dark-launch: reducer berjalan paralel (shadow) — hasil DIBUANG,
-  // tidak mengontrol output. Divergensi = reduce melempar (harusnya 0).
+  // Reducer memelihara PresentationState yang dipakai snapshot presentasi.
+  // Divergensi = reduce melempar (harusnya 0).
   let shadowState: PresentationState | null = rebuiltPresentation?.state ?? null
   let shadowDiag: ReducerDiagnostics | null = rebuiltPresentation
     ? createReducerDiagnostics()
@@ -718,14 +739,14 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       })
   }
   const queuePresentationEvent = (event: DomainEvent): void => {
+    if (!DURABILITY[event.type]?.durable) return
     pendingPresentationEvents.push(event)
     if (presentationFlushTimer === undefined) {
       presentationFlushTimer = setTimeout(flushPresentationEvents, 0)
     }
   }
   const presentationSubscribers = new Set<(event: UiPresentationEvent) => void>()
-  // Content store in-memory untuk query /expand; presentation V2 adalah jalur
-  // production setelah cleanup Fase 7.
+  // Content store in-memory untuk query /expand; jalur production.
   let contentStore: ContentStore | null = null
   const getShadowDiagnostics = (): {
     divergence: number
@@ -751,7 +772,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     unsupportedProjection,
   })
   const getPresentationSnapshot = (): UiPresentationSnapshot => {
-    if (!presentationV2Enabled || !shadowState) return { activities: [], turns: [] }
+    if (!shadowState) return { activities: [], turns: [] }
     const activities: UiPresentationActivity[] = [...shadowState.activities.values()].map((a) => ({
       seq: a.seq,
       turnId: a.turnId,
@@ -989,24 +1010,22 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     ...(shadowState ? { initialSeq: shadowState.seq, initialTurn, initialTurnStartTs } : {}),
   })
   try {
-    if (presentationV2Enabled) {
-      if (!shadowState) shadowState = createInitialState(presentationSessionId)
-      if (!shadowDiag) shadowDiag = createReducerDiagnostics()
-      presentation.setTurnSummaryProvider(({ sessionId: eventSessionId, turnId, fallback }) => {
-        return shadowState
-          ? deriveTurnSummary(shadowState, eventSessionId, turnId, fallback)
-          : fallback
-      })
-      shadowUnsub = presentation.onEvent((e) => {
-        try {
-          if (shadowState && shadowDiag) reduce(shadowState, e, shadowDiag)
-        } catch {
-          shadowDivergence++
-        }
-        queuePresentationEvent(e)
-        publishPresentationEvent(e)
-      })
-    }
+    if (!shadowState) shadowState = createInitialState(presentationSessionId)
+    if (!shadowDiag) shadowDiag = createReducerDiagnostics()
+    presentation.setTurnSummaryProvider(({ sessionId: eventSessionId, turnId, fallback }) => {
+      return shadowState
+        ? deriveTurnSummary(shadowState, eventSessionId, turnId, fallback)
+        : fallback
+    })
+    shadowUnsub = presentation.onEvent((e) => {
+      try {
+        if (shadowState && shadowDiag) reduce(shadowState, e, shadowDiag)
+      } catch {
+        shadowDivergence++
+      }
+      queuePresentationEvent(e)
+      publishPresentationEvent(e)
+    })
   } catch {
     shadowDivergence++
   }
@@ -1025,6 +1044,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         presentation?.noteFileChanged(info)
       } catch {}
     },
+  })
+
+  let contextCompactionSinceCommit = false
+  session.events.on("context:compacted", () => {
+    contextCompactionSinceCommit = true
   })
 
   // ── Shadow checkpoint ──
@@ -1265,6 +1289,16 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       try {
         try {
           await session.run(prompt, { model: modelRef.current, signal: ctl.signal })
+          const trigger = contextCompactionSinceCommit ? "compaction" : "turn"
+          contextCompactionSinceCommit = false
+          const snapshot = session.state
+          await commitContextGeneration(presentationSessionId, cwd, {
+            messages: snapshot.history,
+            turnCount: snapshot.turnCount,
+            stepCount: snapshot.stepCount,
+            trigger,
+            ...(modelRef.current ? { model: modelRef.current } : {}),
+          })
         } catch (e) {
           // Kernel diam pada gagal/abort/timeout (turn:completed hanya sukses):
           // adaptor merekonstruksi turn.failed/cancelled dari sini. Error asli
@@ -1386,15 +1420,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       quiet: enterRepl === true || machineOutput,
       getSnapshot: getPresentationSnapshot,
       onPresentationEvent,
-      ...(presentationV2Enabled
-        ? {
-            policy: {
-              describeActivity,
-              matchTurn: matchTurnBySummary,
-              elapsedVisible,
-            },
-          }
-        : {}),
+      policy: {
+        describeActivity,
+        matchTurn: matchTurnBySummary,
+        elapsedVisible,
+      },
     })
     if (enterRepl === true) {
       turnStatus = null
@@ -1403,20 +1433,16 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     turnStatus = attachTurnStatus(session.events, {
       initialModel: effectiveInitialModel,
       getModel: () => modelRef.current ?? effectiveInitialModel,
-      ...(presentationV2Enabled
-        ? {
-            activityFor: (toolCallId: string) => {
-              const activity = getPresentationSnapshot().activities.find(
-                (item) => item.toolCallId === toolCallId,
-              )
-              if (!activity) return undefined
-              return {
-                name: activity.name,
-                ...(activity.target ? { target: activity.target } : {}),
-              }
-            },
-          }
-        : {}),
+      activityFor: (toolCallId: string) => {
+        const activity = getPresentationSnapshot().activities.find(
+          (item) => item.toolCallId === toolCallId,
+        )
+        if (!activity) return undefined
+        return {
+          name: activity.name,
+          ...(activity.target ? { target: activity.target } : {}),
+        }
+      },
       ...(richStatus
         ? {
             getStats: () => {
@@ -1510,7 +1536,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     runPromptWithVerify,
     permissions,
     close,
-    /** Fase 3 dark-launch: counter shadow reducer (divergensi harus 0). */
+    /** Counter reducer presentasi (divergensi harus 0). */
     getShadowDiagnostics,
     getPresentationSnapshot,
     onPresentationEvent,

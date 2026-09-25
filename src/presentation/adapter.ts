@@ -510,7 +510,7 @@ export function createPresentationAdapter(
       turnId: currentTurn,
       resultId: `result:${sessionId}:${currentTurn}`,
       status: "completed",
-      summary: text || "turn completed",
+      summary: firstLine(text, 200) || "turn completed",
     })
     diag.turnsSettled++
     publish({

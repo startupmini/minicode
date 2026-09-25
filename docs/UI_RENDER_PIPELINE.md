@@ -23,10 +23,12 @@ reasoning/usage/error, `context:compacted` reason `pressure:*`/`recovery`,
 `step:started/completed`), `executor.ts` (`execution:started/completed`),
 `session.ts` (`turn:completed` HANYA di jalur sukses).
 
-Tahap C — raw runtime contract: `src/ui/contract.ts:33` `UiEvent` masih
-mencerminkan bentuk event kernel dan `cli/setup.ts` menyerahkan `session.events`
-apa adanya ke `attachSimpleLogger` + `attachTurnStatus` (dipasang segar per
-turn, dilepas di `finally` agar event telat hening).
+Tahap C — raw runtime/content contract: `src/ui/contract.ts:33` `UiEvent` masih
+mencerminkan bentuk event kernel untuk streaming konten dan transport. Ledger,
+status, lifecycle, dan keputusan user-facing melalui `PresentationEvent` +
+`PresentationPolicy` dari `cli/setup.ts`; `attachSimpleLogger` dan
+`attachTurnStatus` tetap memasang listener runtime per turn dan melepasnya di
+`finally` agar event telat hening.
 
 Tahap C2 — semantic presentation bridge: `cli/setup.ts` membuat
 `PresentationAdapter`, mengurangi event ke `PresentationState` lengkap
@@ -35,8 +37,8 @@ summary dari evidence, dan memuat ulang `presentation_events` saat resume. Bridg
 memprojection seluruh `DomainEventType` melalui `toPresentationEvent()`;
 `src/presentation/projection.ts` menyediakan keputusan policy murni (deskripsi
 activity/turn, running pin, envelope machine) yang di-inject ke renderer sebagai
-`PresentationPolicy`. Consumer legacy (raw bus) hanya untuk rollback
-`MINICODE_PRESENTATION_V2=0`. Lihat `docs/OUTPUT_ARCHITECTURE_AUDIT.md` dan
+`PresentationPolicy`. Raw ledger TUI dan rollback flag sudah dihapus (Phase 8
+landed). Lihat `docs/OUTPUT_ARCHITECTURE_AUDIT.md` dan
 `docs/OUTPUT_EVENT_MODEL.md`.
 
 Tahap D — logger utama `src/ui/assistant/simple.ts:104`: append-only
@@ -119,8 +121,10 @@ I = bisa diinterupsi, L = bisa tiba setelah completion.
 | budget exceeded | watcher/driver | `[budget] … stopping turn` + abort ber-kind | tidak | tidak (fire-once) | tidak | — | tidak |
 | provider failure | recovery policy | retry/compact/throw deterministik; cap retryAfter 30 dtk | tidak | tidak | tidak | tidak | tidak |
 
-Mismatch yang dicari, hasil: raw EventBus tidak hilang (rollback flag), tetapi
-consumer user-facing kini membaca keputusan policy yang sama.
+Mismatch yang dicari, hasil: raw EventBus tetap ada untuk konten/streaming,
+tetapi keputusan user-facing kini membaca policy yang sama (raw ledger TUI
+dihapus di Phase 8). Buffer jawaban live TUI dibatasi 1.000.000 karakter;
+layout paint memakai satu proyeksi transcript dan cache render jawaban.
 `cli/setup.ts:172-376` memproyeksikan seluruh `DomainEventType` secara
 exhaustive; TUI memakai `describeActivity`/`matchTurn`/`elapsedVisible` via
 injeksi, linear memakai deskripsi + `activityFor` untuk label turn-status, dan

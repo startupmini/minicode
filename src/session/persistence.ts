@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite"
+import { createHash } from "node:crypto"
 import { LIMITS } from "../constants.ts"
 import { resolveDbPath } from "../lib/db-path.ts"
 import { scrubSecrets } from "../policy/scrub.ts"
@@ -59,6 +60,23 @@ function open(cwd?: string): Database {
     );
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq);
     CREATE INDEX IF NOT EXISTS idx_presentation_events_session ON presentation_events(session_id, event_seq);
+    CREATE TABLE IF NOT EXISTS context_generations (
+      session_id TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      parent_generation INTEGER,
+      turn_count INTEGER NOT NULL,
+      step_count INTEGER NOT NULL,
+      trigger TEXT NOT NULL,
+      model TEXT,
+      provider TEXT,
+      checksum TEXT NOT NULL,
+      messages TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      truncated INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY(session_id, generation)
+    );
+    CREATE INDEX IF NOT EXISTS idx_context_generations_session
+      ON context_generations(session_id, generation);
   `)
   // migration: add updated_at, toolCallId, name jika kolom lama (backward-compat)
   try {
@@ -108,6 +126,23 @@ function safeContent(value: unknown): string {
 
 const MAX_STORED_EVENT_CHARS = 200_000
 const MAX_STORED_STRING_CHARS = 32_000
+const MAX_CONTEXT_GENERATION_CHARS = 4_000_000
+const MAX_CONTEXT_GENERATIONS = 2
+
+export interface ContextGeneration {
+  sessionId: string
+  generation: number
+  parentGeneration: number | null
+  turnCount: number
+  stepCount: number
+  trigger: string
+  model?: string
+  provider?: string
+  checksum: string
+  createdAt: number
+  truncated: boolean
+  messages: unknown[]
+}
 
 function stripAnsi(value: string): string {
   let out = ""
@@ -401,6 +436,196 @@ export async function saveSession(
   }
 }
 
+function scrubContextValue(value: unknown): unknown {
+  if (value instanceof Uint8Array) return `[binary: ${value.byteLength} bytes]`
+  return scrubStoredValue(value)
+}
+
+function encodeContextMessages(messages: readonly unknown[]): {
+  payload: string
+  truncated: boolean
+} {
+  const safe = messages.map(scrubContextValue)
+  let used = 2
+  const kept: unknown[] = []
+  for (let i = safe.length - 1; i >= 0; i--) {
+    const item = safe[i]
+    const size = JSON.stringify(item).length + 1
+    if (used + size > MAX_CONTEXT_GENERATION_CHARS) break
+    kept.push(item)
+    used += size
+  }
+  kept.reverse()
+  if (kept.length === 0 && safe.length > 0) {
+    return {
+      payload: JSON.stringify([
+        { role: "user", content: "[context generation omitted: message exceeded storage budget]" },
+      ]),
+      truncated: true,
+    }
+  }
+  return { payload: JSON.stringify(kept), truncated: kept.length !== safe.length }
+}
+
+function contextChecksum(payload: string): string {
+  return createHash("sha256").update(payload).digest("hex")
+}
+
+interface ContextGenerationRow {
+  session_id: string
+  generation: number
+  parent_generation: number | null
+  turn_count: number
+  step_count: number
+  trigger: string
+  model: string | null
+  provider: string | null
+  checksum: string
+  messages: string
+  created_at: number
+  truncated: number
+}
+
+function decodeContextGeneration(row: ContextGenerationRow): ContextGeneration | null {
+  try {
+    const messages = JSON.parse(row.messages) as unknown
+    if (!Array.isArray(messages)) return null
+    if (contextChecksum(row.messages) !== row.checksum) return null
+    return {
+      sessionId: row.session_id,
+      generation: row.generation,
+      parentGeneration: row.parent_generation,
+      turnCount: row.turn_count,
+      stepCount: row.step_count,
+      trigger: row.trigger,
+      ...(row.model ? { model: row.model } : {}),
+      ...(row.provider ? { provider: row.provider } : {}),
+      checksum: row.checksum,
+      createdAt: row.created_at,
+      truncated: row.truncated === 1,
+      messages,
+    }
+  } catch {
+    return null
+  }
+}
+
+export async function saveContextGeneration(
+  id: string,
+  cwd: string | undefined,
+  input: {
+    messages: readonly unknown[]
+    turnCount: number
+    stepCount: number
+    trigger?: string
+    model?: string
+  },
+): Promise<ContextGeneration | null> {
+  const encoded = encodeContextMessages(input.messages)
+  const checksum = contextChecksum(encoded.payload)
+  const now = Date.now()
+  const db = open(cwd)
+  try {
+    const txn = db.transaction(() => {
+      const latest = db
+        .prepare(
+          "SELECT * FROM context_generations WHERE session_id = ? ORDER BY generation DESC LIMIT 1",
+        )
+        .get(id) as ContextGenerationRow | null
+      if (latest && latest.checksum === checksum && latest.turn_count === input.turnCount) {
+        return decodeContextGeneration(latest)
+      }
+      const generation = (latest?.generation ?? 0) + 1
+      const parentGeneration = latest?.generation ?? null
+      const model = input.model ?? null
+      const provider = model?.includes("::") ? (model.split("::")[0] ?? null) : null
+      db.prepare(
+        "INSERT INTO context_generations (session_id, generation, parent_generation, turn_count, step_count, trigger, model, provider, checksum, messages, created_at, truncated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        id,
+        generation,
+        parentGeneration,
+        input.turnCount,
+        input.stepCount,
+        input.trigger ?? "turn",
+        model,
+        provider,
+        checksum,
+        encoded.payload,
+        now,
+        encoded.truncated ? 1 : 0,
+      )
+      db.prepare("DELETE FROM context_generations WHERE session_id = ? AND generation < ?").run(
+        id,
+        generation - MAX_CONTEXT_GENERATIONS + 1,
+      )
+      return {
+        sessionId: id,
+        generation,
+        parentGeneration,
+        turnCount: input.turnCount,
+        stepCount: input.stepCount,
+        trigger: input.trigger ?? "turn",
+        ...(model ? { model } : {}),
+        ...(provider ? { provider } : {}),
+        checksum,
+        createdAt: now,
+        truncated: encoded.truncated,
+        messages: JSON.parse(encoded.payload) as unknown[],
+      }
+    })
+    return await withBusyRetry(() => txn())
+  } finally {
+    db.close()
+  }
+}
+
+export function loadLatestContextGeneration(id: string, cwd?: string): ContextGeneration | null {
+  const db = open(cwd)
+  try {
+    const rows = db
+      .prepare(
+        "SELECT * FROM context_generations WHERE session_id = ? ORDER BY generation DESC LIMIT ?",
+      )
+      .all(id, MAX_CONTEXT_GENERATIONS) as ContextGenerationRow[]
+    for (const row of rows) {
+      const decoded = decodeContextGeneration(row)
+      if (decoded) return decoded
+    }
+    return null
+  } finally {
+    db.close()
+  }
+}
+
+/**
+ * Best-effort commit untuk hot-path: kegagalan sidecar TIDAK boleh
+ * menggagalkan turn yang sudah sukses (sidecar adalah peningkatan
+ * recoverability, bukan syarat kebenaran).
+ *
+ * Diagnostik sengaja ditulis di modul pemilik kegagalan, bukan di pemanggil:
+ * menambah `process.stderr.write` di `cli/setup.ts` akan menaikkan writer
+ * ke-27 dan melanggar pagu invaris OAP-008 (test/writer-inventory.test.ts)
+ * yang melarang penambahan writer tak terdaftar.
+ */
+export async function commitContextGeneration(
+  id: string,
+  cwd: string | undefined,
+  input: {
+    messages: readonly unknown[]
+    turnCount: number
+    stepCount: number
+    trigger?: string
+    model?: string
+  },
+): Promise<void> {
+  try {
+    await saveContextGeneration(id, cwd, input)
+  } catch (e) {
+    process.stderr.write(`[warn] context generation persist failed: ${(e as Error).message}\n`)
+  }
+}
+
 // TTL default 30 hari; MINICODE_SESSION_TTL_DAYS=0 = simpan selamanya.
 export function getSessionTtlDays(): number {
   const raw = process.env.MINICODE_SESSION_TTL_DAYS
@@ -422,6 +647,11 @@ export function purgeExpired(db: Database, now = Date.now()): number {
   try {
     db.prepare(
       "DELETE FROM presentation_events WHERE session_id NOT IN (SELECT id FROM sessions)",
+    ).run()
+  } catch {}
+  try {
+    db.prepare(
+      "DELETE FROM context_generations WHERE session_id NOT IN (SELECT id FROM sessions)",
     ).run()
   } catch {}
   return gone.changes

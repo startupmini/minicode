@@ -25,6 +25,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { flagNameOf, valueFlags } from "../cli/args.ts"
+import { loadLatestContextGeneration } from "../src/session/persistence.ts"
 import { type FakeReply, startFakeProvider } from "./helpers/fake-provider.ts"
 
 // Reorder args agar flag dikenal selalu sebelum prompt — cegah flag-injection
@@ -468,11 +469,40 @@ describe("cli: --resume", () => {
       const second = await run(ws, ["pertanyaan kedua", "--resume", "sesi-uji", ...base])
       expect(second.code).toBe(0)
       expect(second.stderr).toContain("resumed session sesi-uji")
-      // 1 user + 1 assistant dari run pertama.
-      expect(second.stderr).toContain("(2 messages)")
+      // Sidecar context generation adalah sumber utama resume (lebih kaya dari
+      // tabel `messages` lama: reasoning + isError + toolCalls utuh).
+      expect(second.stderr).toContain("context generation 1")
       // Provider menerima riwayat itu, bukan hanya prompt baru.
       const msgs = provider.requests()[1]?.messages as { role: string; content: unknown }[]
       expect(msgs.some((m) => String(m.content).includes("pertanyaan pertama"))).toBe(true)
+    } finally {
+      provider.close()
+    }
+  })
+
+  test("turn sukses menuliskan context generation yang bisa dibaca ulang", async () => {
+    const ws = makeWorkspace()
+    const provider = startFakeProvider([{ kind: "text", text: "balasan" }])
+    try {
+      writeProviderConfig(ws, provider.baseUrl)
+      const first = await run(ws, [
+        "pertanyaan pertama",
+        "--session",
+        "sesi-gen",
+        "--cwd",
+        ws.dir,
+        "--model",
+        "gpt-4o-mini",
+        "--allow-local-config",
+      ])
+      expect(first.code).toBe(0)
+      const gen = loadLatestContextGeneration("sesi-gen", ws.dir)
+      expect(gen).not.toBeNull()
+      expect(gen?.generation).toBe(1)
+      expect(gen?.turnCount).toBeGreaterThanOrEqual(1)
+      const roles = (gen?.messages ?? []).map((m) => (m as { role?: string }).role)
+      expect(roles).toContain("user")
+      expect(roles).toContain("assistant")
     } finally {
       provider.close()
     }

@@ -227,9 +227,8 @@ export interface ActivityPolicyDescription {
 
 /**
  * Kumpulan keputusan proyeksi kanonik untuk renderer. Di-inject composition
- * root dari `src/presentation/`; absen = jalur raw legacy (rollback
- * `MINICODE_PRESENTATION_V2=0`). Renderer tidak boleh mengimpor
- * `src/presentation` langsung — batas lapisan.
+ * root dari `src/presentation/`; absen = logika inline legacy di renderer.
+ * Renderer tidak boleh mengimpor `src/presentation` langsung — batas lapisan.
  */
 export interface PresentationPolicy {
   describeActivity: (

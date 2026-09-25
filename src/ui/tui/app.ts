@@ -1257,12 +1257,17 @@ export class TuiApp {
       composerH = Math.max(1, contentBudget - menu.length)
     }
     const viewH = Math.max(1, height - 2 - composerH - menu.length - indicator.length)
-    const curWrapped = this.transcript.wrappedLength(width)
+    let viewport = this.transcript.viewport(width, viewH, this.scrollBack)
+    const curWrapped = viewport.totalRows
     if (this.scrollBack > 0 && this.lastWrapped > 0) {
-      this.scrollBack = Math.max(
+      const nextScrollBack = Math.max(
         0,
         Math.min(this.scrollBack + (curWrapped - this.lastWrapped), Math.max(0, curWrapped - 1)),
       )
+      if (nextScrollBack !== this.scrollBack) {
+        this.scrollBack = nextScrollBack
+        viewport = this.transcript.viewport(width, viewH, this.scrollBack)
+      }
     }
     this.lastWrapped = curWrapped
     if (
@@ -1274,7 +1279,6 @@ export class TuiApp {
     ) {
       this.selection = null
     }
-    const viewport = this.transcript.viewport(width, viewH, this.scrollBack)
     const bodyRows = viewport.rows
     const body = bodyRows.map((row) => {
       const selected = this.selectedRange(row)

@@ -630,7 +630,7 @@ footer.site .spacer { flex: 1; }
     </div></div>
     <div class="step"><div class="dot">7</div><div class="card-b"><b>Persistensi</b>
       <span class="where">src/session/{persistence,shadow-git,checkpoint}.ts · src/telemetry/trace.ts</span>
-      <span class="what">Pesan dan semantic event durable disimpan inkremental ke sqlite (WAL, TTL 30 hari); tree per turn dicatat shadow-git di refs/minicode/*; trace jsonl untuk diagnostik &amp; biaya.</span>
+      <span class="what">Pesan dan semantic event durable disimpan inkremental ke sqlite (WAL, TTL 30 hari); tree per turn dicatat shadow-git di refs/minicode/*; trace jsonl untuk diagnostik &amp; biaya. Sidecar <code>context_generations</code> menyimpan snapshot konteks lengkap per turn (generation, parent, checksum SHA-256, reasoning/isError yang tak ada di tabel <code>messages</code>) dengan retensi 2 generasi; precedence resume satu arah: sidecar valid → messages → sesi baru.</span>
     </div></div>
   </div>
 </section>
@@ -913,7 +913,7 @@ export const kalkulatorTool: Tool = {
 <!-- ── 6 · ENV & PERINTAH ── -->
 <section id="env">
   <h2 class="sec"><span class="hn">06</span> Referensi env var &amp; perintah <a class="anchor" href="#env">#</a></h2>
-  <p class="lede">25 variabel <code>MINICODE_*</code> + <code>NO_COLOR</code> yang benar-benar dibaca kode, dengan titik bacanya. Nilai contoh bersifat ilustratif; sumber kebenaran tetap file yang tercantum.</p>
+  <p class="lede">24 variabel <code>MINICODE_*</code> + <code>NO_COLOR</code> yang benar-benar dibaca kode, dengan titik bacanya. Nilai contoh bersifat ilustratif; sumber kebenaran tetap file yang tercantum.</p>
   <div class="tscroll">
   <table>
     <tr><th>Variabel</th><th>Fungsi</th><th>Dibaca di</th></tr>
@@ -933,7 +933,7 @@ export const kalkulatorTool: Tool = {
     <tr><td><code>MINICODE_GREP_ENGINE</code></td><td><code>js</code> → paksa engine JS, lewati ripgrep</td><td><code>src/tools/grep.ts</code></td></tr>
     <tr><td><code>MINICODE_REPOMAP</code></td><td><code>regex</code> → skip LSP, repo-map pakai regex (lebih cepat)</td><td><code>src/repo/repomap.ts</code></td></tr>
     <tr><td><code>MINICODE_SESSION_TTL_DAYS</code></td><td>retensi sesi (default 30; <code>0</code> = simpan selamanya)</td><td><code>src/session/persistence.ts</code></td></tr>
-    <tr><td><code>MINICODE_PRESENTATION_V2</code></td><td><code>0</code> → matikan shadow presentation/replay; raw bus tetap aktif</td><td><code>cli/setup.ts</code></td></tr>
+
     <tr><td><code>MINICODE_TELEMETRY</code></td><td><code>0</code>/<code>false</code>/<code>off</code> → tidak menulis trace sama sekali</td><td><code>src/telemetry/trace.ts</code></td></tr>
     <tr><td><code>MINICODE_ASCII</code></td><td><code>1</code> → glyph ASCII, paksa tanpa UTF-8</td><td><code>src/ui/render/theme.ts</code></td></tr>
     <tr><td><code>NO_COLOR</code></td><td>ada &amp; ≠ <code>0</code> → tanpa warna (dihormati lazy)</td><td><code>src/ui/render/theme.ts</code></td></tr>

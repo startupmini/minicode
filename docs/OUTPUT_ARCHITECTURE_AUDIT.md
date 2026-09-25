@@ -1,6 +1,6 @@
 # Output Architecture Audit
 
-**Status:** audit selesai; Phase 2 parity landed, renderer authority pending  
+**Status:** audit selesai; Phase 1–8 remediation landed, with one ACP compatibility window. Tables and evidence marked historical describe the pre-remediation baseline.
 **Tanggal:** 2026-09-25  
 **Produk:** MiniCode coding agent CLI  
 **Rujukan kontrak:** `docs/TERMINAL_CONTRACT.md`, `docs/UI_RENDER_PIPELINE.md`
@@ -20,54 +20,55 @@ Rancangan `AGENT_PRESENTATION_ARCHITECTURE_V2_1.md` diperlakukan sebagai target
 arsitektur, bukan bukti bahwa semua fase sudah selesai. Audit ini menilai wiring
 aktual terhadap rancangan tersebut.
 
-## Phase 1/2 implementation update
+## Phase 1–8 implementation update
 
-Audit ini capturing baseline sebelum remediation. Phase 1 menambahkan
-`user.message`, mapper exhaustive, `PROPOSED_EVENT_TYPES`, dan
-`unsupportedProjection` diagnostics. Phase 2 core menambahkan semantic
-collections, derived summaries, bounded retention, durable SQLite event log,
-resume rebuild, checkpoint evidence, dan child-session persistence. Phase 2 parity
-menambahkan producer `finding.detected`, contract restart/branch/child/delete/TTL/
-resume, dan `eventSeq` unik untuk durable writes. Phase 3–7 menambahkan policy
-proyeksi murni + envelope machine + migrasi TUI/linear/machine + persist headless
-+ inventaris writer (OAP-008 terproteksi test, routing sentral penuh menunggu
-Phase 8). OAP-003, OAP-006, dan OAP-011 tertutup pada boundary; jalur raw legacy
-hanya untuk rollback flag sampai Phase 8, dan OAP-001/002/004–005/007/009–010/
-012–013 tetap carried forward.
+Audit ini capturing baseline sebelum remediation. Current implementation status
+setelah Phase 1–8:
+
+- Phase 1: `user.message`, mapper exhaustive, `PROPOSED_EVENT_TYPES`, dan
+  `unsupportedProjection` diagnostics landed.
+- Phase 2: semantic collections, derived summaries, bounded retention, durable
+  SQLite event log, resume rebuild, checkpoint evidence, child-session
+  persistence, producer `finding.detected`, contract restart/branch/child/delete/
+  TTL/resume, dan `eventSeq` unik landed.
+- Phase 3–7: policy proyeksi murni, envelope machine, migrasi TUI/linear/machine,
+  persist headless, dan writer inventory landed.
+- Phase 8: rollback flag dan raw ledger TUI dihapus. Runtime EventBus tetap
+  dipakai untuk streaming konten dan debug/trace, bukan sebagai sumber status
+  user-facing kedua.
+- OAP-001–OAP-010 dan OAP-012–OAP-013 closed atau documenting the compatibility
+  boundary; OAP-011 tetap proposed/compatibility-only. Residual window: ACP
+  legacy `type:"tool"` when canonical lifecycle is unavailable.
 
 ## Executive verdict
 
-MiniCode sudah memiliki fondasi terminal yang kuat: sanitasi trust boundary,
-perhitungan lebar kolom, ownership alternate-screen, coalesce repaint, source-mapped
-selection, OSC52, dan test proteksi yang luas. Namun runtime presentation masih
-memiliki dua sumber kebenaran:
+Audit baseline menunjukkan MiniCode memiliki fondasi terminal yang kuat:
+sanitasi trust boundary, perhitungan lebar kolom, ownership alternate-screen,
+coalesce repaint, source-mapped selection, OSC52, dan test proteksi yang luas.
+Setelah remediation Phase 1–8, status, activity, visibility, correlation, dan
+machine lifecycle mengambil keputusan dari canonical presentation policy yang
+di-inject pada composition root.
 
 ```text
 Agent Runtime
-    ↓ raw MiniCore EventBus
-    ├─ TUI Transcript + App
-    ├─ Linear simple logger + turn status
-    ├─ exec raw JSONL
-    └─ ACP raw stream + partial lifecycle
-          (jalur lama)
+    ↓ MiniCore EventBus
+    ↓ streaming content transport
+    ├─ TUI transcript content + canonical policy ledger
+    ├─ Linear content + canonical policy writer
+    ├─ exec canonical lifecycle + text delta
+    └─ ACP canonical lifecycle + text delta
 
-Raw EventBus
-    ↓ PresentationAdapter
-DomainEvent
-    ↓ shadow reducer
-PresentationState
-    ↓ UiPresentationEvent bridge
-sebagian TUI/linear/ACP
+PresentationAdapter
+    ↓
+DomainEvent → PresentationState (durable/replayable)
+    ↓ UiPresentationEvent + PresentationPolicy
+TUI / linear / exec / ACP
 ```
 
-`PresentationState` sudah replayable dan tetap dark-launch di
-`cli/setup.ts` masih bukan sumber kebenaran yang mengendalikan semua renderer.
-Akibatnya status, lifecycle, visibility, correlation, dan machine protocol masih
-dapat berbeda antar-surface.
-
-Tidak ditemukan P0 yang membuat semua mode langsung tidak dapat dijalankan. Gayanya
-berkisar P1–P3: arsitektur belum siap disebut selesai, tetapi fondasi yang ada dapat
-dimigrasikan secara bertahap tanpa rewrite kernel.
+Tidak ditemukan P0. Residual risk terbatas pada live streaming dan kompatibilitas
+ACP legacy `type:"tool"`; keduanya tidak menentukan status user-facing canonical.
+The historical findings below remain as evidence for the pre-remediation state;
+the current implementation is recorded in the Phase 1–8 update above.
 
 ## Arsitektur aktual
 
@@ -78,7 +79,8 @@ Provider/router
 MiniCore loop (vendor/minicore, frozen)
   │ turn:started, step:*, execution:*, provider:*, context:*
   ▼
-session.events (raw EventBus; user-facing legacy hanya untuk rollback flag)
+session.events (raw EventBus; raw content streaming tetap, semantic legacy
+    user-facing dihapus di Phase 8)
   ├── attachSimpleLogger() ── stdout/stderr linear (keputusan status dari policy)
   │       └── turn-status.ts ── transient stderr (label via activityFor DI)
   ├── Transcript() ── append-only visual state TUI (ledger/summary dari policy)
@@ -110,7 +112,7 @@ session.events (raw EventBus; user-facing legacy hanya untuk rollback flag)
 - TUI, linear, ACP, dan exec sudah memiliki test output serta boundary fail-closed
   untuk machine mode.
 
-## Current Pipeline
+## Historical Pipeline (pre-remediation evidence)
 
 | Stage | Current implementation | Problem | Risk |
 |---|---|---|---|
@@ -169,7 +171,24 @@ session.events (raw EventBus; user-facing legacy hanya untuk rollback flag)
 | Clipboard | Human interaction | `/copy` + app selection OSC52 | Same; source-mapped and sanitized |
 | Debug bus | Debug | Opt-in `bus-debug` raw event summaries | Debug projection from canonical events, redacted payload |
 
-## Findings
+## Historical Findings (before remediation)
+
+The original finding list below is preserved as audit evidence. Current disposition:
+
+| Finding | Current disposition |
+|---|---|
+| OAP-001 | Closed for user-facing decisions; raw EventBus remains only for streaming content/debug. |
+| OAP-002 | Closed at adapter/reducer seam; vendor runtime remains unchanged. |
+| OAP-003 | Closed by exhaustive `toPresentationEvent()` bridge. |
+| OAP-004/OAP-005 | Closed by semantic collections and evidence-derived summaries. |
+| OAP-006 | Closed by versioned machine envelopes. |
+| OAP-007 | Closed by production durable rebuild. |
+| OAP-008/OAP-013 | Closed by writer inventory, boundary checks, and documentation updates. |
+| OAP-009/OAP-010/OAP-012 | Closed by canonical policy and semantic nodes. |
+| OAP-011 | Proposed events remain explicit; no fabricated producer. |
+
+
+### Original finding register (historical)
 
 | ID | Severity | Location | Problem | Recommendation |
 |---|---|---|---|---|
@@ -213,7 +232,7 @@ runtime/debug, kirim semua user-facing surface melalui projection dari
 `src/presentation/projection.ts` via injeksi `PresentationPolicy`
 (`cli/tui.ts`, `cli/setup.ts`); parity test policy-vs-legacy hijau di
 `test/presentation-projections.test.ts` dan `test/presentation-linear-acp.test.ts`.
-Jalur raw legacy dipertahankan hanya untuk rollback `MINICODE_PRESENTATION_V2=0`;
+Jalur raw ledger TUI dan rollback flag dihapus di Phase 8;
 penghapusan menunggu satu rilis hijau (Phase 8).
 
 #### OAP-002 — P1 — Lifecycle runtime tidak lengkap

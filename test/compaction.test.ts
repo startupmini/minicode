@@ -3,6 +3,7 @@
 
 import { describe, expect, test } from "bun:test"
 import type { Message } from "#minicore/core/types.ts"
+import { LIMITS } from "../src/constants.ts"
 import {
   compactWithLlm,
   createLlmCompaction,
@@ -169,10 +170,82 @@ describe("compactWithLlm", () => {
     expect(seenPrompt).toContain("gagal total")
   })
 
+  test("anggaran di prompt = pagu simpan, bukan angka lepas", async () => {
+    // Kalau prompt minta lebih dari yang composeBoundedSummary simpan, sisanya
+    // dibuang diam-diam: token terbuang tanpa manfaat. Keduanya harus-bind ke
+    // konstanta yang sama.
+    let seenPrompt = ""
+    const spy = {
+      id: "spy",
+      models: ["m"],
+      async *stream(req: { messages: Message[] }) {
+        seenPrompt = String(req.messages[0]?.content ?? "")
+        yield { type: "text" as const, text: "ok" }
+        yield { type: "finish" as const, reason: "stop" as const }
+      },
+    } as never
+    await compactWithLlm(storeOf(convo(6)), { keepRecentTurns: 1, provider: spy })
+    const asked = Number(/max (\d+) tokens/.exec(seenPrompt)?.[1])
+    expect(Number.isFinite(asked)).toBe(true)
+    // Estimasi 4 char/token; angka yang diminta harus muat di bawah pagu,
+    // bukan 600 token lepas yang sebagian besar dibuang.
+    expect(asked * 4).toBeLessThan(LIMITS.COMPACTION_SUMMARY_MAX_CHARS)
+    expect(seenPrompt).toContain("discarded")
+  })
+
   test("apiKey membangun provider openai-compat tanpa provider eksplisit", async () => {
     // Tanpa apiKey maupun provider: fallback mekanis, tidak melempar.
     const out = await compactWithLlm(storeOf(convo(6)), { keepRecentTurns: 2 })
     expect(out.length).toBeGreaterThan(0)
+  })
+
+  // Regresi P0 long-horizon: prior summary di-carried verbatim lalu
+  // digabung dengan summary baru. Tanpa pagu, tiap siklus menambah
+  // ~2.400 char ke pesan pertama yang SELALU ikut dikirim ke model — setelah
+  // 12 siklus summary itu sendiri jadi sumber context overflow.
+  test("berulang kali dikompaksi: summary tak tumbuh tanpa batas", async () => {
+    // Panjang summary realistis (LLM diminta "max 600 tokens" ≈ 2.400 char).
+    const realistic = (cycle: number) =>
+      `FAKTA siklus ${cycle}: berkas diubah, tes lulus. ${"detail penting. ".repeat(160)}`
+    let history: Message[] = convo(6)
+    for (let cycle = 0; cycle < 12; cycle++) {
+      history = [
+        ...(await compactWithLlm(storeOf(history), {
+          keepRecentTurns: 1,
+          provider: fakeProvider(realistic(cycle)),
+        })),
+        { role: "user", content: `lanjutan ${cycle}` },
+        { role: "assistant", content: `jawaban lanjutan ${cycle}` },
+      ]
+    }
+    const head = String(history[0]!.content)
+    expect(head).toContain("Previous context")
+    expect(head.length).toBeLessThanOrEqual(LIMITS.COMPACTION_SUMMARY_MAX_CHARS)
+    // Fakta siklus TERAKHIR harus selamat walau yang lama dipangkas.
+    expect(head).toContain("siklus 11")
+    // Pemangkasan bersifat eksplisit, bukan diam-diam: model tak boleh
+    // menyimpulkan ringkasan ini lengkap.
+    expect(head).toContain("elided")
+  })
+
+  test("summary pendek tetap digabung dengan prior di bawah pagu", async () => {
+    let history: Message[] = convo(6)
+    for (let cycle = 0; cycle < 6; cycle++) {
+      history = [
+        ...(await compactWithLlm(storeOf(history), {
+          keepRecentTurns: 1,
+          provider: fakeProvider(`FAKTA ${cycle}`),
+        })),
+        { role: "user", content: `lanjutan ${cycle}` },
+        { role: "assistant", content: `jawaban lanjutan ${cycle}` },
+      ]
+    }
+    const head = String(history[0]!.content)
+    expect(head.length).toBeLessThanOrEqual(LIMITS.COMPACTION_SUMMARY_MAX_CHARS)
+    // Prior di-tail, jadi fakta siklus pertama (yang paling lama) boleh hilang
+    // sementara siklus terbaru pasti ada.
+    expect(head).toContain("FAKTA 5")
+    expect(head).not.toContain("FAKTA 0\n")
   })
 })
 

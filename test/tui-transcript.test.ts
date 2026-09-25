@@ -1,5 +1,6 @@
 // Unit Transcript: koleksi event → baris logis → viewport.
 import { describe, expect, test } from "bun:test"
+import type { UiPresentationActivity, UiPresentationSnapshot } from "../src/ui/contract.ts"
 import { displayWidth } from "../src/ui/render/width.ts"
 import { Transcript } from "../src/ui/tui/transcript.ts"
 import { createFakeBus } from "./helpers/tui-harness.ts"
@@ -8,6 +9,38 @@ function setup() {
   const bus = createFakeBus()
   const t = new Transcript(bus as never)
   return { bus, t }
+}
+
+function activity(overrides: Partial<UiPresentationActivity> = {}): UiPresentationActivity {
+  return {
+    toolCallId: "call-1",
+    name: "write_file",
+    target: "a.ts",
+    status: "completed",
+    tsStart: Date.now(),
+    ...overrides,
+  }
+}
+
+function setupPresentation(snapshot: UiPresentationSnapshot) {
+  const bus = createFakeBus()
+  let handler: ((event: never) => void) | undefined
+  const t = new Transcript(bus as never, {
+    getSnapshot: () => snapshot,
+    onPresentationEvent: (next) => {
+      handler = next as (event: never) => void
+      return () => {
+        handler = undefined
+      }
+    },
+  })
+  return {
+    bus,
+    t,
+    emit(type: string, payload: Record<string, unknown>) {
+      handler?.({ type, ...payload } as never)
+    },
+  }
 }
 
 describe("Transcript", () => {
@@ -21,32 +54,80 @@ describe("Transcript", () => {
     expect(t.size()).toBe(1)
     expect(t.view(40, 3, 0)[2]).toBe("halo dunia")
   })
+  test("buffer live punya cap dan menandai truncasi", () => {
+    const bus = createFakeBus()
+    const t = new Transcript(bus as never, { maxPendingChars: 10 })
+    bus.emit("provider:text", { text: "012345" })
+    bus.emit("provider:text", { text: "6789ABC" })
+    expect(t.view(40, 3, 0).join("\n")).toContain("truncated")
+    bus.emit("turn:completed", {})
+    expect(t.view(40, 3, 0).join("\n")).toContain("truncated")
+  })
   test("ledger tool sukses satu baris › nama target", () => {
-    const { bus, t } = setup()
-    bus.emit("execution:completed", {
-      execution: { call: { name: "write_file", args: { path: "a.ts" } }, result: {} },
+    const { t, emit } = setupPresentation({
+      activities: [activity({ status: "completed" })],
+      turns: [],
     })
-    expect(t.view(60, 2, 0).join("\n")).toContain("› write_file a.ts")
+    emit("tool.completed", { seq: 1, turnId: 1, toolCallId: "call-1", status: "completed" })
+    const out = t.view(60, 2, 0).join("\n")
+    expect(out).toContain("write_file a.ts")
+    expect(out).toContain("completed")
   })
   test("ledger error satu baris merah diawali ›", () => {
-    const { bus, t } = setup()
-    bus.emit("execution:completed", {
-      execution: {
-        call: { name: "bash", args: { cmd: "false" } },
-        result: { isError: true, content: "boom\nbaris2" },
-      },
+    const { t, emit } = setupPresentation({
+      activities: [
+        activity({
+          toolCallId: "bash-1",
+          name: "bash",
+          target: undefined,
+          status: "failed",
+        }),
+      ],
+      turns: [],
+    })
+    emit("tool.failed", {
+      seq: 1,
+      turnId: 1,
+      toolCallId: "bash-1",
+      status: "failed",
+      message: "boom\nbaris2",
     })
     const out = t.view(60, 2, 0).join("\n")
-    expect(out).toContain("› bash")
+    expect(out).toContain("bash")
+    expect(out).toContain("failed")
     expect(out).toContain("boom")
     expect(out).not.toContain("baris2")
   })
   test("nama tool tak terpercaya disanitasi (tak bisa clear-screen)", () => {
-    const { bus, t } = setup()
-    bus.emit("execution:completed", {
-      execution: { call: { name: "x\x1b[2J", args: {} }, result: {} },
+    const { t, emit } = setupPresentation({
+      activities: [activity({ toolCallId: "x1", name: "x\x1b[2J", target: undefined })],
+      turns: [],
     })
+    emit("tool.completed", { seq: 1, turnId: 1, toolCallId: "x1", status: "completed" })
     expect(t.view(60, 2, 0).join("")).not.toContain("\x1b[2J")
+  })
+  test("jawaban model me-render markdown inline (bold/code/heading)", () => {
+    const { bus, t } = setup()
+    bus.emit("provider:text", { text: "## Ringkasan\nHasil **tebal** dan `kode`." })
+    const out = t.view(60, 4, 0).join("\n")
+    expect(out).toContain("Ringkasan")
+    expect(out).toContain("tebal")
+    expect(out).toContain("kode")
+    expect(out).not.toContain("**")
+    expect(out).not.toContain("##")
+    expect(out).not.toContain("`kode`")
+  })
+  test("code fence model menyembunyikan delimiter dan menjaga isi literal", () => {
+    const { bus, t } = setup()
+    bus.emit("provider:text", { text: "```\n**bukan bold**\n```" })
+    const out = t.view(60, 4, 0).join("\n")
+    expect(out).toContain("**bukan bold**")
+    expect(out).not.toContain("```")
+  })
+  test("gema user tidak me-render markdown (literal)", () => {
+    const { t } = setup()
+    t.pushUser("pakai **bintang** ya")
+    expect(t.view(60, 2, 0).join("\n")).toContain("**bintang**")
   })
   test("gema user + error + info + clear", () => {
     const { t } = setup()

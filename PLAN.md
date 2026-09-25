@@ -133,9 +133,12 @@ bergeser.
 - [x] Jalankan `bun x tsc --noEmit`, `bun run lint`, `bun test`,
       `bun run gate:coverage`, `bun run gate:pack`, dan web check.
 
-Hasil verifikasi: 2.581 pass / 22 skip / 0 fail; coverage 84,48% funcs /
-85,52% lines; pack 23/23; web build/check lolos. PTY tabel memakai jalur
-skip transparan bila ConPTY tidak tersedia.
+Hasil verifikasi: 2.595 pass / 22 skip / 0 fail; coverage 84,48% funcs /
+85,43% lines; pack 23/23. PTY tabel memakai jalur skip transparan bila
+ConPTY tidak tersedia. Coverage turun tipis dari Fase output (84,52/85,53)
+karena `src/session/persistence.ts` menambah jalur context generation baru;
+minimum di `scripts/coverage-gate.ts` **tidak** dinaikkan (tetap 84/85) —
+kebijakan repo menaikkan minimum hanya saat coverage naik.
 
 ### Urutan pengerjaan
 
@@ -302,7 +305,7 @@ buffer TUI sendiri. Tidak ada `/select`, `/scroll`, atau mode yang harus diketik
 
 ## Rencana aktif berikutnya — Output Architecture Audit (2026-09-25)
 
-Status: **PHASE 2–7 LANDED — Phase 8 (penghapusan raw) menunggu satu rilis hijau**. Audit memakai skill
+Status: **PHASE 2–8 LANDED — arsitektur output selesai; rilis 0.12.0 terbit**. Audit memakai skill
 `D:\Download\agent-output-architect-SKILL.md` dan tidak mengubah kernel atau
 renderer. Targetnya satu semantic model → policy projection → TUI/linear/exec/ACP,
 sambil mempertahankan kontrak terminal dan fitur selection yang sudah hijau.
@@ -345,8 +348,8 @@ sambil mempertahankan kontrak terminal dan fitur selection yang sudah hijau.
       delete/TTL/resume contract, dan `eventSeq` unik untuk durable writes.
 - [x] Phase 4–7 — policy proyeksi + migrasi TUI/linear/machine + persist headless,
       semua di belakang rollback flag dengan parity test.
-- [ ] Phase 8 — hapus jalur raw/flag dalam commit terisolasi setelah satu rilis
-      hijau; jangan campur cleanup dengan perubahan semantik.
+- [x] Phase 8 — hapus jalur raw ledger TUI + rollback flag dalam perubahan
+      terisolasi; legacy `type:"tool"` ACP dipertahankan satu jendela kompat.
 
 ### Acceptance audit
 

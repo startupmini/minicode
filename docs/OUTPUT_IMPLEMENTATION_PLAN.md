@@ -1,6 +1,6 @@
 # Output Architecture Implementation Plan
 
-**Status:** Phase 2 parity landed; renderer authority belum dimulai  
+**Status:** Phase 1–8 landed; canonical presentation policy is active on all user-facing surfaces. Legacy ACP `type:"tool"` remains a compatibility window.
 **Tanggal:** 2026-09-25  
 **Related:** `docs/OUTPUT_ARCHITECTURE_AUDIT.md`, `docs/OUTPUT_EVENT_MODEL.md`, `docs/OUTPUT_PROTOCOL_SPEC.md`, `docs/OUTPUT_RENDERING_SPEC.md`, `docs/OUTPUT_UX_RULES.md`
 
@@ -24,10 +24,10 @@ terbukti.
 
 - Mouse wheel/drag app-level selection, `/copy [n]`, Esc-only abort, popup lifecycle,
   sanitasi, width, and terminal ownership are already implemented in the working tree.
-- Current baseline after Phase 2–7: 2581 pass, 22 skip, 0 fail; coverage 84.48% funcs /
-  85.52% lines; pack 23/23; web build/check pass.
-- `PresentationAdapter`/reducer are present, but `cli/setup.ts` still keeps the
-  canonical state in shadow/dark-launch until renderer parity is complete.
+- Current baseline after Phase 2–8: 2587 pass, 22 skip, 0 fail; coverage 84.52% funcs /
+  85.53% lines; pack 23/23; web build/check pass.
+- `PresentationAdapter`/reducer drive all user-facing surfaces through the
+  canonical state; raw ledger TUI and the rollback flag were removed in Phase 8.
 - `rebuildFromDurable()` is production-wired from the durable presentation event
   table, with child-session event persistence and interrupted-state recovery.
 - The pack size guard is 2.25 MiB: six required audit artifacts add about 80 KB;
@@ -46,8 +46,8 @@ terbukti.
   `test.completed` sebagai event tanpa producer; mapper tidak mengarangnya.
 - `unsupportedProjection` diagnostics dan fixture exhaustive menjaga bridge
   agar event baru tidak diam-diam dropped.
-- Full suite: 2581 pass / 22 skip / 0 fail. Renderer TUI/linear/machine memakai
-  keputusan policy via injeksi; jalur raw legacy hanya untuk rollback flag.
+- Historical Phase 1 snapshot: 2581 pass / 22 skip / 0 fail. At that point the
+  renderer still used the raw bus and Phase 4 had not started.
 
 ## 3.1 Hasil Phase 2 core
 
@@ -61,8 +61,10 @@ terbukti.
 - `presentation_events` SQLite table menyimpan durable event idempotent, scrubbed,
   dan TERMINAL/branch/TTL/delete-aware; setup memuat dan rebuild-nya sebelum
   adapter-seq baru dibuat.
-- `MINICODE_PRESENTATION_V2=0` mematikan shadow projection/replay tanpa mematikan
-  raw bus; child session juga menulis semantic event log sendiri.
+- Historical migration detail: before Phase 8,
+  `MINICODE_PRESENTATION_V2=0` disabled shadow projection/replay while the raw
+  content stream remained available. Child sessions also wrote their own
+  semantic event log.
 - Regression tests: semantic collections, summary late evidence, cross-session
   identity, bounded eviction, persistence idempotency/scrubbing, checkpoint bridge,
   adapter provider, branch/child/delete/TTL lifecycle, dan resume rebuild.
@@ -72,6 +74,25 @@ terbukti.
   `finding.detected` terbit dari `result.findings` eksplisit pada
   `submit_result`; `test.completed` hanya terbit dari verify output yang memiliki
   hitungan pass/fail terstruktur.
+
+## 3.2 Hasil Phase 3–8
+
+- Phase 3: modul policy murni `src/presentation/projection.ts` (seleksi node per
+  mode, deskripsi activity/turn, running pin + ambang elapsed, envelope
+  `minicode.output.v1`, kategori error machine, digest divergensi) + 14 test
+  policy tabel-driven.
+- Phase 4/5: TUI dan linear memakai keputusan policy via injeksi `cli/`
+  (`PresentationPolicy`); parity test policy-vs-legacy identik; label turn-status
+  via `activityFor`; test inventaris writer OAP-008.
+- Phase 6: `exec --json` streaming envelope kanonik + summary berversi + setup
+  failure selalu ber-envelope; ACP lifecycle penuh + cancel terminal + persist
+  headless; sanitasi ANSI + scrub di tepi mesin.
+- Phase 7: `persistCurrent` di jalur headless exec/ACP; resume notice tetap
+  stderr mesin-aman; ambang coverage naik ke 84/85.
+- Phase 8: rollback flag dihapus, raw ledger TUI + `targetForFallback` dihapus
+  (3 test dimigrasi ke event presentasi); legacy `type:"tool"` ACP dipertahankan
+  satu jendela kompat; queue durable dibatasi, result generic diringkas, dan
+  buffer/render TUI dibatasi; full gate hijau.
 
 ## 4. Fase migrasi
 
@@ -119,12 +140,12 @@ exhaustive mapper may expose existing anomalies.
 has a consumer/projection test; duplicate/late/out-of-order fixtures; no throw from
 mapper.
 
-**Migration/rollback:** `MINICODE_PRESENTATION_V2=0` returns to raw sink; raw bus
-remains subscribed for trace/debug.
+**Migration/rollback:** flag and raw TUI ledger were removed in Phase 8; the
+runtime EventBus remains only for streaming content and debug/trace transport.
 
 ### Phase 2 — Complete presentation state and truthful summaries
 
-**Status:** parity landed; renderer migration remains open.
+**Status:** landed; state/reducer is replayable and renderer authority is wired.
 
 **Goal:** make `PresentationState` a replayable semantic model, not a partial index.
 
@@ -168,12 +189,12 @@ semantic node selection.
 **Tests/gates:** table-driven node policy tests; normal/verbose/debug/machine
 snapshots; semantic parity assertions; no renderer status parsing.
 
-**Migration/rollback:** projection can run beside legacy path and report divergence;
-disable per surface if any protected output changes.
+**Migration/rollback:** projection ran beside the legacy path during rollout and
+reported divergence; Phase 8 removed the rollout seam after parity.
 
-### Phase 4 — TUI projection behind rollout flag
+### Phase 4 — TUI projection (completed rollout)
 
-**Status:** landed (policy di-inject via `cli/tui.ts`; raw ledger hanya untuk rollback `=0`; parity test `policy bag vs inline legacy`).
+**Status:** landed (policy di-inject via `cli/tui.ts`; raw TUI ledger and its rollback path were removed in Phase 8; parity tests remain as regression protection).
 
 **Goal:** move TUI transcript/activity/selection to canonical state without breaking
 current screen ownership.
@@ -195,8 +216,8 @@ can be evicted; resize may re-render different text source.
 **Tests/gates:** existing TUI tests plus canonical-vs-legacy fixture; stream+resize+
 abort+popup+selection fuzz; PTY on POSIX; transparent ConPTY skip.
 
-**Migration/rollback:** `MINICODE_PRESENTATION_V2=0`; if divergence exceeds threshold,
-surface stays legacy without runtime changes.
+**Migration/rollback:** the rollout flag was removed in Phase 8 after the parity
+  gate and release 0.12.0.
 
 ### Phase 5 — Linear/one-shot projection and writer policy
 
@@ -219,8 +240,9 @@ answer `/copy` mismatch, direct console output from builtin commands.
 **Tests/gates:** normal/verbose text fixtures, `NO_COLOR`, non-TTY, split stream,
 abort/EOF, copy equivalence, table parity, direct-writer guard.
 
-**Migration/rollback:** projection behind same flag; retain legacy raw handlers as
-reference implementation until one release parity.
+**Migration/rollback:** the rollout flag was removed after the parity gate in
+Phase 8; raw handlers remain only where they carry streaming content, not
+semantic status decisions.
 
 ### Phase 6 — Exec and ACP machine projection
 
@@ -234,8 +256,9 @@ reference implementation until one release parity.
 **Dependencies:** Phase 1 event envelope; Phase 2 snapshots; protocol spec.
 
 **Behavior changes:** versioned `minicode.output.v1`; canonical lifecycle in exec/ACP;
-human raw event stream becomes debug-only; setup failure always emits terminal machine
-summary; ACP cancel/shutdown guarantees explicit terminal response.
+human semantic raw event output is debug-only while text deltas remain a transport;
+setup failure always emits terminal machine summary; ACP cancel/shutdown guarantees
+explicit terminal response.
 
 **Risks:** breaking existing integrations; duplicate text/lifecycle records; scrub
 changes alter payload shape.
@@ -273,7 +296,7 @@ route, not persistence.
 
 ### Phase 8 — Shadow removal and cleanup
 
-**Status:** deferred — penghapusan jalur raw/flag butuh satu rilis rollout hijau lebih dulu (aturan fase ini sendiri); inventaris writer + parity harness sudah hijau sebagai prasyarat.
+**Status:** landed — flag `MINICODE_PRESENTATION_V2` dihapus, raw ledger TUI dihapus (migrasi 3 test ke event presentasi), parity policy-vs-legacy tetap hijau; legacy `type:"tool"` ACP dipertahankan satu jendela kompat.
 
 **Goal:** after rollout, eliminate duplicate truth and dead paths.
 
@@ -338,11 +361,12 @@ noise, copyability, and mode consistency.
 
 ## 7. Rollout and rollback
 
-- Start with a feature flag defaulting to legacy until phase-specific parity is green.
-- Enable one surface at a time; do not combine TUI, machine, and cleanup changes.
-- Log only counters for dropped/unsupported/anomalous projection in debug mode.
-- Roll back by flag before reverting code; if a protocol field is already consumed,
-  preserve compatibility aliases for one window.
+- The rollout is complete: policy is injected at the composition root, raw TUI
+  semantic ledger and the feature flag are removed, and streaming content remains
+  a transport concern.
+- Before any future semantic cleanup, run the parity and writer-inventory gates;
+  do not reintroduce a second status authority.
+- If a protocol field is consumed, preserve compatibility aliases for one window.
 - Update `docs/TERMINAL_CONTRACT.md` only when observable terminal behavior changes;
   update its test map in the same change.
 - Update `docs/ARCHITECTURE.html` when structure/dependencies change.
@@ -365,6 +389,5 @@ The architecture is complete only when:
 
 ## 9. Current next action
 
-Phase 2–7 landed behind the same rollback boundary. Next is Phase 8 post-release:
-hapus jalur raw/flag dalam commit terisolasi setelah satu rilis hijau. Jangan
-campur cleanup dengan perubahan semantik.
+Phase 1–8 landed. The current follow-up is limited to documentation drift and
+post-change validation; keep future cleanup isolated from semantic changes.

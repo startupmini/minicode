@@ -13,6 +13,7 @@
 // sink lama — perilaku user NOL berubah pada Fase 1.
 
 import { classifyToolResult, denyReasonOf, summarizeArgs } from "../telemetry/trace.ts"
+import { normalizeTodos } from "../tools/todo.ts"
 import type {
   ApprovalEventHook,
   ApprovalHookEvent,
@@ -323,27 +324,37 @@ export function createPresentationAdapter(
     reasoningText = ""
     reasoningTruncated = false
   }
-  const planFromTodoArgs = (
+  // Pemetaan task domain → plan presentational. Sengaja memakai
+  // `normalizeTodos` (pemilik semantik domain) alih-alih memetakan status
+  // sendiri: dua normalizer independen pasti bisa berbeda pendapat (mis. 2 item
+  // `in_progress` → file menyimpan satu `in_progress`, adaptor lama poked dua
+  // `active`), dan yang tampil ke manusia/mesin adalah adaptor.
+  //
+  // `normalizeTodos` juga menerapkan kebijakan completion, jadi plan mencerminkan
+  // keputusan blocked yang sama dengan file.
+  const planFromTodos = (
     args: unknown,
   ): { steps: PlanStep[]; status: "open" | "completed" | "cancelled" } | undefined => {
     if (typeof args !== "object" || args === null) return undefined
     const raw = (args as { todos?: unknown }).todos
     if (!Array.isArray(raw) || raw.length === 0) return undefined
-    const steps: PlanStep[] = []
-    for (const [index, item] of raw.slice(0, 100).entries()) {
-      if (typeof item !== "object" || item === null) continue
-      const value = item as { content?: unknown; status?: unknown }
-      const title = typeof value.content === "string" ? value.content.trim().slice(0, 200) : ""
-      if (!title) continue
-      const status =
-        value.status === "completed" || value.status === "cancelled"
-          ? value.status
-          : value.status === "in_progress"
-            ? "active"
-            : "pending"
-      steps.push({ stepId: String(index + 1), title, status })
+    let list: ReturnType<typeof normalizeTodos>
+    try {
+      list = normalizeTodos(raw)
+    } catch {
+      return undefined
     }
-    if (steps.length === 0) return undefined
+    if (list.length === 0) return undefined
+    const steps: PlanStep[] = list.map((t, i) => ({
+      stepId: String(i + 1),
+      title: t.content,
+      status:
+        t.status === "completed" || t.status === "cancelled" || t.status === "blocked"
+          ? t.status
+          : t.status === "in_progress"
+            ? "active"
+            : "pending",
+    }))
     const status = steps.every((step) => step.status === "completed")
       ? "completed"
       : steps.every((step) => step.status === "cancelled")
@@ -593,17 +604,6 @@ export function createPresentationAdapter(
         ...(parentLink ? { parentLink } : {}),
         ...(childId ? { childSessionId: childId } : {}),
       })
-      const plan = call.name === "todo_write" ? planFromTodoArgs(call.args) : undefined
-      if (plan) {
-        const planSessionId = childId ?? sessionId
-        publish({
-          ...(childId ? childBase(currentTurn, childId, parentLink) : base(currentTurn)),
-          type: "plan.updated",
-          planId: `plan:${planSessionId}:${currentTurn}`,
-          status: plan.status,
-          steps: plan.steps,
-        })
-      }
       if (childId) {
         publish({
           ...childBase(currentTurn, childId, parentLink),
@@ -677,6 +677,29 @@ export function createPresentationAdapter(
       }
       if (!result.isError) {
         if (count) counts.ok++
+        if (call.name === "todo_write") {
+          // Plan event terbit DI SINI — setelah tool sukses — bukan di
+          // `execution:started`. Sebelumnya published dari argumen SEBELUM
+          // tool jalan, sehingga `plan.updated` berstatus "completed" bisa
+          // tertahan durable meski `saveTodos` gagal (disk penuh/EACCES):
+          // presentasi menyatakan selesai padahal tak ada file-nya.
+          //
+          // Sumber kebenaran = `normalizeTodos` yang sama dengan file todo,
+          // jadi status/cap tidak bisa berbeda dua arah (sebelumnya adaptor
+          // memetakan status sendiri: 2 item `in_progress` jadi dua `active`
+          // padahal file menyimpan satu).
+          const plan = planFromTodos(call.args)
+          if (plan) {
+            const planSessionId = childId ?? sessionId
+            publish({
+              ...(childId ? childBase(currentTurn, childId, parentLink) : base(currentTurn)),
+              type: "plan.updated",
+              planId: `plan:${planSessionId}:${currentTurn}`,
+              status: plan.status,
+              steps: plan.steps,
+            })
+          }
+        }
         if (call.name === "submit_result") {
           const args = call.args as { summary?: unknown }
           publish(

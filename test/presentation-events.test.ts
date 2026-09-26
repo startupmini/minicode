@@ -459,24 +459,28 @@ test("submit_result dengan findings eksplisit memancarkan finding.detected", () 
   a.dispose()
 })
 
-test("todo_write memancarkan plan.updated dari args semantic", () => {
+test("todo_write memancarkan plan.updated SETELAH tool sukses", () => {
+  // Kontrak berubah: plan event dulu terbit di `execution:started` dari argumen
+  // mentah, sehingga `status:"completed"` bisa tertahan durable meski
+  // `saveTodos` gagal. Sekarang terbit di `execution:completed`, dan statusnya
+  // diturunkan dari normalizer yang sama dengan file todo.
   const bus = fakeBus()
   const a = createPresentationAdapter(bus, { sessionId: "s1" })
   const events = collect(a)
-  bus.emit("execution:started", {
-    execution: {
-      call: {
-        id: "todo1",
-        name: "todo_write",
-        args: {
-          todos: [
-            { content: "Inspect", status: "in_progress" },
-            { content: "Ship", status: "pending" },
-          ],
-        },
-      },
+  const call = {
+    id: "todo1",
+    name: "todo_write",
+    args: {
+      todos: [
+        { content: "Inspect", status: "in_progress" },
+        { content: "Ship", status: "pending" },
+      ],
     },
-  })
+  }
+  bus.emit("execution:started", { execution: { call } })
+  // Belum selesai → belum ada klaim apa pun ke durable log.
+  expect(events.find((event) => event.type === "plan.updated")).toBeUndefined()
+  bus.emit("execution:completed", { execution: { call, result: { content: "ok" } } })
   expect(events.find((event) => event.type === "plan.updated")).toMatchObject({
     status: "open",
     steps: [

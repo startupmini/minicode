@@ -253,7 +253,7 @@ export interface ContextCompactedEvent extends Base {
 }
 
 export type SemanticSeverity = "info" | "warning" | "error" | "critical"
-export type PlanStepStatus = "pending" | "active" | "completed" | "cancelled"
+export type PlanStepStatus = "pending" | "active" | "completed" | "cancelled" | "blocked"
 export interface PlanStep {
   stepId: string
   title?: string

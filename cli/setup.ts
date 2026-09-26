@@ -82,7 +82,7 @@ import {
 import { setAskApprovalHook, setAskTextFn } from "../src/tools/ask_user.ts"
 import { killAllBackgroundJobs } from "../src/tools/bash.ts"
 import { setSubAgentParentRouting } from "../src/tools/task.ts"
-import { todoSession } from "../src/tools/todo.ts"
+import { setCompletionEvidence, todoSession } from "../src/tools/todo.ts"
 import { promptAsk, promptAskText } from "../src/ui/approval/prompt.ts"
 import { attachSimpleLogger } from "../src/ui/assistant/simple.ts"
 import type {
@@ -909,8 +909,13 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     setupToolLayer(cfg, toolScope ?? "full", permissionMode),
   )
 
-  // todo_write/todo_read menyimpan state per sesi di .minicode/todos/<id>.json
-  todoSession.id = sessionId
+  // todo_write/todo_read menyimpan state per sesi di .minicode/todos/<id>.json.
+  // WAJIB pakai presentationSessionId (resumeId ?? sessionId), BUKAN sessionId:
+  // `sessionId` di-cek cli/index.ts adalah acak saat --resume tanpa --session,
+  // jadi mengikat ke sana membuat task state hilang tepat di batas resume —
+  // todo_read mengembalikan "(no todos yet)" padahal .minicode/todos/<resumeId>.json
+  // ada. Id kanonik sudah didefinisikan di atas; jangan sidestep.
+  todoSession.id = presentationSessionId
   todoSession.cwd = cwd
   // View pertanyaan ask_user — composition root meng-inject, tool menolak
   // jalan tanpanya (fail-closed, sama seperti `ask` pada permission).
@@ -1157,8 +1162,27 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     ? (process.env.MINICODE_VERIFY_CMD ?? cfg.verifyCommand ?? detectVerifyCommand(cwd) ?? "")
     : ""
   const verifyActive = verifyCommand.length > 0
+  // Sumber bukti completion untuk domain task (INV-003). Menyimpan hasil
+  // verify TERAKHIR: pada saat `todo_write` berjalan, verify untuk turn ini
+  // BELUM pernah jalan (verify terjadi setelah turn selesai), jadi bukti yang
+  // relevan adalah hasil turn sebelumnya. Maknanya persis yang dibutuhkan:
+  // "verify terakhir merah" -> agent tidak boleh menandai task selesai pada
+  // turn berikutnya sebelum memperbaiki yang merah.
+  //
+  // Tanpa `--verify` (opt-in) tidak ada bukti sama sekali → `unverified`:
+  // completion tetap diizinkan, tapi tidak diklaim terverifikasi.
+  let lastVerify: { ok: boolean; command: string; output: string } | null = null
+  setCompletionEvidence(() => {
+    if (!verifyActive || !lastVerify) return { verdict: "unverified" }
+    if (lastVerify.ok) return { verdict: "passed", detail: lastVerify.command }
+    return {
+      verdict: "failed",
+      detail: `last verification failed (${lastVerify.command}): ${lastVerify.output.slice(0, 200)}`,
+    }
+  })
   const runVerifyWithPresentation = async (signal?: AbortSignal) => {
     const result = await runVerify(verifyCommand, cwd ?? process.cwd(), undefined, signal)
+    lastVerify = { ok: result.ok, command: verifyCommand, output: result.output }
     const evidence = parseVerifyTestEvidence(verifyCommand, result.output)
     if (evidence) {
       presentation?.noteTestCompleted({

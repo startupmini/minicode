@@ -21,7 +21,14 @@
 // terbaca (dan tidak ikut ternoda).
 
 import { afterAll, describe, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { flagNameOf, valueFlags } from "../cli/args.ts"
@@ -504,6 +511,91 @@ describe("cli: --resume", () => {
     } finally {
       provider.close()
     }
+  })
+
+  test("state task bertahan lintas --resume (todos terikat ke id sesi kanonik)", async () => {
+    // Regresi: `sessionId` di-cek cli/index.ts acak saat `--resume` tanpa
+    // `--session`, sementara todo diikat ke sana. Akibatnya `todo_read` di
+    // sesi resumed mengembalikan "(no todos yet)" padahal file-nya ada —
+    // task state hilang tepat di batas yang seharusnya dilewatinya.
+    const ws = makeWorkspace()
+
+    // Run 1: model menulis todo. Provider HARUS diganti untuk run 2 supaya
+    // skripnya mulai dari index 0 (fake provider mengulang balasan terakhir).
+    const p1 = startFakeProvider([
+      {
+        kind: "tool",
+        name: "todo_write",
+        args: { todos: [{ content: "TUGAS ASLI", status: "in_progress" }] },
+      },
+      { kind: "text", text: "ok" },
+    ])
+    try {
+      writeProviderConfig(ws, p1.baseUrl)
+      const first = await run(ws, [
+        "--session",
+        "s-task",
+        "--cwd",
+        ws.dir,
+        "--model",
+        "gpt-4o-mini",
+        "--allow-local-config",
+        "mulai",
+      ])
+      expect(first.code).toBe(0)
+    } finally {
+      p1.close()
+    }
+
+    // Run 2: resume, model membaca todo.
+    const p2 = startFakeProvider([
+      // id HARUS unik: fake provider default-nya "call_1" untuk semua, jadi
+      // tool_call_id turn ini akan sama dengan tool call yang di-replay dari
+      // history dan korelasi jadi ambigu.
+      { kind: "tool", id: "read_now", name: "todo_read", args: {} },
+      { kind: "text", text: "ok" },
+    ])
+    try {
+      writeProviderConfig(ws, p2.baseUrl)
+      const second = await run(ws, [
+        "--resume",
+        "s-task",
+        "--cwd",
+        ws.dir,
+        "--model",
+        "gpt-4o-mini",
+        "--allow-local-config",
+        "lanjut",
+      ])
+      expect(second.code).toBe(0)
+      // Harus dikorelasikan ke tool_call todo_read milik turn INI.
+      // Mengambil `tool` pertama akan salah baca hasil yang di-REPLAY dari
+      // history sesi (yang kebetulan berisi todo lama) — persis jebakan yang
+      // membuat audit awal menyimpulkan bug ini tidak ada.
+      const msgs = p2.requests()[1]?.messages as {
+        role: string
+        content: unknown
+        tool_call_id?: string
+      }[]
+      const callId = msgs
+        .filter((m) => m.role === "assistant")
+        .flatMap(
+          (m) =>
+            (m as unknown as { tool_calls?: { id: string; function: { name: string } }[] })
+              .tool_calls ?? [],
+        )
+        .find((c) => c.function.name === "todo_read")?.id
+      expect(callId).toBeDefined()
+      const toolMsg = msgs.find((m) => m.role === "tool" && m.tool_call_id === callId)
+      expect(String(toolMsg?.content ?? "")).toContain("TUGAS ASLI")
+    } finally {
+      p2.close()
+    }
+
+    // Dan tidak boleh muncul file todo liar dari id acak.
+    const todoDir = join(ws.dir, ".minicode", "todos")
+    const files = existsSync(todoDir) ? readdirSync(todoDir) : []
+    expect(files).toEqual(["s-task.json"])
   })
 
   test("id sesi tak dikenal -> peringatan, mulai baru, tetap exit 0", async () => {

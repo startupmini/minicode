@@ -8,20 +8,62 @@ import { atomicWriteText } from "../lib/atomic-write.ts"
 // Tanpa ini agent tidak punya tempat menyimpan rencana antar step, sehingga
 // pada task panjang ia lupa langkah yang belum dikerjakan.
 
-export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled"
+export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled" | "blocked"
 
 export interface TodoItem {
   content: string
   status: TodoStatus
+  /** Alasan `blocked` — WAJIB ada kalau status=blocked (INV: blocker harus
+   *  bisa dijelaskan). Tidak ada di schema tool: diisi runtime dari bukti. */
+  blockedReason?: string
 }
 
-const STATUSES: TodoStatus[] = ["pending", "in_progress", "completed", "cancelled"]
+const STATUSES: TodoStatus[] = ["pending", "in_progress", "completed", "cancelled", "blocked"]
 
 const GLYPH: Record<TodoStatus, string> = {
   pending: "[ ]",
   in_progress: "[~]",
   completed: "[x]",
   cancelled: "[-]",
+  blocked: "[!]",
+}
+
+// ── Completion evidence (INV-003 / INV-009) ──────────────────────────────────
+// "Agent bilang selesai" BUKAN bukti. Kebijakan ini bisa disuntik: composition
+// root menyuntikkan sumber bukti (di CLI: hasil verify terakhir); tanpa
+// injeksi, default `unverified` — completion tetap diizinkan, tapi statusnya
+// tercatat sebagai belum diverifikasi, bukan diam-diam dianggap sah.
+//
+// Fail-closed hanya di arah yang berbahaya: `failed` MENOLAK `completed`.
+// Menolak tanpa bukti (default) akan mematikan pemakaian normal yang tidak
+// menjalankan verify, jadi itu tidak dilakukan.
+export type CompletionVerdict = "unverified" | "passed" | "failed"
+
+export interface CompletionEvidence {
+  verdict: CompletionVerdict
+  detail?: string
+}
+
+const UNVERIFIED: CompletionEvidence = { verdict: "unverified" }
+let completionEvidence: () => CompletionEvidence = () => UNVERIFIED
+
+/** Dipanggil composition root (cli/setup.ts). Tanpa ini: `unverified`. */
+export function setCompletionEvidence(fn: () => CompletionEvidence): void {
+  completionEvidence = fn
+}
+
+/** Kembalikan ke default (seam uji / isolasi antar test file). */
+export function clearCompletionEvidence(): void {
+  completionEvidence = () => UNVERIFIED
+}
+
+export function currentCompletionEvidence(): CompletionEvidence {
+  try {
+    return completionEvidence() ?? UNVERIFIED
+  } catch {
+    // Sumber bukti yang melempar TIDAK boleh menuntaskan task diam-diam.
+    return { verdict: "failed", detail: "completion evidence source failed" }
+  }
 }
 
 function sanitizeTodoId(id: string): string {
@@ -47,9 +89,15 @@ export async function deleteTodoFiles(sessionId: string, cwd: string): Promise<v
   await rm(planPath(sessionId, cwd), { force: true }).catch(() => {})
 }
 
-/** Sanitasi + batasi daftar. Diekspor untuk test. */
-export function normalizeTodos(input: unknown): TodoItem[] {
+/** Sanitasi + batasi daftar + terapkan kebijakan completion. Diekspor untuk test.
+ *
+ * `evidence` default = `currentCompletionEvidence()` (sumber yang disuntik
+ * composition root). Pemanggil yang sudah punya bukti bisa mengoper nilainya
+ * eksplisit supaya deterministik di test.
+ */
+export function normalizeTodos(input: unknown, evidence?: CompletionEvidence): TodoItem[] {
   if (!Array.isArray(input)) throw new Error("todos must be an array")
+  const ev = evidence ?? currentCompletionEvidence()
   const out: TodoItem[] = []
   for (const raw of input.slice(0, LIMITS.TODO_MAX_ITEMS)) {
     if (!raw || typeof raw !== "object") continue
@@ -62,6 +110,17 @@ export function normalizeTodos(input: unknown): TodoItem[] {
     out.push({ content, status })
   }
   if (out.length === 0) throw new Error("todos is empty — provide at least one item with content")
+  // Bukti merah MENOLAK `completed`: task turun ke `blocked` beserta alasannya.
+  // Ini yang menutup INV-003 — sebelumnya model bisa menandai "selesai" sambil
+  // verify merah dan tak ada satu pun jalur kode yang mencegahnya.
+  if (ev.verdict === "failed") {
+    const reason = ev.detail?.trim().slice(0, 300) || "verification failed"
+    for (const t of out) {
+      if (t.status !== "completed") continue
+      t.status = "blocked"
+      t.blockedReason = reason
+    }
+  }
   // Satu in_progress saja: kalau model menandai beberapa, sisanya turun ke
   // pending supaya daftar tetap punya satu fokus yang jelas.
   let seenActive = false
@@ -75,9 +134,17 @@ export function normalizeTodos(input: unknown): TodoItem[] {
 
 export function renderTodos(todos: TodoItem[]): string {
   const done = todos.filter((t) => t.status === "completed").length
+  const blocked = todos.filter((t) => t.status === "blocked").length
   const active = todos.find((t) => t.status === "in_progress")
-  const head = `todos ${done}/${todos.length}${active ? ` · sekarang: ${active.content}` : ""}`
-  const body = todos.map((t) => `  ${GLYPH[t.status]} ${t.content}`).join("\n")
+  const head =
+    `todos ${done}/${todos.length}` +
+    (blocked > 0 ? ` · ${blocked} blocked` : "") +
+    (active ? ` · sekarang: ${active.content}` : "")
+  const body = todos
+    .map(
+      (t) => `  ${GLYPH[t.status]} ${t.content}${t.blockedReason ? ` — ${t.blockedReason}` : ""}`,
+    )
+    .join("\n")
   return `${head}\n${body}`
 }
 
@@ -148,7 +215,7 @@ export const todoSession = { id: "default", cwd: undefined as string | undefined
 export const todoWriteTool: Tool = {
   name: "todo_write",
   description:
-    "Write/replace the todo list for this task. Send the ENTIRE list every time (not a delta). Use for tasks with 3+ steps: keep exactly one item in_progress at a time, mark it completed as soon as it is done.",
+    "Write/replace the todo list for this task. Send the ENTIRE list every time (not a delta). Use for tasks with 3+ steps: keep exactly one item in_progress at a time, mark it completed as soon as it is done. Marking an item completed while verification is failing is REFUSED — it comes back as blocked with the reason, so fix the failing check first.",
   parameters: {
     type: "object",
     properties: {
@@ -161,7 +228,7 @@ export const todoWriteTool: Tool = {
             content: { type: "string", description: "short, actionable task item" },
             status: {
               type: "string",
-              enum: ["pending", "in_progress", "completed", "cancelled"],
+              enum: ["pending", "in_progress", "completed", "cancelled", "blocked"],
             },
           },
           required: ["content", "status"],
@@ -174,7 +241,8 @@ export const todoWriteTool: Tool = {
   },
   async execute({ todos }, ctx) {
     ctx.signal.throwIfAborted()
-    const list = normalizeTodos(todos)
+    const evidence = currentCompletionEvidence()
+    const list = normalizeTodos(todos, evidence)
     // cwd sesi dari ToolContext dulu (skenario --cwd / sub-agen), lalu global
     // yang di-set composition root (cli/setup.ts, MCP serve), terakhir cwd
     // proses. Urutan lama (global-dulu) buta terhadap ctx.
@@ -183,7 +251,15 @@ export const todoWriteTool: Tool = {
     // Plan artifact ditulis tiap save — murah (atomik, kecil) dan membuat
     // resume lintas sesi tidak butuh memutar ulang seluruh percakapan.
     await savePlanSnapshot(todoSession.id, list, cwd).catch(() => {})
-    return renderTodos(list)
+    // Penolakan completion harus TERLIHAT oleh model, bukan hanya tersimpan di
+    // file: tanpa baris ini model mengira item-nya completed lalu mencoba
+    // lanjut — persis pola "false completion" yang INV-003 larang.
+    const refused = list.filter((t) => t.status === "blocked" && t.blockedReason)
+    const notice =
+      refused.length > 0
+        ? `refused ${refused.length} completion claim(s): verification is failing, so they are blocked instead of completed. Fix the failing check first.\n`
+        : ""
+    return notice + renderTodos(list)
   },
 }
 

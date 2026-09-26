@@ -51,6 +51,42 @@ pernah ditolak — history 400 pesan terukur 62 ms encode + 53 ms blob write tia
 turn (O(history)), jadi ~115 ms per turn, sementara jalur `messages` bersama
 prefix-compare 10 ms.
 
+## Task system (state kerja durable)
+
+Task state **bukan** chat history dan **bukan** tool trace. Owner semantiknya
+`src/tools/todo.ts`; `.minicode/todos/<id>.json` adalah satu-satunya sumber
+kebenaran, dan `plan.updated` (event durable untuk ACP/`exec --json`) hanyalah
+**proyeksi** dari file itu.
+
+```text
+todo_write (model) ─► normalizeTodos ─► .minicode/todos/<id>.json   (state)
+                            │                    ▲
+                            │                    │ setCompletionEvidence
+                            │            bukti verify terakhir
+                            ▼
+                     plan.updated (proyeksi, terbit SETELAH tool sukses)
+```
+
+Tiga aturan yang menjaga domain ini:
+
+1. **Identitas sesi kanonik.** Todo terikat ke `presentationSessionId`
+   (`resumeId ?? sessionId`), bukan `sessionId`. `sessionId` dari
+   `cli/index.ts` acak saat `--resume` tanpa `--session`; mengikat ke sana
+   membuat task state hilang di batas resume dan meninggalkan file yatim.
+2. **Completion butuh bukti.** `setCompletionEvidence()` menyuntikkan verdict   (`unverified` | `passed` | `failed`) dari composition root. `failed` menolak
+   `completed` → task jadi `blocked` + alasannya, dan hasilnya dilaporkan ke
+   model. Default `unverified` menjaga pemakaian tanpa `--verify` tetap
+   POSSIBLE; yang dilarang adalah completion diam-diam tanpa jejak.
+3. **Satu normalizer, dua store.** `planFromTodos` ( adaptor) memanggil
+   `normalizeTodos` yang sama dengan file, sehingga status/cap/`blocked` tidak
+   bisa berbeda arah — dan plan event terbit di `execution:completed`, bukan
+   dari argumen sebelum tool jalan.
+
+Batas saat ini (NOT IMPLEMENTED, lihat `docs/TASK_ARCHITECTURE_AUDIT.md`):
+tanpa dependency/graph, tanpa scheduler, tanpa surface user (`/tasks`),
+`/undo` hanya revert file (todo tetap `completed`), dan tidak ada TTL/GC untuk
+file todo di luar SQLite.
+
 ## UI/UX terminal (kontrak FROZEN)
 
 Sesi interaktif (`minicode` di TTY mampu) SELALU membuka TUI **fullscreen alternate screen**: transkrip ala shell + status bar satu baris + popup komposit di atas transkrip yang tetap terlihat (redup). Jalur non-interaktif (one-shot prompt, `exec`, pipe/redirect/CI, `TERM=dumb`, layar < 10 baris) tetap shell-first: cetak polos append-only ke scrollback tanpa cursor control.

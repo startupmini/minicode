@@ -133,8 +133,8 @@ bergeser.
 - [x] Jalankan `bun x tsc --noEmit`, `bun run lint`, `bun test`,
       `bun run gate:coverage`, `bun run gate:pack`, dan web check.
 
-Hasil verifikasi: 2.598 pass / 22 skip / 0 fail; coverage 84,47% funcs /
-85,44% lines; pack 23/23. PTY tabel memakai jalur skip transparan bila
+Hasil verifikasi: 2.610 pass / 22 skip / 0 fail; coverage 84,50% funcs /
+85,45% lines; pack 23/23. PTY tabel memakai jalur skip transparan bila
 ConPTY tidak tersedia. Coverage turun tipis dari Fase output (84,52/85,53)
 karena `src/session/persistence.ts` menambah jalur fidelity baru; minimum di
 `scripts/coverage-gate.ts` **tidak** dinaikkan (tetap 84/85) — kebijakan repo

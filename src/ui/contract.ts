@@ -170,7 +170,7 @@ export interface UiPresentationPlan {
   steps: Array<{
     stepId: string
     title?: string
-    status: "pending" | "active" | "completed" | "cancelled"
+    status: "pending" | "active" | "completed" | "cancelled" | "blocked"
   }>
 }
 
@@ -325,7 +325,7 @@ export interface UiPresentationEvent {
   steps?: Array<{
     stepId: string
     title?: string
-    status: "pending" | "active" | "completed" | "cancelled"
+    status: "pending" | "active" | "completed" | "cancelled" | "blocked"
   }>
   evidence?: string[]
 }

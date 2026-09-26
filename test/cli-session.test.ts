@@ -20,6 +20,7 @@
 // supaya config global, DB sesi, dan cache harga milik mesin ini tidak ikut
 // terbaca (dan tidak ikut ternoda).
 
+import { Database } from "bun:sqlite"
 import { afterAll, describe, expect, test } from "bun:test"
 import {
   existsSync,
@@ -709,6 +710,141 @@ describe("cli: --verify (self-heal)", () => {
     }
   })
 
+  // ── STEP 2 / PF-07: jalur produksi verify → setCompletionEvidence →
+  // todo_write → gerbang. Test unit menyuntik bukti secara manual, jadi test
+  // ini yang membuktikan wiring composition-root benar-benar bekerja.
+  // Diuji dengan mutasi: injeksi bukti diganti `unverified` → WAJAH test ini
+  // merah (lihat docs/TASK_FOUNDATION_REPAIR_REPORT.md).
+  test("PF-07: jalur produksi verify merah → todo_write ditolak gerbang", async () => {
+    const ws = makeWorkspace()
+    writeFileSync(join(ws.dir, "merah.ts"), "process.exit(1)\n", "utf8")
+    // id unik supaya korelasi ke turn ini tidak salah baca history replay.
+    const provider = startFakeProvider([
+      {
+        kind: "tool",
+        id: "claim_pf07",
+        name: "todo_write",
+        args: { todos: [{ content: "Klaim selesai", status: "completed" }] },
+      },
+      { kind: "text", text: "ok" },
+    ])
+    try {
+      writeProviderConfig(ws, provider.baseUrl)
+      const r = await run(
+        ws,
+        [
+          "--session",
+          "pf07",
+          "--verify",
+          "--cwd",
+          ws.dir,
+          "--model",
+          "gpt-4o-mini",
+          "--allow-local-config",
+          "mulai",
+        ],
+        { MINICODE_VERIFY_CMD: `${process.execPath} merah.ts` },
+      )
+      expect(r.code).toBe(0)
+      // Baseline merah → gerbang AKTIF sebelum todo_write (bukti ada).
+      expect(r.stderr).toContain("baseline failing before agent run")
+
+      // Observasi harus milik turn INI: korelasikan ke tool_call_id uniknya.
+      const msgs = provider.requests()[1]?.messages as {
+        role: string
+        content: unknown
+        tool_call_id?: string
+      }[]
+      const callId = msgs
+        .filter((m) => m.role === "assistant")
+        .flatMap(
+          (m) =>
+            (m as unknown as { tool_calls?: { id: string; function: { name: string } }[] })
+              .tool_calls ?? [],
+        )
+        .find((c) => c.function.name === "todo_write")?.id
+      expect(callId).toBe("claim_pf07")
+      const toolMsg = msgs.find((m) => m.role === "tool" && m.tool_call_id === callId)
+      const observed = String(toolMsg?.content ?? "")
+      // Bukti gerbang terlihat di hasil tool yang benar-benar diterima model.
+      expect(observed).toContain("refused 1 completion claim")
+      expect(observed).toContain("blocked")
+    } finally {
+      provider.close()
+    }
+  })
+
+  // ── STEP 6 / PF-05: identitas presentasi harus kanonik setelah --resume.
+  test("PF-05: identitas plan event kanonik setelah --resume", async () => {
+    const ws = makeWorkspace()
+    const p1 = startFakeProvider([
+      {
+        kind: "tool",
+        id: "seed_write",
+        name: "todo_write",
+        args: { todos: [{ content: "Tugas seed", status: "in_progress" }] },
+      },
+      { kind: "text", text: "ok" },
+    ])
+    try {
+      writeProviderConfig(ws, p1.baseUrl)
+      const first = await run(ws, [
+        "--session",
+        "idtest",
+        "--cwd",
+        ws.dir,
+        "--model",
+        "gpt-4o-mini",
+        "--allow-local-config",
+        "seed",
+      ])
+      expect(first.code).toBe(0)
+    } finally {
+      p1.close()
+    }
+
+    const p2 = startFakeProvider([
+      {
+        kind: "tool",
+        id: "resume_write",
+        name: "todo_write",
+        args: { todos: [{ content: "Tugas lanjutan", status: "in_progress" }] },
+      },
+      { kind: "text", text: "ok" },
+    ])
+    try {
+      writeProviderConfig(ws, p2.baseUrl)
+      const second = await run(ws, [
+        "--resume",
+        "idtest",
+        "--cwd",
+        ws.dir,
+        "--model",
+        "gpt-4o-mini",
+        "--allow-local-config",
+        "lanjut",
+      ])
+      expect(second.code).toBe(0)
+    } finally {
+      p2.close()
+    }
+
+    // row.session_id, payload.sessionId, dan planId harus dari sumber sama.
+    const db = new Database(join(ws.dir, ".minicode", "sessions.db"), { readonly: true })
+    const rows = db
+      .prepare(
+        "SELECT session_id AS rowSession, json_extract(payload,'$.sessionId') AS payloadSession, json_extract(payload,'$.planId') AS planId FROM presentation_events WHERE session_id = 'idtest' AND type = 'plan.updated'",
+      )
+      .all() as { rowSession: string; payloadSession: string; planId: string }[]
+    db.close()
+    expect(rows.length).toBeGreaterThanOrEqual(2)
+    for (const r of rows) {
+      expect(r.payloadSession).toBe("idtest")
+      expect(r.rowSession).toBe(r.payloadSession)
+      expect(r.planId.startsWith("plan:idtest:")).toBe(true)
+    }
+  })
+
   test("verify yang selalu gagal berhenti setelah 3 percobaan tanpa crash", async () => {
     const ws = makeWorkspace()
     writeFileSync(join(ws.dir, "selalu-gagal.ts"), "process.exit(1)\n", "utf8")
@@ -724,6 +860,70 @@ describe("cli: --verify (self-heal)", () => {
       )
       expect(r.code).toBe(0)
       expect(r.stderr).toContain("still failing after 3 attempts")
+    } finally {
+      provider.close()
+    }
+  })
+
+  // ── STEP 1 / PF-01: gerbang completion hanya membaca verify SEBELUM turn.
+  // Baseline-first menutupi "baseline merah", tapi "baseline hijau lalu verify
+  // turn ini berubah merah" pernah lolos: klaim `completed` tersimpan, verify
+  // 3x merah, dan file tetap `completed` — persis invarian yang diklaim tertutup.
+  test("PF-01: baseline hijau lalu verify turn merah — completed tak boleh bertahan", async () => {
+    const ws = makeWorkspace()
+    // Verify: panggilan PERTAMA hijau (baseline), berikutnya merah.
+    writeFileSync(
+      join(ws.dir, "hijau-lalu-merah.ts"),
+      [
+        "import { existsSync, writeFileSync } from 'node:fs'",
+        "if (existsSync('sudah-dipakai.flag')) process.exit(1)",
+        "writeFileSync('sudah-dipakai.flag', '1')",
+        "process.exit(0)",
+        "",
+      ].join("\n"),
+      "utf8",
+    )
+    // id tool_call UNIK: kalau tidak, korelasi ke request turn ini bisa salah
+    // baca pesan tool yang di-replay dari history (jebakan yang sudah pernah
+    // membuat test ini hampa).
+    const provider = startFakeProvider([
+      {
+        kind: "tool",
+        id: "claim_pf01",
+        name: "todo_write",
+        args: { todos: [{ content: "Refactor modul", status: "completed" }] },
+      },
+      { kind: "text", text: "selesai" },
+    ])
+    try {
+      writeProviderConfig(ws, provider.baseUrl)
+      const r = await run(
+        ws,
+        [
+          "--session",
+          "pf01",
+          "--verify",
+          "--cwd",
+          ws.dir,
+          "--model",
+          "gpt-4o-mini",
+          "--allow-local-config",
+          "mulai",
+        ],
+        { MINICODE_VERIFY_CMD: `${process.execPath} hijau-lalu-merah.ts` },
+      )
+      expect(r.code).toBe(0)
+      // Syarat precondition: verify baseline hijau, lalu turn ini merah.
+      expect(r.stderr).not.toContain("baseline failing before agent run")
+      expect(r.stderr).toContain("still failing after 3 attempts")
+
+      // Durable state WAJIB bukan `completed`.
+      const file = join(ws.dir, ".minicode", "todos", "pf01.json")
+      const persisted = (
+        JSON.parse(readFileSync(file, "utf8")) as { todos: { content: string; status: string }[] }
+      ).todos
+      expect(persisted[0]?.status).not.toBe("completed")
+      expect(persisted[0]?.status).toBe("blocked")
     } finally {
       provider.close()
     }

@@ -1,190 +1,186 @@
-# Task Foundation Gap Map
+# Task Foundation Gap Map (pasca REPAIR)
 
-Peta kesenjangan antara apa yang diklaim `f38e0d1` dengan apa yang terbukti,
-lalu apa yang masih perlu dibereskan sebelum Task Model bisa dimulai.
+Peta kesenjangan setelah repair atas temuan `e4a7b7c`. Rujukan:
+`TASK_FOUNDATION_REPAIR_REPORT.md` (apa yang diperbaiki dan buktinya),
+`TASK_FOUNDATION_TEST_MATRIX.md` (mutasi), `TASK_ARCHITECTURE_AUDIT.md` (gap
+fitur dari audit awal).
 
-Rujukan: `TASK_FOUNDATION_POST_AUDIT.md` (temuan), `TASK_ARCHITECTURE_AUDIT.md`
-(audit sebelumnya, gap fitur), `TASK_FOUNDATION_TEST_MATRIX.md` (mutasi).
+Cakupan repair: hanya D.1-D.2. Task Graph / Scheduler / `/tasks` UI /
+milestone / task model / `task_id` / dependency **tidak** diimplementasikan.
 
 ---
 
 ## A. FOUNDATION STATUS
 
-**PARTIALLY VERIFIED.**
+**VERIFIED untuk keenam gap target.** Tidak ada lagi PF-01, PF-02, PF-03,
+PF-04, PF-05, PF-07 yang FAILED atau UNTESTED.
 
-Empat cacat yang diklaim diperbaiki di `f38e0d1` **memang diperbaiki** dan
-regresinya **terbukti non-vacuous**. Namun satu dari empat itu - yang paling
-penting, INV-003 - **belum menutup invariansnya**, dan audit ini menemukan
-empat cacat baru yang tidak ada di audit sebelumnya.
+Klasifikasi per item:
 
- Yang terbukti benar:
-- INV-001 task state bertahan lintas resume (V-02, V-05)
-- Plan event hanya terbit setelah tool sukses (V-01)
-- Plan == file, satu normalizer (V-03)
-- `atomicWriteText` atomik (V-07)
-- Gerbang menolak completion bila bukti merah SUDAH ada sebelum turn (V-04)
+| Item | Klasifikasi |
+|---|---|
+| PF-01 `completed` tidak bertahan saat verify merah | **VERIFIED** (E2E + 3 probe proses nyata + mutasi) |
+| PF-02 durable = observed | **VERIFIED** (unit + mutasi + probe R4) |
+| PF-03 `blockedReason` durable lintas proses | **VERIFIED** (unit + mutasi + probe R5) |
+| PF-04 `blocked` terkurung semantik | **VERIFIED** (2 pagar + mutasi) |
+| PF-05 identitas presentasi kanonik | **VERIFIED** (E2E + mutasi + probe R6) |
+| PF-07 wiring produksi bertes | **VERIFIED** (E2E + mutasi; sebelumnya VACUOUS) |
+| Rekonsiliasi pasca-verify | **IMPLEMENTED** dan **VERIFIED** oleh PF-01 |
+| `applyCompletionPolicy` tunggal (tulis + rekonsiliasi) | **IMPLEMENTED** |
+| PF-06 artefak `.md` gagal diam-diam | **UNTESTED** (tidak diperbaiki, di luar scope) |
+| PF-08 `lastVerify` tak diinvalidasi | **UNTESTED** (tidak diperbaiki) |
+| PF-09 `completionEvidence` global | **UNTESTED** (tidak diperbaiki) |
+| PF-10 `planId` per turn | **UNTESTED** (tidak diperbaiki) |
+| PF-11 jendela kill tulis-flush | **UNTESTED** (tidak diperbaiki) |
+| ENOSPC asli | **UNCONFIRMED** (hanya ENOTDIR/EACCES diuji) |
+| Konkurensi multi-proses pada satu DB | **UNCONFIRMED** |
 
- Yang terbukti **belum** benar:
-- INV-003 bocor saat baseline hijau lalu verify turn berubah merah (PF-01, P0)
-- Durable state != state yang diamati (PF-02, P1)
-- `blockedReason` hilang saat baca (PF-03, P1)
-- `blocked` bisa dipilih model tanpa alasan (PF-04, P1)
-- Identitas ganda masih ada di sisi presentasi (PF-05, P1)
-- Wiring verify-ke-gate tidak punya test (PF-07, P2)
+Tidak ada skor numerik. Penilaian berbasis bukti langsung.
 
-Tidak ada angka skor. Penilaian di atas berbasis bukti langsung, bukan
-skoring.
+### Batas yang tersisa pada keenam gap target
+
+Enam gap target tertutup, tapi tiga batasan nyata harus dicatat:
+
+1. **Durable event log menyimpan klaim `completed` yang pernah terbit** sebelum
+   rekonsiliasi (probe R2: `[{completed}, {open, blocked}]`). Itu sejarah yang
+   benar - klaim itu memang terjadi - dan proyeksi akhir benar karena
+   `planId` sama sehingga reducer memakai last-write-wins. Yang dijamin adalah
+   **state akhir**, bukan bahwa log tidak pernah memuat klaim.
+2. **`failed` belum ada.** `blocked` berarti "ada yang menahan dengan bukti".
+   Status `failed` (percobaan dijalankan dan tidak berhasil) sengaja tidak
+   ditambahkan karena itu lifecycle state - bagian dari Canonical Task Model
+   yang ditunda.
+3. **Tidak ada status retry.** Tidak ada mekanisme retry pada task, sehingga
+   tidak ada yang perlu dibedakan dari `blocked`.
 
 ---
 
 ## B. BEFORE -> AFTER
 
-Dimensions following the skill section 39 format.
-
-| Dimension | Sebelum (sebelum `f38e0d1`) | Sesudah (`f38e0d1`) | Status sesudah `f38e0d1` | Evidence |
-|---|---|---|---|---|
-| Task persistence | Hilang di batas resume (id acak) | Bertahan | **VERIFIED** | V-02, V-05, PROBE 8 |
-| Completion verification | Tidak ada jalur penolakan | Ada gerbang, tapi bocor bila baseline hijau | **PARTIALLY VERIFIED** | PF-01, PROBE 1-3 |
-| Evidence attached to task | Tidak ada | Ada `blocked` + alasan, tapi alasan tidak bertahan | **PARTIALLY VERIFIED** | PF-03 |
-| Plan/file consistency | Dua normalizer, dua kebenaran | Satu normalizer | **VERIFIED** | V-03, mutasi bypass |
-| Publish integrity | Plan terbit sebelum tool (bisa durable tanpa file) | Terbit setelah tool sukses | **VERIFIED** | V-01, PROBE 5 |
-| Identity | Ganda di sisi todo | Tetap ganda di sisi presentasi | **PARTIALLY VERIFIED** | PF-05, PROBE 9 |
-| Dependency / graph | Tidak ada | Tidak ada | **NOT IMPLEMENTED** | audit sebelumnya |
-| User control | Tidak ada | Tidak ada | **NOT IMPLEMENTED** | audit sebelumnya |
-| Undo reconciliation | File saja | File saja | **NOT IMPLEMENTED** | audit sebelumnya |
-| Context projection | Tidak ada | Tidak ada | **NOT IMPLEMENTED** | audit sebelumnya |
+| Dimension | `e4a7b7c` (sebelum repair) | Sesudah repair | Evidence |
+|---|---|---|---|
+| Completion saat verify merah | `completed` bertahan bila baseline hijau | **Selalu non-completed** | MUT-1, probe R1/R2/R3 |
+| Rekonsiliasi pasca-verify | Tidak ada | Ada, idempoten, hanya bila berubah | `reconcileCompletionEvidence` |
+| Durable vs observed | Durable ≠ observed (baca menerapkan kebijakan) | **Sama** - baca pasif | MUT-3, probe R4 |
+| `blockedReason` | Ditulis, dibuang saat baca | **Bertahan** write-baca-renderPlan | MUT-4, probe R5 |
+| `blocked` tanpa alasan | Bisa dibuat model | **Mustahil** (dua pagar) | MUT-5 |
+| Identitas plan event | Ganda (`payload` ≠ `row`) | **Kanonik** | MUT-6, probe R6 |
+| Wiring produksi bertes | VACUOUS (48 test hijau saat dimutasi) | **Terdeteksi** (E2E merah) | MUT-2 |
+| Dependency / graph | Tidak ada | Tidak ada | di luar scope |
+| User control | Tidak ada | Tidak ada | di luar scope |
+| Undo reconciliation | File saja | File saja | di luar scope |
+| Context projection | Tidak ada | Tidak ada | di luar scope |
 
 ---
 
 ## C. Sisa utang arsitektur
 
-### C.1 Utang dari audit sebelumnya (belum disentuh, sesuai scope)
-
-| ID | Utang | Severity | Kenapa belum dikerjakan di pass ini |
-|---|---|---|---|
-| TASK-005 | `evidenceComplete` dihitung, nol konsumen | P1 | Butuh renderer/gate; UI kontrak FROZEN |
-| TASK-006 | `/undo` hanya revert file; todo tetap `completed` | P1 | Butuh keputusan semantik (apa yang terjadi pada task yang di-undo?) |
-| TASK-007 | `.minicode/plans/*.md` write-only; tak ada proyeksi ke context | P1 | Interaksi dengan compaction; perlu ukur token |
-| TASK-008 | Nol dependency/graph/scheduler | P1 | Butuh Task Model lebih dulu |
-| TASK-010 | Tidak ada TTL/GC untuk file todo di luar SQLite | P2 | Perbaikan kecil tapi di luar scope pass ini |
-| TASK-011 | Tidak ada `/tasks`; task state 100% milik model | P1 | Butuh renderer |
-| TASK-012 | Truncate 50 item diam-diam; full-replace buta | P2 | Butuh keputusan merge semantics |
-
-### C.2 Utang baru dari audit ini
+### C.1 Utang yang TIDAK tersentuh di pass ini (sesuai scope)
 
 | ID | Utang | Severity | Catatan |
 |---|---|---|---|
-| PF-01 | Gate bocor saat baseline hijau lalu turn merah | **P0** | Perbaikan terkecil: rekonsiliasi setelah `runWithSelfHeal` |
-| PF-02 | Gate diterapkan saat baca; durable != observed | P1 | Pisahkan jalur baca dari jalur kebijakan |
-| PF-03 | `blockedReason` hilang saat baca dan di `.md` | P1 | Baca `blockedReason` di `normalizeTodos` |
-| PF-04 | `blocked` bisa dipilih model tanpa alasan | P1 | Keluarkan dari enum model, atau wajibkan alasan |
-| PF-05 | Adapter presentasi masih pakai id acak | P1 | Pakai `presentationSessionId` |
-| PF-06 | `savePlanSnapshot` gagal diam-diam | P2 | Hapus artefak, atau jadikan tercatat |
-| PF-07 | Wiring verify-ke-gate tanpa test | P2 | E2E test; fix P0 bisa dicabut tanpa terdeteksi |
-| PF-08 | `lastVerify` tak pernah diinvalidasi | P3 | Timestamp/turn; false positive saja |
-| PF-09 | `completionEvidence` global, parallel dengan `todoSession` | P3 | Laten untuk embedder |
-| PF-10 | `planId` per-turn; plan tidak berevolusi | P3 | Butuh identitas task stabil (prasyarat) |
-| PF-11 | Jendela kill antara tulis file dan flush event | P3 | Arah divergensi benar; tidak mendesak |
+| PF-06 | `savePlanSnapshot` gagal ditelan `.catch` diam-diam; artefak `.md` bisa usang | P2 | Perlu keputusan: hapus artefak, atau jadikan tercatat |
+| PF-08 | `lastVerify` tak pernah diinvalidasi saat repo berubah | P3 | False positive saja (aman, tapi membosankan) |
+| PF-09 | `completionEvidence` module-global, parallel dengan `todoSession` | P3 | Laten untuk embedder |
+| PF-10 | `planId` per turn; plan tidak berevolusi, dan `stepId` masih indeks posisi | P3 | Butuh identitas task stabil |
+| PF-11 | Jendela kill antara tulis file dan flush event | P3 | Arah divergensi benar (event subset file) |
+| TASK-005 | `evidenceComplete` dihitung, nol konsumen | P1 | Butuh renderer |
+| TASK-006 | `/undo` hanya revert file; todo tetap `completed` | P1 | Butuh keputusan semantik |
+| TASK-007 | `.minicode/plans/*.md` write-only; tak ada proyeksi ke context model | P1 | Interaksi dengan compaction |
+| TASK-008 | Nol dependency / graph / scheduler | P1 | Butuh Task Model lebih dulu |
+| TASK-010 | Tidak ada TTL/GC untuk file todo di luar SQLite | P2 | Perbaikan kecil |
+| TASK-011 | Tidak ada `/tasks`; task state 100% milik model | P1 | Butuh renderer |
+| TASK-012 | Truncate 50 item diam-diam; full-replace buta | P2 | Butuh keputusan merge semantics |
+
+### C.2 Utang BARU yang muncul dari repair ini
+
+| ID | Utang | Severity | Catatan |
+|---|---|---|---|
+| R-01 | Durable event log masih memuat klaim `completed` sebelum rekonsiliasi | P3 | Sejarah yang benar; state akhir sudah benar. Butuh `supersedes` atau model event untuk jadi bersih - terkait PF-10. |
+| R-02 | `reconcileCompletionEvidence` menulis file + plan snapshot tanpa transaksi | P3 | Sama seperti `todo_write`: kalau gagal di tengah, JSON dan `.md` bisa berbeda. Arahnya file = kebenaran. |
+| R-03 | Rekonsiliasi tidak menerbitkan event bila tidak ada perubahan | P3 | Sengaja (idempoten), tapi berarti replay log bisa terlihat "melompat" dari completed ke blocked tanpa event penghubung. |
+
+Tidak ada utang baru yang P0 atau P1.
 
 ---
 
 ## D. Prasyarat eksak untuk memulai CANONICAL TASK MODEL
 
-Sebelum Task Graph / Scheduler dimulai, prasyarat berikut harus beres. Urut
-dari yang paling mengunci:
+Enam gap target sudah tertutup. Prasyarat yang tersisa**bukan** perbaikan -
+ini keputusan desain.
 
-### D.1 Wajib - correctness (harus hijau sebelum model baru)
+### D.1 Sudah terpenuhi (tidak perlu diulang)
 
-1. **PF-01 ditutup** - `completed` tidak boleh bertahan saat verify merah.
-   Tanpa ini, Task Model baru akan dibangun di atas state yang bisa
-   false-complete - dan setiap fitur berikutnya (dependency, scheduler)
-   mewarisi kebohongan itu.
-2. **PF-02 ditutup** - Durable harus sama dengan observed. Tanpa ini, satu sumber
-   kebenaran" tidak ada; yang ada dua bentuk.
-3. **PF-03 ditutup** - `blockedReason` harus bertahan. Blocker tanpa alasan
-   tidak bisa dipakai sebagai input dependency.
-4. **PF-04 ditutup** - `blocked` harus selalu beralasan. Status tanpa alasan
-   tidak bisa dibedakan "verify merah" dari "agen menyerah".
-5. **PF-05 ditutup** - Satu identitas sesi. Tanpa ini, rekonstruksi state pada
-  resume salah attribut.
+- PF-01, PF-02, PF-03, PF-04, PF-05, PF-07: closed dan verified.
+- Gerbang completion punya implementasi tunggal (`applyCompletionPolicy`).
+- Durable dan observed tidak lagi berbeda.
+- Ada jalur rekonsiliasi yang eksplisit dan eksplisit-meny-write.
 
-### D.2 Wajib - testability (agar perbaikan berikutnya bisa diverifikasi)
+### D.2 Keputusan desain yang blocking (D.3 dari gap map sebelumnya)
 
-6. **PF-07 ditutup** - Test E2E verify-ke-gate. Tanpa ini, perbaikan D.1 tidak
-   bisa dibuktikan tidak vacuous.
-7. Korelasi `tool_call_id` unik di semua test E2E task (sudah jadi prinsip di
-   test matrix; yang tersisa `cli-session.test.ts:459` masih rely on string).
+| # | Keputusan | Kenapa blocking |
+|---|---|---|
+| 1 | **`task_id` stabil** | Graph, retry, dan supersedes (INV-002, INV-011, INV-007) semuanya butuh id yang bertahan lintas edit daftar. `stepId` sekarang indeks posisi. Tanpa ini, graph akan menebak. |
+| 2 | **Provenance** | Siapa/mengapa mengubah task. Tanpa ini, dekomposisi adaptif tidak bisa diaudit (INV-007). |
+| 3 | **FDD vs BLOCKED** | `blocked` sekarang = "ada yang menahan dengan bukti". `failed` = "percobaan berjalan dan gagal". Keduanya perlu dibedakan sebelum retryable failure punya arti. |
+| 4 | **Merge semantics** | `todo_write` masih full-replace buta. Task beridentitas stabil butuh aturan eksplisit saat model mengirim subset. |
+| 5 | **`planId` dan `stepId`** | Keduanya diturunkan dari turn/indeks, bukan identitas. Selaraskan dengan keputusan #1 (PF-10). |
 
-### D.3 Wajib - design decisions (blocking, perlu diputuskan)
+### D.3 Boleh ditunda (tidak memblokir)
 
-8. **Model data task stabil** - `task_id` yang bertahan lintas retry, turn,
-   dan proses. Ini prasyarat mutlak untuk graph (PF-10 tidak bisa diperbaiki
-   tanpa ini). Syarat minimum: id yang diturunkan dari isi/konteks, bukan
-   indeks posisi.
-9. **Provenance** - siapa/apa yang mengubah task dan mengapa (INV-007).
-   Tanpa ini, dekomposisi adaptif tidak bisa diaudit.
-10. **Semantik `blocked` dan `failed` dibedakan** - `blocked` = ada yang
-    menahan (dependency/permission/input user); `failed` = percobaan sudah
-    dijalankan dan unsuccessful. Sekarang keduanya tidak ada.
-11. **Merge semantics untuk full-replace** - sekarang `todo_write`
-    full-replace buta (TASK-012). Task Model yang punya identitas stabil
-    harus punya aturan yang jelas saat model mengirim subset.
-
-### D.4 Boleh ditunda (tidak memblokir Task Model)
-
-- PF-06 (artefak `.md`), PF-08 (invalidation bukti), PF-09 (global),
-  PF-11 (jendela kill).
-- TASK-005, TASK-010, TASK-011, TASK-006 (tetap butuh renderer / keputusan
-  UI terpisah).
+PF-06, PF-08, PF-09, PF-10, PF-11, TASK-005, TASK-006, TASK-007, TASK-010,
+TASK-011, TASK-012. Semuanya butuh renderer, keputusan UI, atau model data
+yang belum ada - tidakkasusbanding dengan grafs.
 
 ---
 
 ## E. Go / No-Go
 
-### NO-GO untuk Task Graph / Scheduler sekarang.
+### GO untuk CANONICAL TASK MODEL - dengan syarat
 
-Alasannya spesifik, bukan umum:
+Alasan GO (berbeda dari pass sebelumnya):
 
-1. **PF-01 adalah P0 pada fondasi yang diklaim sudah diperbaiki.** graph dan
-   scheduler dibangun di atas "task mana yang selesai". Kalau jawaban itu
-   bisa salah secara struktural (bukan karena model salah, tapi karena tidak
-   ada rekonsiliasi), setiap fitur turunan - prioritas, dependency, progress -
-   akan mewarisi ketidakakuratan itu dan menambah lapisan yang lebih sulit
-   diaudit.
-2. **Belum ada identitas task stabil (INV-002).** graph butuh `task_id`.
-   `stepId` sekarang adalah indeks posisi yang berubah setiap daftar
-   diedit. Tanpa identitas, "retry" dan "supersedes" (INV-011, INV-007)
-   tidak bisa diekspresikan - dan tanpa itu, graph akan menebak.
-3. **Belum ada test yang bisa membuktikan perbaikan D.1 (PF-07).** Kalau
-   perbaikan D.1 dibuat tanpa test E2E, kita tidak akan tahu apakah
-   benar-benar bekerja.
-4. **Durable != observed (PF-02).** Scheduler yang membaca "blocked" dari
-   `todo_read` bisa bertindak berdasarkan state yang tidak ada di disk.
+1. Enam gap fondasi tertutup dan **terbukti** - termasuk gap P0 yang dulu
+   bocor. Fondasi sekarang tidak bisa menghasilkan `completed` palsu.
+2. Durable = observed, sehingga graph dan scheduler membaca state yang sama
+   dengan yang dilihat manusia.
+3. Ada jalur rekonsiliasi yang eksplisit, jadi Task Model baru bisa
+  -that-closing-state tanpa harus membangun mekanisme sendiri.
+4. Enam mutasi testing membuktikan test benar-benar menangkap fix - jadi
+   regresi di masa depan akan terlihat.
 
-### GO untuk pekerjaan prasyarat (D.1 - D.2).
+### Syarat yang harus dipenuhi sebelum menulis kode graph
 
-Rekomendasi urutan kerja:
+Syarat 1-2 di D.2 harus diputuskan lebih dulu (keputusan desain, bukan
+implementasi):
+
+- **task_id stabil**: harus ada strategi. Pilihan paling murah yang cukup:
+  id yang diturunkan dari konten task (hash singkat) plus suffiks untuk
+  duplikat, sehingga id bertahan saat daftar disisipkan di tengah. Butuh
+  keputusan: apakah id dipegang model atau diturunkan sistem?
+- **Provenance**: minimal `source` (USER / AGENT / SYSTEM / DISCOVERED) dan
+  `reason` untuk task yang dibuat/diubah saat runtime.
+
+Kalau dua ini belum diputuskan, Task Graph akan dibangun di atas `stepId`
+indeks posisi - dan setiap fitur turunan akan mewarisi kelemahannya.
+
+### Rekomendasi urutan
 
 ```
-Langkah 1  PF-01  rekonsiliasi setelah self-heal (P0, terkecil)
-Langkah 2  PF-07  test E2E verify-ke-gate (sebelum/sesudah langkah 1)
-Langkah 3  PF-02  pisahkan jalur baca dari gate
-Langkah 4  PF-03  blockedReason bertahan
-Langkah 5  PF-04  blocked wajib beralasan
-Langkah 6  PF-05  identitas presentasi
-Langkah 7  D.3.8  desain task_id stabil (belum implementasi graph)
+Langkah 1  Putuskan task_id + provenance (desain, bukan kode)
+Langkah 2  Tambah task_id ke TodoItem, backward-compatible (blocked-only reasons)
+Langkah 3  Test migrasi: daftar lama tanpa id -> id stable, planId/supercedes konsisten
+Langkah 4  Baru THEN Task Graph
 ```
 
-Langkah 1-6 adalah perbaikan terlokalisasi pada `src/tools/todo.ts`,
-`cli/setup.ts`, dan `src/presentation/adapter.ts` - tidak menyentuh
-presentasi/UI, jadi tidak berisiko pada kontrak FROZEN terminal.
-
-Langkah 7 adalah titik di mana Task Model benar-benar dimulai, dan itu
-memang keputusan desain, bukan perbaikan.
+Langkah 2 harus menjaga kompatibilitas: `TodoItem` yang tidak punya `task_id`
+(lama) harus tetap bisa dibaca - pola yang sama seperti migrasi kolom
+`reasoning` di `f38e0d1`.
 
 ### Catatan risiko
 
-Tidak ada blocker eksternal. Semua temuan reproducible di repo ini tanpa
-layanan eksternal. Risiko utama adalah temptation untuk memulai graph lebih
-dini karena "graph akan compléter semuanya" - tapi graph tidak memperbaiki
-state yang salah, hanya membungkusnya lebih rapi.
+Risiko utama bukan teknis, tapi godanya jelas: Task Graph terasa seperti
+pelengkap alami sehingga menggoda untuk menunda repair yang baru saja selesai.
+Secara jujur: graph tidak memperbaiki state yang salah; graph hanya
+membungkusnya lebih rapi, dan membuat state yang salah terlihat lebih
+meyakinkan.

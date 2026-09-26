@@ -85,6 +85,15 @@ export interface PresentationAdapter {
     turnId?: number
   }): void
   noteCheckpoint(info: { checkpointId: string; paths?: string[]; turnId?: number }): void
+  /**
+   * Terbitkan `plan.updated` dari daftar yang SUDAH dinormalisasi di domain
+   * task (hasil rekonsiliasi pasca-verify), bukan dari argumen mentah.
+   *
+   * Dipakai jalur yang tidak melalui `todo_write` — reconcile setelah verify
+   * selesai. Tanpa ini, file di disk sudah `blocked` sementara durable event
+   * log masih berbunyi `completed`: dua bentuk kebenaran untuk satu state.
+   */
+  notePlanReconciled(info: { todos: readonly unknown[]; sessionId?: string; turnId?: number }): void
   setTurnSummaryProvider(provider: TurnSummaryProvider | undefined): void
   getDiagnostics(): AdapterDiagnostics
   dispose(): void
@@ -989,6 +998,19 @@ export function createPresentationAdapter(
     noteFileChanged,
     noteTestCompleted,
     noteCheckpoint,
+    notePlanReconciled(info) {
+      const plan = planFromTodos({ todos: info.todos })
+      if (!plan) return
+      const owner = info.sessionId ?? sessionId
+      publish({
+        ...base(currentTurn),
+        type: "plan.updated",
+        planId: `plan:${owner}:${currentTurn}`,
+        status: plan.status,
+        steps: plan.steps,
+        ...(info.turnId !== undefined ? { turnId: info.turnId } : {}),
+      })
+    },
     setTurnSummaryProvider(provider) {
       turnSummaryProvider = provider
     },

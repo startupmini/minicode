@@ -9,7 +9,7 @@
 //  - Integritas publish: plan event tidak boleh terbit untuk todo_write yang
 //    GAGAL (sebelumnya terbit dari argumen di `execution:started`).
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { LIMITS } from "../src/constants.ts"
@@ -19,6 +19,8 @@ import {
   clearCompletionEvidence,
   loadTodos,
   normalizeTodos,
+  reconcileCompletionEvidence,
+  renderPlan,
   renderTodos,
   setCompletionEvidence,
   todoSession,
@@ -116,6 +118,46 @@ describe("INV-003 completion butuh bukti", () => {
     expect(text).toContain("lint: 3 errors")
   })
 
+  // ── PF-04: `blocked` harus terkurung semantik ──────────────────────────────
+  test("blocked tanpa alasan tidak boleh ada (PF-04)", () => {
+    // Dua pagar: `blocked` tidak ada di enum model, DAN `normalizeTodos`
+    // menurunkan blocker tanpa alasan ke `pending`. Pagar kedua ini yang
+    // diuji di sini — file ditulis tangan / jalur argumen lain.
+    const out = normalizeTodos([{ content: "Merah tanpa alasan", status: "blocked" }], {
+      verdict: "unverified",
+    })
+    expect(out[0]?.status).toBe("pending")
+    expect(out[0]?.blockedReason).toBeUndefined()
+  })
+
+  test("blocked DENGAN alasan dari file dipertahankan (PF-04 + PF-03)", () => {
+    const out = normalizeTodos(
+      [{ content: "Merah beralasan", status: "blocked", blockedReason: "verify: 3 errors" }],
+      { verdict: "unverified" },
+    )
+    expect(out[0]?.status).toBe("blocked")
+    expect(out[0]?.blockedReason).toBe("verify: 3 errors")
+  })
+
+  test("enum model tidak menawarkan `blocked` (PF-04)", () => {
+    const schema = todoWriteTool.parameters as {
+      properties: { todos: { items: { properties: { status: { enum: string[] } } } } }
+    }
+    const statuses = schema.properties.todos.items.properties.status.enum
+    expect(statuses).not.toContain("blocked")
+    expect(statuses).toContain("completed")
+  })
+
+  test("verify merah menghasilkan blocked, bukan `failed` (FDD != BLOCKED)", () => {
+    // `blocked` berarti "ada yang menahan dengan bukti", bukan "percobaan
+    // sudah dijalankan dan gagal" — itu status `failed` yang belum ada di
+    // fondasi dan sengaja tidak ditambahkan di pass ini.
+    setCompletionEvidence(() => ({ verdict: "failed", detail: "verify merah" }))
+    const out = normalizeTodos([{ content: "x", status: "completed" }])
+    expect(out[0]?.status).toBe("blocked")
+    expect(out[0]?.status).not.toBe("failed")
+  })
+
   test("tool memberi tahu model saat completion ditolak (bukan diam-diam)", async () => {
     const dir = workspace()
     todoSession.id = "s1"
@@ -130,6 +172,82 @@ describe("INV-003 completion butuh bukti", () => {
     // Dan file-nya memang blocked, bukan completed.
     const persisted = await loadTodos("s1", dir)
     expect(persisted[0]?.status).toBe("blocked")
+  })
+})
+
+describe("PF-02 jalur baca pasif", () => {
+  test("disk `completed` + bukti merah → loadTetap `completed` (PF-02)", async () => {
+    // Baca TIDAK boleh menerapkan kebijakan. Kalau iya, `todo_read` melaporkan
+    // blocked sementara file tetap completed — durable != observed, dan tidak
+    // ada yang menyelaraskan.
+    const dir = workspace()
+    todoSession.id = "s2"
+    todoSession.cwd = dir
+    // Tulis tanpa gate.
+    setCompletionEvidence(() => ({ verdict: "unverified" }))
+    await todoWriteTool.execute(
+      { todos: [{ content: "Terlihat selesai", status: "completed" }] } as never,
+      { signal: new AbortController().signal, cwd: dir } as never,
+    )
+    // Sekarang bukti berubah merah.
+    setCompletionEvidence(() => ({ verdict: "failed", detail: "verify: merah" }))
+    const read = await loadTodos("s2", dir)
+    expect(read[0]?.status).toBe("completed")
+    // Tidak ada penulisan diam-diam: file tetap sama.
+    const raw = readFileSync(join(dir, ".minicode", "todos", "s2.json"), "utf8")
+    expect(raw).toContain('"status": "completed"')
+  })
+
+  test("reconcileCompletionEvidence adalah operasi TULIS yang eksplisit (PF-02)", async () => {
+    const dir = workspace()
+    todoSession.id = "s3"
+    todoSession.cwd = dir
+    setCompletionEvidence(() => ({ verdict: "unverified" }))
+    await todoWriteTool.execute(
+      { todos: [{ content: "Awalnya selesai", status: "completed" }] } as never,
+      { signal: new AbortController().signal, cwd: dir } as never,
+    )
+    // Baca pasif: tak berubah walau bukti merah.
+    setCompletionEvidence(() => ({ verdict: "failed", detail: "verify: merah" }))
+    expect((await loadTodos("s3", dir))[0]?.status).toBe("completed")
+
+    // Rekonsiliasi eksplisit → menulis balik.
+    const next = await reconcileCompletionEvidence("s3", dir, {
+      verdict: "failed",
+      detail: "verify: merah",
+    })
+    expect(next?.[0]?.status).toBe("blocked")
+    expect((await loadTodos("s3", dir))[0]?.status).toBe("blocked")
+
+    // Idempoten: jalan kedua tak mengubah apa pun.
+    expect(
+      await reconcileCompletionEvidence("s3", dir, { verdict: "failed", detail: "x" }),
+    ).toBeNull()
+  })
+
+  test("reconcile tidak melakukan apa-apa saat bukti bukan `failed` (PF-01)", async () => {
+    const dir = workspace()
+    await reconcileCompletionEvidence("s4", dir, { verdict: "passed" })
+    expect(await loadTodos("s4", dir)).toEqual([])
+  })
+})
+
+describe("PF-03 blockedReason durable lintas proses", () => {
+  test("alasan blocker bertahan: write → baca ulang → renderPlan (PF-03)", async () => {
+    const dir = workspace()
+    todoSession.id = "s5"
+    todoSession.cwd = dir
+    setCompletionEvidence(() => ({ verdict: "failed", detail: "tsc: 2 errors" }))
+    await todoWriteTool.execute(
+      { todos: [{ content: "Tugas gagal", status: "completed" }] } as never,
+      { signal: new AbortController().signal, cwd: dir } as never,
+    )
+    const reread = await loadTodos("s5", dir)
+    expect(reread[0]?.blockedReason).toBe("tsc: 2 errors")
+    // Dan artefak plan untuk manusia ikut memuat alasannya.
+    const plan = renderPlan("s5", reread)
+    expect(plan).toContain("tsc: 2 errors")
+    expect(plan).toContain("(blocked)")
   })
 })
 

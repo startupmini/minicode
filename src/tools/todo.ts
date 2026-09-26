@@ -95,41 +95,71 @@ export async function deleteTodoFiles(sessionId: string, cwd: string): Promise<v
  * composition root). Pemanggil yang sudah punya bukti bisa mengoper nilainya
  * eksplisit supaya deterministik di test.
  */
+/**
+ * Terapkan kebijakan completion pada daftar yang sudah ternormalisasi.
+ *
+ * Murni (tanpa I/O) dan dipakai oleh DUA jalur agar aturan "completed butuh
+ * bukti" hanya ada di satu tempat:
+ *  1. `todo_write` (jalur tulis) - sebelum disimpan;
+ *  2. `reconcileCompletionEvidence` (jalur rekonsiliasi) - setelah verify
+ *     selesai, karena verify sebuah turn berjalan SETELAH `todo_write`.
+ *
+ * Mengembalikan array BARU bila ada yang berubah, `null` bila tidak -
+ * pemanggil memakai ini untuk memutuskan apakah perlu menulis/menerbitkan
+ * event (idempoten: tidak ada event plan palsu saat tidak ada perubahan).
+ */
+export function applyCompletionPolicy(
+  list: readonly TodoItem[],
+  evidence: CompletionEvidence,
+): TodoItem[] | null {
+  if (evidence.verdict !== "failed") return null
+  const reason = evidence.detail?.trim().slice(0, 300) || "verification failed"
+  if (!list.some((t) => t.status === "completed")) return null
+  return list.map((t) =>
+    t.status === "completed" ? { ...t, status: "blocked" as const, blockedReason: reason } : t,
+  )
+}
+
 export function normalizeTodos(input: unknown, evidence?: CompletionEvidence): TodoItem[] {
   if (!Array.isArray(input)) throw new Error("todos must be an array")
   const ev = evidence ?? currentCompletionEvidence()
   const out: TodoItem[] = []
   for (const raw of input.slice(0, LIMITS.TODO_MAX_ITEMS)) {
     if (!raw || typeof raw !== "object") continue
-    const r = raw as { content?: unknown; status?: unknown }
+    const r = raw as { content?: unknown; status?: unknown; blockedReason?: unknown }
     const content = String(r.content ?? "")
       .trim()
       .slice(0, LIMITS.TODO_CONTENT_MAX_CHARS)
     if (!content) continue
     const status = STATUSES.includes(r.status as TodoStatus) ? (r.status as TodoStatus) : "pending"
-    out.push({ content, status })
+    // `blockedReason` HARUS ikut dibaca: tanpanya alasan blocker hilang
+    // tepat setelah restart (durable write, non-durable read).
+    const reason = typeof r.blockedReason === "string" ? r.blockedReason.trim().slice(0, 300) : ""
+    out.push(reason ? { content, status, blockedReason: reason } : { content, status })
   }
   if (out.length === 0) throw new Error("todos is empty — provide at least one item with content")
-  // Bukti merah MENOLAK `completed`: task turun ke `blocked` beserta alasannya.
-  // Ini yang menutup INV-003 — sebelumnya model bisa menandai "selesai" sambil
-  // verify merah dan tak ada satu pun jalur kode yang mencegahnya.
-  if (ev.verdict === "failed") {
-    const reason = ev.detail?.trim().slice(0, 300) || "verification failed"
-    for (const t of out) {
-      if (t.status !== "completed") continue
-      t.status = "blocked"
-      t.blockedReason = reason
-    }
+  // `blocked` tanpa alasan adalah state tak terjelaskan (PF-04). Selain
+  // `blocked` dikeluarkan dari enum model, ada pagar kedua di sini: file yang
+  // ditulis tangan atau jalur argumen lain tidak boleh menciptakan blocker
+  // yang tak bisa dijelaskan. Tanpa alasan -> turun ke `pending`.
+  for (const t of out) {
+    if (t.status !== "blocked" || t.blockedReason) continue
+    t.status = "pending"
   }
+  // Bukti merah MENOLAK `completed`: task turun ke `blocked` beserta alasannya.
+  // Ini yang menutup INV-003 - sebelumnya model bisa menandai "selesai" sambil
+  // verify merah dan tak ada satu pun jalur kode yang mencegahnya.
+  const gated = applyCompletionPolicy(out, ev)
+  const final = gated ?? out
   // Satu in_progress saja: kalau model menandai beberapa, sisanya turun ke
   // pending supaya daftar tetap punya satu fokus yang jelas.
   let seenActive = false
-  for (const t of out) {
+  for (const t of final) {
     if (t.status !== "in_progress") continue
     if (seenActive) t.status = "pending"
     seenActive = true
   }
-  return out
+  return final
 }
 
 export function renderTodos(todos: TodoItem[]): string {
@@ -148,13 +178,63 @@ export function renderTodos(todos: TodoItem[]): string {
   return `${head}\n${body}`
 }
 
+/**
+ * Baca daftar todo dari disk. **PASIF**: tidak menerapkan kebijakan
+ * completion apa pun.
+ *
+ * Dulu jalur baca ini melewati `normalizeTodos` tanpa argumen bukti, sehingga
+ * ia memakai `currentCompletionEvidence()` - akibatnya `todo_read` melaporkan
+ * `blocked` sementara file tetap `completed`. Durable dan observed berbeda, dan
+ * tak ada yang menyelaraskan. Sekarang bentuk di disk adalah satu-satunya
+ * kebenaran; kebijakan hanya berlaku di jalur tulis (`todo_write`) dan di
+ * rekonsiliasi eksplisit (`reconcileCompletionEvidence`) yang menulis balik.
+ */
 export async function loadTodos(sessionId: string, cwd = process.cwd()): Promise<TodoItem[]> {
   try {
     const raw = await readFile(todoPath(sessionId, cwd), "utf8")
     const parsed = JSON.parse(raw) as { todos?: unknown }
-    return normalizeTodos(parsed.todos ?? [])
+    if (!Array.isArray(parsed.todos)) return []
+    // Bentuk tersimpan sudah ternormalisasi saat ditulis. Normalisasi di sini
+    // hanya untuk mem-namedai file yang ditulis tangan, dengan bukti
+    // `unverified` supaya TIDAK ada kebijakan yang diam-diam berlaku saat baca.
+    return normalizeTodos(parsed.todos, UNVERIFIED)
   } catch {
     return []
+  }
+}
+
+/**
+ * Rekonsiliasi completion SETELAH verify selesai.
+ *
+ * Menutup gap PF-01: `todo_write` berjalan sebelum verify sebuah turn, jadi
+ * klaim `completed` bisa sudah tersimpan ketika verify turn itu berubah merah.
+ * Fungsi ini menutup celah itu dari arah yang sama seperti gerbang tulis:
+ * penurunan `completed` menjadi `blocked` + alasan, ditulis balik ke disk, dan
+ * pemanggil menerbitkan `plan.updated` baru.
+ *
+ * Idempoten dan pasif-bila-tak-perlu: mengembalikan `null` bila tidak ada
+ * perubahan, supaya tidak terbit event plan yang tidak mencerminkan kenyataan.
+ */
+export async function reconcileCompletionEvidence(
+  sessionId: string,
+  cwd: string,
+  evidence: CompletionEvidence,
+): Promise<TodoItem[] | null> {
+  if (evidence.verdict !== "failed") return null
+  try {
+    const current = await loadTodos(sessionId, cwd)
+    const next = applyCompletionPolicy(current, evidence)
+    if (!next) return null
+    await saveTodos(sessionId, next, cwd)
+    await savePlanSnapshot(sessionId, next, cwd).catch(() => {})
+    return next
+  } catch (e) {
+    // Best-effort: kegagalan rekonsiliasi TIDAK boleh menggagalkan turn yang
+    // sudah selesai. Diagnostik ditulis di modul pemilik kegagalan, bukan di
+    // pemanggil — menambah `process.stderr.write` di `cli/setup.ts` menaikkan
+    // writer ke-27 dan melanggar pagu invaris OAP-008 (test/writer-inventory).
+    process.stderr.write(`[warn] completion reconcile failed: ${(e as Error).message}\n`)
+    return null
   }
 }
 
@@ -174,15 +254,28 @@ export async function saveTodos(
  * Best-effort: gagal tulis tak boleh menggagalkan todo_write. */
 export function renderPlan(sessionId: string, todos: TodoItem[]): string {
   const done = todos.filter((t) => t.status === "completed").length
+  const blocked = todos.filter((t) => t.status === "blocked").length
   const lines = [
     `# Plan — ${sessionId}`,
     ``,
-    `Progress: ${done}/${todos.length} completed.`,
+    `Progress: ${done}/${todos.length} completed.${blocked ? ` · ${blocked} blocked.` : ""}`,
     ``,
-    ...todos.map(
-      (t) =>
-        `- [${t.status === "completed" ? "x" : t.status === "in_progress" ? "~" : t.status === "cancelled" ? "-" : " "}] ${t.content} (${t.status})`,
-    ),
+    ...todos.map((t) => {
+      const box =
+        t.status === "completed"
+          ? "x"
+          : t.status === "in_progress"
+            ? "~"
+            : t.status === "cancelled"
+              ? "-"
+              : t.status === "blocked"
+                ? "!"
+                : " "
+      // Alasan blocker WAJIB ikut: tanpa ini artefak ini tidak bisa
+      // menjelaskan kenapa sebuah task tidak bisa diselesaikan.
+      const why = t.blockedReason ? ` — ${t.blockedReason}` : ""
+      return `- [${box}] ${t.content} (${t.status})${why}`
+    }),
     ``,
     `_Updated: ${new Date().toISOString()}_`,
     ``,
@@ -226,9 +319,14 @@ export const todoWriteTool: Tool = {
           type: "object",
           properties: {
             content: { type: "string", description: "short, actionable task item" },
+            // `blocked` SENGAJA tidak ada di enum model: itu status yang
+            // ditegakkan runtime (verifikasi merah) dan selalu membawa alasan.
+            // Jika model boleh memilihnya, `blocked` berubah menjadi generic
+            // non-completed state - tercampur "verify merah" dengan "agen
+            // menyerah" (PF-04).
             status: {
               type: "string",
-              enum: ["pending", "in_progress", "completed", "cancelled", "blocked"],
+              enum: ["pending", "in_progress", "completed", "cancelled"],
             },
           },
           required: ["content", "status"],

@@ -82,7 +82,11 @@ import {
 import { setAskApprovalHook, setAskTextFn } from "../src/tools/ask_user.ts"
 import { killAllBackgroundJobs } from "../src/tools/bash.ts"
 import { setSubAgentParentRouting } from "../src/tools/task.ts"
-import { setCompletionEvidence, todoSession } from "../src/tools/todo.ts"
+import {
+  reconcileCompletionEvidence,
+  setCompletionEvidence,
+  todoSession,
+} from "../src/tools/todo.ts"
 import { promptAsk, promptAskText } from "../src/ui/approval/prompt.ts"
 import { attachSimpleLogger } from "../src/ui/assistant/simple.ts"
 import type {
@@ -988,7 +992,12 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // Adaptor mulai mengamati sejak bus hidup (closure onApprovalEvent di atas
   // aman: check() pertama selalu terjadi setelah wiring ini, saat run()).
   presentation = createPresentationAdapter(session.events, {
-    sessionId,
+    // PF-05: WAJIB `presentationSessionId`, bukan `sessionId`. `sessionId` acak
+    // saat `--resume` tanpa `--session`, sehingga `payload.sessionId` dan
+    // `planId` pada event plan merujuk ke sesi fiktif sementara barisnya
+    // ditulis dengan id kanonik - dua identitas untuk satu sesi, dan plan
+    // bercabang alih-alih berevolusi.
+    sessionId: presentationSessionId,
     ...(contentStore ? { contentStore } : {}),
     ...(shadowState ? { initialSeq: shadowState.seq, initialTurn, initialTurnStartTs } : {}),
   })
@@ -1369,6 +1378,27 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       },
       signal,
     )
+    // PF-01: `todo_write` berjalan SEBELUM verify turn ini, jadi klaim
+    // `completed` bisa sudah tersimpan ketika verify berubah merah (baseline
+    // hijau tidak menutup celah ini - hanya baseline merah yang menutupnya).
+    // Rekonsiliasi harus terjadi SETELAH self-heal selesai, di luar `runOnce`,
+    // supaya verdict final itulah yang membentuk state durable.
+    if (verifyActive && lastVerify && !lastVerify.ok) {
+      // `reconcileCompletionEvidence` sudah best-effort + menulis diagnostik
+      // sendiri, jadi pemanggil tak perlu try/catch (dan tak perlu menambah
+      // writer di file ini — pagu OAP-008).
+      const reconciled = await reconcileCompletionEvidence(presentationSessionId, cwd ?? ".", {
+        verdict: "failed",
+        detail: `last verification failed (${lastVerify.command}): ${lastVerify.output.slice(0, 200)}`,
+      })
+      if (reconciled) {
+        presentation?.notePlanReconciled({
+          todos: reconciled,
+          sessionId: presentationSessionId,
+          turnId: session.state.turnCount,
+        })
+      }
+    }
     await runHooksGated(
       "post",
       { phase: "post", prompt: p, cwd, result: session.state.turnCount },

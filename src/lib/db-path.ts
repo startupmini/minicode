@@ -34,3 +34,29 @@ export function resolveDbPath(filename: string, cwd?: string): string {
   } catch {}
   return global
 }
+
+/**
+ * Resolusi DB **local-only** — N1 dari Task Model review.
+ *
+ * `resolveDbPath` jatuh ke `~/.minicode/` global bila `<cwd>/.minicode` belum
+ * ada. Itu benar untuk `sessions.db`/`vector.db` (histori bukan milik satu
+ * repo), tetapi SALAH untuk task state: task list adalah milik workspace yang
+ * sedang dikerjakan, dan kalau ia mendarat di DB user-global maka
+ *  (a) state satu project bocor ke project lain yang kebetulan memakai
+ *      session id sama, dan
+ *  (b) ikut tersapu `purgeExpired` yang berbasis `updated_at` milik session
+ *      lain.
+ *
+ * Perilaku lama `todoPath` justru selalu cwd-lokal, jadi memakai fungsi ini
+ * mempertahankan isolasi yang sudah dimiliki task state, bukan mengubahnya.
+ */
+export function resolveLocalDbPath(filename: string, cwd?: string): string {
+  if (filename.includes("/") || filename.includes("\\") || filename.includes(".."))
+    throw new Error(`invalid filename: ${filename}`)
+  const baseCwd = cwd ?? process.cwd()
+  const dir = resolve(baseCwd, ".minicode")
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+  } catch {}
+  return join(dir, filename)
+}

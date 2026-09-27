@@ -565,18 +565,17 @@ export async function deleteSession(id: string, cwd?: string) {
     const { sanitizeSessionId } = await import("./checkpoint.ts")
     const { rm } = await import("node:fs/promises")
     const { resolve: resolvePath, join: joinPath } = await import("node:path")
-    await rm(
-      joinPath(
-        resolvePath(cwd ?? process.cwd()),
-        ".minicode",
-        "checkpoints",
-        sanitizeSessionId(id),
-      ),
-      {
-        recursive: true,
-        force: true,
-      },
-    ).catch(() => {})
+    const { assertDeletableTarget } = await import("../lib/safe-open.ts")
+    const base = resolvePath(cwd ?? process.cwd())
+    const cpDir = joinPath(base, ".minicode", "checkpoints", sanitizeSessionId(id))
+    // Gerbang fail-closed (Fase 0A): hapus hanya terbukti anak dari `base`.
+    // Jalur ini best-effort, jadi kegagalan gerbang = LEWATI, bukan lempar keluar.
+    const safeCp = await assertDeletableTarget(
+      cpDir,
+      { root: base, tempScoped: false },
+      { recursive: true },
+    ).catch(() => null)
+    if (safeCp) await rm(safeCp, { recursive: true, force: true }).catch(() => {})
   } catch {}
   // Audit #10 §17: ref shadow-git (`refs/minicode/<sesi>/*`) menunjuk tree
   // berisi ISI file saat snapshot — tanpa prune, konten sesi yang dihapus

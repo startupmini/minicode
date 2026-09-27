@@ -3,7 +3,8 @@
 
 import { afterAll, expect, test } from "bun:test"
 import { randomUUID } from "node:crypto"
-import { mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { resolve } from "node:path"
 import { mechanicalCompaction } from "#minicore/core/compact.ts"
 import { AgentError, abortError, ProviderError } from "#minicore/core/errors.ts"
 import { ContextStore } from "#minicore/core/history.ts"
@@ -29,17 +30,30 @@ import { readFileTool } from "../src/tools/read_file.ts"
 import { writeFileTool } from "../src/tools/write_file.ts"
 import { formatError } from "../src/ui/assistant/simple.ts"
 
-const tmp = ".tmp-extreme"
+// Fase 0A — cleanup berbasis PATH DIMILIKI, bukan enumerasi bare-name di cwd.
+//
+// Sebelumnya afterAll memakai `readdir(".")` + filter prefix `.tmp-extreme`
+// lalu `rm(entry, {recursive})`. Itu satu-satunya construct di baseline yang
+// bisa menghasilkan tanda tangan insiden 2026-09-28: menghapus anak dari root
+// repo sambil mempertahankan rootnya. Amannya hanya bergantung pada filter
+// prefix longgar, atau suffix ""/"." , langsung menjadi root delete.
+//
+// Sekarang setiap path dicatat SAAT DIBUAT sebagai absolut, dan hanya daftar
+// itu yang dihapus. Tidak ada enumerasi direktori, tidak ada path relatif
+// terhadap cwd, tidak ada tebakan prefix.
+const TRACKED = new Set<string>()
+
+function track(name: string): string {
+  const abs = resolve(process.cwd(), name)
+  TRACKED.add(abs)
+  return abs
+}
+
+const tmp = track(".tmp-extreme")
 const ctx: any = { signal: new AbortController().signal }
 
-// bersihkan semua artifact test yang bocor ke repo root (dipakai banyak test di atas)
 afterAll(async () => {
-  const entries = await readdir(".").catch(() => [] as string[])
-  for (const e of entries) {
-    if (e.startsWith(".tmp-extreme")) {
-      await rm(e, { recursive: true, force: true }).catch(() => {})
-    }
-  }
+  for (const p of TRACKED) await rm(p, { recursive: true, force: true }).catch(() => {})
 })
 
 // ── 02 Session Core ──────────────────────────────────────────────────────────
@@ -96,7 +110,7 @@ test("03 persistence corrupt session id → null", () => {
 })
 
 test("03 persistence updated_at sorts most recent first", async () => {
-  const d = `.tmp-extreme-${randomUUID().slice(0, 4)}`
+    const d = track(`.tmp-extreme-${randomUUID().slice(0, 4)}`)
   await mkdir(`${d}/.minicode`, { recursive: true })
   const a = `t-a-${randomUUID().slice(0, 6)}`
   const b = `t-b-${randomUUID().slice(0, 6)}`
@@ -411,7 +425,7 @@ test("09 edit tolerates CRLF vs LF line endings", async () => {
 
 // ── 10 Search ────────────────────────────────────────────────────────────────
 test("10 glob {a,b} expansion", async () => {
-  const d = `.tmp-extreme-${randomUUID().slice(0, 4)}`
+    const d = track(`.tmp-extreme-${randomUUID().slice(0, 4)}`)
   await mkdir(`${d}/sub`, { recursive: true })
   await writeFile(`${d}/sub/a.ts`, "x")
   await writeFile(`${d}/sub/b.ts`, "x")
@@ -423,7 +437,7 @@ test("10 glob {a,b} expansion", async () => {
 })
 
 test("10 grep include filter + null byte skip", async () => {
-  const d = `.tmp-extreme-${randomUUID().slice(0, 4)}`
+    const d = track(`.tmp-extreme-${randomUUID().slice(0, 4)}`)
   await mkdir(`${d}/sub`, { recursive: true })
   await writeFile(`${d}/sub/a.ts`, "hello\nworld")
   await writeFile(`${d}/sub/b.js`, "hello\nworld")
@@ -449,7 +463,7 @@ test("11 git status in non-repo returns message not crash", async () => {
 
 // ── 12 Memory ────────────────────────────────────────────────────────────────
 test("12 vector add/search/forget + dim mismatch cosine", async () => {
-  const d = `.tmp-extreme-${randomUUID().slice(0, 4)}`
+    const d = track(`.tmp-extreme-${randomUUID().slice(0, 4)}`)
   const marker = `ext-${randomUUID().slice(0, 6)}`
   await addMemory(`unique ${marker} marker`, { cwd: d })
   const hits = await searchHybrid("marker", { cwd: d, topK: 3 })

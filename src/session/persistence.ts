@@ -8,6 +8,39 @@ const dbPath = (cwd?: string) => resolveDbPath("sessions.db", cwd)
 
 const initializedSessionPaths = new Set<string>()
 
+/**
+ * Retry sinkron untuk blok setup schema di `open()`.
+ *
+ * Ditemukan oleh test baseline Phase 0: `open()` menjalankan
+ * `CREATE TABLE IF NOT EXISTS` TANPA pagar retry, padahal `busy_timeout` sudah
+ * diset. Akibatnya satu penulis yang lock-nya ditahan membuat PEMBUKA DB
+ * melempar SQLITE_BUSY — dan itu terjadi SEBELUM `withBusyRetry` di
+ * `appendPresentationEvents` sempat dipanggil. Jadi jalur retry yang ada tidak
+ * pernah menyelamatkan operasi yang paling butuh: DB-nya sendiri belum siap.
+ *
+ * `withBusyRetry` (async) tidak bisa dipakai di sini karena `open()` sinkron
+ * dan dipanggil dari jalur sinkron (`loadSession`, `listSessions`, dst).
+ */
+export function withBusyRetrySync<T>(fn: () => T, attempts = 3): T | null {
+  let last: unknown
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return fn()
+    } catch (e) {
+      const msg = String((e as Error).message ?? e)
+      if (!msg.includes("SQLITE_BUSY") && !msg.includes("database is locked")) throw e
+      last = e
+      // Backoff sinkron pendek. Total ≤ 175ms; cukup untuk lock yang datang
+      // dari proses lain yang sedang commit, dan jauh di bawah budget startup.
+      Bun.sleepSync(25 * 2 ** i)
+    }
+  }
+  process.stderr.write(
+    `[warn] persistence: schema setup gave up after ${attempts} attempts: ${String((last as Error)?.message ?? last)}\n`,
+  )
+  return null
+}
+
 function open(cwd?: string): Database {
   const p = dbPath(cwd)
   const db = new Database(p)
@@ -44,7 +77,12 @@ function open(cwd?: string): Database {
       // WAL/SHM akan dibuat dengan mode yang sama pada checkpoint berikutnya
     } catch {}
   }
-  db.exec(`
+  // DDL setup: `CREATE TABLE IF NOT EXISTS` butuh lock tulis bila tabel belum
+  // ada. Tanpa retry di sini, DB yang sedang dikunci proses lain membuat
+  // SETIAP operasi sesi gagal seketika. `null` = gagal terus; pemanggil akan
+  // gagal di statement berikutnya dengan pesan yang lebih jelas.
+  withBusyRetrySync(() => {
+    db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, created_at INTEGER, cwd TEXT, system TEXT);
     CREATE TABLE IF NOT EXISTS messages (session_id TEXT, seq INTEGER, role TEXT, content TEXT, toolCalls TEXT, toolCallId TEXT, name TEXT, reasoning TEXT, is_error INTEGER, ts INTEGER, PRIMARY KEY(session_id, seq));
     CREATE TABLE IF NOT EXISTS turns (session_id TEXT, turn_idx INTEGER, usage TEXT, ts INTEGER, PRIMARY KEY(session_id, turn_idx));
@@ -60,6 +98,7 @@ function open(cwd?: string): Database {
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq);
     CREATE INDEX IF NOT EXISTS idx_presentation_events_session ON presentation_events(session_id, event_seq);
   `)
+  })
   // migration: add updated_at, toolCallId, name jika kolom lama (backward-compat)
   try {
     const cols = db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]
@@ -207,6 +246,90 @@ function rebasePresentationPayload(payload: string, from: string, to: string): s
   }
 }
 
+/**
+ * Bentuk minimum tiap tipe event durable. N4.
+ *
+ * Sebelumnya `decodePresentationEvent` hanya memeriksa enam field skalar lalu
+ * `return value as DomainEvent` — blind cast. Akibatnya event yang lolos
+ * validasi tapi bentuknya salah (payload terpotong oleh
+ * `encodePresentationEvent`, atau baris yang ditulis proses versi lain) tetap
+ * masuk ke `reduce`, dan `reduce` yang membaca field yang tidak ada melempar
+ * TypeError. Satu event rusak itu menghapus SELURUH presentation state sesi,
+ * karena `setup.ts` menangkap lemparannya di sekitar `rebuildFromDurable`.
+ *
+ * Aturan: lebih baik membuang satu event daripada kehilangan seluruh state.
+ * Pembuangan tidak senyap — `loadPresentationEventsWithStats` menghitungnya.
+ */
+function isValidPlanStep(s: unknown): boolean {
+  if (!s || typeof s !== "object") return false
+  const step = s as { stepId?: unknown; status?: unknown }
+  if (typeof step.stepId !== "string") return false
+  return PLAN_STEP_STATUSES.has(step.status as string)
+}
+
+const PLAN_STEP_STATUSES = new Set([
+  "pending",
+  "active",
+  "completed",
+  "cancelled",
+  "blocked",
+])
+const PLAN_STATUSES = new Set(["open", "completed", "cancelled"])
+
+function isValidEventShape(value: Record<string, unknown>): boolean {
+  const isStr = (k: string): boolean => typeof value[k] === "string"
+  const isNum = (k: string): boolean => typeof value[k] === "number"
+  const isArr = (k: string): boolean => Array.isArray(value[k])
+  switch (value.type) {
+    case "plan.updated":
+      return (
+        isStr("planId") &&
+        PLAN_STATUSES.has(value.status as string) &&
+        isArr("steps") &&
+        (value.steps as unknown[]).every(isValidPlanStep)
+      )
+    case "tool.started":
+      return isStr("toolCallId") && isNum("stepId") && !!value.identity && !!value.argsSummary
+    case "tool.progress":
+    case "tool.completed":
+    case "tool.failed":
+    case "tool.denied":
+    case "tool.cancelled":
+    case "file.changed":
+      return isStr("toolCallId") || isArr("paths")
+    case "turn.completed":
+      return !!value.summary
+    case "turn.failed":
+    case "turn.cancelled":
+    case "user.message":
+    case "turn.started":
+    case "checkpoint.created":
+      return true
+    case "model.delta":
+    case "reasoning.delta":
+      return isStr("delta")
+    case "model.completed":
+    case "reasoning.completed":
+      return isStr("text")
+    case "approval.requested":
+      return isStr("approvalId")
+    case "approval.settled":
+      return isStr("approvalId") && !!value.outcome
+    case "test.completed":
+      return isNum("passed") && isNum("failed")
+    case "context.compacted":
+      return isStr("reason")
+    case "finding.detected":
+      return isStr("findingId") && isStr("category")
+    case "result.produced":
+      return isStr("resultId") && !!value.status
+    case "diagnostic.raised":
+      return isStr("category") && isStr("message")
+    default:
+      return true
+  }
+}
+
 function decodePresentationEvent(payload: string): DomainEvent | null {
   try {
     const value = JSON.parse(payload) as Partial<DomainEvent>
@@ -221,24 +344,46 @@ function decodePresentationEvent(payload: string): DomainEvent | null {
       typeof value.turnId !== "number"
     )
       return null
+    // Stub hasil truncate (`encodePresentationEvent`) hanya punya Base +
+    // `truncated`. Tolak eksplisit supaya tidak pernah sampai ke `reduce`.
+    if ((value as { truncated?: unknown }).truncated === true) return null
+    if (!isValidEventShape(value as unknown as Record<string, unknown>)) return null
     return value as DomainEvent
   } catch {
     return null
   }
 }
 
-export function loadPresentationEvents(id: string, cwd?: string): DomainEvent[] {
+export interface PresentationEventLoad {
+  events: DomainEvent[]
+  /** Baris yang dibuang `decodePresentationEvent`. N4: tidak boleh senyap. */
+  rejected: number
+}
+
+export function loadPresentationEventsWithStats(
+  id: string,
+  cwd?: string,
+): PresentationEventLoad {
   const db = open(cwd)
   try {
     const rows = db
       .prepare("SELECT payload FROM presentation_events WHERE session_id = ? ORDER BY event_seq")
       .all(id) as { payload: string }[]
-    return rows
-      .map((row) => decodePresentationEvent(row.payload))
-      .filter((event): event is DomainEvent => event !== null)
+    const events: DomainEvent[] = []
+    let rejected = 0
+    for (const row of rows) {
+      const event = decodePresentationEvent(row.payload)
+      if (event) events.push(event)
+      else rejected++
+    }
+    return { events, rejected }
   } finally {
     db.close()
   }
+}
+
+export function loadPresentationEvents(id: string, cwd?: string): DomainEvent[] {
+  return loadPresentationEventsWithStats(id, cwd).events
 }
 
 export async function appendPresentationEvents(
@@ -274,7 +419,11 @@ export async function appendPresentationEvents(
 // SQLITE_BUSY / database-is-locked bisa muncul saat Pool(3) sub-agent menulis
 // bersamaan meski WAL+busy_timeout aktif (terutama Windows). Retry singkat
 // P0.2: async + Bun.sleep agar tidak block event-loop (sebelumnya Atomics.wait freeze 175ms).
-async function withBusyRetry<T>(fn: () => T, attempts = 3): Promise<T> {
+//
+// Diekspor (seam aditif, bukan refactor) supaya jalur retry bisa diuji langsung.
+// Sebelum ini tidak ada satu pun test yang menyuntik SQLITE_BUSY, sehingga
+// "retry bekerja" adalah klaim tanpa bukti.
+export async function withBusyRetry<T>(fn: () => T, attempts = 3): Promise<T> {
   let last: unknown
   for (let i = 0; i < attempts; i++) {
     try {

@@ -450,10 +450,13 @@ type-checked in practice by bun's transpiler and exercised by 94 tests.
 
 | | |
 |---|---|
-| **Commit SHA** | recorded in the checkpoint below |
-| **Message** | `feat: implement TaskGraph` |
-| **Files** | `src/task/graph.ts` · `src/task/graph-validate.ts` · `src/task/readiness.ts` · `test/phase5-taskgraph.test.ts` · `PHASE-5C-TASKGRAPH-IMPLEMENTATION-REPORT.md` |
-| **Push** | **NOT PUSHED** |
+| **Commit SHA** | `7bff3bcad3ca34acd49ebe2f07c16e3a5e692df2` (`feat: implement TaskGraph`) |
+| **Parent** | `f378909` — the 5B design checkpoint |
+| **Files** | `src/task/graph.ts` (270 L) · `src/task/graph-validate.ts` (365 L) · `src/task/readiness.ts` (219 L) · `test/phase5-taskgraph.test.ts` (1 042 L) · `PHASE-5C-TASKGRAPH-IMPLEMENTATION-REPORT.md` (468 L) |
+| **Diff** | 5 files, 2 364 insertions, 0 deletions, 0 modified tracked files |
+| **Push** | **NOT PUSHED** — 24 commits ahead of `origin/main` |
+
+Recorded in a follow-up commit, since a commit cannot contain its own hash.
 
 ---
 

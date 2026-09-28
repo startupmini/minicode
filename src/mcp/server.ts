@@ -190,6 +190,69 @@ async function invokeTool(
   }
 }
 
+/**
+ * PHASE 4A.3 - durable MCP task namespace.
+ *
+ * WHY THIS EXISTS. `todoSession.id` used to be the literal `"mcp-server"` for
+ * the whole process. As a durable task namespace that is unsafe: it is a
+ * constant, so every MCP context that has ever run against the same `root`
+ * shares one identity space, and it can also collide with anything else that
+ * ever uses that string. `TASK_ARCHITECTURE_AUDIT.md` already flagged the
+ * underlying problem - `mcp serve` is single-tenant, and concurrent requests
+ * overwrite each other's files last-writer-wins.
+ *
+ * WHAT THIS IDENTIFIES. One server instance = one logical MCP context. That
+ * matches this implementation's actual lifecycle, which was verified rather
+ * than assumed:
+ *   - `initialize` is a stateless reply (server.ts `case "initialize"`) - it
+ *     issues no session id and the server keeps no state for it;
+ *   - there is no client identity anywhere in the protocol surface here;
+ *   - the idempotency key is the client-supplied JSON-RPC id, and the code
+ *     itself documents that "client reconnect resets seq", so request ids are
+ *     client-controlled and are NOT stable logical identity.
+ *
+ * So a per-request id would be wrong (it is not a context) and a per-client id
+ * is not available (no client identity exists). One context per server instance
+ * is the smallest identity the evidence actually supports.
+ *
+ * NOT CLAIMED: persistence across a process restart. There is no mechanism
+ * storing this id, so a restart creates a NEW context and the previous
+ * context's tasks are left on disk and unreachable. That is stated rather than
+ * papered over, and nothing is deleted to hide it.
+ *
+ * The value is namespaced with an `mcp:` prefix so it can never equal a legacy
+ * `"mcp-server"` row, nor a CLI `presentationSessionId`, and so it is greppable
+ * in diagnostics.
+ */
+export function newMcpContextId(): string {
+  return `mcp:${randomUUID()}`
+}
+
+/**
+ * Install `contextId` as the durable todo namespace for this server, scoped to
+ * `root`, and return the previous globals so the caller can restore them.
+ *
+ * Extracted from `serveMcp` so the production wiring itself is testable -
+ * `serveMcp` needs a live stdin transport and cannot run in a unit test, and a
+ * factory-only test would prove nothing about what actually gets installed.
+ */
+export function applyMcpContext(
+  contextId: string,
+  root: string,
+): { prevId: string; prevCwd: string | undefined } {
+  // Fail closed. There is deliberately NO fallback to "mcp-server": if a
+  // namespace cannot be established, serving must not continue with a shared
+  // identity.
+  if (!contextId || contextId === "mcp-server") {
+    throw new Error("mcp: refusing to serve without a unique task namespace")
+  }
+  const prevId = todoSession.id
+  const prevCwd = todoSession.cwd
+  todoSession.id = contextId
+  todoSession.cwd = root
+  return { prevId, prevCwd }
+}
+
 export async function serveMcp(opts: McpServeOptions = {}): Promise<void> {
   const tools = selectTools(opts)
   const byName = new Map(tools.map((t) => [t.name, t]))
@@ -197,15 +260,18 @@ export async function serveMcp(opts: McpServeOptions = {}): Promise<void> {
   // Root tunggal: jail permission, cwd eksekusi, dan jurnal memakai nilai
   // yang sama (audit #05: divergensi ketiganya = jail bypass).
   const root = opts.root ?? process.cwd()
+  // The journal key is an internal, per-process record. It is deliberately NOT
+  // the durable task namespace and is left unchanged.
   const JOURNAL_SESSION = "mcp-server"
 
   // todoSession global dipakai tool todo_*; di proses serve khusus, skop ke
-  // sesi server agar tak mencemari/membaca state sesi lain (P2 isolation).
-  // Default "default" bila serve dipakai sebagai library tanpa setup root.
-  const prevTodo = todoSession.id
-  const prevTodoCwd = todoSession.cwd
-  todoSession.id = "mcp-server"
-  todoSession.cwd = root
+  // konteks server ini agar tak mencemari/membaca state sesi lain (P2
+  // isolation). Phase 4A.3: the scope is now a unique per-instance id rather
+  // than the shared literal "mcp-server".
+  const { prevId: prevTodo, prevCwd: prevTodoCwd } = applyMcpContext(
+    newMcpContextId(),
+    root,
+  )
 
   // Idempotency request (audit #05 P0, diperkuat #08 P0): retry client
   // (atau crash-restart) tak boleh mengeksekusi ulang mutasi non-idempoten

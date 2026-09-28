@@ -3,7 +3,7 @@
 // stdio pipe; test berbicara JSON-RPC. Hermetic: tmp cwd per test.
 
 import { expect, test } from "bun:test"
-import { existsSync, mkdtempSync, readFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs"
 import { rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -499,16 +499,36 @@ test("mcp-server: dua cwd terpisah tak bisa silang", async () => {
   }
 })
 
-test("mcp-server: todo ter-skup mcp-server; stdin close = exit bersih", async () => {
+test("mcp-server: todo ter-skop namespace unik server; BUKAN 'mcp-server'", async () => {
   const dir = tmpRoot()
   const c = await startServer(["--cwd", dir])
+  const c2 = await startServer(["--cwd", dir])
   try {
     const t = await call(c, 111, "todo_write", {
       todos: [{ content: "tugas-srv", status: "pending" }],
     })
     expect((t.result as { isError: boolean }).isError ?? false).toBe(false)
-    expect(existsSync(join(dir, ".minicode", "todos", "mcp-server.json"))).toBe(true)
+
+    // Phase 4A.3: the durable namespace is per server instance. It is NOT the
+    // shared literal "mcp-server" any more, and it is still not "default".
+    const names = readdirSync(join(dir, ".minicode", "todos"))
+    expect(names).toHaveLength(1)
+    expect(names[0]).toMatch(/^mcp-.+\.json$/)
+    expect(names[0]).not.toBe("mcp-server.json")
+    expect(existsSync(join(dir, ".minicode", "todos", "mcp-server.json"))).toBe(false)
     expect(existsSync(join(dir, ".minicode", "todos", "default.json"))).toBe(false)
+
+    // A second server over the SAME directory is a different logical context,
+    // so it must address a different durable file - this is the invariant the
+    // shared literal used to violate.
+    const t2 = await call(c2, 111, "todo_write", {
+      todos: [{ content: "tugas-srv-2", status: "pending" }],
+    })
+    expect((t2.result as { isError: boolean }).isError ?? false).toBe(false)
+    const after = readdirSync(join(dir, ".minicode", "todos"))
+    expect(after).toHaveLength(2)
+    expect(new Set(after).size).toBe(2)
+    for (const n of after) expect(n).toMatch(/^mcp-.+\.json$/)
   } finally {
     const code = await c.exited().catch(() => null)
     expect([0, null]).toContain(code)

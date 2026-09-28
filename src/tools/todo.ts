@@ -380,6 +380,40 @@ export async function loadPlan(sessionId: string, cwd = process.cwd()): Promise<
 /** Session id aktif — di-set CLI supaya todo tersimpan per sesi. */
 export const todoSession = { id: "default", cwd: undefined as string | undefined }
 
+/**
+ * PHASE 4A.4B — the identity ONE todo operation runs under.
+ *
+ * WHY THIS EXISTS. `todoSession` is a process-level singleton. The write path used
+ * to read it *after* an `await`, so a second request that rebound the global could
+ * silently steal the first request's session: the JSON write, the TaskStore
+ * namespace, the assignment's session stamp and the plan snapshot could all end
+ * up under the wrong session.
+ *
+ * The fix is deliberately NOT a new global and NOT a new context abstraction. It
+ * is the existing per-request `ToolContext` — which MCP already builds fresh for
+ * every request and already populates with the execution root — plus ONE capture
+ * at operation entry. Everything after an `await` then reads the immutable local,
+ * so the operation stays bound to the session it was invoked with no matter what
+ * another request does to the global.
+ *
+ * Resolution order (preserved from the original code, which preferred `ctx` over
+ * the global):
+ *   sessionId: ctx.sessionId  ->  todoSession.id
+ *   cwd:       ctx.cwd        ->  todoSession.cwd  ->  process.cwd()
+ *
+ * `todoSession` remains the composition-root DEFAULT — `cli/setup.ts` binds it
+ * once at startup and never mutates it during operation. It is read here exactly
+ * once per operation, at entry, which is what makes it safe rather than what makes
+ * it correct on its own.
+ */
+export function todoOperationContext(ctx: unknown): { sessionId: string; cwd: string } {
+  const c = (ctx ?? {}) as { sessionId?: string; cwd?: string }
+  return {
+    sessionId: typeof c.sessionId === "string" && c.sessionId !== "" ? c.sessionId : todoSession.id,
+    cwd: c.cwd ?? todoSession.cwd ?? process.cwd(),
+  }
+}
+
 export const todoWriteTool: Tool = {
   name: "todo_write",
   description:
@@ -425,11 +459,15 @@ export const todoWriteTool: Tool = {
     ctx.signal.throwIfAborted()
     const evidence = currentCompletionEvidence()
     const list = normalizeTodos(todos, evidence)
-    // cwd sesi dari ToolContext dulu (skenario --cwd / sub-agen), lalu global
-    // yang di-set composition root (cli/setup.ts, MCP serve), terakhir cwd
-    // proses. Urutan lama (global-dulu) buta terhadap ctx.
-    const cwd = (ctx as { cwd?: string }).cwd ?? todoSession.cwd ?? process.cwd()
-    await saveTodos(todoSession.id, list, cwd)
+    // PHASE 4A.4B - bind ONCE, before the first await. `sessionId` and `cwd` are
+    // immutable for the rest of this operation, so no later request can redirect
+    // the JSON write, the TaskStore namespace, the assignment stamp or the plan
+    // snapshot to another session.
+    //
+    // cwd resolution order is unchanged: ToolContext first (--cwd / sub-agent),
+    // then the composition-root global, then the process cwd.
+    const { sessionId, cwd } = todoOperationContext(ctx)
+    await saveTodos(sessionId, list, cwd)
     // PHASE 4A.4 - canonical TaskStore synchronization (NEW ARCHITECTURE).
     //
     // Placement follows the ordering production already proves: the durable JSON
@@ -450,7 +488,7 @@ export const todoWriteTool: Tool = {
       try {
         const sync = synchronizeCanonicalTasks({
           cwd,
-          sessionId: todoSession.id,
+          sessionId,
           declared: list.map((t) => ({
             ...(t.taskId ? { taskId: t.taskId } : {}),
             title: t.content,
@@ -472,7 +510,7 @@ export const todoWriteTool: Tool = {
     }
     // Plan artifact ditulis tiap save — murah (atomik, kecil) dan membuat
     // resume lintas sesi tidak butuh memutar ulang seluruh percakapan.
-    await savePlanSnapshot(todoSession.id, list, cwd).catch(() => {})
+    await savePlanSnapshot(sessionId, list, cwd).catch(() => {})
     // Penolakan completion harus TERLIHAT oleh model, bukan hanya tersimpan di
     // file: tanpa baris ini model mengira item-nya completed lalu mencoba
     // lanjut — persis pola "false completion" yang INV-003 larang.
@@ -481,7 +519,11 @@ export const todoWriteTool: Tool = {
       refused.length > 0
         ? `refused ${refused.length} completion claim(s): verification is failing, so they are blocked instead of completed. Fix the failing check first.\n`
         : ""
-    return notice + renderTodos(list) + (assignment ? `\n${encodeCanonicalAssignments(todoSession.id, assignment)}` : "")
+    return (
+      notice +
+      renderTodos(list) +
+      (assignment ? `\n${encodeCanonicalAssignments(sessionId, assignment)}` : "")
+    )
   },
 }
 
@@ -491,8 +533,10 @@ export const todoReadTool: Tool = {
   parameters: { type: "object", properties: {}, additionalProperties: false },
   async execute(_args, ctx) {
     ctx.signal.throwIfAborted()
-    const cwd = (ctx as { cwd?: string }).cwd ?? todoSession.cwd ?? process.cwd()
-    const list = await loadTodos(todoSession.id, cwd)
+    // PHASE 4A.4B - same single entry capture as the write path. A concurrent
+    // write rebinding the global must not decide which session this read observes.
+    const { sessionId, cwd } = todoOperationContext(ctx)
+    const list = await loadTodos(sessionId, cwd)
     if (list.length === 0) return "(no todos yet — use todo_write to create one)"
     return renderTodos(list)
   },

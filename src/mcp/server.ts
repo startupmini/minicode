@@ -71,6 +71,11 @@ async function invokeTool(
   opts: McpServeOptions,
   signal: AbortSignal,
   journal: { session: string; root: string },
+  /** PHASE 4A.4B: the 4A.3 durable task namespace for THIS server instance.
+   *  Threaded explicitly so the per-request ToolContext can carry it. It is a
+   *  parameter, never a read of process-global state, so two in-flight requests
+   *  cannot observe each other's session. */
+  contextId: string,
   /** Kunci bukti dedup `req:<id>:<argsHash>` (dibuat pemanggil dari argumen
    * mentah) — ditulis apa adanya ke outcome.note + flag dedup. */
   noteKey?: string,
@@ -137,15 +142,20 @@ async function invokeTool(
       ...(noteKey ? { note: noteKey } : {}),
     })
   }
-  const ctx: ToolContext = {
-    signal,
-    state: { history: [], turnCount: 0, stepCount: 0 },
-    emit: () => {},
-    // P0 audit #05: root eksekusi HARUS sama dengan root jail permission.
-    // Sebelumnya ctx tanpa cwd → tool jatuh ke process.cwd() sementara jail
-    // memakai opts.root — divergensi jail-vs-eksekusi bila --cwd dipakai.
-    cwd: root,
-  }
+    const ctx: ToolContext & { sessionId?: string } = {
+      signal,
+      state: { history: [], turnCount: 0, stepCount: 0 },
+      emit: () => {},
+      // P0 audit #05: root eksekusi HARUS sama dengan root jail permission.
+      // Sebelumnya ctx tanpa cwd  tool jatuh ke process.cwd() sementara jail
+      // memakai opts.root - divergensi jail-vs-eksekusi bila --cwd dipakai.
+      cwd: root,
+      // PHASE 4A.4B: bind this request to the 4A.3 namespace explicitly. The
+      // ctx object is already built per request, so this is the existing
+      // composition mechanism doing the job - no new global, and the session
+      // cannot be swapped by another request mid-flight.
+      sessionId: contextId,
+    }
   try {
     const out = await tool.execute(validArgs, ctx)
     const text =
@@ -268,10 +278,13 @@ export async function serveMcp(opts: McpServeOptions = {}): Promise<void> {
   // konteks server ini agar tak mencemari/membaca state sesi lain (P2
   // isolation). Phase 4A.3: the scope is now a unique per-instance id rather
   // than the shared literal "mcp-server".
-  const { prevId: prevTodo, prevCwd: prevTodoCwd } = applyMcpContext(
-    newMcpContextId(),
-    root,
-  )
+  //
+  // PHASE 4A.4B: the id is captured in a `const` so the SAME per-instance
+  // namespace can be attached to every request's ToolContext below. The global is
+  // still installed for the tools that have no other way to learn it, but the
+  // todo write path no longer depends on it surviving an await.
+  const mcpContextId = newMcpContextId()
+  const { prevId: prevTodo, prevCwd: prevTodoCwd } = applyMcpContext(mcpContextId, root)
 
   // Idempotency request (audit #05 P0, diperkuat #08 P0): retry client
   // (atau crash-restart) tak boleh mengeksekusi ulang mutasi non-idempoten
@@ -556,6 +569,7 @@ export async function serveMcp(opts: McpServeOptions = {}): Promise<void> {
               opts,
               linkedSignal(reqCtrl),
               { session: JOURNAL_SESSION, root },
+              mcpContextId,
               noteKey,
             )
           } finally {

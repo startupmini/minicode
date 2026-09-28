@@ -398,8 +398,15 @@ test("11. all-id-less reorder of a canonical list is rejected and changes nothin
   expect(open(dir).listTasks(S)).toHaveLength(3)
   expect(open(dir).nextId(S)).toBe("t4")
   // And no plan is published for it.
-  const events = planFor(dir, [{ content: "C" }], "rejected", S)
-  // A rejected write is an error result, so the adapter publishes nothing at all.
+  //
+  // PHASE 4C.1 CLARIFICATION. The assertion below is deliberately inline rather
+  // than routed through the `planFor` helper used by the tests above. `planFor`
+  // hardcodes `result: { isError: false }`, i.e. it models a SUCCESSFUL tool
+  // result - the opposite of the rejected case being proved here. An earlier
+  // draft called `planFor(...)` and discarded the result, which was not merely
+  // dead: read casually it suggests "no plan is published for a rejected write",
+  // while in fact that call publishes one. The only faithful model of a rejected
+  // write is an ERROR result, which is what the adapter gates on.
   const bus = fakeBus()
   const adapter = createPresentationAdapter(bus, {
     sessionId: S,
@@ -411,11 +418,12 @@ test("11. all-id-less reorder of a canonical list is rejected and changes nothin
   bus.emit("execution:completed", {
     execution: {
       call: { id: "r1", name: "todo_write", args: { todos: [{ content: "C" }] } },
+      // isError: true is the load-bearing part - the adapter publishes only on
+      // !result.isError.
       result: { isError: true, content: "TASK_IDENTITY_REQUIRED" },
     },
   })
   expect(seen.filter((e) => e.type === "plan.updated")).toHaveLength(0)
-  void events
 })
 
 // ===========================================================================

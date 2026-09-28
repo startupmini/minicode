@@ -4,6 +4,7 @@ import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
 import { sanitizeSessionPart } from "../lib/session-id.ts"
+import { isTaskId } from "../task/model.ts"
 
 // Todo list per sesi — state eksplisit untuk task multi-langkah.
 // Tanpa ini agent tidak punya tempat menyimpan rencana antar step, sehingga
@@ -14,9 +15,21 @@ export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled" |
 export interface TodoItem {
   content: string
   status: TodoStatus
-  /** Alasan `blocked` — WAJIB ada kalau status=blocked (INV: blocker harus
+  /** Alasan `blocked` - WAJIB ada kalau status=blocked (INV: blocker harus
    *  bisa dijelaskan). Tidak ada di schema tool: diisi runtime dari bukti. */
   blockedReason?: string
+  /**
+   * PHASE 4A.1 - canonical task identity, OPTIONAL.
+   *
+   * This field only TRANSPORTS an id that already exists. The protocol layer
+   * never mints, derives, rewrites or infers one: an id that is absent stays
+   * absent, and an id that is present is passed through byte-for-byte. The sole
+   * allocator remains `TaskStore`.
+   *
+   * Validity is checked with the one canonical guard, `isTaskId` from
+   * `src/task/model.ts` - there is deliberately no second regex in this file.
+   */
+  taskId?: string
 }
 
 const STATUSES: TodoStatus[] = ["pending", "in_progress", "completed", "cancelled", "blocked"]
@@ -155,7 +168,7 @@ export function normalizeTodos(input: unknown, evidence?: CompletionEvidence): T
   const out: TodoItem[] = []
   for (const raw of input.slice(0, LIMITS.TODO_MAX_ITEMS)) {
     if (!raw || typeof raw !== "object") continue
-    const r = raw as { content?: unknown; status?: unknown; blockedReason?: unknown }
+    const r = raw as { content?: unknown; status?: unknown; blockedReason?: unknown; taskId?: unknown }
     const content = String(r.content ?? "")
       .trim()
       .slice(0, LIMITS.TODO_CONTENT_MAX_CHARS)
@@ -164,7 +177,19 @@ export function normalizeTodos(input: unknown, evidence?: CompletionEvidence): T
     // `blockedReason` HARUS ikut dibaca: tanpanya alasan blocker hilang
     // tepat setelah restart (durable write, non-durable read).
     const reason = typeof r.blockedReason === "string" ? r.blockedReason.trim().slice(0, 300) : ""
-    out.push(reason ? { content, status, blockedReason: reason } : { content, status })
+    // PHASE 4A.1 - `taskId` is the ONE identity-bearing field that survives
+    // normalization. It is validated with the canonical guard and then passed
+    // through unchanged: never trimmed, renumbered, generated or coerced. An
+    // absent id stays absent - this layer must not invent durable identity.
+    if (r.taskId !== undefined && r.taskId !== null && !isTaskId(r.taskId)) {
+      throw new Error(`todo item has a non-canonical taskId: ${String(r.taskId)}`)
+    }
+    const taskId = isTaskId(r.taskId) ? r.taskId : undefined
+    out.push(
+      reason
+        ? { content, status, blockedReason: reason, ...(taskId ? { taskId } : {}) }
+        : { content, status, ...(taskId ? { taskId } : {}) },
+    )
   }
   if (out.length === 0) throw new Error("todos is empty — provide at least one item with content")
   // `blocked` tanpa alasan adalah state tak terjelaskan (PF-04). Selain
@@ -201,7 +226,11 @@ export function renderTodos(todos: TodoItem[]): string {
     (active ? ` · sekarang: ${active.content}` : "")
   const body = todos
     .map(
-      (t) => `  ${GLYPH[t.status]} ${t.content}${t.blockedReason ? ` — ${t.blockedReason}` : ""}`,
+      // PHASE 4A.1 - identity is echoed so the model can reference the task
+      // later. It is rendered only when present; an id-less item is rendered
+      // exactly as before. No id is ever synthesised for display.
+      (t) =>
+        `  ${GLYPH[t.status]} ${t.taskId ? `${t.taskId} — ` : ""}${t.content}${t.blockedReason ? ` — ${t.blockedReason}` : ""}`,
     )
     .join("\n")
   return `${head}\n${body}`
@@ -368,6 +397,15 @@ export const todoWriteTool: Tool = {
             status: {
               type: "string",
               enum: ["pending", "in_progress", "completed", "cancelled"],
+            },
+            // PHASE 4A.1 - the single identity-bearing field the model may
+            // supply. Optional, so every existing id-less payload still
+            // validates. `additionalProperties: false` below is retained, so
+            // this is the ONLY new accepted property.
+            taskId: {
+              type: "string",
+              description:
+                "Canonical task id (e.g. t1) of an EXISTING task, as returned by todo_read. Omit for a new task. Never invent one.",
             },
           },
           required: ["content", "status"],

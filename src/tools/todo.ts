@@ -542,20 +542,58 @@ export const todoWriteTool: Tool = {
         )
       }
     }
+    // PHASE 4B.1 - write the RESOLVED identities back to the durable todo file.
+    //
+    // THE DEFECT THIS FIXES. `saveTodos` above persists the *declared* payload,
+    // which by definition carries no id for a task the sync was about to create.
+    // The id minted by TaskStore reached the plan builder (4A.4A) but never the
+    // JSON, and `todo_read` reads the JSON - so the model could never learn the id
+    // of a task it had just created. On the next turn it re-sent that item
+    // id-less, 4A.5 classified it as a mixed payload, and a SECOND durable row was
+    // created for the same logical task. Measured before the fix: t3=C then
+    // t4=C, two canonical rows for one task.
+    //
+    // The ids merged here are the allocator's own, returned by the transaction
+    // that committed them. Nothing is inferred from position, content or title.
+    //
+    // ORDERING IS PRESERVED. The first `saveTodos` still happens BEFORE the
+    // canonical sync, so a durable-write failure still suppresses plan
+    // publication (4A.4) and the 4A.5 guard still runs before anything is
+    // written. This is an ADDITIONAL write that only happens once the canonical
+    // state is committed.
+    //
+    // The legacy all-id-less path produces no assignment, so it performs no
+    // second write and its file is byte-identical to before.
+    let current = list
+    if (assignment) {
+      const merged = list.map((t, i) =>
+        // Only ever ADD an id the store just minted. A declared id is never
+        // rewritten, and an item with no assignment entry is left untouched.
+        !t.taskId && assignment[i] ? { ...t, taskId: assignment[i]!.taskId } : t,
+      )
+      if (merged.some((t, i) => t.taskId !== list[i]?.taskId)) {
+        current = merged
+        // Awaited, not swallowed: leaving a stale view file behind is precisely
+        // what made this defect invisible. If this write fails the operation
+        // reports failure rather than pretending the identity is observable.
+        await saveTodos(sessionId, current, cwd)
+      }
+    }
     // Plan artifact ditulis tiap save — murah (atomik, kecil) dan membuat
     // resume lintas sesi tidak butuh memutar ulang seluruh percakapan.
-    await savePlanSnapshot(sessionId, list, cwd).catch(() => {})
+    // Now fed with the RESOLVED list, so the persisted plan carries canonical ids.
+    await savePlanSnapshot(sessionId, current, cwd).catch(() => {})
     // Penolakan completion harus TERLIHAT oleh model, bukan hanya tersimpan di
     // file: tanpa baris ini model mengira item-nya completed lalu mencoba
     // lanjut — persis pola "false completion" yang INV-003 larang.
-    const refused = list.filter((t) => t.status === "blocked" && t.blockedReason)
+    const refused = current.filter((t) => t.status === "blocked" && t.blockedReason)
     const notice =
       refused.length > 0
         ? `refused ${refused.length} completion claim(s): verification is failing, so they are blocked instead of completed. Fix the failing check first.\n`
         : ""
     return (
       notice +
-      renderTodos(list) +
+      renderTodos(current) +
       (assignment ? `\n${encodeCanonicalAssignments(sessionId, assignment)}` : "")
     )
   },

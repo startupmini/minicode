@@ -24,8 +24,8 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { TaskGraph } from "../src/task/graph.ts"
-import { computeBlockers } from "../src/task/readiness.ts"
 import { TaskStore, resetTaskStoreHandles, type NewTaskInput } from "../src/task/store.ts"
+import type { Blocker } from "../src/task/readiness.ts"
 import type { Task, TaskSnapshot, TaskStatus } from "../src/task/model.ts"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -334,25 +334,32 @@ describe("J/K. cycles", () => {
 
 // ---------------------------------------------------------------------------
 describe("L. dependency satisfaction — only COMPLETED", () => {
-  test.each(ALL_STATUSES)("dependency with status %s", (status) => {
-    const g = graphOf([
-      mkTask("t1", { status, blockedReason: status === "BLOCKED" ? "cause" : null }),
-      mkTask("t2", { dependsOn: ["t1"] }),
-    ])
-    const satisfied = status === "COMPLETED"
-    const blockers = g.blockers("t2")
+  // PHASE 5D.1: `test.each` types its callback parameter as `unknown`, which
+  // cannot carry a `TaskStatus` annotation and leaked `unknown` into 10 type
+  // errors. A typed `for` loop over the same fixture list gives real inference
+  // with no cast and no suppression, and produces the same test names and the
+  // same assertions.
+  for (const status of ALL_STATUSES) {
+    test(`dependency with status ${status}`, () => {
+      const g = graphOf([
+        mkTask("t1", { status, blockedReason: status === "BLOCKED" ? "cause" : null }),
+        mkTask("t2", { dependsOn: ["t1"] }),
+      ])
+      const satisfied = status === "COMPLETED"
+      const blockers = g.blockers("t2")
 
-    if (satisfied) {
-      expect(blockers).toEqual([])
-      expect(g.isReady("t2")).toBe(true)
-    } else {
-      expect(blockers.length).toBe(1)
-      const terminal = status === "CANCELLED" || status === "FAILED"
-      expect(blockers[0]?.kind).toBe(terminal ? "DEPENDENCY_TERMINAL" : "DEPENDENCY_UNSATISFIED")
-      expect(blockers[0]?.permanent).toBe(terminal)
-      expect(g.isReady("t2")).toBe(false)
-    }
-  })
+      if (satisfied) {
+        expect(blockers).toEqual([])
+        expect(g.isReady("t2")).toBe(true)
+      } else {
+        expect(blockers.length).toBe(1)
+        const terminal = status === "CANCELLED" || status === "FAILED"
+        expect(blockers[0]?.kind).toBe(terminal ? "DEPENDENCY_TERMINAL" : "DEPENDENCY_UNSATISFIED")
+        expect(blockers[0]?.permanent).toBe(terminal)
+        expect(g.isReady("t2")).toBe(false)
+      }
+    })
+  }
 
   test("COMPLETED is the only satisfying status — explicit negation table", () => {
     for (const status of ALL_STATUSES) {
@@ -365,18 +372,22 @@ describe("L. dependency satisfaction — only COMPLETED", () => {
 
 // ---------------------------------------------------------------------------
 describe("M. readiness matrix", () => {
-  test.each(ALL_STATUSES)("status %s: eligible / ready", (status) => {
-    const blockedReason = status === "BLOCKED" ? "waiting on review" : null
-    const g = graphOf([mkTask("t1", { status, blockedReason })])
+  // PHASE 5D.1: typed `for` loop instead of `test.each` (see the note in
+  // section L). Same names, same assertions, real type inference.
+  for (const status of ALL_STATUSES) {
+    test(`status ${status}: eligible / ready`, () => {
+      const blockedReason = status === "BLOCKED" ? "waiting on review" : null
+      const g = graphOf([mkTask("t1", { status, blockedReason })])
 
-    const eligible = status === "PENDING" || status === "BLOCKED"
-    expect(g.eligibleTasks()).toEqual(eligible ? ["t1"] : [])
+      const eligible = status === "PENDING" || status === "BLOCKED"
+      expect(g.eligibleTasks()).toEqual(eligible ? ["t1"] : [])
 
-    // Ready requires PENDING. BLOCKED is eligible but NEVER ready.
-    const ready = status === "PENDING"
-    expect(g.isReady("t1")).toBe(ready)
-    expect(g.readyTasks()).toEqual(ready ? ["t1"] : [])
-  })
+      // Ready requires PENDING. BLOCKED is eligible but NEVER ready.
+      const ready = status === "PENDING"
+      expect(g.isReady("t1")).toBe(ready)
+      expect(g.readyTasks()).toEqual(ready ? ["t1"] : [])
+    })
+  }
 
   test("BLOCKED is eligible but never ready — the anti-contradiction invariant", () => {
     const g = graphOf([mkTask("t1", { status: "BLOCKED", blockedReason: "cause" })])
@@ -587,8 +598,36 @@ describe("O. NotReady union — FIVE states (Phase 5C.1 amendment)", () => {
     }
   })
 
-  test("eligible-not-ready is never used for a task that is not eligible", () => {
-    // The variant must not leak: only BLOCKED can produce it, because only
+  // PHASE 5D.1 defect D1 regression. COMPILE-SENSITIVE: the annotations below
+  // only typecheck if `blockers()` really returns `readonly Blocker[]` on every
+  // path. Under the original defect (returning `EMPTY_IDS`, a
+  // `readonly string[]`) `g.blockers(id)[0]?.kind` is a type error, because
+  // `string` has no `kind`. Runtime assertions cannot catch that; these can.
+  test("D1: blockers() is typed as Blocker[] on every return path", () => {
+    const g = graphOf([mkTask("t1")])
+
+    // absent id -> the empty result is still Blocker[]
+    const absent: Blocker["kind"] | undefined = g.blockers("t99")[0]?.kind
+    expect(absent).toBeUndefined()
+
+    // present id, no blockers -> also Blocker[]
+    const present: Blocker["kind"] | undefined = g.blockers("t1")[0]?.kind
+    expect(present).toBeUndefined()
+
+    // a real blocker, and `permanent` is reachable as a boolean
+    const blocked = graphOf([mkTask("t1", { status: "CANCELLED" }), mkTask("t2", { dependsOn: ["t1"] })])
+    const first = blocked.blockers("t2")[0]
+    const kind = first?.kind
+    const permanent = first?.permanent
+    expect(kind).toBe("DEPENDENCY_TERMINAL")
+    expect(permanent).toBe(true)
+
+    // the whole array is assignable to the declared element type
+    const all: readonly Blocker[] = blocked.blockers("t2")
+    expect(all.length).toBe(1)
+  })
+
+  test("eligible-not-ready is never used for a task that is not eligible", () => {    // The variant must not leak: only BLOCKED can produce it, because only
     // BLOCKED survives to step 4 of the classification.
     for (const status of ALL_STATUSES) {
       const g = graphOf([mkTask("t1", { status, blockedReason: status === "BLOCKED" ? "c" : null })])
@@ -614,7 +653,9 @@ describe("O. NotReady union — FIVE states (Phase 5C.1 amendment)", () => {
     const eligible = g.eligibleTasks()
     const ready = g.readyTasks()
     // t1 BLOCKED, t2 and t4 PENDING are all eligible.
-    expect(eligible.sort()).toEqual(["t1", "t2", "t4"])
+    // `eligibleTasks()` returns a readonly array, so sort a defensive copy
+    // rather than mutating (or weakening the type of) the graph's own result.
+    expect([...eligible].sort()).toEqual(["t1", "t2", "t4"])
     // t2 is ready outright; t4's dependency t3 is COMPLETED, so t4 is ready too.
     // t1 is eligible but never ready.
     expect(ready).toEqual(["t2", "t4"])
@@ -1132,16 +1173,19 @@ describe("Z. purity — construction performs no I/O", () => {
 describe("status matrix (brief S19) — every real TaskStatus", () => {
   // Five axes. `reason` is the `notReadyReason` state for a task in this status
   // with NO blockers; `blocker` is what it causes on a dependent.
-  const EXPECTED: Record<
-    string,
-    {
-      eligible: boolean
-      ready: boolean
-      satisfies: boolean
-      blocker: string
-      reason: "ready" | "eligible-not-ready" | "not-eligible"
-    }
-  > = {
+  //
+  // PHASE 5D.1: keyed as `Record<TaskStatus, …>` rather than `Record<string, …>`
+  // so the compiler proves the table is COMPLETE — a ninth key or a missing
+  // status is now a type error, and `EXPECTED[status]` needs no cast.
+  interface MatrixRow {
+    eligible: boolean
+    ready: boolean
+    satisfies: boolean
+    /** The blocker this status causes on a dependent; `""` when it satisfies. */
+    blocker: Blocker["kind"] | ""
+    reason: "ready" | "eligible-not-ready" | "not-eligible"
+  }
+  const EXPECTED: Record<TaskStatus, MatrixRow> = {
     PENDING:     { eligible: true,  ready: true,  satisfies: false, blocker: "DEPENDENCY_UNSATISFIED", reason: "ready" },
     BLOCKED:     { eligible: true,  ready: false, satisfies: false, blocker: "DEPENDENCY_UNSATISFIED", reason: "eligible-not-ready" },
     IN_PROGRESS: { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_UNSATISFIED", reason: "not-eligible" },
@@ -1150,6 +1194,15 @@ describe("status matrix (brief S19) — every real TaskStatus", () => {
     COMPLETED:   { eligible: false, ready: false, satisfies: true,  blocker: "",                        reason: "not-eligible" },
     CANCELLED:   { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_TERMINAL",     reason: "not-eligible" },
     FAILED:      { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_TERMINAL",     reason: "not-eligible" },
+  }
+
+  // Explicit total lookup: `noUncheckedIndexedAccess` makes a `Record` read
+  // `MatrixRow | undefined`, and a missing row is a real fixture bug worth
+  // failing loudly rather than papering over with a cast.
+  const rowOf = (status: TaskStatus): MatrixRow => {
+    const row: MatrixRow | undefined = EXPECTED[status]
+    if (row === undefined) throw new Error(`no status-matrix row for ${status}`)
+    return row
   }
 
   test("the matrix covers exactly the 8 real statuses and nothing else", () => {
@@ -1163,10 +1216,11 @@ describe("status matrix (brief S19) — every real TaskStatus", () => {
     expect([...fromMatrix].sort()).toEqual(["eligible-not-ready", "not-eligible", "ready"])
   })
 
-  test.each(ALL_STATUSES)(
-    "%s: eligible / ready / satisfies / blocker / reason",
-    (status) => {
-      const expected = EXPECTED[status] as (typeof EXPECTED)[string]
+  // PHASE 5D.1: typed `for` loop instead of `test.each` (see the note in
+  // section L). Same names, same assertions, real type inference.
+  for (const status of ALL_STATUSES) {
+    test(`${status}: eligible / ready / satisfies / blocker / reason`, () => {
+      const expected = rowOf(status)
       const blockedReason = status === "BLOCKED" ? "cause" : null
       const g = graphOf([mkTask("t1", { status, blockedReason })])
 
@@ -1184,9 +1238,12 @@ describe("status matrix (brief S19) — every real TaskStatus", () => {
       const kinds = kindsOf(dependent, "t2")
       if (expected.satisfies) {
         expect(kinds).toEqual([])
-      } else {
+      } else if (expected.blocker !== "") {
+        // Narrowed to `Blocker["kind"]`, so this compares like with like.
         expect(kinds).toEqual([expected.blocker])
+      } else {
+        throw new Error(`status ${status} neither satisfies nor blocks a dependent`)
       }
-    },
-  )
+    })
+  }
 })

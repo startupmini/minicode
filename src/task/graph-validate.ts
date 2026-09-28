@@ -313,10 +313,21 @@ function findDependencyCycles(byId: ReadonlyMap<string, GraphNode>): {
     ]
 
     while (frames.length > 0) {
-      const frame = frames[frames.length - 1]
+      // PHASE 5D.1 / defect D2. Under `noUncheckedIndexedAccess` a plain
+      // `frames[frames.length - 1]` is `Frame | undefined`, and a length test
+      // does NOT narrow an index expression — so the compiler could not prove
+      // the loop invariant. `.at(-1)` states that absence is possible and the
+      // `undefined` test makes the narrowing provable. No assertion, no cast.
+      const frame = frames.at(-1)
+      if (frame === undefined) break
 
-      if (frame.next < frame.adj.length) {
-        const neighbour = frame.adj[frame.next] as string
+      // One `undefined` test replaces the `next < adj.length` bounds check:
+      // `next` advances by exactly 1 from 0 and `adj` never changes length, so
+      // `adj.at(next)` is undefined exactly when the frame is exhausted. This
+      // also removes the `as string` cast that previously masked the same
+      // unchecked access.
+      const neighbour = frame.adj.at(frame.next)
+      if (neighbour !== undefined) {
         frame.next++
         if (!index.has(neighbour)) {
           index.set(neighbour, counter)
@@ -334,12 +345,14 @@ function findDependencyCycles(byId: ReadonlyMap<string, GraphNode>): {
         continue
       }
 
-      // All edges of `frame` are consumed: close it, then pop an SCC if it is a root.
+      // The frame has no unvisited edge left: close it, then pop an SCC if it
+      // is a root (lowlink === index).
       frames.pop()
       if (lowlink.get(frame.id) === index.get(frame.id)) {
         const component: string[] = []
         for (;;) {
-          const member = sccStack.pop() as string
+          const member = sccStack.pop()
+          if (member === undefined) break
           onStack.delete(member)
           component.push(member)
           if (member === frame.id) break
@@ -351,8 +364,10 @@ function findDependencyCycles(byId: ReadonlyMap<string, GraphNode>): {
         }
       }
 
-      if (frames.length > 0) {
-        const caller = frames[frames.length - 1]
+      // Propagate the lowlink to the frame that resumed us. `at(-1)` keeps this
+      // provable; a plain index would reintroduce D2 here.
+      const caller = frames.at(-1)
+      if (caller !== undefined) {
         lowlink.set(
           caller.id,
           Math.min(lowlink.get(caller.id) as number, lowlink.get(frame.id) as number),

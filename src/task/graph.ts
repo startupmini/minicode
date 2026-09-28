@@ -39,6 +39,18 @@ export type { Blocker, BlockerKind, NotReady } from "./readiness"
 const EMPTY_IDS: readonly string[] = Object.freeze([])
 
 /**
+ * A genuinely `Blocker`-typed empty result.
+ *
+ * PHASE 5D.1 / defect D1. `blockers()` promises `readonly Blocker[]`, so its
+ * empty result must be typed as one. Returning `EMPTY_IDS` here handed callers a
+ * `readonly string[]` while claiming otherwise — a defect the runtime could not
+ * surface (the array is empty either way) and `tsc` did. Typed explicitly rather
+ * than cast: `Object.freeze([])` is `readonly never[]`, which is assignable to
+ * `readonly Blocker[]` with no assertion and no `as`.
+ */
+const EMPTY_BLOCKERS: readonly Blocker[] = Object.freeze([])
+
+/**
  * Deterministic node order (design lock S12): `order` ascending, then `taskId`
  * ascending.
  *
@@ -242,7 +254,7 @@ export class TaskGraph {
   /** Every relation-derived reason this task is not ready. */
   blockers(taskId: string): readonly Blocker[] {
     const node = this.getNode(taskId)
-    if (node === undefined) return EMPTY_IDS
+    if (node === undefined) return EMPTY_BLOCKERS
     return computeBlockers(node, this.analysis.byId, this.analysis)
   }
 

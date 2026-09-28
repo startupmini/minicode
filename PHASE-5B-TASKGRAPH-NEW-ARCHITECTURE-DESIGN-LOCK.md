@@ -22,6 +22,42 @@ UNKNOWN. Every decision is labelled in §26; the contract as a whole is
 
 ---
 
+## AMENDMENT 5C.1 — `not-eligible` DID NOT MEAN NOT-ELIGIBLE
+
+**Status: ACTIVE. Supersedes the four-state `NotReady` union in §9.**
+Issued in Phase 5C.1 (`PHASE-5C.1-NOTREADY-SEMANTIC-CORRECTION-REPORT.md`),
+before any downstream consumer existed.
+
+**The defect.** This document locked a four-state union (§9) and, in the same
+document, defined eligibility to include `BLOCKED` (§8). Those two decisions are
+inconsistent for exactly one input: **a durably-`BLOCKED` task with zero derived
+blockers**. That task *is* eligible — §8 says so explicitly — but it is never
+ready, because §8 also requires `status === "PENDING"`. The union had no member
+for it:
+
+| candidate member | why it is wrong |
+|---|---|
+| `ready` | false — the task is not ready |
+| `blocked` | false — `blockers` would be empty, a self-contradiction |
+| `not-eligible` | false — the task IS eligible; this is the negation of §8 |
+
+The 5C implementation was forced to answer `not-eligible`, i.e. to report a task
+as ineligible while `eligibleTasks()` simultaneously listed it. **That is a
+contract that lied, and the implementation was right to flag it rather than make
+the enum fit.**
+
+**The correction.** `eligible` and `ready` are distinct predicates, so the public
+API now names both (§9). The union becomes five states. This is a
+**NEW ARCHITECTURE correction** — not a recovery, and not a reinterpretation of
+a lost original. Nothing else in this document changes.
+
+**What is deliberately NOT amended:** `eligibleForReadiness`, `isReady`,
+dependency semantics (§7), cycle semantics (§11), validity (§10), blockers
+(§9), ordering (§12), immutability (§14–16) and the public API list (§19). The
+fault was in the *reason vocabulary*, not in the state model.
+
+---
+
 ## 1. Purpose
 
 TaskGraph answers **six read-only questions** over exactly one TaskStore snapshot:
@@ -187,16 +223,20 @@ eligibleForReadiness(n)  =  n.status ∈ { PENDING, BLOCKED }
 isReady(n)               =  n.status === PENDING ∧ blockers(n) = []
 ```
 
-| status | eligible? | currently ready? | why |
-|---|---|---|---|
-| `PENDING` | yes | iff no blockers | the normal ready case |
-| `BLOCKED` | **yes** | **never** | eligible, but the durable state wins — no contradiction (§13) |
-| `IN_PROGRESS` | no | no | already started; readiness is about *starting* |
-| `VERIFYING` | no | no | already started |
-| `RETRYING` | no | no | already attempted |
-| `COMPLETED` | no | no | terminal |
-| `CANCELLED` | no | no | terminal |
-| `FAILED` | no | no | terminal |
+| status | eligible? | currently ready? | `notReadyReason` (no blockers) | why |
+|---|---|---|---|---|
+| `PENDING` | yes | iff no blockers | `ready` | the normal ready case |
+| `BLOCKED` | **yes** | **never** | **`eligible-not-ready`** | eligible, but the durable state wins — no contradiction (§13) |
+| `IN_PROGRESS` | no | no | `not-eligible` | already started; readiness is about *starting* |
+| `VERIFYING` | no | no | `not-eligible` | already started |
+| `RETRYING` | no | no | `not-eligible` | already attempted |
+| `COMPLETED` | no | no | `not-eligible` | terminal |
+| `CANCELLED` | no | no | `not-eligible` | terminal |
+| `FAILED` | no | no | `not-eligible` | terminal |
+
+With blockers present, `blocked` outranks the status column above for **every**
+row — including `BLOCKED` itself, so a `BLOCKED` task that also waits on a
+dependency reports `blocked`, not `eligible-not-ready`.
 
 **`BLOCKED` being eligible-but-not-ready is the key move.** It lets the graph
 model "this could become ready once verification is fixed" without ever claiming a
@@ -232,15 +272,31 @@ ever observed; `SELF_REFERENCE` ← defence in depth.
 **Deliberately not modelled as blockers:** status. A cancelled or failed task is
 not "blocked", it is **not eligible**. Conflating them would produce the §13
 contradiction. The public surface therefore answers *"why not ready?"* with a
-discriminated union:
+discriminated union. **AMENDED by 5C.1 — FIVE states, not four:**
 
 ```ts
 type NotReady =
   | { kind: "ready" }
+  | { kind: "eligible-not-ready"; status: TaskStatus }   // ADDED by 5C.1
   | { kind: "not-eligible"; status: TaskStatus }
   | { kind: "blocked"; blockers: readonly Blocker[] }
   | { kind: "graph-invalid"; diagnostics: readonly Diagnostic[] }
 ```
+
+`eligible-not-ready` exists for one input: a durably-`BLOCKED` task with zero
+derived blockers. It is eligible (§8) and not ready (§8), and without a name for
+that the union was forced to call it `not-eligible` — contradicting
+`eligibleTasks()`. See AMENDMENT 5C.1 above.
+
+For a valid graph and a known id the five are exhaustive and mutually exclusive:
+
+| condition | state |
+|---|---|
+| no blockers, `PENDING` | `ready` |
+| any blocker (any status) | `blocked` |
+| no blockers, eligible, not `PENDING` | `eligible-not-ready` |
+| no blockers, not eligible | `not-eligible` |
+| graph invalid | `graph-invalid` (for every id) |
 
 ## 10. Graph validity
 
@@ -293,16 +349,16 @@ every other consumer for free, and makes determinism (G5) fall out of the design
 
 ## 13. Durable status vs derived state
 
-| durable `TaskStatus` | graph-derived readiness | dependents |
-|---|---|---|
-| `PENDING` | eligible; ready iff no blockers | blocked (temporary) |
-| `IN_PROGRESS` | not eligible | blocked (temporary) |
-| `VERIFYING` | not eligible | blocked (temporary) |
-| `BLOCKED` | eligible, **never** ready | blocked (temporary) |
-| `RETRYING` | not eligible | blocked (temporary) |
-| `COMPLETED` | not eligible (terminal) | **satisfied** |
-| `CANCELLED` | not eligible (terminal) | blocked (**permanent**) |
-| `FAILED` | not eligible (terminal) | blocked (**permanent**) |
+| durable `TaskStatus` | graph-derived readiness | `notReadyReason` | dependents |
+|---|---|---|---|
+| `PENDING` | eligible; ready iff no blockers | `ready` / `blocked` | blocked (temporary) |
+| `IN_PROGRESS` | not eligible | `not-eligible` / `blocked` | blocked (temporary) |
+| `VERIFYING` | not eligible | `not-eligible` / `blocked` | blocked (temporary) |
+| `BLOCKED` | eligible, **never** ready | **`eligible-not-ready`** / `blocked` | blocked (temporary) |
+| `RETRYING` | not eligible | `not-eligible` / `blocked` | blocked (temporary) |
+| `COMPLETED` | not eligible (terminal) | `not-eligible` / `blocked` | **satisfied** |
+| `CANCELLED` | not eligible (terminal) | `not-eligible` / `blocked` | blocked (**permanent**) |
+| `FAILED` | not eligible (terminal) | `not-eligible` / `blocked` | blocked (**permanent**) |
 
 **No contradiction is constructible:** `isReady` requires `status === PENDING`, so
 a durably-`BLOCKED` task can never be reported ready. The durable status is
@@ -502,7 +558,7 @@ a `TaskSnapshot` value passed in by the caller.
 | dependency semantics | **DECIDED** | §6 |
 | dependency satisfaction | **DECIDED** | §7 |
 | readiness | **DECIDED** | §8 |
-| blockers | **DECIDED** | §9 |
+| blockers | **DECIDED** (§9, **AMENDED by 5C.1**: `NotReady` now five states) | §9 |
 | cycle behaviour | **DECIDED** | §11 |
 | graph validity | **DECIDED** | §10 |
 | snapshot model | **DECIDED** | §16 |

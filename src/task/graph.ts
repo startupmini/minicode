@@ -199,7 +199,26 @@ export class TaskGraph {
     return computeIsReady(node, this.analysis.byId, this.analysis)
   }
 
-  /** Why this task is or is not ready. `undefined` if the id is not in the snapshot. */
+  /**
+   * Why this task is or is not ready. `undefined` if the id is not in the snapshot.
+   *
+   * The order of these tests is the whole contract:
+   *
+   *  1. an invalid graph answers `graph-invalid` for EVERY id — the structure
+   *     is ill-defined, so no partial readiness claim is permitted;
+   *  2. any blocker answers `blocked` — blockers outrank status, so a
+   *     durably-`BLOCKED` task that also waits on a dependency reports the
+   *     actionable reason;
+   *  3. `PENDING` with no blockers is the only `ready` case;
+   *  4. an ELIGIBLE task that survived the above is `eligible-not-ready` —
+   *     this is the `BLOCKED`-with-no-blockers case, and it is exactly why
+   *     Phase 5C.1 added the variant;
+   *  5. everything else is `not-eligible`.
+   *
+   * Step 4 tests `eligibleForReadiness` rather than hard-coding `"BLOCKED"`, so
+   * this classification can never drift away from `eligibleTasks()`, which uses
+   * the same predicate.
+   */
   notReadyReason(taskId: string): NotReady | undefined {
     const node = this.getNode(taskId)
     if (node === undefined) return undefined
@@ -212,6 +231,10 @@ export class TaskGraph {
     if (blockers.length > 0) return { kind: "blocked", blockers }
 
     if (node.status === "PENDING") return { kind: "ready" }
+
+    if (eligibleForReadiness(node)) {
+      return { kind: "eligible-not-ready", status: node.status }
+    }
 
     return { kind: "not-eligible", status: node.status }
   }

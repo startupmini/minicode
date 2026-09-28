@@ -480,10 +480,14 @@ describe("N. blocker classification", () => {
 })
 
 // ---------------------------------------------------------------------------
-describe("O. NotReady union", () => {
-  test("all four locked states are produced, and no fifth exists", () => {
+describe("O. NotReady union — FIVE states (Phase 5C.1 amendment)", () => {
+  test("all five states are produced, and no sixth exists", () => {
     // ready
     expect(graphOf([mkTask("t1")]).notReadyReason("t1")).toEqual({ kind: "ready" })
+    // eligible-not-ready  <- the 5C.1 correction
+    expect(
+      graphOf([mkTask("t1", { status: "BLOCKED", blockedReason: "waiting on review" })]).notReadyReason("t1"),
+    ).toEqual({ kind: "eligible-not-ready", status: "BLOCKED" })
     // not-eligible
     expect(graphOf([mkTask("t1", { status: "COMPLETED" })]).notReadyReason("t1")).toEqual({
       kind: "not-eligible",
@@ -496,6 +500,130 @@ describe("O. NotReady union", () => {
     // graph-invalid
     const invalid = graphOf([mkTask("t1", { parentId: "t99" })]).notReadyReason("t1")
     expect(invalid?.kind).toBe("graph-invalid")
+  })
+
+  // --- brief S4.A: the case the original 5B union could not name -----------
+  test("A. BLOCKED with zero blockers is eligible-not-ready, NOT not-eligible", () => {
+    const g = graphOf([mkTask("t1", { status: "BLOCKED", blockedReason: "awaiting sign-off" })])
+
+    // eligible...
+    expect(g.eligibleTasks()).toEqual(["t1"])
+    // ...but not ready
+    expect(g.readyTasks()).toEqual([])
+    expect(g.isReady("t1")).toBe(false)
+    // ...and with no blockers at all
+    expect(g.blockers("t1")).toEqual([])
+    // ...so the reason must be the new variant.
+    expect(g.notReadyReason("t1")).toEqual({ kind: "eligible-not-ready", status: "BLOCKED" })
+  })
+
+  test("B. BLOCKED with a dependency blocker reports blocked", () => {
+    const g = graphOf([
+      mkTask("t1", { status: "PENDING" }),
+      mkTask("t2", { status: "BLOCKED", blockedReason: "cause", dependsOn: ["t1"] }),
+    ])
+    // Blockers outrank the status: the actionable reason is reported.
+    expect(g.notReadyReason("t2")?.kind).toBe("blocked")
+  })
+
+  test("C. PENDING with no blockers is ready", () => {
+    const g = graphOf([mkTask("t1")])
+    expect(g.notReadyReason("t1")).toEqual({ kind: "ready" })
+    expect(g.isReady("t1")).toBe(true)
+  })
+
+  test("D. PENDING with blockers is blocked", () => {
+    const g = graphOf([mkTask("t1", { status: "PENDING" }), mkTask("t2", { dependsOn: ["t1"] })])
+    expect(g.notReadyReason("t2")?.kind).toBe("blocked")
+    expect(g.isReady("t2")).toBe(false)
+  })
+
+  test("E. every non-eligible, non-READY status is not-eligible", () => {
+    for (const status of ["IN_PROGRESS", "VERIFYING", "RETRYING", "COMPLETED", "CANCELLED", "FAILED"] as const) {
+      const g = graphOf([mkTask("t1", { status })])
+      expect(g.notReadyReason("t1")).toEqual({ kind: "not-eligible", status })
+      expect(g.eligibleTasks()).toEqual([])
+    }
+  })
+
+  test("F. an invalid graph reports graph-invalid, even for a BLOCKED task", () => {
+    const g = graphOf([mkTask("t1", { status: "BLOCKED", blockedReason: "cause", parentId: "t99" })])
+    expect(g.notReadyReason("t1")?.kind).toBe("graph-invalid")
+  })
+
+  test("G. the state for every status x blocker combination is pinned", () => {
+    // Exhaustiveness: for a VALID graph and a known id, exactly one state, and
+    // it is the one the contract prescribes.
+    for (const status of ALL_STATUSES) {
+      const blockedReason = status === "BLOCKED" ? "cause" : null
+      const eligible = status === "PENDING" || status === "BLOCKED"
+
+      // no blockers
+      const clean = graphOf([mkTask("t1", { status, blockedReason })])
+      const expectedClean =
+        status === "PENDING"
+          ? "ready"
+          : eligible
+            ? "eligible-not-ready"
+            : "not-eligible"
+      expect({ status, blockers: 0, kind: clean.notReadyReason("t1")?.kind }).toEqual({
+        status,
+        blockers: 0,
+        kind: expectedClean,
+      })
+
+      // with an unsatisfied dependency -> always `blocked`, for EVERY status.
+      // t3 carries the loop's status and waits on t2, so this pins that
+      // blockers outrank status rather than being overridden by it.
+      const dirty = graphOf([
+        mkTask("t1", { status, blockedReason }),
+        mkTask("t2", { status: "PENDING" }),
+        mkTask("t3", { status, blockedReason, dependsOn: ["t2"] }),
+      ])
+      expect({ status, kind: dirty.notReadyReason("t3")?.kind }).toEqual({
+        status,
+        kind: "blocked",
+      })
+    }
+  })
+
+  test("eligible-not-ready is never used for a task that is not eligible", () => {
+    // The variant must not leak: only BLOCKED can produce it, because only
+    // BLOCKED survives to step 4 of the classification.
+    for (const status of ALL_STATUSES) {
+      const g = graphOf([mkTask("t1", { status, blockedReason: status === "BLOCKED" ? "c" : null })])
+      const kind = g.notReadyReason("t1")?.kind
+      if (kind === "eligible-not-ready") {
+        expect({ status, eligibleListed: g.eligibleTasks() }).toEqual({
+          status: "BLOCKED",
+          eligibleListed: ["t1"],
+        })
+      }
+    }
+  })
+
+  test("the five states stay consistent with eligibleTasks/isReady/readyTasks", () => {
+    // Design-consistency audit: no id may be simultaneously listed as eligible
+    // and reported ready, and vice versa.
+    const g = graphOf([
+      mkTask("t1", { status: "BLOCKED", blockedReason: "c" }),
+      mkTask("t2", { status: "PENDING" }),
+      mkTask("t3", { status: "COMPLETED" }),
+      mkTask("t4", { dependsOn: ["t3"] }),
+    ])
+    const eligible = g.eligibleTasks()
+    const ready = g.readyTasks()
+    // t1 BLOCKED, t2 and t4 PENDING are all eligible.
+    expect(eligible.sort()).toEqual(["t1", "t2", "t4"])
+    // t2 is ready outright; t4's dependency t3 is COMPLETED, so t4 is ready too.
+    // t1 is eligible but never ready.
+    expect(ready).toEqual(["t2", "t4"])
+    expect(eligible).toContain("t1")
+    expect(ready).not.toContain("t1")
+    // eligible is a superset of ready, and the difference is exactly t1.
+    expect([...eligible].filter((id) => !ready.includes(id))).toEqual(["t1"])
+    // The eligible-but-not-ready task says so.
+    expect(g.notReadyReason("t1")?.kind).toBe("eligible-not-ready")
   })
 
   test("an invalid graph reports graph-invalid for every node, not a partial answer", () => {
@@ -1002,41 +1130,63 @@ describe("Z. purity — construction performs no I/O", () => {
 
 // ---------------------------------------------------------------------------
 describe("status matrix (brief S19) — every real TaskStatus", () => {
+  // Five axes. `reason` is the `notReadyReason` state for a task in this status
+  // with NO blockers; `blocker` is what it causes on a dependent.
   const EXPECTED: Record<
     string,
-    { eligible: boolean; ready: boolean; satisfies: boolean; blocker: string }
+    {
+      eligible: boolean
+      ready: boolean
+      satisfies: boolean
+      blocker: string
+      reason: "ready" | "eligible-not-ready" | "not-eligible"
+    }
   > = {
-    PENDING:     { eligible: true,  ready: true,  satisfies: false, blocker: "DEPENDENCY_UNSATISFIED" },
-    BLOCKED:     { eligible: true,  ready: false, satisfies: false, blocker: "DEPENDENCY_UNSATISFIED" },
-    IN_PROGRESS: { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_UNSATISFIED" },
-    VERIFYING:   { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_UNSATISFIED" },
-    RETRYING:    { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_UNSATISFIED" },
-    COMPLETED:   { eligible: false, ready: false, satisfies: true,  blocker: "" },
-    CANCELLED:   { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_TERMINAL" },
-    FAILED:      { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_TERMINAL" },
+    PENDING:     { eligible: true,  ready: true,  satisfies: false, blocker: "DEPENDENCY_UNSATISFIED", reason: "ready" },
+    BLOCKED:     { eligible: true,  ready: false, satisfies: false, blocker: "DEPENDENCY_UNSATISFIED", reason: "eligible-not-ready" },
+    IN_PROGRESS: { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_UNSATISFIED", reason: "not-eligible" },
+    VERIFYING:   { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_UNSATISFIED", reason: "not-eligible" },
+    RETRYING:    { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_UNSATISFIED", reason: "not-eligible" },
+    COMPLETED:   { eligible: false, ready: false, satisfies: true,  blocker: "",                        reason: "not-eligible" },
+    CANCELLED:   { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_TERMINAL",     reason: "not-eligible" },
+    FAILED:      { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_TERMINAL",     reason: "not-eligible" },
   }
 
   test("the matrix covers exactly the 8 real statuses and nothing else", () => {
     expect(Object.keys(EXPECTED).sort()).toEqual([...ALL_STATUSES].sort())
   })
 
-  test.each(ALL_STATUSES)("%s: eligible / ready / satisfies / blocker", (status) => {
-    const expected = EXPECTED[status] as (typeof EXPECTED)[string]
-    const blockedReason = status === "BLOCKED" ? "cause" : null
-    const g = graphOf([mkTask("t1", { status, blockedReason })])
-
-    expect(g.eligibleTasks()).toEqual(expected.eligible ? ["t1"] : [])
-    expect(g.isReady("t1")).toBe(expected.ready)
-
-    const dependent = graphOf([
-      mkTask("t1", { status, blockedReason }),
-      mkTask("t2", { dependsOn: ["t1"] }),
-    ])
-    const kinds = kindsOf(dependent, "t2")
-    if (expected.satisfies) {
-      expect(kinds).toEqual([])
-    } else {
-      expect(kinds).toEqual([expected.blocker])
-    }
+  test("the NotReady states reachable by status alone are all exercised", () => {
+    // `blocked` and `graph-invalid` need relations, so they are covered by
+    // their own dedicated tests; this guards the three status-derived states.
+    const fromMatrix = new Set(Object.values(EXPECTED).map((e) => e.reason))
+    expect([...fromMatrix].sort()).toEqual(["eligible-not-ready", "not-eligible", "ready"])
   })
+
+  test.each(ALL_STATUSES)(
+    "%s: eligible / ready / satisfies / blocker / reason",
+    (status) => {
+      const expected = EXPECTED[status] as (typeof EXPECTED)[string]
+      const blockedReason = status === "BLOCKED" ? "cause" : null
+      const g = graphOf([mkTask("t1", { status, blockedReason })])
+
+      expect(g.eligibleTasks()).toEqual(expected.eligible ? ["t1"] : [])
+      expect(g.isReady("t1")).toBe(expected.ready)
+      // `ready` carries no status; the other states echo the durable status.
+      expect(g.notReadyReason("t1")).toEqual(
+        expected.reason === "ready" ? { kind: "ready" } : { kind: expected.reason, status },
+      )
+
+      const dependent = graphOf([
+        mkTask("t1", { status, blockedReason }),
+        mkTask("t2", { dependsOn: ["t1"] }),
+      ])
+      const kinds = kindsOf(dependent, "t2")
+      if (expected.satisfies) {
+        expect(kinds).toEqual([])
+      } else {
+        expect(kinds).toEqual([expected.blocker])
+      }
+    },
+  )
 })

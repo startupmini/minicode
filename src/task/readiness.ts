@@ -39,14 +39,30 @@ export interface Blocker {
 }
 
 /**
- * Why a task is or is not ready (design lock S9).
+ * Why a task is or is not ready (design lock S9, AMENDED by Phase 5C.1).
  *
- * Exactly the four locked states — no more. Note that durable status is NOT a
- * blocker: a cancelled task is *not eligible*, not *blocked*. Conflating the
- * two is what would let a durably-`BLOCKED` task be reported ready.
+ * FIVE states, not four. The original 5B union could not name the case of a
+ * durably-`BLOCKED` task with zero derived blockers: such a task IS eligible
+ * (so `eligibleTasks()` lists it) yet is never ready, and the four-state union
+ * forced it to be mislabelled `not-eligible` — the very negation of eligibility.
+ * `eligible-not-ready` states the distinction the public API must preserve:
+ *
+ *     eligible  !=  ready
+ *
+ * The set is exhaustive and mutually exclusive for a VALID graph and a known id:
+ *   - no blockers + PENDING                      -> `ready`
+ *   - blockers (any status)                      -> `blocked`
+ *   - no blockers + eligible but not PENDING     -> `eligible-not-ready`
+ *   - no blockers + not eligible                 -> `not-eligible`
+ *   - invalid graph                              -> `graph-invalid`
+ *
+ * Durable status is NOT a blocker: a cancelled task is *not eligible*, not
+ * *blocked*. Conflating the two is what would let a durably-`BLOCKED` task be
+ * reported ready.
  */
 export type NotReady =
   | { readonly kind: "ready" }
+  | { readonly kind: "eligible-not-ready"; readonly status: TaskStatus }
   | { readonly kind: "not-eligible"; readonly status: TaskStatus }
   | { readonly kind: "blocked"; readonly blockers: readonly Blocker[] }
   | { readonly kind: "graph-invalid"; readonly diagnostics: readonly Diagnostic[] }

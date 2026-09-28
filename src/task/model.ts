@@ -206,6 +206,7 @@ export type TaskErrorCode =
   | "TASK_DUPLICATE_ID"
   | "TASK_STALE_REVISION"
   | "TASK_MIGRATION_FAILURE"
+  | "TASK_TX_ACTIVE"
 
 /**
  * Domain error. `code` is the stable, machine-checkable discriminator; the

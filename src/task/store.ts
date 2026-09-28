@@ -151,6 +151,30 @@ const DDL_STATEMENTS: readonly string[] = DDL.split(";")
 const handles = new Map<string, Database>()
 const initialized = new Set<string>()
 
+/** Depth of in-flight `withTransaction` calls, per db path.
+ *
+ *  Exists for two reasons:
+ *   1. `close`/`resetTaskStoreHandles` must not yank the connection out from
+ *      under an open transaction - that would leave a half-applied unit of work
+ *      with no rollback path.
+ *   2. It makes the transaction boundary observable, so a caller cannot open a
+ *      transaction and then escape it by reaching for a different connection. */
+const txDepth = new Map<string, number>()
+
+function openTxPaths(): string[] {
+  return [...txDepth.entries()].filter(([, d]) => d > 0).map(([p]) => p)
+}
+
+/** Throw if `p` currently has an open transaction. */
+function assertNoOpenTx(p: string, what: string): void {
+  if ((txDepth.get(p) ?? 0) > 0) {
+    throw new TaskError(
+      "TASK_TX_ACTIVE",
+      `cannot ${what} while a TaskStore transaction is open for this database`,
+    )
+  }
+}
+
 function dbFile(cwd?: string): string {
   return resolveLocalDbPath(TASK_DB_FILENAME, cwd)
 }
@@ -580,6 +604,9 @@ export class TaskStore {
   /** Close the handle. For tests and explicit shutdown only. */
   static close(cwd?: string): void {
     const p = dbFile(cwd)
+    // Closing the connection under an open transaction would abandon a
+    // half-applied unit of work with no way to roll it back.
+    assertNoOpenTx(p, "close the store")
     const db = handles.get(p)
     if (db) {
       try {
@@ -589,10 +616,66 @@ export class TaskStore {
       initialized.delete(p)
     }
   }
+
+  // ── transaction boundary (Phase 4A.2) ─────────────────────────────────────
+
+  /**
+   * Run `fn` inside a single SQLite transaction owned by THIS TaskStore.
+   *
+   * WHY THIS EXISTS. A caller could previously open its own `db.transaction()`
+   * and call TaskStore methods inside it, and get atomicity that was silently
+   * false: TaskStore holds its own cached `Database` handle, so the caller's
+   * transaction and TaskStore's writes were two different connections and
+   * committed independently. Measured: a forced throw rolled back nothing.
+   *
+   * WHY THE CALLBACK RECEIVES `this`. The transaction is opened on the very same
+   * cached handle that every TaskStore method obtains from `handle(cwd)`, so
+   * there is exactly ONE authoritative connection per path. Every method called
+   * on `tx` therefore participates in this transaction by construction - there
+   * is no "escaped" path, and no second allocator or duplicated SQL.
+   *
+   * NESTING. `bun:sqlite` implements a nested `db.transaction` as a savepoint
+   * that joins the enclosing transaction rather than committing independently
+   * (measured). So `createTask`/`patchTask`, which each open their own
+   * transaction, compose correctly inside this one with no extra machinery.
+   *
+   * BUSY HANDLING. Deliberately unchanged: this adds no new retry. Contention
+   * is handled by the connection's existing `busy_timeout` pragma, and the
+   * bounded per-statement retry remains scoped to schema DDL exactly as in
+   * Phase 1. No unbounded retry is introduced here.
+   *
+   * Errors from `fn` propagate unchanged after rollback.
+   */
+  withTransaction<T>(fn: (tx: TaskStore) => T): T {
+    const p = dbFile(this.cwd)
+    const db = handle(this.cwd)
+    txDepth.set(p, (txDepth.get(p) ?? 0) + 1)
+    try {
+      return db.transaction(() => fn(this))()
+    } finally {
+      const d = (txDepth.get(p) ?? 1) - 1
+      if (d <= 0) txDepth.delete(p)
+      else txDepth.set(p, d)
+    }
+  }
+
+  /** True when a `withTransaction` is currently in flight for this store's
+   *  database. Diagnostics only; the guard above is what enforces safety. */
+  inTransaction(): boolean {
+    return (txDepth.get(dbFile(this.cwd)) ?? 0) > 0
+  }
 }
 
 /** Discard the handle cache. For hermetic tests only. */
 export function resetTaskStoreHandles(): void {
+  // Refuse while any transaction is open, for the same reason `close` does.
+  const open = openTxPaths()
+  if (open.length > 0) {
+    throw new TaskError(
+      "TASK_TX_ACTIVE",
+      `cannot reset task store handles while ${open.length} transaction(s) are open`,
+    )
+  }
   for (const db of handles.values()) {
     try {
       db.close()

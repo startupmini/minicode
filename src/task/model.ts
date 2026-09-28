@@ -212,6 +212,43 @@ export type TaskErrorCode =
   // TASK_INVALID_ID on purpose: no id was malformed, the payload simply lacks the
   // information required to address existing canonical state safely.
   | "TASK_IDENTITY_REQUIRED"
+  // PHASE 6B: a write tried to author `IN_PROGRESS` outside the Scheduler claim
+  // primitive while Scheduler authority is active. Deliberately distinct from
+  // TASK_INVALID_TRANSITION: nothing is malformed, the *caller* lacks authority.
+  // This is the fail-closed boundary that stops model-facing todo_write from
+  // creating an authoritative claim (6B P2).
+  | "TASK_AUTHORITY_VIOLATION"
+
+/**
+ * PHASE 6B: outcome of `TaskStore.claimTask`.
+ *
+ * Adjudicated by TaskStore, never by a caller. The four cases are disjoint and
+ * exhaustive for a canonical `taskId`.
+ */
+export type ClaimOutcome =
+  /** The atomic, revision-guarded mutation changed exactly one row. */
+  | "CLAIM_ACCEPTED"
+  /** The row exists but `expectedRevision` no longer matched. Never retried. */
+  | "CLAIM_REJECTED_STALE"
+  /** No such row in this session. Never recreated by a claim. */
+  | "NOT_FOUND"
+  /** The row exists and the revision matched, but the status is not claimable. */
+  | "WRONG_STATE"
+
+/**
+ * PHASE 6B: outcome of `TaskStore.reconcileStranded`.
+ *
+ * `REFUSED_NO_OWNERSHIP` is the fail-closed case required by 6B S8/P3: when
+ * ownership of the session cannot be positively established, reconciliation is
+ * refused rather than guessing. It is a first-class outcome, not an error,
+ * because refusing is the correct behaviour.
+ */
+export type ReconcileOutcome =
+  | "RECONCILED"
+  | "NOT_FOUND"
+  | "NOT_STRANDED"
+  | "REJECTED_STALE"
+  | "REFUSED_NO_OWNERSHIP"
 
 /**
  * Domain error. `code` is the stable, machine-checkable discriminator; the

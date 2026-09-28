@@ -31,6 +31,10 @@ import { resolveLocalDbPath } from "../lib/db-path.ts"
 import { scrubSecrets } from "../policy/scrub.ts"
 import type { CompletionEvidence } from "../tools/todo.ts"
 import {
+  type ClaimOutcome,
+  isTaskId,
+  isTaskStatus,
+  type ReconcileOutcome,
   type Task,
   type TaskAcceptance,
   TaskError,
@@ -39,8 +43,6 @@ import {
   type TaskSnapshot,
   type TaskStatus,
   type TaskVerification,
-  isTaskId,
-  isTaskStatus,
   taskIdFromIndex,
 } from "./model.ts"
 
@@ -310,15 +312,82 @@ export interface UpsertOptions {
    *  called without DI cannot silently refuse `completed`.
    *  [PHASE 1] inert: the only reader was the deferred `synchronizeTasks`. */
   evidence?: CompletionEvidence
-  /** Revision that MUST match (optimistic). `undefined` = no check. */
+  /** Revision that MUST match (optimistic). `undefined` = no check.
+   *
+   *  PHASE 6B NOTE: this is a READ-THEN-WRITE check performed OUTSIDE the write
+   *  transaction (see `patchTask`). It catches sequential staleness only and is
+   *  NOT a compare-and-swap. Code that needs real mutual exclusion must use
+   *  `claimTask`, whose revision predicate lives inside the SQL mutation. */
   expectedRevision?: number
 }
+
+/**
+ * PHASE 6B: authority mode.
+ *
+ * `LEGACY` (the default, and the only mode in production today) preserves the
+ * historical behaviour where any writer may author `IN_PROGRESS`.
+ *
+ * `SCHEDULER` closes that door: `IN_PROGRESS` may then be authored ONLY by
+ * `claimTask`. Model-facing `todo_write` therefore fails closed with
+ * `TASK_AUTHORITY_VIOLATION` instead of creating a claim.
+ *
+ * Activation is explicit and per-instance. There is no environment variable, no
+ * module-level flag, and no automatic activation on `initialize()`.
+ */
+export type TaskAuthorityMode = "LEGACY" | "SCHEDULER"
+
+export interface TaskStoreOptions {
+  /**
+   * PHASE 6B. Defaults to `"LEGACY"`. Must be opted into by a composition root.
+   * Tests must assert that no production path sets this.
+   */
+  authority?: TaskAuthorityMode
+}
+
+/**
+ * Render a status allow-list as a SQL literal list.
+ *
+ * The values are module-private compile-time constants (`TaskStatus` members),
+ * never caller input, so this needs no escaping. It exists so the claim and
+ * reconcile predicates read as one auditable statement each, instead of string
+ * concatenation repeated per call site.
+ */
+function sqlList(statuses: readonly TaskStatus[]): string {
+  return statuses.map((s) => `'${s}'`).join(", ")
+}
+
+/**
+ * PHASE 6B: the only status a claim may transition from.
+ *
+ * `COMPLETED`, `CANCELLED` and `FAILED` are irreversible and are therefore not
+ * claimable — which is what stops a claim from resurrecting finished or
+ * abandoned work. `IN_PROGRESS` and `VERIFYING` are excluded because a second
+ * claim of in-flight work is exactly the double-claim the primitive prevents.
+ */
+const CLAIMABLE_STATUSES: readonly TaskStatus[] = ["PENDING"]
+
+/**
+ * PHASE 6B: the only statuses reconciliation may revert.
+ *
+ * `IN_PROGRESS` and `VERIFYING` assert in-flight activity with no durable proof
+ * of liveness. `COMPLETED` / `CANCELLED` / `FAILED` are irreversible facts and
+ * are never targets. `PAUSED` does not exist in `TaskStatus` and is never
+ * introduced here.
+ */
+const RECONCILABLE_STATUSES: readonly TaskStatus[] = ["IN_PROGRESS", "VERIFYING"]
 
 export class TaskStore {
   readonly cwd: string
 
-  constructor(cwd?: string) {
+  /**
+   * PHASE 6B. Defaults to `"LEGACY"`, so every existing construction site keeps
+   * its exact current behaviour. Per-instance, never a module singleton.
+   */
+  readonly authorityMode: TaskAuthorityMode
+
+  constructor(cwd?: string, opts: TaskStoreOptions = {}) {
     this.cwd = cwd ?? process.cwd()
+    this.authorityMode = opts.authority ?? "LEGACY"
   }
 
   /** Prepare the schema. Idempotent; safe to call repeatedly. */
@@ -409,6 +478,15 @@ export class TaskStore {
   // ── write ─────────────────────────────────────────────────────────────────
 
   createTask(sessionId: string, input: NewTaskInput): Task {
+    // PHASE 6B authority guard. Creating a task directly in `IN_PROGRESS` is an
+    // authoritative claim just as much as patching one into that status, so the
+    // guard must cover creation as well. LEGACY is untouched.
+    if (this.authorityMode === "SCHEDULER" && input.status === "IN_PROGRESS") {
+      throw new TaskError(
+        "TASK_AUTHORITY_VIOLATION",
+        `IN_PROGRESS may only be authored by claimTask while Scheduler authority is active (${sessionId})`,
+      )
+    }
     const db = handle(this.cwd)
     const id = this.nextId(sessionId)
     return db.transaction(() => {
@@ -462,13 +540,24 @@ export class TaskStore {
    * This is the Phase 1 revision substrate. It deliberately contains no
    * scheduler claim/CAS logic — a later phase may add that on top, but the
    * substrate itself is what makes such a check possible at all.
+   *
+   * PHASE 6B: `expectedRevision` is a READ-THEN-WRITE check performed OUTSIDE
+   * the write transaction, and the UPDATE carries no `AND revision = ?`
+   * predicate. It therefore detects sequential staleness but is NOT a
+   * compare-and-swap; two concurrent writers can both pass it. Use
+   * `claimTask` when mutual exclusion is required.
+   *
+   * PHASE 6B authority guard: when `authorityMode === "SCHEDULER"`, a patch may
+   * not author `IN_PROGRESS` — only `claimTask` may. This is the fail-closed
+   * door that stops model-facing `todo_write` from creating a claim.
    */
-  patchTask(
-    sessionId: string,
-    taskId: string,
-    patch: TaskPatch,
-    opts: UpsertOptions = {},
-  ): Task {
+  patchTask(sessionId: string, taskId: string, patch: TaskPatch, opts: UpsertOptions = {}): Task {
+    if (this.authorityMode === "SCHEDULER" && patch.status === "IN_PROGRESS") {
+      throw new TaskError(
+        "TASK_AUTHORITY_VIOLATION",
+        `IN_PROGRESS may only be authored by claimTask while Scheduler authority is active (${sessionId}/${taskId})`,
+      )
+    }
     if (!isTaskId(taskId)) throw new TaskError("TASK_INVALID_ID", `not a canonical id: ${taskId}`)
     const db = handle(this.cwd)
     const current = this.getTask(sessionId, taskId)
@@ -520,13 +609,121 @@ export class TaskStore {
   }
 
   /** Readable alias for the layer above. */
-  updateTask(
+  updateTask(sessionId: string, taskId: string, patch: TaskPatch, opts: UpsertOptions = {}): Task {
+    return this.patchTask(sessionId, taskId, patch, opts)
+  }
+
+  // ── PHASE 6B: scheduler substrate ──────────────────────────────────────────
+  //
+  // P1 (claim) and P3 (reconciliation) live here, inside the TaskStore
+  // persistence boundary, for one reason: both need the revision predicate to be
+  // part of the SQL mutation itself. Emulating either with
+  // read -> compare in application code -> write without the predicate is
+  // explicitly NOT a compare-and-swap and is not done.
+  //
+  // Neither primitive accepts a `TaskGraph`, a plan revision, a presentation
+  // revision, or a timestamp as currency. The only currency is the per-task
+  // `revision` column.
+
+  /**
+   * P1: atomically claim one task for execution.
+   *
+   * The revision predicate and the claimable-status predicate are INSIDE the
+   * single UPDATE statement, so SQLite decides the winner. This is the property
+   * `patchTask`'s `expectedRevision` lacks.
+   *
+   * Claim contract (6A S4/S7): durable, revision-advancing, atomic, TaskStore
+   * adjudicated, valid only from `CLAIMABLE_STATUSES`, never silently retried,
+   * and never based on `TaskGraph.sourceMaxRevision`.
+   *
+   * A zero-rows-affected result is disambiguated with a follow-up READ so the
+   * caller learns *which* precondition failed. That read is classification only
+   * — it cannot turn a lost race into a win, because the mutation already
+   * happened and already failed.
+   */
+  claimTask(
     sessionId: string,
     taskId: string,
-    patch: TaskPatch,
-    opts: UpsertOptions = {},
-  ): Task {
-    return this.patchTask(sessionId, taskId, patch, opts)
+    expectedRevision: number,
+  ): { outcome: ClaimOutcome; task: Task | null } {
+    if (!isTaskId(taskId)) throw new TaskError("TASK_INVALID_ID", `not a canonical id: ${taskId}`)
+    const db = handle(this.cwd)
+    const statuses = sqlList(CLAIMABLE_STATUSES)
+
+    // THE revision predicate lives here, in SQL. One statement = one atomic
+    // decision; there is no read-then-write window.
+    const result = db
+      .prepare(
+        `UPDATE tasks
+            SET status = 'IN_PROGRESS', updated_at = ?, revision = revision + 1
+          WHERE session_id = ? AND task_id = ? AND revision = ? AND status IN (${statuses})`,
+      )
+      .run(nowIso(), sessionId, taskId, expectedRevision)
+
+    if (result.changes === 1) {
+      return { outcome: "CLAIM_ACCEPTED", task: this.getTask(sessionId, taskId) }
+    }
+
+    // Lost the race, or never was claimable. Classify for the caller.
+    const current = this.getTask(sessionId, taskId)
+    if (current === null) return { outcome: "NOT_FOUND", task: null }
+    if (current.revision !== expectedRevision) {
+      return { outcome: "CLAIM_REJECTED_STALE", task: current }
+    }
+    return { outcome: "WRONG_STATE", task: current }
+  }
+
+  /**
+   * P3: revert ONE stranded in-flight task, revision-safely.
+   *
+   * Deliberately single-task rather than bulk: a bulk revert cannot be made
+   * atomic across rows, so a per-row revision predicate is the only way to
+   * guarantee a newer writer is never clobbered (6B S-race case A/C).
+   *
+   * The caller MUST hold session ownership (see `task/session-ownership.ts`).
+   * When `ownsSession` is false this returns `REFUSED_NO_OWNERSHIP` and mutates
+   * nothing — reconciliation fails closed rather than guessing.
+   *
+   * Never deletes. Never touches `parentId` / `dependsOn` / `order`. Never
+   * manufactures `verification` or `evidence`. Never reads a graph. Never
+   * inspects message history or presentation events.
+   */
+  reconcileStranded(
+    sessionId: string,
+    taskId: string,
+    expectedRevision: number,
+    opts: { ownsSession: boolean },
+  ): { outcome: ReconcileOutcome; task: Task | null } {
+    if (!isTaskId(taskId)) throw new TaskError("TASK_INVALID_ID", `not a canonical id: ${taskId}`)
+    if (!opts.ownsSession) {
+      // Fail closed. Uncertainty about ownership is not permission to act.
+      return { outcome: "REFUSED_NO_OWNERSHIP", task: null }
+    }
+    const db = handle(this.cwd)
+    const statuses = sqlList(RECONCILABLE_STATUSES)
+
+    // Sets status AND clears blockedReason is deliberately NOT done: a stranded
+    // task's blockedReason is not the property being reconciled, and rewriting
+    // it would destroy information the operator may need.
+    const result = db
+      .prepare(
+        `UPDATE tasks
+            SET status = 'PENDING', updated_at = ?, revision = revision + 1
+          WHERE session_id = ? AND task_id = ? AND revision = ? AND status IN (${statuses})`,
+      )
+      .run(nowIso(), sessionId, taskId, expectedRevision)
+
+    if (result.changes === 1) {
+      return { outcome: "RECONCILED", task: this.getTask(sessionId, taskId) }
+    }
+
+    const current = this.getTask(sessionId, taskId)
+    if (current === null) return { outcome: "NOT_FOUND", task: null }
+    if (current.revision !== expectedRevision) {
+      // Someone else moved it. Do not overwrite newer state.
+      return { outcome: "REJECTED_STALE", task: current }
+    }
+    return { outcome: "NOT_STRANDED", task: current }
   }
 
   /**

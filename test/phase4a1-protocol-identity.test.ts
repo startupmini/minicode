@@ -32,6 +32,7 @@ import {
   todoSession,
   todoWriteTool,
 } from "../src/tools/todo.ts"
+import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 
 const owned: string[] = []
 async function ownedDir(): Promise<string> {
@@ -185,6 +186,22 @@ test("F2. taskId written through the todo_write tool itself round-trips", async 
   const dir = await ownedDir()
   todoSession.id = "p4a-tool"
   todoSession.cwd = dir
+  // Phase 4A.4: `todo_write` now ALSO synchronizes canonical identity, and a
+  // taskId that no TaskStore row backs is correctly rejected as TASK_NOT_FOUND.
+  // This test is about the PROTOCOL round-trip, so the id is seeded first; the
+  // rejection behaviour is covered in test/phase4a4-production-sync.test.ts.
+  const store = new TaskStore(dir)
+  const prov = { origin: "runtime", source: "test" } as const
+  for (let i = 0; i < 3; i++) {
+    store.createTask("p4a-tool", {
+      title: `seed-${i}`,
+      status: "PENDING",
+      order: i,
+      provenance: prov,
+    })
+  }
+  expect(store.getTask("p4a-tool", "t3")).not.toBeNull()
+
   await todoWriteTool.execute(
     { todos: [{ taskId: "t3", content: "lewat tool", status: "completed" }] },
     mkctx(),

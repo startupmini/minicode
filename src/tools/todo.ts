@@ -4,7 +4,8 @@ import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
 import { sanitizeSessionPart } from "../lib/session-id.ts"
-import { isTaskId } from "../task/model.ts"
+import { isTaskId, TaskError } from "../task/model.ts"
+import { hasCanonicalIdentity, synchronizeCanonicalTasks } from "../task/sync.ts"
 
 // Todo list per sesi — state eksplisit untuk task multi-langkah.
 // Tanpa ini agent tidak punya tempat menyimpan rencana antar step, sehingga
@@ -425,6 +426,38 @@ export const todoWriteTool: Tool = {
     // proses. Urutan lama (global-dulu) buta terhadap ctx.
     const cwd = (ctx as { cwd?: string }).cwd ?? todoSession.cwd ?? process.cwd()
     await saveTodos(todoSession.id, list, cwd)
+    // PHASE 4A.4 - canonical TaskStore synchronization (NEW ARCHITECTURE).
+    //
+    // Placement follows the ordering production already proves: the durable JSON
+    // write happens first, so a failure here still suppresses plan publication
+    // (the adapter only publishes when the tool did not error). All-id-less
+    // payloads are left alone - the legacy path stays legacy.
+    //
+    // `content` is mapped to `title` here because TaskStore requires `title`;
+    // passing the legacy `content` through was measured to fail NOT NULL.
+    if (hasCanonicalIdentity(list)) {
+      try {
+        synchronizeCanonicalTasks({
+          cwd,
+          sessionId: todoSession.id,
+          declared: list.map((t) => ({
+            ...(t.taskId ? { taskId: t.taskId } : {}),
+            title: t.content,
+            status: t.status,
+            ...(t.blockedReason ? { blockedReason: t.blockedReason } : {}),
+          })),
+        })
+      } catch (e) {
+        // DIVERGENCE, made visible rather than silent: the JSON file is already
+        // committed, TaskStore rolled back. Surfacing the code keeps the failure
+        // machine-checkable while the message states the real state of the world.
+        const err = e as TaskError
+        throw new TaskError(
+          err.code ?? "TASK_PERSISTENCE_FAILURE",
+          `canonical task sync failed (${err.message}); the todo JSON file was already written, TaskStore rolled back - the two are now out of step`,
+        )
+      }
+    }
     // Plan artifact ditulis tiap save — murah (atomik, kecil) dan membuat
     // resume lintas sesi tidak butuh memutar ulang seluruh percakapan.
     await savePlanSnapshot(todoSession.id, list, cwd).catch(() => {})

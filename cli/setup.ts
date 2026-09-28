@@ -32,6 +32,7 @@ import {
   runWithSelfHeal,
 } from "../src/policy/verifier.ts"
 import { createPresentationAdapter, type PresentationAdapter } from "../src/presentation/adapter.ts"
+import { createTaskIdentityResolver } from "../src/task/sync.ts"
 import { type DomainEvent, DURABILITY } from "../src/presentation/events.ts"
 import { createInitialState, type PresentationState } from "../src/presentation/model.ts"
 import {
@@ -999,6 +1000,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     // bercabang alih-alih berevolusi.
     sessionId: presentationSessionId,
     ...(contentStore ? { contentStore } : {}),
+    // PHASE 4A.4 - canonical task identity for the plan projection. TaskStore is
+    // the authority: an id is reported only when that row really exists for this
+    // session, so an unresolvable plan degrades to the positional shape instead
+    // of emitting a false payloadVersion 2.
+    taskIdentityProvider: createTaskIdentityResolver(cwd ?? process.cwd()),
     ...(shadowState ? { initialSeq: shadowState.seq, initialTurn, initialTurnStartTs } : {}),
   })
   try {

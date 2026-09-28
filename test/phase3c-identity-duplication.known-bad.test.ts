@@ -32,6 +32,30 @@
 // semantics should make the "six rows" assertion fail — that failure is the
 // signal, not a problem.
 //
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 4A.5 STATUS: HISTORICAL EVIDENCE — RETAINED DELIBERATELY, STILL PASSING
+// The contract above has now been implemented at the TOOL boundary, and this test
+// still passes unchanged. That is not a stale test, and it is not a gap:
+//
+//   This test drives `synchronizeIdentities` — the Phase 3A identity applier —
+//   directly, with an explicitly id-less declaration. At that layer, an id-less
+//   item is genuinely a NEW task, and it must stay that way: the applier is the
+//   component that mints identity for work that has none, and it has no business
+//   deciding whether the CALLER was allowed to send ambiguous input.
+//
+//   4A.5 therefore did not change this layer at all. It changed `todo_write`, so
+//   the ambiguity can no longer REACH this layer: a full declaration with zero
+//   taskIds against a session that already has canonical identity is now rejected
+//   with TASK_IDENTITY_REQUIRED, before any JSON write and before any TaskStore
+//   mutation. The duplication below remains reachable only for a caller that
+//   bypasses the tool, which is exactly the historical condition this file
+//   documents.
+//
+//   The live guard against the real-world duplication is now
+//   `test/phase4a5-idless-rejection.test.ts` (cases C and D): canonical A/B/C
+//   followed by an all-id-less C/A/B is REJECTED and the store still holds
+//   exactly three rows.
+//
 // ROOT CAUSE (for context, not for this test to assert)
 // The model protocol cannot express identity: `todo_write`'s schema sets
 // `additionalProperties: false` on todo items, so no `taskId` can be sent, and

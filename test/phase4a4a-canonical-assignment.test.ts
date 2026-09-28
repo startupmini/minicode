@@ -479,9 +479,15 @@ test("K. the assignment channel holds no module-level mutable state", async () =
 // ---------------------------------------------------------------------------
 // L. the legacy all-id-less path is untouched
 // ---------------------------------------------------------------------------
-test("L. an all-id-less payload stays legacy: no sync, no assignment, byte-identical output", async () => {
+// PHASE 4A.5 FIXTURE CORRECTION. This test used to seed canonical tasks and then
+// write an all-id-less payload into that same session. That is exactly the case
+// 4A.5 now REJECTS, so the fixture no longer described the legacy path. The
+// intent - "the legacy path is unchanged" - is preserved by using a session with
+// NO canonical identity, which is precisely what LEGACY means. The complementary
+// case (canonical tasks + all-id-less) is proven in the 4A.5 suite, not here.
+test("L. an all-id-less payload with no canonical identity stays legacy: no sync, no assignment", async () => {
   const dir = await ownedDir()
-  seed(dir)
+  // NO seed: this session has never had canonical identity, so it is LEGACY.
   const todos = [
     { content: "legacy one", status: "pending" },
     { content: "legacy two", status: "pending" },
@@ -490,13 +496,16 @@ test("L. an all-id-less payload stays legacy: no sync, no assignment, byte-ident
   // No assignment is emitted at all - nothing to decode, and nothing invented.
   expect(decodeCanonicalAssignments(out, { sessionId: S })).toBeUndefined()
   expect(out).not.toContain("canonical-tasks")
-  // The existing rows are untouched: no adoption, no allocation, no mutation.
+  // Nothing was adopted, allocated or created: the store is still empty.
   const store = new TaskStore(dir)
-  expect(store.listTasks(S).map((x) => x.id)).toEqual(["t1", "t2", "t3"])
-  expect(store.getTask(S, "t1")?.title).toBe("A")
-  // The legacy JSON file still holds exactly the id-less payload.
-  const raw = await readFile(join(dir, `.minicore`, `todos-${S}.json`), "utf8").catch(() => "")
-  if (raw) expect(raw).not.toContain("taskId")
+  expect(store.listTasks(S)).toEqual([])
+  // The legacy JSON file holds exactly the id-less payload, at its real path
+  // (`.minicode/todos/<sanitized-session>.json`).
+  const raw = await readFile(join(dir, ".minicode", "todos", `${S}.json`), "utf8")
+  const parsed = JSON.parse(raw) as { sessionId: string; todos: Array<{ content: string }> }
+  expect(parsed.sessionId).toBe(S)
+  expect(parsed.todos.map((t) => t.content)).toEqual(["legacy one", "legacy two"])
+  expect(raw).not.toContain("taskId")
 })
 
 // ---------------------------------------------------------------------------

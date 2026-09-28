@@ -77,6 +77,41 @@ export function hasCanonicalIdentity(items: readonly { taskId?: string }[]): boo
   return items.some((i) => typeof i.taskId === "string" && i.taskId !== "")
 }
 
+/**
+ * PHASE 4A.5 — does this session ALREADY have canonical identity?
+ *
+ * AUTHORITY. This asks TaskStore, and nothing else. The legacy JSON file is NOT
+ * consulted, on purpose:
+ *   - a JSON file exists for every session that has ever written a todo, canonical
+ *     or not, so its presence says nothing about canonical identity;
+ *   - conversely, a canonical session can have its JSON rewritten by a rejected
+ *     write, so the JSON can be a poor predictor in the other direction too.
+ *   The duplication this guards against is duplicate DURABLE tasks, so the
+ * predicate has to be answered by the store that holds them.
+ *
+ * STATUS IS DELIBERATELY IGNORED. Every row counts, whatever its status. A
+ * session whose tasks are all COMPLETED, CANCELLED or BLOCKED still has canonical
+ * identity: its ids are allocated, its orders are meaningful, and an identity-blind
+ * re-declaration would duplicate them. Filtering by status would silently reopen
+ * the duplication bug the moment a todo list finished.
+ *
+ * `task_meta` (the dormant migration substrate from Phase 0C/1) is also NOT
+ * consulted: nothing in production writes it, and no task means no identity to
+ * protect. A future bootstrap must therefore CREATE tasks, not merely write a
+ * stamp, or this guard would not see it - see the report.
+ */
+export function hasCanonicalTasks(cwd: string, sessionId: string): boolean {
+  try {
+    return new TaskStore(cwd).listTasks(sessionId).length > 0
+  } catch (e) {
+    // A store we cannot open cannot be proven canonical, and claiming otherwise
+    // would either invent identity or block a legitimate legacy write. Fail open
+    // to LEGACY and let the legacy path behave exactly as it always has.
+    if (e instanceof TaskError) throw e
+    return false
+  }
+}
+
 export function synchronizeCanonicalTasks(opts: {
   cwd: string
   sessionId: string

@@ -207,6 +207,11 @@ export type TaskErrorCode =
   | "TASK_STALE_REVISION"
   | "TASK_MIGRATION_FAILURE"
   | "TASK_TX_ACTIVE"
+  // PHASE 4A.5: a full declaration that carries no canonical identity at all,
+  // submitted to a session that ALREADY has canonical tasks. Distinct from
+  // TASK_INVALID_ID on purpose: no id was malformed, the payload simply lacks the
+  // information required to address existing canonical state safely.
+  | "TASK_IDENTITY_REQUIRED"
 
 /**
  * Domain error. `code` is the stable, machine-checkable discriminator; the

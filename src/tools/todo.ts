@@ -5,7 +5,8 @@ import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
 import { sanitizeSessionPart } from "../lib/session-id.ts"
 import { isTaskId, TaskError } from "../task/model.ts"
-import { hasCanonicalIdentity, synchronizeCanonicalTasks } from "../task/sync.ts"
+import { hasCanonicalIdentity, hasCanonicalTasks, synchronizeCanonicalTasks } from "../task/sync.ts"
+import { TaskStore } from "../task/store.ts"
 import {
   encodeCanonicalAssignments,
   type CanonicalAssignmentTable,
@@ -467,6 +468,39 @@ export const todoWriteTool: Tool = {
     // cwd resolution order is unchanged: ToolContext first (--cwd / sub-agent),
     // then the composition-root global, then the process cwd.
     const { sessionId, cwd } = todoOperationContext(ctx)
+
+    // PHASE 4A.5 — reject an identity-blind full declaration once canonical
+    // identity already exists for this session (NEW ARCHITECTURE).
+    //
+    // `todo_write` is a FULL DECLARATION, so re-sending the same work without
+    // ids is indistinguishable from creating it again. That is precisely the
+    // duplication debc295 documents. Once canonical tasks exist, an all-id-less
+    // payload carries too little information to address them, so it is rejected
+    // rather than guessed at — identity is never manufactured to make an
+    // ambiguous payload "work".
+    //
+    // PLACEMENT. This sits BEFORE `saveTodos`, so a rejected write is a complete
+    // no-op: no JSON replacement, no TaskStore mutation, no id allocation, no
+    // plan (the throw makes the tool result an error, which the adapter already
+    // treats as "do not publish"). Rejecting after the JSON write would leave the
+    // legacy file describing a state TaskStore never accepted.
+    //
+    // EMPTY PAYLOAD is excluded. `todos: []` declares nothing, so there is no
+    // item to misaddress; it keeps its existing meaning (clear the legacy list,
+    // D7 retention keeps canonical tasks untouched). The guard cannot be laundered
+    // through it: canonical rows survive, so the NEXT all-id-less write is still
+    // rejected.
+    if (list.length > 0 && !hasCanonicalIdentity(list) && hasCanonicalTasks(cwd, sessionId)) {
+      const count = new TaskStore(cwd).listTasks(sessionId).length
+      throw new TaskError(
+        "TASK_IDENTITY_REQUIRED",
+        `this task already has ${count} canonical task(s), so this full declaration must identify them. ` +
+          `Call todo_read and re-send every item with its taskId (e.g. {"taskId":"t1", ...}); ` +
+          `omit taskId only on items that are genuinely new. ` +
+          `Nothing was written: the todo list and canonical tasks are unchanged.`,
+      )
+    }
+
     await saveTodos(sessionId, list, cwd)
     // PHASE 4A.4 - canonical TaskStore synchronization (NEW ARCHITECTURE).
     //

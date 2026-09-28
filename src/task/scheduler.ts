@@ -406,10 +406,39 @@ export class Scheduler {
       ok: observation.kind === "returned" && observation.ok,
     })
 
+    // [PHASE 6F] The attempt ENDED. Record that one durable fact, for THIS
+    //    generation, before dropping the in-memory claim.
+    //
+    //    The generation is the POST-CLAIM revision captured at claim time. It is
+    //    NOT re-read from the task here: current task state is mutable, and
+    //    inferring the generation from it is exactly the confusion the marker
+    //    exists to remove. If an external writer moved the task between claim
+    //    and return, the marker still names the generation that actually ran,
+    //    and reconciliation resolves the mismatch on its own terms.
+    //
+    //    `ok` is deliberately NOT consulted. A rejected turn and a successful
+    //    turn are both "an attempt ended"; conflating them with success is the
+    //    bug this replaces. EXECUTION != VERIFICATION != COMPLETION.
+    const generation = this.claim
+    if (generation === null) {
+      // The claim was cleared while the turn was in flight (stop() during
+      // dispatch). We no longer know which generation this was, so writing a
+      // marker would be a guess. Refuse rather than fabricate evidence.
+      throw new SchedulerError(
+        "persistence",
+        "attempt ended but no active claim identifies its generation",
+      )
+    }
+    this.store.recordAttemptReturned(this.sessionId, generation.taskId, generation.claimRevision)
+
     // The claim is released from this Scheduler's bookkeeping, but the task's
     // durable status is NOT rewritten here: a returned turn is not a verdict,
     // and the verifier owns the next transition. Clearing the local claim lets
     // a later cycle act; a later cycle re-reads authoritative state first.
+    //
+    //    The marker's presence is what makes that safe: a later cycle will see
+    //    the completed generation and must not revert it. Before the marker
+    //    existed, this same line produced the unbounded re-execution loop.
     this.claim = null
     return {
       ok: observation.kind === "returned" && observation.ok,
@@ -456,6 +485,14 @@ export class Scheduler {
    * Ownership-aware and fail-closed: without positively-held ownership this
    * refuses rather than guessing, because reverting live work is worse than
    * leaving it stranded.
+   *
+   * [PHASE 6F] The decision is made on EVIDENCE, not on status. The old rule
+   * reverted every `IN_PROGRESS` row that was not this Scheduler's current
+   * in-memory claim — which, because the claim is cleared after every dispatch,
+   * reverted the Scheduler's own freshly completed work and re-executed it
+   * forever. Now a generation is reverted ONLY when there is no completion
+   * marker for it. Absence of a marker is the sole admissible evidence that an
+   * attempt never recorded completion.
    */
   reconcile(): readonly string[] {
     const owned = ownsSession(this.sessionId, this.owner)
@@ -471,6 +508,35 @@ export class Scheduler {
       if (task.status !== "IN_PROGRESS" && task.status !== "VERIFYING") continue
       // Never revert the task this Scheduler is actively executing.
       if (this.claim?.taskId === task.id) continue
+
+      // [PHASE 6F] Read the marker BEFORE reverting. The comparison is against
+      // the task's CURRENT revision, and the marker names the generation that
+      // actually ran.
+      const marker = this.store.getAttemptMarker(this.sessionId, task.id)
+      if (marker !== null) {
+        if (marker.attemptRevision > task.revision) {
+          // The marker names a generation NEWER than the task row, which cannot
+          // happen through any legitimate sequence. Do not guess which one is
+          // wrong: guessing here either strands a live task or re-runs a
+          // finished one, and both are silent corruption.
+          throw new SchedulerError(
+            "persistence",
+            `attempt marker revision ${marker.attemptRevision} exceeds task ${task.id} revision ${task.revision}`,
+          )
+        }
+        // marker.attemptRevision === task.revision: this exact generation
+        //   recorded completion. Do not revert it.
+        // marker.attemptRevision < task.revision: a newer generation exists
+        //   (an external writer moved the task after the attempt ended), so
+        //   this marker is not evidence about the current generation. Still do
+        //   not revert: reverting here would fight a legitimate newer writer,
+        //   and the revision-guarded UPDATE below is the only thing allowed to
+        //   move the row anyway. Fails safe toward leaving work alone.
+        continue
+      }
+
+      // No marker: positive evidence that this generation has no recorded
+      // completion. This is the ONLY path to a revert.
       const result = this.store.reconcileStranded(this.sessionId, task.id, task.revision, {
         ownsSession: owned,
       })

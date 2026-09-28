@@ -216,18 +216,36 @@ describe("discovery", () => {
     expect(bridge.seen.map((w) => w.taskId)).toEqual([a.id, b.id])
   })
 
-  test("10b. a stranded task from a previous cycle is reconciled, then re-dispatched", async () => {
-    // This is the at-least-once window made visible: cycle 1 claims t1 and the
-    // turn returns an observation, but no verifier moves it, so it is still
-    // IN_PROGRESS. Cycle 2 reverts it and legitimately dispatches it again.
+  test("10b. a normal return is NOT re-dispatched: the marker records that the attempt ended", async () => {
+    // [PHASE 6F] This test previously asserted the opposite: it encoded the
+    // unbounded re-execution loop that Phase 6D identified as a liveness
+    // failure. `expect(seen).toEqual([a.id, a.id])` was only satisfiable by
+    // re-running a task whose turn had already returned.
+    //
+    // The new contract: a returned turn leaves a durable attempt marker, the
+    // task stays IN_PROGRESS (a return is not a verdict), and reconciliation
+    // must NOT revert a generation that recorded completion. So repeated cycles
+    // dispatch exactly once.
     const a = add("PENDING")
     const { sc, bridge } = makeScheduler()
     sc.start()
     await sc.cycle()
     expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
+
+    // The marker is durable, and names the post-claim generation.
+    const marker = store.getAttemptMarker(S, a.id)
+    expect(marker).not.toBeNull()
+    expect(marker?.attemptRevision).toBe(store.getTask(S, a.id)?.revision)
+
+    // Three further cycles with no external mutation: still exactly one turn.
     await sc.cycle()
-    expect(bridge.seen.map((w) => w.taskId)).toEqual([a.id, a.id])
+    await sc.cycle()
+    await sc.cycle()
+    expect(bridge.seen.map((w) => w.taskId)).toEqual([a.id])
+    expect(bridge.seen.length).toBe(1)
+    // Untouched: still IN_PROGRESS, and the marker still matches.
     expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
+    expect(store.getAttemptMarker(S, a.id)?.attemptRevision).toBe(store.getTask(S, a.id)?.revision)
   })
 
   test("11. an invalid graph aborts the cycle with zero dispatch", async () => {
@@ -596,21 +614,32 @@ describe("serialisation", () => {
     await all
   })
 
-  test("28. a second cycle after the first completes may dispatch again", async () => {
+  test("28. a later cycle dispatches again once a task is LEGITIMATELY ready again", async () => {
+    // [PHASE 6F] The original assertion here was `expect(calls).toBe(2)` after
+    // two cycles on a SINGLE PENDING task — a second encoding of the same
+    // unbounded re-execution loop that test 10b also encoded. Proving
+    // "not permanently wedged" by counting re-dispatches of an unchanging task
+    // cannot distinguish that from the livelock.
+    //
+    // The property worth keeping is real, and is now tested honestly: a
+    // returned attempt does not wedge the Scheduler. When an external authority
+    // supplies a NEW scheduling justification, the Scheduler acts again.
     add("PENDING")
-    let calls = 0
-    const sc = new Scheduler(S, {
-      store,
-      runTurn: () => {
-        calls++
-        return { kind: "returned", ok: true }
-      },
-      instruction: "x",
-    })
+    const { sc, bridge } = makeScheduler()
     sc.start()
     await sc.cycle()
+    // Cycle 2 alone changes nothing: one task, one completed attempt.
     await sc.cycle()
-    expect(calls).toBe(2)
+    expect(bridge.seen.length).toBe(1)
+
+    // New justification: the first task is completed by an external authority
+    // and a second task becomes ready.
+    const first = bridge.seen[0]
+    expect(first).toBeDefined()
+    legacy.patchTask(S, (first as SchedulerWorkItem).taskId, { status: "COMPLETED" })
+    const b = add("PENDING", { order: 2 })
+    await sc.cycle()
+    expect(bridge.seen.map((w) => w.taskId)).toEqual([(first as SchedulerWorkItem).taskId, b.id])
   })
 
   test("28b. concurrent cycles run the cycle body ONCE (Scheduler-side joining)", async () => {

@@ -105,6 +105,17 @@ interface TaskRow {
   revision: number
 }
 
+/**
+ * [PHASE 6F] Proof that an execution attempt for one task generation ended.
+ *
+ * NOT a task state, NOT a lock, NOT a completion. `attemptRevision` is the
+ * POST-CLAIM revision of the generation that ran, and is the only value
+ * reconciliation compares against a task's current revision.
+ */
+export interface AttemptMarker {
+  readonly attemptRevision: number
+}
+
 const DDL = `
 CREATE TABLE IF NOT EXISTS tasks (
   session_id TEXT NOT NULL,
@@ -128,6 +139,12 @@ CREATE INDEX IF NOT EXISTS idx_tasks_session_order ON tasks(session_id, task_ord
 CREATE TABLE IF NOT EXISTS task_meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS task_attempt (
+  session_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  attempt_revision INTEGER NOT NULL,
+  PRIMARY KEY (session_id, task_id)
 );
 `
 
@@ -724,6 +741,72 @@ export class TaskStore {
       return { outcome: "REJECTED_STALE", task: current }
     }
     return { outcome: "NOT_STRANDED", task: current }
+  }
+
+  /**
+   * [PHASE 6F] Record that an execution attempt reached its end.
+   *
+   * This is the ONE durable fact the attempt-recovery design adds. It answers
+   * exactly one question: "did an attempt for this task, at this generation,
+   * finish?" It is deliberately NOT:
+   *
+   *   - a task status. The task row is untouched; `IN_PROGRESS` stays
+   *     `IN_PROGRESS`. A returned turn is not a verdict.
+   *   - a completion claim. It says the ATTEMPT ENDED, never that the work was
+   *     correct. EXECUTION != VERIFICATION != COMPLETION.
+   *   - a lock, lease or heartbeat. It grants no exclusion and expires on
+   *     nothing. There is no clock here by design.
+   *   - a counter or a history. One row per task, overwritten per generation, so
+   *     the table stays O(tasks) and is never an execution log.
+   *
+   * `attemptRevision` MUST be the POST-CLAIM revision of the generation that ran.
+   * It is written verbatim: the store does not re-read the task and does not
+   * substitute current task state, because inferring the generation from mutable
+   * state is precisely the confusion this marker exists to eliminate.
+   *
+   * Upsert, so a new generation overwrites the previous marker. That is what
+   * keeps a historical marker from suppressing recovery of a newer one.
+   */
+  recordAttemptReturned(sessionId: string, taskId: string, attemptRevision: number): void {
+    if (!isTaskId(taskId)) throw new TaskError("TASK_INVALID_ID", `not a canonical id: ${taskId}`)
+    if (!Number.isSafeInteger(attemptRevision) || attemptRevision < 1) {
+      throw new TaskError(
+        "TASK_INVALID_ID",
+        `attempt revision must be a positive integer: ${attemptRevision}`,
+      )
+    }
+    const db = handle(this.cwd)
+    try {
+      db.prepare(
+        `INSERT INTO task_attempt (session_id, task_id, attempt_revision)
+              VALUES (?, ?, ?)
+         ON CONFLICT(session_id, task_id) DO UPDATE SET attempt_revision = excluded.attempt_revision`,
+      ).run(sessionId, taskId, attemptRevision)
+    } catch (e) {
+      // A marker that cannot be persisted is NOT a returned attempt. The caller
+      // must treat this as a persistence failure, never as "execution
+      // succeeded": swallowing it would convert a crash window into a silent
+      // permanent strand.
+      throw new TaskError("TASK_PERSISTENCE_FAILURE", (e as Error).message)
+    }
+  }
+
+  /**
+   * [PHASE 6F] Read the attempt marker for one task, or `null` when none exists.
+   *
+   * The absence of a marker is meaningful and is the ONLY intended positive
+   * evidence that a generation has no recorded completion. A caller that finds
+   * `null` must not treat it as an error, and must not fill the gap with a
+   * heuristic.
+   */
+  getAttemptMarker(sessionId: string, taskId: string): AttemptMarker | null {
+    if (!isTaskId(taskId)) throw new TaskError("TASK_INVALID_ID", `not a canonical id: ${taskId}`)
+    const db = handle(this.cwd)
+    const row = db
+      .prepare(`SELECT attempt_revision FROM task_attempt WHERE session_id = ? AND task_id = ?`)
+      .get(sessionId, taskId) as { attempt_revision: number } | null | undefined
+    if (row === null || row === undefined) return null
+    return { attemptRevision: row.attempt_revision }
   }
 
   /**

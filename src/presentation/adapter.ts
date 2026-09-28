@@ -14,6 +14,7 @@
 
 import { classifyToolResult, denyReasonOf, summarizeArgs } from "../telemetry/trace.ts"
 import { normalizeTodos } from "../tools/todo.ts"
+import { decodeCanonicalAssignments, type CanonicalAssignmentTable } from "../task/assignment.ts"
 import type {
   ApprovalEventHook,
   ApprovalHookEvent,
@@ -382,6 +383,14 @@ export function createPresentationAdapter(
   const planFromTodos = (
     args: unknown,
     ownerSessionId: string,
+    /**
+     * PHASE 4A.4A - the canonical assignment produced by the SAME todo_write
+     * operation, already decoded off that call's own result. Optional: absent
+     * whenever the operation produced no assignment (legacy all-id-less payload,
+     * truncated result, foreign session), and every one of those cases must fall
+     * back to the legacy positional shape rather than claim `v2`.
+     */
+    assignment?: CanonicalAssignmentTable,
   ):
     | {
         steps: PlanStep[]
@@ -425,8 +434,42 @@ export function createPresentationAdapter(
     // the wrong length, or leaves any entry unresolved yields the legacy
     // positional plan. A partially-identified v2 event is never emitted: that
     // would falsely claim the event is taskId-based.
+    //
+    // PHASE 4A.4A - an assignment from THIS operation is the strongest identity
+    // evidence available: it is the committed result of the transaction that
+    // created the row, not a later lookup and not a re-query. It is accepted only
+    // when it is exactly as long as the declaration AND never contradicts an id
+    // the model actually declared. A mismatch means the assignment is stale or
+    // belongs to another operation, and is rejected outright.
+    //
+    // Every rejection falls through to the provider path, which itself refuses
+    // partial resolution - so no failure mode in this block can yield `v2`.
     let canonical = false
-    if (taskIdentityProvider) {
+    const table = assignment
+    let assigned = false
+    if (table && table.length > 0 && table.length === steps.length) {
+      const declaredIds = list.map((t) => t.taskId)
+      let consistent = true
+      for (let i = 0; i < table.length; i++) {
+        const claimed = declaredIds[i]
+        const a = table[i]
+        if (!a || (claimed !== undefined && claimed !== a.taskId)) {
+          consistent = false
+          break
+        }
+      }
+      if (consistent) {
+        steps.forEach((step, i) => {
+          const a = table[i]
+          if (!a) return
+          step.taskId = a.taskId
+          step.ordinal = i
+        })
+        canonical = true
+        assigned = true
+      }
+    }
+    if (!assigned && taskIdentityProvider) {
       let resolved: readonly (string | null)[] | undefined
       try {
         resolved = taskIdentityProvider({ sessionId: ownerSessionId, declared: steps })
@@ -779,9 +822,17 @@ export function createPresentationAdapter(
           // jadi status/cap tidak bisa berbeda dua arah (sebelumnya adaptor
           // memetakan status sendiri: 2 item `in_progress` jadi dua `active`
           // padahal file menyimpan satu).
-          const plan = planFromTodos(call.args, childId ?? sessionId)
+          const planSessionId = childId ?? sessionId
+          // PHASE 4A.4A - the assignment is read off THIS call's own result, the
+          // one object the kernel emitted together with this `call`. Nothing is
+          // remembered between events, so there is no state for another turn or
+          // another session to consume.
+          const plan = planFromTodos(
+            call.args,
+            planSessionId,
+            decodeCanonicalAssignments(result.content, { sessionId: planSessionId }),
+          )
           if (plan) {
-            const planSessionId = childId ?? sessionId
             publish({
               ...(childId ? childBase(currentTurn, childId, parentLink) : base(currentTurn)),
               type: "plan.updated",

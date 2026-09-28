@@ -37,6 +37,7 @@
 import { TaskError, isTaskId, type Task } from "./model.ts"
 import { type DeclaredTask, planTaskIdentities, todoStatusToTask } from "./identity.ts"
 import { TaskStore } from "./store.ts"
+import type { CanonicalAssignment, CanonicalAssignmentTable } from "./assignment.ts"
 
 /** One declared item, already mapped out of the legacy `TodoItem` shape.
  *  `content` is mapped to `title` by the caller - the store requires `title`,
@@ -56,6 +57,18 @@ export interface CanonicalSyncResult {
   created: Task[]
   /** D7 survivors: declared in an earlier turn, omitted now, kept anyway. */
   retained: Task[]
+  /**
+   * PHASE 4A.4A — one entry per DECLARED item, in declaration order: the
+   * canonical id that item now has, and whether it already existed or this
+   * operation minted it. Absent for the legacy all-id-less path, which performs
+   * no synchronization and therefore has nothing to assign.
+   *
+   * Built INSIDE the transaction from the ids `createTask` returned, so it is
+   * exactly the committed result and never a later reconstruction. A rollback
+   * throws, so no assignment can be published for a transaction that did not
+   * commit — that is a structural guarantee, not a check.
+   */
+  assignment?: CanonicalAssignmentTable
 }
 
 /** True when at least one item carries an identity. Mirrors the recovered
@@ -106,11 +119,15 @@ export function synchronizeCanonicalTasks(opts: {
     const seen = new Set<string>()
     const changed: Task[] = []
     const created: Task[] = []
+    // PHASE 4A.4A — pushed in `plan.entries` order, which IS declaration order,
+    // so index i of this table always describes declared item i.
+    const assignment: CanonicalAssignment[] = []
 
     plan.entries.forEach((entry) => {
       if (entry.kind === "existing") {
         const id = entry.taskId as string
         seen.add(id)
+        assignment.push({ taskId: id, kind: "existing" })
         changed.push(
           tx.patchTask(sessionId, id, {
             title: entry.title,
@@ -126,6 +143,9 @@ export function synchronizeCanonicalTasks(opts: {
         // provenance { origin: "model", source: "todo_write" }.
         const t = tx.createTask(sessionId, entry.input as never)
         seen.add(t.id)
+        // The id the allocator actually returned, captured here and now — never
+        // re-derived from position, title or content afterwards.
+        assignment.push({ taskId: t.id, kind: "new" })
         created.push(t)
       }
     })
@@ -147,7 +167,7 @@ export function synchronizeCanonicalTasks(opts: {
         retained.push(t.order === order ? t : tx.patchTask(sessionId, t.id, { order }))
       })
 
-    return { applied: true, changed, created, retained }
+    return { applied: true, changed, created, retained, assignment }
   })
 }
 

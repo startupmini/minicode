@@ -6,6 +6,10 @@ import { atomicWriteText } from "../lib/atomic-write.ts"
 import { sanitizeSessionPart } from "../lib/session-id.ts"
 import { isTaskId, TaskError } from "../task/model.ts"
 import { hasCanonicalIdentity, synchronizeCanonicalTasks } from "../task/sync.ts"
+import {
+  encodeCanonicalAssignments,
+  type CanonicalAssignmentTable,
+} from "../task/assignment.ts"
 
 // Todo list per sesi — state eksplisit untuk task multi-langkah.
 // Tanpa ini agent tidak punya tempat menyimpan rencana antar step, sehingga
@@ -435,9 +439,16 @@ export const todoWriteTool: Tool = {
     //
     // `content` is mapped to `title` here because TaskStore requires `title`;
     // passing the legacy `content` through was measured to fail NOT NULL.
+    //
+    // PHASE 4A.4A - the resulting assignment is captured here and emitted on the
+    // return value, which is the only per-operation channel the kernel itself
+    // correlates (the reasoning, and the rejected alternatives, are in
+    // `src/task/assignment.ts`). The legacy all-id-less path appends nothing, so
+    // its output is byte-identical to what it was before this phase.
+    let assignment: CanonicalAssignmentTable | undefined
     if (hasCanonicalIdentity(list)) {
       try {
-        synchronizeCanonicalTasks({
+        const sync = synchronizeCanonicalTasks({
           cwd,
           sessionId: todoSession.id,
           declared: list.map((t) => ({
@@ -447,6 +458,7 @@ export const todoWriteTool: Tool = {
             ...(t.blockedReason ? { blockedReason: t.blockedReason } : {}),
           })),
         })
+        if (sync.assignment && sync.assignment.length > 0) assignment = sync.assignment
       } catch (e) {
         // DIVERGENCE, made visible rather than silent: the JSON file is already
         // committed, TaskStore rolled back. Surfacing the code keeps the failure
@@ -469,7 +481,7 @@ export const todoWriteTool: Tool = {
       refused.length > 0
         ? `refused ${refused.length} completion claim(s): verification is failing, so they are blocked instead of completed. Fix the failing check first.\n`
         : ""
-    return notice + renderTodos(list)
+    return notice + renderTodos(list) + (assignment ? `\n${encodeCanonicalAssignments(todoSession.id, assignment)}` : "")
   },
 }
 

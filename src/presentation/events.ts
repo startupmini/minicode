@@ -254,8 +254,29 @@ export interface ContextCompactedEvent extends Base {
 
 export type SemanticSeverity = "info" | "warning" | "error" | "critical"
 export type PlanStepStatus = "pending" | "active" | "completed" | "cancelled" | "blocked"
+
+/**
+ * One step of a plan.
+ *
+ * PHASE 3B: `taskId` is the canonical identity; `ordinal` is display position.
+ *
+ * `stepId` is NOT identity. It is a positional label (`String(i + 1)`) that
+ * predates canonical task ids and is still consumed by projection, reducer and
+ * ACP, so it is retained for compatibility and explicitly documented as
+ * non-canonical. It is also deliberately NOT mirrored from `taskId`: mirroring
+ * would change what existing consumers observe.
+ *
+ * Both new fields are OPTIONAL and additive. Durable `plan.updated` rows written
+ * before this change carry neither, and still satisfy the `isValidEventShape`
+ * gate in `src/session/persistence.ts`, so replay is unaffected.
+ */
 export interface PlanStep {
+  /** Positional compatibility label. NOT canonical identity. */
   stepId: string
+  /** Canonical TaskStore identity (`t<n>`), present only on payloadVersion=2. */
+  taskId?: string
+  /** Display position within the plan. Explicitly not identity. */
+  ordinal?: number
   title?: string
   status: PlanStepStatus
 }
@@ -264,6 +285,13 @@ export interface PlanUpdatedEvent extends Base {
   type: "plan.updated"
   planId: string
   status: "open" | "completed" | "cancelled"
+  /**
+   * `2` means step identity is `taskId`-based and every step carries a
+   * `taskId`. Absent means positional `stepId` only. The adapter emits `2` only
+   * when identity resolution is total, so `payloadVersion === 2` is a truthful
+   * statement that this event carries no positional identity.
+   */
+  payloadVersion?: 2
   steps: PlanStep[]
   expandRef?: ContentRef
 }

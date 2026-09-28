@@ -61,6 +61,19 @@ export type TurnSummaryProvider = (input: {
   fallback: TurnSummary
 }) => TurnSummary
 
+/**
+ * PHASE 3B: resolves canonical task identity for a declared plan.
+ *
+ * Returns one canonical task id (`t<n>`) per declared step, positionally
+ * aligned, or `null` where no canonical identity exists yet. The implementation
+ * is expected to read the authoritative TaskStore; the adapter must never
+ * resolve or allocate identity itself.
+ */
+export type TaskIdentityProvider = (input: {
+  sessionId: string
+  declared: readonly PlanStep[]
+}) => readonly (string | null)[] | undefined
+
 export interface PresentationAdapter {
   onEvent(handler: (e: DomainEvent) => void): () => void
   /** Dipanggil permission/ask_user via hook DI (bukan event bus). */
@@ -244,6 +257,18 @@ export function createPresentationAdapter(
   opts: {
     sessionId: string
     contentStore?: ContentStore
+    /**
+     * PHASE 3B: the single seam through which canonical task identity reaches
+     * the plan. Given the owning session and the declared steps, return one
+     * canonical task id per declared step, positionally aligned, or `null` for
+     * one that has no canonical identity yet. Returning `undefined`, throwing,
+     * or returning a mismatched length all mean "no canonical identity", and
+     * the plan falls back to the positional legacy shape.
+     *
+     * The adapter deliberately does NOT implement this. Resolution belongs to
+     * TaskStore, which is the sole allocator of task identity.
+     */
+    taskIdentityProvider?: TaskIdentityProvider
     initialSeq?: number
     initialTurn?: number
     initialTurnStartTs?: number
@@ -251,6 +276,7 @@ export function createPresentationAdapter(
 ): PresentationAdapter {
   const sessionId = opts.sessionId
   const contentStore = opts.contentStore
+  const taskIdentityProvider = opts.taskIdentityProvider
   let seq = opts.initialSeq ?? 0
   let currentTurn = opts.initialTurn ?? 0
   let turnStartTs = opts.initialTurnStartTs ?? 0
@@ -341,9 +367,29 @@ export function createPresentationAdapter(
   //
   // `normalizeTodos` juga menerapkan kebijakan completion, jadi plan mencerminkan
   // keputusan blocked yang sama dengan file.
+  // PHASE 3B - two identities, one authority.
+  //
+  // `stepId` below is a POSITIONAL label and is not identity. Canonical identity
+  // is `taskId`, and it is NEVER computed here: the adapter must not allocate or
+  // resolve task identity, so it cannot even express a `t<n>`. Identity arrives
+  // only through the injected `taskIdentityProvider`, the single seam through
+  // which TaskStore authority reaches the plan.
+  //
+  // With no provider injected - the production case today, see the boundary note
+  // in PHASE-3B-PLAN-PIPELINE-RECOVERY-REPORT.md - behaviour is identical to
+  // before this change: positional `stepId`, no `payloadVersion`. Presentation
+  // stays an observation, never an authority.
   const planFromTodos = (
     args: unknown,
-  ): { steps: PlanStep[]; status: "open" | "completed" | "cancelled" } | undefined => {
+    ownerSessionId: string,
+  ):
+    | {
+        steps: PlanStep[]
+        status: "open" | "completed" | "cancelled"
+        /** True only when EVERY step resolved to a canonical taskId. */
+        canonical: boolean
+      }
+    | undefined => {
     if (typeof args !== "object" || args === null) return undefined
     const raw = (args as { todos?: unknown }).todos
     if (!Array.isArray(raw) || raw.length === 0) return undefined
@@ -369,7 +415,32 @@ export function createPresentationAdapter(
       : steps.every((step) => step.status === "cancelled")
         ? "cancelled"
         : "open"
-    return { steps, status }
+
+    // Resolve identity through the seam only. A provider that throws, returns
+    // the wrong length, or leaves any entry unresolved yields the legacy
+    // positional plan. A partially-identified v2 event is never emitted: that
+    // would falsely claim the event is taskId-based.
+    let canonical = false
+    if (taskIdentityProvider) {
+      let resolved: readonly (string | null)[] | undefined
+      try {
+        resolved = taskIdentityProvider({ sessionId: ownerSessionId, declared: steps })
+      } catch {
+        resolved = undefined
+      }
+      if (resolved && resolved.length === steps.length) {
+        const ids = resolved.map((id) => (typeof id === "string" && id.length > 0 ? id : null))
+        if (ids.every((id) => id !== null)) {
+          steps.forEach((step, i) => {
+            step.taskId = ids[i] as string
+            step.ordinal = i
+          })
+          canonical = true
+        }
+      }
+    }
+
+    return { steps, status, canonical }
   }
 
   const markTerminal = (id: string): boolean => {
@@ -697,7 +768,7 @@ export function createPresentationAdapter(
           // jadi status/cap tidak bisa berbeda dua arah (sebelumnya adaptor
           // memetakan status sendiri: 2 item `in_progress` jadi dua `active`
           // padahal file menyimpan satu).
-          const plan = planFromTodos(call.args)
+          const plan = planFromTodos(call.args, childId ?? sessionId)
           if (plan) {
             const planSessionId = childId ?? sessionId
             publish({
@@ -705,6 +776,9 @@ export function createPresentationAdapter(
               type: "plan.updated",
               planId: `plan:${planSessionId}:${currentTurn}`,
               status: plan.status,
+              // `2` asserts this event's step identity is taskId-based. Emitted
+              // only on total resolution, so the claim is always truthful.
+              ...(plan.canonical ? { payloadVersion: 2 as const } : {}),
               steps: plan.steps,
             })
           }
@@ -999,14 +1073,15 @@ export function createPresentationAdapter(
     noteTestCompleted,
     noteCheckpoint,
     notePlanReconciled(info) {
-      const plan = planFromTodos({ todos: info.todos })
-      if (!plan) return
       const owner = info.sessionId ?? sessionId
+      const plan = planFromTodos({ todos: info.todos }, owner)
+      if (!plan) return
       publish({
         ...base(currentTurn),
         type: "plan.updated",
         planId: `plan:${owner}:${currentTurn}`,
         status: plan.status,
+        ...(plan.canonical ? { payloadVersion: 2 as const } : {}),
         steps: plan.steps,
         ...(info.turnId !== undefined ? { turnId: info.turnId } : {}),
       })

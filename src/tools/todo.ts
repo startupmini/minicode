@@ -3,6 +3,7 @@ import { resolve } from "node:path"
 import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
+import { sanitizeSessionPart } from "../lib/session-id.ts"
 
 // Todo list per sesi — state eksplisit untuk task multi-langkah.
 // Tanpa ini agent tidak punya tempat menyimpan rencana antar step, sehingga
@@ -67,17 +68,37 @@ export function currentCompletionEvidence(): CompletionEvidence {
 }
 
 function sanitizeTodoId(id: string): string {
+  return sanitizeSessionPart(id)
+}
+
+/**
+ * OLD mapping (pre-N2). No longer the source of truth — kept ONLY so files
+ * already written to disk stay reachable for one compatibility version.
+ * `a/b` used to become `a_b.json`; under the canonical mapping that file is
+ * `a-b.json`, so `loadTodos` must try both. Once the compatibility window
+ * closes, this function is deleted.
+ */
+function legacySanitizeTodoId(id: string): string {
   return id.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 64) || "default"
 }
 
+/** Todo filename. Canonical (N2) — the source of truth for all writes. */
 function todoPath(sessionId: string, cwd: string): string {
-  const safe = sanitizeTodoId(sessionId)
-  return resolve(cwd, ".minicode", "todos", `${safe}.json`)
+  return resolve(cwd, ".minicode", "todos", `${sanitizeTodoId(sessionId)}.json`)
+}
+
+/** Legacy filename. Read fallback only; never written. */
+function legacyTodoPath(sessionId: string, cwd: string): string {
+  return resolve(cwd, ".minicode", "todos", `${legacySanitizeTodoId(sessionId)}.json`)
 }
 
 function planPath(sessionId: string, cwd: string): string {
-  const safe = sanitizeTodoId(sessionId)
-  return resolve(cwd, ".minicode", "plans", `${safe}.md`)
+  return resolve(cwd, ".minicode", "plans", `${sanitizeTodoId(sessionId)}.md`)
+}
+
+/** Same as `legacyTodoPath`, for the plan snapshot. */
+function legacyPlanPath(sessionId: string, cwd: string): string {
+  return resolve(cwd, ".minicode", "plans", `${legacySanitizeTodoId(sessionId)}.md`)
 }
 
 // Audit #13 chain 28: todo + plan snapshot adalah state milik sesi —
@@ -85,8 +106,16 @@ function planPath(sessionId: string, cwd: string): string {
 // residual reachable pasca-hapus. Best-effort (kegagalan tak menggagalkan hapus).
 export async function deleteTodoFiles(sessionId: string, cwd: string): Promise<void> {
   const { rm } = await import("node:fs/promises")
-  await rm(todoPath(sessionId, cwd), { force: true }).catch(() => {})
-  await rm(planPath(sessionId, cwd), { force: true }).catch(() => {})
+  // Both are removed: canonical (N2) and legacy, because old files can still
+  // exist in a workspace that was never rewritten after the upgrade.
+  for (const p of [
+    todoPath(sessionId, cwd),
+    legacyTodoPath(sessionId, cwd),
+    planPath(sessionId, cwd),
+    legacyPlanPath(sessionId, cwd),
+  ]) {
+    await rm(p, { force: true }).catch(() => {})
+  }
 }
 
 /** Sanitasi + batasi daftar + terapkan kebijakan completion. Diekspor untuk test.
@@ -190,16 +219,28 @@ export function renderTodos(todos: TodoItem[]): string {
  * rekonsiliasi eksplisit (`reconcileCompletionEvidence`) yang menulis balik.
  */
 export async function loadTodos(sessionId: string, cwd = process.cwd()): Promise<TodoItem[]> {
+  // N2: try the canonical name first, then the legacy name. A file written by an
+  // older process only exists at the legacy path, so without this fallback a
+  // workspace that was upgraded but never ran `todo_write` again would lose its
+  // task list silently.
+  for (const p of [todoPath(sessionId, cwd), legacyTodoPath(sessionId, cwd)]) {
+    const parsed = await readTodoFile(p)
+    if (parsed) return parsed
+  }
+  return []
+}
+
+async function readTodoFile(p: string): Promise<TodoItem[] | null> {
   try {
-    const raw = await readFile(todoPath(sessionId, cwd), "utf8")
+    const raw = await readFile(p, "utf8")
     const parsed = JSON.parse(raw) as { todos?: unknown }
-    if (!Array.isArray(parsed.todos)) return []
+    if (!Array.isArray(parsed.todos)) return null
     // Bentuk tersimpan sudah ternormalisasi saat ditulis. Normalisasi di sini
     // hanya untuk mem-namedai file yang ditulis tangan, dengan bukti
     // `unverified` supaya TIDAK ada kebijakan yang diam-diam berlaku saat baca.
     return normalizeTodos(parsed.todos, UNVERIFIED)
   } catch {
-    return []
+    return null
   }
 }
 

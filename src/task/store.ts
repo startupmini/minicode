@@ -141,6 +141,76 @@ export interface ExecutionLineage {
 }
 
 /**
+ * [PHASE 6P] Who owns the CURRENT in-flight state of a task.
+ *
+ * This is a FOURTH, separate fact. It is deliberately NOT folded into
+ * `TaskStatus`, `ExecutionLineage`, or `Task`:
+ *
+ *   status             WHAT the task is (pending, in-flight, done, …)
+ *   execution_owner    WHOSE in-flight state it is
+ *   exec_generation    WHICH execution generation is current
+ *   attempt_generation whether that generation's attempt reached its end
+ *
+ * WHY IT EXISTS (6N F1, proved in 6O §5.2). `IN_PROGRESS` is overloaded: it is
+ * written both by `claimTask` (a Scheduler-owned execution) and by the
+ * model-facing path (`todo_write` → `synchronizeCanonicalTasks` → `patchTask`,
+ * where it is the agent's plan cursor — see `src/tools/todo.ts:15-19`).
+ * Reconciliation used to read *every* `IN_PROGRESS`/`VERIFYING` without a
+ * completion marker as stranded Scheduler work, so it reverted the user's cursor.
+ *
+ * The information needed to tell those apart DID NOT EXIST in the other columns.
+ * Two histories are byte-identical under `(status, exec_generation,
+ * attempt_generation)` and demand opposite actions:
+ *
+ *   H2  claim → crash                     → IN_PROGRESS/1/NULL → REVERT
+ *   H5  claim → crash → reconcile → user
+ *       marks IN_PROGRESS                 → IN_PROGRESS/1/NULL → LEAVE
+ *
+ * `exec_generation > 0` does not separate them (both are 1, and reconcile never
+ * resets the counter), and `attempt_generation` is NULL in both. This column is
+ * the missing fact: it records whether a reconcile already ended that claim.
+ *
+ * STATE MODEL — the only two values:
+ *   'scheduler'  the current in-flight status was established by `claimTask` and
+ *                has NOT been reconciled away. The Scheduler may recover it.
+ *   null         no Scheduler execution owns this task. Either never claimed, or
+ *                ownership was released (by a reconcile, or by any status write
+ *                that leaves the Scheduler-owned in-flight states). The Scheduler
+ *                must NOT touch it.
+ *
+ * TRANSITIONS (and only these):
+ *   set   'scheduler'  by `claimTask`, in the SAME statement that advances
+ *                      `exec_generation` and writes IN_PROGRESS — so ownership and
+ *                      generation can never disagree.
+ *   clear null         by `reconcileStranded` / `reconcileIfNoCompletedAttempt`
+ *                      (reverting releases it), and by ANY other writer that
+ *                      moves the task OUT of RECONCILABLE_STATUSES.
+ *   keep  unchanged    by a status write that STAYS inside
+ *                      RECONCILABLE_STATUSES, and by every non-status write
+ *                      (title, order, dependency, evidence, …). A title edit does
+ *                      not end a claim.
+ *
+ * WHY A WRITE THAT STAYS `IN_PROGRESS` KEEPS OWNERSHIP. A user writing
+ * `IN_PROGRESS` onto a task whose claim is stranded does not end the stranded
+ * execution; it only re-states the agent's plan cursor on top of it. The
+ * Scheduler's generation is still dead, so the row is still recoverable (6O
+ * history H3/H6). Releasing ownership there would strand the generation forever.
+ * Ownership is released when the task LEAVES the in-flight states — which is
+ * also exactly what a reconcile does.
+ *
+ * IT IS NOT: a lock, a lease, a heartbeat, a priority, a completion claim, a
+ * verification, or evidence of anything. It grants no authority over the task
+ * beyond "the Scheduler may revert this in-flight state", and it is never
+ * consulted for readiness, identity, or dependency semantics.
+ */
+export type ExecutionOwner = "scheduler"
+
+/** Result shape for `getExecutionOwnership`. `null` = no such task. */
+export interface ExecutionOwnership {
+  readonly executionOwner: ExecutionOwner | null
+}
+
+/**
  * [PHASE 6I] Outcome of `reconcileIfNoCompletedAttempt`.
  *
  * Distinct from the 6B `ReconcileOutcome` because the decision now also carries
@@ -175,6 +245,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   revision INTEGER NOT NULL,
   exec_generation INTEGER NOT NULL DEFAULT 0,
   attempt_generation INTEGER,
+  execution_owner TEXT,
   PRIMARY KEY (session_id, task_id)
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_session_order ON tasks(session_id, task_order);
@@ -316,6 +387,72 @@ function migrateExecutionLineageSchema(db: Database): void {
   }
 }
 
+/**
+ * [PHASE 6P] Add `execution_owner` to a database that predates it.
+ *
+ * Same decision procedure as `migrateExecutionLineageSchema` — decide from
+ * `PRAGMA table_info`, never from a version stamp, because a stamp can lie and
+ * the schema cannot. Kept as a SEPARATE function so the 6P change is
+ * independently reviewable and independently idempotent, and so the older
+ * function's documented properties are not silently redefined.
+ *
+ * PROPERTIES, each load-bearing:
+ *   - IDEMPOTENT: added only when absent, so repeated opens are a no-op and a
+ *     partially migrated database converges.
+ *   - ADDITIVE / NON-DESTRUCTIVE: `ADD COLUMN` only. No row is updated, deleted,
+ *     reordered or rewritten. Same guarantee as the 6I migration.
+ *   - COMPATIBLE WITH EXISTING ROWS: nullable with no default, so every existing
+ *     row reads back as `NULL` = "no Scheduler execution owns this task".
+ *   - TRANSACTIONAL: the ALTER runs in one transaction, so an interruption leaves
+ *     the table as it was rather than half-migrated.
+ *
+ * NO BACKFILL — DELIBERATE, and it is the important decision here.
+ *
+ * It is tempting to backfill `'scheduler'` onto every pre-6P row that looks like a
+ * stranded claim (`status IN (IN_PROGRESS, VERIFYING) AND exec_generation > 0`).
+ * That would be a GUESS, and it is provably wrong in one direction and
+ * un-recoverable in the other:
+ *
+ *   - A pre-6P row can ALSO be history H5: claim → crash → 6B `reconcileStranded`
+ *     (status → PENDING) → a user turn marks IN_PROGRESS. That is the same
+ *     `(IN_PROGRESS, exec>0, att NULL)` shape, and backfilling would mark
+ *     interactive work as Scheduler-owned and revert it — reintroducing 6N F1
+ *     on upgraded databases.
+ *   - Not backfilling leaves a pre-6P genuinely stranded claim unrecovered. Its
+ *     row stays IN_PROGRESS, which is not-eligible, so its dependents stay
+ *     unready. This is an availability cost, and it is a MANUAL/OPERATOR cost,
+ *     not a correctness one: no execution is corrupted, nothing is lost.
+ *
+ * The ambiguity in legacy rows is IRREDUCIBLE — the fact was never recorded, and
+ * 6I's "NO INFERENCE" rule (a pre-lineage row is not given a generation derived
+ * from its revision) forbids manufacturing it. Inventing ownership would be the
+ * same error one column over. So: additive only, no inference, and the
+ * behaviour change is stated rather than hidden.
+ */
+function migrateExecutionOwnershipSchema(db: Database): void {
+  const present = new Set(
+    (db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[]).map((r) => r.name),
+  )
+  // No `tasks` table at all: the DDL above just created it with the column.
+  if (present.size === 0) return
+  if (present.has("execution_owner")) return
+
+  try {
+    withBusyRetrySync(() => {
+      // Nullable with NO default: existing rows read as NULL, which is exactly
+      // "no Scheduler execution owns this task" - the safe direction, because it
+      // forbids reconciliation rather than permitting it.
+      db.exec("ALTER TABLE tasks ADD COLUMN execution_owner TEXT")
+      return true
+    })
+  } catch (e) {
+    throw new TaskError(
+      "TASK_MIGRATION_FAILURE",
+      `execution-ownership migration failed: ${(e as Error).message}`,
+    )
+  }
+}
+
 function handle(cwd?: string): Database {
   const p = dbFile(cwd)
   const existing = handles.get(p)
@@ -363,6 +500,9 @@ function handle(cwd?: string): Database {
     // execution-lineage columns and every statement naming them fails. The
     // migration runs here, on the same open path, immediately after the DDL.
     migrateExecutionLineageSchema(db)
+    // [PHASE 6P] Same open path, immediately after, so a database that already
+    // has the lineage columns but predates 6P still receives `execution_owner`.
+    migrateExecutionOwnershipSchema(db)
     initialized.add(p)
   } catch (e) {
     try {
@@ -721,11 +861,39 @@ export class TaskStore {
       acceptance: patch.acceptance === undefined ? current.acceptance : patch.acceptance,
       provenance: current.provenance,
     }
+    // [PHASE 6P] EXECUTION OWNERSHIP IS RELEASED ONLY WHEN THE TASK LEAVES THE
+    // SCHEDULER-OWNED IN-FLIGHT STATES.
+    //
+    // `patchTask` is every non-claim status writer: the model-facing
+    // `synchronizeCanonicalTasks` path and any operator edit. Two rules, and the
+    // difference between them is the whole point of the 6O history table:
+    //
+    //   status STAYS inside RECONCILABLE_STATUSES -> ownership is KEPT.
+    //     A user writing IN_PROGRESS is the agent's plan cursor (todo.ts:15-19)
+    //     laid on top of a live claim. It does not end the stranded execution
+    //     (6O H3/H6), and only a legitimate authority may end a Scheduler
+    //     execution. Releasing here would strand the generation forever.
+    //
+    //   status LEAVES RECONCILABLE_STATUSES       -> ownership is CLEARED.
+    //     The row is no longer a Scheduler execution in flight, so leaving
+    //     `scheduler` on it would be STALE ownership that a later reconcile
+    //     could still match. This is what stops an interactive completion,
+    //     failure, cancellation, block or requeue from being reverted later.
+    //
+    // Non-status writes (title, order, dependsOn, evidence, …) never touch the
+    // column: editing a title must not end an execution claim.
+    //
+    // The release is computed in SQL (a CASE over the RESULTING status) so it
+    // stays inside the write transaction and needs no extra read - a read here
+    // would be a read-then-write outside the mutation, which is exactly the
+    // hazard `expectedRevision` is documented not to be.
     return db.transaction(() => {
       this.validate(sessionId, next, taskId)
       try {
         db.prepare(
-          `UPDATE tasks SET title = ?, status = ?, task_order = ?, parent_id = ?, depends_on_json = ?, blocked_reason = ?, verification_json = ?, evidence_json = ?, acceptance_json = ?, updated_at = ?, revision = revision + 1
+          `UPDATE tasks SET title = ?, status = ?, task_order = ?, parent_id = ?, depends_on_json = ?, blocked_reason = ?,
+            verification_json = ?, evidence_json = ?, acceptance_json = ?, updated_at = ?, revision = revision + 1,
+            execution_owner = CASE WHEN ? IN (${sqlList(RECONCILABLE_STATUSES)}) THEN execution_owner ELSE NULL END
            WHERE session_id = ? AND task_id = ?`,
         ).run(
           next.title,
@@ -738,6 +906,7 @@ export class TaskStore {
           j((next.evidence ?? []).slice(0, MAX_EVIDENCE)),
           j(next.acceptance ?? null),
           nowIso(),
+          next.status,
           sessionId,
           taskId,
         )
@@ -747,7 +916,6 @@ export class TaskStore {
       return this.getTask(sessionId, taskId)!
     })()
   }
-
   /** Readable alias for the layer above. */
   updateTask(sessionId: string, taskId: string, patch: TaskPatch, opts: UpsertOptions = {}): Task {
     return this.patchTask(sessionId, taskId, patch, opts)
@@ -797,11 +965,19 @@ export class TaskStore {
     // accepts the claim, so the two can never disagree and a rejected claim
     // cannot advance it. It is the only place in the entire store that
     // increments `exec_generation` - see the invariant at the column DDL.
+    //
+    // [PHASE 6P] `execution_owner = 'scheduler'` is set by that same statement,
+    // for the same reason. The three facts that define a Scheduler execution -
+    // accepted revision, new generation, durable ownership - are therefore
+    // ATOMIC. There is no interleaving in which the row says "generation N
+    // exists" while ownership still says "interactive/unknown", or vice versa,
+    // and a rejected claim writes none of the three.
     const result = db
       .prepare(
         `UPDATE tasks
             SET status = 'IN_PROGRESS', updated_at = ?, revision = revision + 1,
-                exec_generation = exec_generation + 1
+                exec_generation = exec_generation + 1,
+                execution_owner = 'scheduler'
           WHERE session_id = ? AND task_id = ? AND revision = ? AND status IN (${statuses})`,
       )
       .run(nowIso(), sessionId, taskId, expectedRevision)
@@ -862,11 +1038,19 @@ export class TaskStore {
     // Sets status AND clears blockedReason is deliberately NOT done: a stranded
     // task's blockedReason is not the property being reconciled, and rewriting
     // it would destroy information the operator may need.
+    // [PHASE 6P] Same contract as `reconcileIfNoCompletedAttempt` for ownership:
+    // only durably Scheduler-owned in-flight state may be reverted, and
+    // reverting releases ownership. This is the path `Scheduler.releaseClaim`
+    // uses for a claim whose dispatch never established, so requiring ownership
+    // here also stops this method from reverting a task whose claim has already
+    // been released or was never ours.
     const result = db
       .prepare(
         `UPDATE tasks
-            SET status = 'PENDING', updated_at = ?, revision = revision + 1
-          WHERE session_id = ? AND task_id = ? AND revision = ? AND status IN (${statuses})`,
+            SET status = 'PENDING', updated_at = ?, revision = revision + 1,
+                execution_owner = NULL
+          WHERE session_id = ? AND task_id = ? AND revision = ? AND status IN (${statuses})
+            AND execution_owner = 'scheduler' AND exec_generation > 0`,
       )
       .run(nowIso(), sessionId, taskId, expectedRevision)
 
@@ -907,6 +1091,31 @@ export class TaskStore {
       | undefined
     if (row === null || row === undefined) return null
     return { execGeneration: row.exec_generation, attemptGeneration: row.attempt_generation }
+  }
+
+  /**
+   * [PHASE 6P] Read EXECUTION OWNERSHIP for one task.
+   *
+   * Deliberately a SEPARATE accessor from `getExecutionLineage`, so the four
+   * facts stay four facts: task state, execution ownership, execution generation,
+   * attempt generation. Folding ownership into the lineage object would invite
+   * exactly the collapse 6O rejected.
+   *
+   * Returns `null` for a task that does not exist (same convention as
+   * `getExecutionLineage`). `executionOwner === null` on an existing task is a
+   * MEANINGFUL value - "no Scheduler execution owns this task" - not an error.
+   *
+   * Reachable only here: ownership is execution state and must not leak into
+   * `Task`, TaskGraph, readiness or presentation.
+   */
+  getExecutionOwnership(sessionId: string, taskId: string): ExecutionOwnership | null {
+    if (!isTaskId(taskId)) throw new TaskError("TASK_INVALID_ID", `not a canonical id: ${taskId}`)
+    const db = handle(this.cwd)
+    const row = db
+      .prepare(`SELECT execution_owner FROM tasks WHERE session_id = ? AND task_id = ?`)
+      .get(sessionId, taskId) as { execution_owner: ExecutionOwner | null } | null | undefined
+    if (row === null || row === undefined) return null
+    return { executionOwner: row.execution_owner }
   }
 
   /**
@@ -1017,11 +1226,27 @@ export class TaskStore {
     const db = handle(this.cwd)
     const statuses = sqlList(RECONCILABLE_STATUSES)
 
+    // [PHASE 6P] `execution_owner = 'scheduler'` is a REQUIRED condition, and
+    // `exec_generation > 0` is retained beside it as a co-condition.
+    //
+    // The owner condition is what makes 6N F1 impossible: a task the model marked
+    // IN_PROGRESS without a claim is not Scheduler execution state, so it is
+    // never reverted (6O H1). The exec condition is redundant while the column
+    // exists - only `claimTask` sets ownership, and it always advances the
+    // generation in the same statement - and is kept deliberately as a cheap
+    // invariant: if a future writer ever sets ownership without a generation, this
+    // still refuses rather than reverting.
+    //
+    // Reverting RELEASES ownership in the same statement, which is what makes
+    // 6O H5 work: after this runs, the row is interactive state, and a later
+    // user IN_PROGRESS write must survive the next reconcile.
     const result = db
       .prepare(
         `UPDATE tasks
-            SET status = 'PENDING', updated_at = ?, revision = revision + 1
+            SET status = 'PENDING', updated_at = ?, revision = revision + 1,
+                execution_owner = NULL
           WHERE session_id = ? AND task_id = ? AND revision = ? AND status IN (${statuses})
+            AND execution_owner = 'scheduler' AND exec_generation > 0
             AND (attempt_generation IS NULL OR attempt_generation < exec_generation)`,
       )
       .run(nowIso(), sessionId, taskId, expectedRevision)

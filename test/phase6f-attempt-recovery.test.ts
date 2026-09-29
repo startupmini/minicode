@@ -68,14 +68,41 @@ function add(status: TaskStatus = "PENDING", over: Partial<Task> = {}): Task {
   return store.createTask(S, { title: `t ${status}`, status, order: 1, provenance: prov, ...over })
 }
 
+/**
+ * [PHASE 6P] A GENUINE Scheduler-owned stranded execution.
+ *
+ * Before 6P this helper fabricated the state with `legacy.createTask(status:
+ * "IN_PROGRESS")`, which produced `IN_PROGRESS / exec_generation=0 /
+ * attempt_generation=NULL`. That shape is not a stranded Scheduler execution at
+ * all - it is exactly 6O history **H1**: an interactive writer marked the task
+ * in progress and no claim ever existed. 6O requires H1 to be LEFT ALONE, so the
+ * old fixture asserted the pre-6P behaviour that 6N F1 identified as a defect.
+ *
+ * The fixture is now built the way the real system builds it:
+ *   PENDING --claimTask--> IN_PROGRESS, exec_generation=1, execution_owner='scheduler'
+ * and, for VERIFYING, the model-facing write afterwards - which RETAINS
+ * ownership because VERIFYING is one of the Scheduler-owned in-flight states.
+ *
+ * This is a STRONGER fixture: it exercises the real claim path instead of
+ * hand-planting a status, so these tests now also prove that ownership is
+ * established by a claim and survives a later status write.
+ */
 function addStranded(status: "IN_PROGRESS" | "VERIFYING", over: Partial<Task> = {}): Task {
-  return legacy.createTask(S, {
+  const created = store.createTask(S, {
     title: `stranded ${status}`,
-    status,
+    status: "PENDING",
     order: 1,
     provenance: prov,
     ...over,
   })
+  const claimed = store.claimTask(S, created.id, created.revision)
+  if (claimed.outcome !== "CLAIM_ACCEPTED") {
+    throw new Error(`addStranded: claim rejected (${claimed.outcome})`)
+  }
+  if (status === "VERIFYING") {
+    store.patchTask(S, created.id, { status: "VERIFYING" })
+  }
+  return store.getTask(S, created.id)!
 }
 
 const lin = (s: TaskStore, id: string): ExecutionLineage | null => s.getExecutionLineage(S, id)
@@ -247,11 +274,17 @@ describe("B. restart", () => {
 
   test("B6. a generation with NO completion record is recovered", async () => {
     const a = addStranded("IN_PROGRESS")
-    expect(lin(store, a.id)).toEqual({ execGeneration: 0, attemptGeneration: null })
+    // [6P] A genuine claim: generation 1 exists, has NOT completed, and the row
+    // is durably Scheduler-owned. Before 6P this fixture was exec=0, i.e. the H1
+    // shape (interactive IN_PROGRESS), which 6O requires to be LEFT alone.
+    expect(lin(store, a.id)).toEqual({ execGeneration: 1, attemptGeneration: null })
+    expect(store.getExecutionOwnership(S, a.id)?.executionOwner).toBe("scheduler")
     const h = makeHarness()
     h.sc.start()
     expect(h.sc.reconcile()).toEqual([a.id])
     expect(store.getTask(S, a.id)?.status).toBe("PENDING")
+    // [6P] Reverting RELEASES ownership, so the row is interactive state again.
+    expect(store.getExecutionOwnership(S, a.id)?.executionOwner).toBeNull()
   })
 })
 
@@ -673,7 +706,11 @@ describe("I. reconciliation, isolation, terminal states", () => {
     const c = store.claimTask(S, recorded.id, 1)
     store.recordAttemptReturned(S, recorded.id, c.execGeneration)
     expect(lin(store, recorded.id)).toEqual({ execGeneration: 1, attemptGeneration: 1 })
-    expect(lin(store, stranded.id)).toEqual({ execGeneration: 0, attemptGeneration: null })
+    // [6P] The stranded row is a REAL claim now (exec=1, owned), so the two rows
+    // differ in the fact that actually drives the decision.
+    expect(lin(store, stranded.id)).toEqual({ execGeneration: 1, attemptGeneration: null })
+    expect(store.getExecutionOwnership(S, recorded.id)?.executionOwner).toBe("scheduler")
+    expect(store.getExecutionOwnership(S, stranded.id)?.executionOwner).toBe("scheduler")
 
     const h = makeHarness()
     h.sc.start()
@@ -695,15 +732,17 @@ describe("I. reconciliation, isolation, terminal states", () => {
     const untouched: TaskStatus[] = ["COMPLETED", "CANCELLED", "FAILED", "PENDING", "BLOCKED"]
     const ids: string[] = []
     for (const status of untouched) {
+      // [6P] `add`, not `addStranded`: this case is about resting/terminal STATES,
+      // not about a stranded execution, so each row is created directly in the
+      // named status. (It previously rode on the stranded helper, which is why it
+      // read as if a generation were involved.)
       ids.push(
-        addStranded(status as "IN_PROGRESS", {
+        add(status, {
           title: `x ${status}`,
           ...(status === "BLOCKED" ? { blockedReason: "waiting" } : {}),
         }).id,
       )
     }
-    // A COMPLETED row that carries a generation is still never touched. The
-    // record is written directly on a fresh claim so the guard is satisfied.
     const before = ids.map((id) => store.getTask(S, id)!)
     const h = makeHarness()
     h.sc.start()
@@ -788,7 +827,7 @@ describe("I. reconciliation, isolation, terminal states", () => {
 // ═════════════════════════════════════════════════════════════════════════════
 
 describe("J. migration, legacy, static architecture", () => {
-  test("J1. an existing database reopens with clean lineage defaults", async () => {
+  test("J1. an existing database reopens with lineage AND ownership intact", async () => {
     const a = addStranded("IN_PROGRESS")
     const before = store.getTask(S, a.id)
     resetTaskStoreHandles()
@@ -796,17 +835,43 @@ describe("J. migration, legacy, static architecture", () => {
     const after = reopened.getTask(S, a.id)
     expect(after?.status).toBe(before?.status)
     expect(after?.revision).toBe(before?.revision)
-    // Pre-6I rows read as "never claimed, never attempted".
+    // [6P] Ownership is DURABLE: it survives a TaskStore reopen exactly as the
+    // lineage does. This is the property that makes the 6O decision cross a
+    // process boundary instead of living in module state.
     expect(reopened.getExecutionLineage(S, a.id)).toEqual({
-      execGeneration: 0,
+      execGeneration: 1,
       attemptGeneration: null,
     })
-    // And such a row is reconcilable, as a pre-6I stranded row always was.
+    expect(reopened.getExecutionOwnership(S, a.id)?.executionOwner).toBe("scheduler")
+    // And a genuinely stranded, durably-owned row is still reconcilable after reopen.
     resetTaskStoreHandles()
     resetSessionOwnershipForTests()
     const h = makeHarness({ store: reopened })
     h.sc.start()
     expect(h.sc.reconcile()).toEqual([a.id])
+  })
+
+  test("J1b. a pre-6P row is NOT auto-reconciled (no inferred ownership)", async () => {
+    // [6P] The deliberate consequence of the additive-only, no-backfill migration.
+    // A row that predates `execution_owner` reads as owner=NULL, so reconciliation
+    // refuses it. The information needed to tell a stranded pre-6P claim from
+    // interactive IN_PROGRESS was never recorded and is IRREDUCIBLE; manufacturing
+    // it would reintroduce 6N F1 on upgraded databases. Such rows are an
+    // OPERATOR cost (manual requeue), never a correctness cost: nothing is lost and
+    // no execution is corrupted. This test pins that decision so it cannot be
+    // "fixed" by inference later.
+    const a = legacy.createTask(S, {
+      title: "pre-6p stranded",
+      status: "IN_PROGRESS",
+      order: 1,
+      provenance: prov,
+    })
+    expect(store.getExecutionOwnership(S, a.id)?.executionOwner).toBeNull()
+    expect(lin(store, a.id)).toEqual({ execGeneration: 0, attemptGeneration: null })
+    const h = makeHarness()
+    h.sc.start()
+    expect(h.sc.reconcile()).toEqual([])
+    expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
   })
 
   test("J2. LEGACY mode never writes lineage across its whole lifecycle", () => {

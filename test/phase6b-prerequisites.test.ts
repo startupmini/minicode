@@ -56,6 +56,35 @@ const add = (
 ): Task =>
   store.createTask(S, { title: `t ${status}`, status, order: 1, blockedReason, provenance: prov })
 
+/**
+ * [PHASE 6P] A GENUINE Scheduler-owned in-flight task.
+ *
+ * Since 6P, reconciliation only recovers state that is durably identified as a
+ * Scheduler execution. `add(legacy, "IN_PROGRESS")` plants the 6O **H1** shape -
+ * interactive IN_PROGRESS with no claim ever made - which reconciliation now
+ * correctly REFUSES.
+ *
+ * The tests that use this helper are about something else entirely (session
+ * ownership gating, field preservation, reconcile races, session isolation), so
+ * they now build their fixture the way the real system does: a real claim, which
+ * is what "stranded" has always meant. This keeps their original intent intact
+ * and adds coverage of the ownership precondition.
+ */
+const addOwned = (store: TaskStore, status: "IN_PROGRESS" | "VERIFYING" = "IN_PROGRESS"): Task => {
+  const created = store.createTask(S, {
+    title: `t ${status}`,
+    status: "PENDING",
+    order: 1,
+    provenance: prov,
+  })
+  const claimed = authority.claimTask(S, created.id, created.revision)
+  if (claimed.outcome !== "CLAIM_ACCEPTED") {
+    throw new Error(`addOwned: claim rejected (${claimed.outcome})`)
+  }
+  if (status === "VERIFYING") store.patchTask(S, created.id, { status: "VERIFYING" })
+  return store.getTask(S, created.id)!
+}
+
 // ── P1: atomic claim ─────────────────────────────────────────────────────────
 describe("P1. claimTask", () => {
   test("1. succeeds with the exact revision and reports CLAIM_ACCEPTED", () => {
@@ -283,7 +312,7 @@ describe("P2. authority mode", () => {
 // ── P3: session ownership + reconciliation ───────────────────────────────────
 describe("P3. session ownership", () => {
   test("17. an ACTIVE session is not reconciled", () => {
-    const t = add(legacy, "IN_PROGRESS")
+    const t = addOwned(legacy, "IN_PROGRESS")
     const owner = acquireSessionOwnership(S, "worker")!
     const r = legacy.reconcileStranded(S, t.id, t.revision, { ownsSession: ownsSession(S, owner) })
     // Ownership IS held, so the mechanics work — but the point of 17 is that
@@ -311,7 +340,7 @@ describe("P3. session ownership", () => {
     // exclusive by design.
     const owner = acquireSessionOwnership(S, "w")!
     for (const status of ["IN_PROGRESS", "VERIFYING"] as const) {
-      const t = add(legacy, status)
+      const t = addOwned(legacy, status)
       const r = legacy.reconcileStranded(S, t.id, t.revision, {
         ownsSession: ownsSession(S, owner),
       })
@@ -372,14 +401,19 @@ describe("P3. reconciliation contract", () => {
 
   test("20b. reconciliation never mutates relationship or descriptive fields", () => {
     const parent = add(legacy, "COMPLETED")
-    const child = legacy.createTask(S, {
+    // [6P] a real claim, so the row is durably Scheduler-owned. This test is about
+    // relationship/description preservation, not about who owns the row.
+    const childSeed = legacy.createTask(S, {
       title: "child",
-      status: "IN_PROGRESS",
+      status: "PENDING",
       order: 2,
       parentId: parent.id,
       dependsOn: [parent.id],
       provenance: prov,
     })
+    const claimed = authority.claimTask(S, childSeed.id, childSeed.revision)
+    if (claimed.outcome !== "CLAIM_ACCEPTED") throw new Error("20b: claim rejected")
+    const child = legacy.getTask(S, childSeed.id)!
     const before = legacy.getTask(S, child.id)!
     legacy.reconcileStranded(S, child.id, before.revision, { ownsSession: mine() })
     const after = legacy.getTask(S, child.id)!
@@ -416,7 +450,7 @@ describe("P3. reconciliation contract", () => {
   })
 
   test("22. race C: two reconciliations -> exactly one durable transition", () => {
-    const t = add(legacy, "IN_PROGRESS")
+    const t = addOwned(legacy, "IN_PROGRESS")
     const rev = t.revision
     const a = legacy.reconcileStranded(S, t.id, rev, { ownsSession: mine() })
     const b = legacy.reconcileStranded(S, t.id, rev, { ownsSession: mine() })
@@ -462,13 +496,17 @@ describe("P3. reconciliation contract", () => {
     // `taskId` is allocated PER SESSION, so both tasks are `t1`. That is what
     // makes this the sharpest isolation test available: the SAME id string
     // exists in both sessions and must resolve to different rows.
-    const a = add(legacy, "IN_PROGRESS")
-    const b = legacy.createTask("other-sess", {
+    const a = addOwned(legacy, "IN_PROGRESS")
+    const bSeed = legacy.createTask("other-sess", {
       title: "b",
-      status: "IN_PROGRESS",
+      status: "PENDING",
       order: 1,
       provenance: prov,
     })
+    if (authority.claimTask("other-sess", bSeed.id, bSeed.revision).outcome !== "CLAIM_ACCEPTED") {
+      throw new Error("26: claim rejected")
+    }
+    const b = legacy.getTask("other-sess", bSeed.id)!
     expect(b.id).toBe(a.id)
 
     const otherOwner = acquireSessionOwnership("other-sess", "o")!

@@ -62,14 +62,35 @@ function add(status: TaskStatus = "PENDING", over: Partial<Task> = {}): Task {
 }
 
 /** Fixture for state a crashed Scheduler would have left behind. */
+/**
+ * [PHASE 6P] A GENUINE Scheduler-owned stranded execution.
+ *
+ * Previously this planted `status: "IN_PROGRESS"` directly, producing
+ * `exec_generation = 0` — which is 6O history **H1** (interactive IN_PROGRESS,
+ * no claim ever made) rather than a stranded Scheduler execution, and 6O requires
+ * H1 to be left alone. The fixture now goes through the real claim path, so these
+ * tests exercise ownership establishment rather than a hand-made status.
+ *
+ * VERIFYING is produced by claiming first and then taking the model-facing write,
+ * which RETAINS ownership (VERIFYING is a Scheduler-owned in-flight state) and so
+ * stays recoverable.
+ */
 function addStranded(status: "IN_PROGRESS" | "VERIFYING", over: Partial<Task> = {}): Task {
-  return legacy.createTask(S, {
+  const created = store.createTask(S, {
     title: `stranded ${status}`,
-    status,
+    status: "PENDING",
     order: 1,
     provenance: prov,
     ...over,
   })
+  const claimed = store.claimTask(S, created.id, created.revision)
+  if (claimed.outcome !== "CLAIM_ACCEPTED") {
+    throw new Error(`addStranded: claim rejected (${claimed.outcome})`)
+  }
+  if (status === "VERIFYING") {
+    store.patchTask(S, created.id, { status: "VERIFYING" })
+  }
+  return store.getTask(S, created.id)!
 }
 
 /** A recording, immediately-resolving bridge. */

@@ -56,6 +56,16 @@ const MAX_PARENT = 64
 
 /** Shape of the data, not of the table: this rises when column SEMANTICS
  *  change, not merely when a column is added. */
+// [PHASE 6K] Deliberately NOT bumped. `TASK_DATA_VERSION` is an existing
+// contract (taskstore.test.ts "H" asserts `ensureDataVersion() === 1`, and that
+// a newer writer is refused rather than downgraded), and bumping it would be a
+// semantic change outside the scope of D3/D4/D5.
+//
+// It is also unnecessary. The lineage migration decides from
+// `PRAGMA table_info`, not from this stamp, precisely because a stamp can lie
+// and the schema cannot. The stamp is written as bookkeeping; the migration's
+// correctness does not depend on it. If a future change makes the SCHEMA itself
+// version-dependent, that change should bump this constant deliberately.
 const TASK_DATA_VERSION = 1
 
 /** Bounded schema-DDL retry. Matches the Phase 0C contract: at most `attempts`
@@ -224,6 +234,88 @@ function dbFile(cwd?: string): string {
   return resolveLocalDbPath(TASK_DB_FILENAME, cwd)
 }
 
+/**
+ * [PHASE 6K] Bring an existing `tasks` table up to the current lineage schema.
+ *
+ * WHY THIS EXISTS (Phase 6J D3, HIGH): `CREATE TABLE IF NOT EXISTS tasks (...)`
+ * is a NO-OP when the table already exists. SQLite does not add columns. So a
+ * database created before Phase 6I never received `exec_generation` /
+ * `attempt_generation`, and because `createTask` names them, task creation
+ * failed outright on any pre-6I installation - on the LEGACY path, with the
+ * Scheduler still disabled.
+ *
+ * WHY SCHEMA INTROSPECTION rather than only a version stamp: a version stamp
+ * can lie (a 6F database may carry a stale or absent `data_version`), whereas
+ * `PRAGMA table_info` reports what is actually there. The stamp is still
+ * written so `dataVersion()` reflects reality, but the DECISION is made from
+ * the schema.
+ *
+ * PROPERTIES, each load-bearing:
+ *   - IDEMPOTENT: a column is added only when absent, so running twice is a
+ *     no-op, and a partially migrated database converges.
+ *   - NON-DESTRUCTIVE: no row is deleted, updated, or reordered. `ADD COLUMN`
+ *     only appends.
+ *   - COMPATIBLE WITH EXISTING ROWS: the defaults are exactly the 6H
+ *     semantics for a row that predates lineage - `exec_generation = 0`
+ *     ("never claimed") and `attempt_generation = NULL` ("never attempted").
+ *     `revision`, `status`, `task_id` and every relationship are untouched.
+ *   - NO INFERENCE: a pre-lineage row is NOT given a generation derived from
+ *     its revision. 6H explicitly declined that, and it is what caused D1.
+ *   - TRANSACTIONAL: both ALTERs run in one transaction, so an interruption
+ *     leaves the table in its previous state rather than half-migrated.
+ */
+function migrateExecutionLineageSchema(db: Database): void {
+  const present = new Set(
+    (db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[]).map((r) => r.name),
+  )
+  // No `tasks` table at all: the DDL above just created it with the columns.
+  if (present.size === 0) return
+
+  const needsExec = !present.has("exec_generation")
+  const needsAttempt = !present.has("attempt_generation")
+  if (!needsExec && !needsAttempt) return
+
+  const run = db.transaction(() => {
+    if (needsExec) {
+      // NOT NULL with a non-null default is required by SQLite for ADD COLUMN,
+      // and it backfills every existing row with 0 = "never claimed".
+      db.exec("ALTER TABLE tasks ADD COLUMN exec_generation INTEGER NOT NULL DEFAULT 0")
+    }
+    if (needsAttempt) {
+      // Deliberately nullable with NO default: existing rows read as NULL,
+      // which is exactly 6H's "no attempt of the current generation".
+      db.exec("ALTER TABLE tasks ADD COLUMN attempt_generation INTEGER")
+    }
+  })
+  try {
+    withBusyRetrySync(() => {
+      run()
+      return true
+    })
+  } catch (e) {
+    throw new TaskError(
+      "TASK_MIGRATION_FAILURE",
+      `lineage migration failed: ${(e as Error).message}`,
+    )
+  }
+  // Record the schema version so `dataVersion()` is no longer fiction.
+  try {
+    const cur = db.prepare("SELECT value FROM task_meta WHERE key = ?").get("data_version") as
+      | { value: string }
+      | null
+      | undefined
+    const n = cur ? Number(cur.value) : 0
+    if (!Number.isFinite(n) || n < TASK_DATA_VERSION) {
+      db.prepare(
+        "INSERT INTO task_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      ).run("data_version", String(TASK_DATA_VERSION))
+    }
+  } catch {
+    // The version stamp is bookkeeping, not correctness. A failure to record it
+    // must never prevent the store from opening.
+  }
+}
+
 function handle(cwd?: string): Database {
   const p = dbFile(cwd)
   const existing = handles.get(p)
@@ -266,6 +358,11 @@ function handle(cwd?: string): Database {
       })
       if (ok === null) throw new Error(`schema init did not complete: ${stmt.slice(0, 40)}`)
     }
+    // [PHASE 6K] `CREATE TABLE IF NOT EXISTS` cannot add a column to an
+    // existing table, so a database created before 6I never receives the
+    // execution-lineage columns and every statement naming them fails. The
+    // migration runs here, on the same open path, immediately after the DDL.
+    migrateExecutionLineageSchema(db)
     initialized.add(p)
   } catch (e) {
     try {

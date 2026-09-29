@@ -267,13 +267,7 @@ function isValidPlanStep(s: unknown): boolean {
   return PLAN_STEP_STATUSES.has(step.status as string)
 }
 
-const PLAN_STEP_STATUSES = new Set([
-  "pending",
-  "active",
-  "completed",
-  "cancelled",
-  "blocked",
-])
+const PLAN_STEP_STATUSES = new Set(["pending", "active", "completed", "cancelled", "blocked"])
 const PLAN_STATUSES = new Set(["open", "completed", "cancelled"])
 
 function isValidEventShape(value: Record<string, unknown>): boolean {
@@ -360,10 +354,7 @@ export interface PresentationEventLoad {
   rejected: number
 }
 
-export function loadPresentationEventsWithStats(
-  id: string,
-  cwd?: string,
-): PresentationEventLoad {
+export function loadPresentationEventsWithStats(id: string, cwd?: string): PresentationEventLoad {
   const db = open(cwd)
   try {
     const rows = db
@@ -691,6 +682,40 @@ export function listSessions(
 }
 
 export async function deleteSession(id: string, cwd?: string) {
+  // [PHASE 6K] TaskStore rows FIRST, and NOT best-effort.
+  //
+  // Phase 6J (D4, HIGH): this function deleted session-side state and never
+  // touched `tasks.db` at all - `deleteTask`/`deleteSessionTasks` had zero
+  // production callers. Deleting a session and recreating it with the same id
+  // therefore resurrected the old task rows *with their execution lineage*, and
+  // a Scheduler on the recreated session dispatched that deleted work.
+  //
+  // ORDERING (6K §8, two databases, so NOT atomic): tasks are removed BEFORE
+  // session-side state. The two stores are separate files, so no single
+  // transaction spans them. The ordering is chosen because the two possible
+  // residues are not symmetric:
+  //
+  //   task delete fails first -> the session still exists, so the delete is
+  //                              visibly incomplete and retryable, and nothing
+  //                              is orphaned. BENIGN.
+  //   session delete fails after -> the session exists with no tasks. Also
+  //                              benign: a retry is a no-op for tasks and then
+  //                              completes the session delete. CONVERGES.
+  //
+  // The reverse order would produce the dangerous residue (tasks surviving a
+  // deleted session) on the first failure. That is why tasks go first.
+  //
+  // It is NOT swallowed: if task deletion fails we deliberately leave the
+  // session intact and propagate, because continuing would delete the session
+  // and leave exactly the executable orphans this fix exists to prevent.
+  try {
+    const { TaskStore } = await import("../task/store.ts")
+    new TaskStore(cwd).deleteSessionTasks(id)
+  } catch (e) {
+    throw new Error(
+      `deleteSession: task store cleanup failed for ${id}; session state left intact so the delete can be retried: ${(e as Error).message}`,
+    )
+  }
   const db = open(cwd)
   const txn = db.transaction(() => {
     db.prepare("DELETE FROM messages WHERE session_id = ?").run(id)

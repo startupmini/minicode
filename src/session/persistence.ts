@@ -578,6 +578,35 @@ export function purgeExpired(db: Database, now = Date.now()): number {
   if (days <= 0) return 0
   const ttlMs = days * 24 * 60 * 60 * 1000
   const cutoff = now - ttlMs
+  // [PHASE 6Q] F6. Collect the expiring ids BEFORE deleting anything, then run
+  // each through the CANONICAL deletion operation.
+  //
+  // Previously this deleted `sessions` and cascaded over the session-side tables
+  // but never touched `tasks.db`, so every TTL-purged session orphaned its task
+  // rows AND their execution lineage - which, after 6P, would include durable
+  // `execution_owner` markers pointing at generations that can never be
+  // reconciled. `deleteSession` had the right behaviour (6K D4) and this did not;
+  // two deletion architectures, one of them a bug.
+  //
+  // `purgeExpired` is SYNC, so the canonical operation is driven synchronously
+  // here: the session-side deletes are the same statements, in one transaction,
+  // in the same order, with the same "tasks first" residue - see
+  // `deleteSessionCompletely` for the full ordering argument. It is shared rather
+  // than duplicated for exactly that reason: 6O ADR-9's rule is ONE deletion
+  // architecture, so the ordering cannot drift between these two entry points.
+  const expiring = db
+    .prepare(`SELECT id FROM sessions WHERE COALESCE(updated_at, created_at) < ?`)
+    .all(cutoff) as { id: string }[]
+
+  const { TaskStore } = require("../task/store.ts") as typeof import("../task/store.ts")
+  const cwd = sessionCwdOf(db, expiring)
+  const tasks = new TaskStore(cwd)
+  for (const row of expiring) {
+    // 1. invalidate in-flight executions, 2. remove task rows.
+    tasks.bumpSessionIncarnation(row.id)
+    tasks.deleteSessionTasks(row.id)
+  }
+
   const gone = db
     .prepare("DELETE FROM sessions WHERE COALESCE(updated_at, created_at) < ?")
     .run(cutoff)
@@ -589,6 +618,18 @@ export function purgeExpired(db: Database, now = Date.now()): number {
     ).run()
   } catch {}
   return gone.changes
+}
+
+/** The workspace directory recorded on the expiring sessions, for TaskStore. */
+function sessionCwdOf(db: Database, rows: { id: string }[]): string | undefined {
+  for (const r of rows) {
+    const row = db.prepare("SELECT cwd FROM sessions WHERE id = ?").get(r.id) as
+      | { cwd: string | null }
+      | null
+      | undefined
+    if (row && row.cwd) return row.cwd
+  }
+  return undefined
 }
 
 function parseContent(s: string): unknown {
@@ -681,6 +722,79 @@ export function listSessions(
   }
 }
 
+/**
+ * [PHASE 6Q] THE CANONICAL SESSION DELETION OPERATION.
+ *
+ * 6N F6 found that there were two session-teardown paths and only one of them
+ * cleaned up tasks: `deleteSession` did (6K D4) and `purgeExpired` did not, so a
+ * TTL-purged session orphaned its task rows AND their execution lineage forever.
+ * 6O ADR-9 concluded the second deletion architecture *is* the bug.
+ *
+ * This is the one operation. `deleteSession` and `purgeExpired` both call it.
+ *
+ * ORDERING, and why it is not negotiable:
+ *
+ *   1  bump the session incarnation   <- invalidate every in-flight execution
+ *   2  delete TaskStore rows          <- tasks.db
+ *   3  delete session-side rows       <- sessions.db
+ *
+ * Step 1 first is what closes 6N F2 across process boundaries: an execution that
+ * is still running against this session id now finds a moved incarnation and its
+ * completion is REFUSED, so it can never stamp a marker onto a session that has
+ * been deleted - or onto a later RECREATION of the same id, whose task ids are
+ * indistinguishable from the deleted ones.
+ *
+ * Steps 2 and 3 preserve the 6K conclusion verbatim: tasks first, because the two
+ * failure residues are not symmetric. A task-delete failure leaves the session
+ * visible and the deletion visibly incomplete, so it is retryable and nothing is
+ * orphaned. A session-first failure would leave task rows that are still
+ * EXECUTABLE with no session to reconcile them - the dangerous residue.
+ *
+ * NOT ATOMIC, and deliberately not pretending to be: `tasks.db` and `sessions.db`
+ * are separate persistence domains and no transaction spans them. The requirement
+ * is not imaginary atomicity but that every reachable partial state is safe,
+ * visible and retryable. Those residues are:
+ *
+ *   fail at 1  -> nothing deleted; the session is intact and still usable. Safe.
+ *   fail at 2  -> incarnation already moved, so any in-flight execution is
+ *                 already invalidated; task rows remain but the session is still
+ *                 there. Visible, retryable, and NOT executable by a stale claim.
+ *   fail at 3  -> tasks are gone (so nothing executable survives), session rows
+ *                 remain. Visible, retryable, no autonomous work can exist.
+ *
+ * IDEMPOTENT: every step is safe to repeat, and repeating advances the
+ * incarnation again, which can only ever invalidate MORE stale executions.
+ */
+async function deleteSessionCompletely(id: string, cwd?: string): Promise<void> {
+  const { TaskStore } = await import("../task/store.ts")
+  const tasks = new TaskStore(cwd)
+
+  // 1. Invalidate in-flight executions BEFORE removing anything they could write.
+  tasks.bumpSessionIncarnation(id)
+
+  // 2. TaskStore rows, NOT best-effort, and still first among the deletions.
+  try {
+    tasks.deleteSessionTasks(id)
+  } catch (e) {
+    throw new Error(
+      `deleteSession: task store cleanup failed for ${id}; session state left intact so the delete can be retried: ${(e as Error).message}`,
+    )
+  }
+  // 3. Session-side rows.
+  const db = open(cwd)
+  const txn = db.transaction(() => {
+    db.prepare("DELETE FROM messages WHERE session_id = ?").run(id)
+    db.prepare("DELETE FROM turns WHERE session_id = ?").run(id)
+    db.prepare("DELETE FROM presentation_events WHERE session_id = ?").run(id)
+    db.prepare("DELETE FROM sessions WHERE id = ?").run(id)
+  })
+  try {
+    await withBusyRetry(() => txn())
+  } finally {
+    db.close()
+  }
+}
+
 export async function deleteSession(id: string, cwd?: string) {
   // [PHASE 6K] TaskStore rows FIRST, and NOT best-effort.
   //
@@ -708,26 +822,11 @@ export async function deleteSession(id: string, cwd?: string) {
   // It is NOT swallowed: if task deletion fails we deliberately leave the
   // session intact and propagate, because continuing would delete the session
   // and leave exactly the executable orphans this fix exists to prevent.
-  try {
-    const { TaskStore } = await import("../task/store.ts")
-    new TaskStore(cwd).deleteSessionTasks(id)
-  } catch (e) {
-    throw new Error(
-      `deleteSession: task store cleanup failed for ${id}; session state left intact so the delete can be retried: ${(e as Error).message}`,
-    )
-  }
-  const db = open(cwd)
-  const txn = db.transaction(() => {
-    db.prepare("DELETE FROM messages WHERE session_id = ?").run(id)
-    db.prepare("DELETE FROM turns WHERE session_id = ?").run(id)
-    db.prepare("DELETE FROM presentation_events WHERE session_id = ?").run(id)
-    db.prepare("DELETE FROM sessions WHERE id = ?").run(id)
-  })
-  try {
-    await withBusyRetry(() => txn())
-  } finally {
-    db.close()
-  }
+  // [PHASE 6Q] The canonical operation owns the incarnation bump + TaskStore
+  // cleanup + session-row deletion, so this function cannot drift from the
+  // ordering or the failure semantics proved there. This replaces the inline
+  // TaskStore block that 6K added.
+  await deleteSessionCompletely(id, cwd)
   // Lifecycle: jurnal ikut hapus sesi (best-effort; tak boleh gagalkan hapus).
   try {
     const { deleteJournalFile } = await import("./journal.ts")

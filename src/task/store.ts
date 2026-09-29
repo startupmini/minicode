@@ -210,6 +210,38 @@ export interface ExecutionOwnership {
   readonly executionOwner: ExecutionOwner | null
 }
 
+/** `task_meta` key holding the current incarnation of a session id. */
+const incarnationKey = (sessionId: string): string => `session_incarnation:${sessionId}`
+
+/**
+ * [PHASE 6Q] Outcome of `recordAttemptReturned`.
+ *
+ * [DESIGN DECISION] This used to be `void` and it THREW whenever the guarded
+ * UPDATE matched no row. That is what made 6N F2 a wedge rather than an error: the
+ * throw escaped `cycle()`, so the Scheduler never reached the line that clears its
+ * own claim, and it kept both the claim and the session ownership forever.
+ *
+ * "The row I claimed is gone" and "the generation moved" are NOT persistence
+ * failures - they are the ordinary outcomes of a session being deleted under a
+ * running execution, or of a later generation superseding an earlier one. The
+ * protection 6I wanted is preserved exactly (NOTHING IS WRITTEN when the guard
+ * does not match); what changes is that the caller is TOLD, instead of being
+ * destroyed by it. Genuine SQL errors still throw.
+ */
+export type AttemptRecordOutcome =
+  /** The completion marker for this generation was written. */
+  | "RECORDED"
+  /** The task row no longer exists - the session was deleted under this execution. */
+  | "TASK_GONE"
+  /** The row exists but this generation is no longer current. Nothing was written. */
+  | "SUPERSEDED"
+  /**
+   * The session was deleted (or deleted and recreated) since this execution was
+   * claimed, so the row that exists - if any - belongs to a DIFFERENT incarnation.
+   * This is the cross-generation guard; nothing was written.
+   */
+  | "SESSION_SUPERSEDED"
+
 /**
  * [PHASE 6I] Outcome of `reconcileIfNoCompletedAttempt`.
  *
@@ -953,7 +985,13 @@ export class TaskStore {
     sessionId: string,
     taskId: string,
     expectedRevision: number,
-  ): { outcome: ClaimOutcome; task: Task | null; execGeneration: number } {
+  ): {
+    outcome: ClaimOutcome
+    task: Task | null
+    execGeneration: number
+    /** [PHASE 6Q] Incarnation the claim was made under. 1 for an undeleted session. */
+    sessionIncarnation: number
+  } {
     if (!isTaskId(taskId)) throw new TaskError("TASK_INVALID_ID", `not a canonical id: ${taskId}`)
     const db = handle(this.cwd)
     const statuses = sqlList(CLAIMABLE_STATUSES)
@@ -988,6 +1026,10 @@ export class TaskStore {
         outcome: "CLAIM_ACCEPTED",
         task: this.getTask(sessionId, taskId),
         execGeneration: lineage?.execGeneration ?? 0,
+        // [PHASE 6Q] Read inside the same call so the Scheduler can present this
+        // incarnation back at lineage-write time. A deletion between claim and
+        // write moves it, and the write is then refused.
+        sessionIncarnation: this.getSessionIncarnation(sessionId),
       }
     }
 
@@ -995,15 +1037,16 @@ export class TaskStore {
     // claim creates NO generation: execGeneration reports the unchanged current
     // value so a caller can never mistake a rejection for a claim.
     const current = this.getTask(sessionId, taskId)
+    const sessionIncarnation = this.getSessionIncarnation(sessionId)
     if (current === null) {
-      return { outcome: "NOT_FOUND", task: null, execGeneration: 0 }
+      return { outcome: "NOT_FOUND", task: null, execGeneration: 0, sessionIncarnation }
     }
     const lineage = this.getExecutionLineage(sessionId, taskId)
     const execGeneration = lineage?.execGeneration ?? 0
     if (current.revision !== expectedRevision) {
-      return { outcome: "CLAIM_REJECTED_STALE", task: current, execGeneration }
+      return { outcome: "CLAIM_REJECTED_STALE", task: current, execGeneration, sessionIncarnation }
     }
-    return { outcome: "WRONG_STATE", task: current, execGeneration }
+    return { outcome: "WRONG_STATE", task: current, execGeneration, sessionIncarnation }
   }
 
   /**
@@ -1118,6 +1161,70 @@ export class TaskStore {
     return { executionOwner: row.execution_owner }
   }
 
+  // ── [PHASE 6Q] SESSION INCARNATION ──────────────────────────────────────────
+
+  /**
+   * [PHASE 6Q] A durable, monotonically increasing counter identifying WHICH
+   * INCARNATION of a session id is current.
+   *
+   * WHY IT EXISTS (6N F2). `taskId` is allocated PER SESSION and restarts at `t1`,
+   * so deleting a session and recreating it with the same id produces a session
+   * whose task rows are *indistinguishable by id* from the deleted ones. An
+   * execution that was still running against the DELETED incarnation therefore
+   * holds a `(taskId, execGeneration)` pair that a FRESH claim in the RECREATED
+   * session can legitimately match:
+   *
+   *   delete session A  -> recreate A  -> new Scheduler claims new t1 (exec=1)
+   *   -> the OLD execution returns with (t1, execGeneration=1)
+   *   -> `WHERE exec_generation = 1` MATCHES THE NEW ROW
+   *
+   * Without a discriminator the old execution would stamp `attempt_generation` on
+   * the new row, and that new claim would be treated as "already completed" and
+   * never recovered. That is exactly the cross-generation effect 6Q must forbid.
+   *
+   * THE MINIMUM GUARD. The Scheduler reads the incarnation at CLAIM time and
+   * passes it back at lineage-write time; the write is refused if the current
+   * incarnation has moved. Deletion bumps the counter, which invalidates every
+   * in-flight execution of that session id at once, in one durable write, with no
+   * coordination and no cross-process signalling.
+   *
+   * Stored in `task_meta` in THIS database, so the counter and the task rows it
+   * protects share a persistence domain and can be read and written under one
+   * handle. It is NOT session state: it deliberately SURVIVES the session's own
+   * deletion, because its entire job is to remember that a deletion happened.
+   *
+   * It is NOT a lease, lock, heartbeat, priority or completion claim. It grants no
+   * authority; it only lets a late writer recognise that it is late.
+   */
+  getSessionIncarnation(sessionId: string): number {
+    const db = handle(this.cwd)
+    const row = db
+      .prepare(`SELECT value FROM task_meta WHERE key = ?`)
+      .get(incarnationKey(sessionId)) as { value: string } | null | undefined
+    if (row === null || row === undefined) return 1
+    const n = Number(row.value)
+    return Number.isSafeInteger(n) && n > 0 ? n : 1
+  }
+
+  /**
+   * [PHASE 6Q] Invalidate every in-flight execution of this session id.
+   *
+   * Called by the canonical deletion operation BEFORE any row is removed, so that
+   * an execution which returns after this point is refused rather than allowed to
+   * write into a session that no longer exists - or into a later recreation of it.
+   *
+   * Idempotent-safe: bumping an already-bumped counter is harmless, and a session
+   * that was never deleted keeps incarnation 1.
+   */
+  bumpSessionIncarnation(sessionId: string): number {
+    const db = handle(this.cwd)
+    const next = this.getSessionIncarnation(sessionId) + 1
+    db.prepare(
+      `INSERT INTO task_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    ).run(incarnationKey(sessionId), String(next))
+    return next
+  }
+
   /**
    * [PHASE 6I] Record that the execution attempt for one generation ended.
    *
@@ -1139,7 +1246,17 @@ export class TaskStore {
    *
    * The task's durable status is NOT touched, and no other column is written.
    */
-  recordAttemptReturned(sessionId: string, taskId: string, execGeneration: number): void {
+  recordAttemptReturned(
+    sessionId: string,
+    taskId: string,
+    execGeneration: number,
+    /**
+     * [PHASE 6Q] The incarnation the caller claimed under. Omitted = "assume the
+     * current one", which preserves the pre-6Q behaviour for any caller that does
+     * not track incarnations; the Scheduler always supplies it.
+     */
+    sessionIncarnation?: number,
+  ): AttemptRecordOutcome {
     if (!isTaskId(taskId)) throw new TaskError("TASK_INVALID_ID", `not a canonical id: ${taskId}`)
     if (!Number.isSafeInteger(execGeneration) || execGeneration < 1) {
       throw new TaskError(
@@ -1148,29 +1265,48 @@ export class TaskStore {
       )
     }
     const db = handle(this.cwd)
-    let changes = 0
-    try {
-      changes = db
-        .prepare(
-          `UPDATE tasks
-              SET attempt_generation = ?
-            WHERE session_id = ? AND task_id = ? AND exec_generation = ?`,
-        )
-        .run(execGeneration, sessionId, taskId, execGeneration).changes
-    } catch (e) {
-      // Evidence that cannot be persisted is NOT a returned attempt. Never
-      // swallow: converting this into "execution succeeded" would turn the crash
-      // window into a silent permanent strand.
-      throw new TaskError("TASK_PERSISTENCE_FAILURE", (e as Error).message)
-    }
-    if (changes !== 1) {
-      // The generation moved under us. Recording it now would attribute an
-      // outcome to the wrong generation, which is worse than recording nothing.
-      throw new TaskError(
-        "TASK_PERSISTENCE_FAILURE",
-        `execution generation ${execGeneration} is no longer current for ${sessionId}/${taskId}; refusing to record a stale completion`,
-      )
-    }
+
+    // [PHASE 6Q] THE INCARNATION GUARD MUST PRECEDE THE WRITE.
+    //
+    // Checking it afterwards is not a weaker check, it is a wrong one: the guarded
+    // UPDATE can MATCH A ROW THAT BELONGS TO A DIFFERENT SESSION LIFETIME, because
+    // `taskId` restarts at `t1` for every incarnation and a fresh claim also
+    // starts at `exec_generation = 1`. Observed during 6Q: with the check after
+    // the write, a delete + recreate + re-claim sequence returned RECORDED and
+    // stamped `attempt_generation` onto the RECREATED row.
+    //
+    // The check and the write share one transaction, so no other process can bump
+    // the incarnation between them.
+    return db.transaction((): AttemptRecordOutcome => {
+      if (sessionIncarnation !== undefined) {
+        if (this.getSessionIncarnation(sessionId) !== sessionIncarnation) {
+          return "SESSION_SUPERSEDED"
+        }
+      }
+      let changes = 0
+      try {
+        changes = db
+          .prepare(
+            `UPDATE tasks
+                SET attempt_generation = ?
+              WHERE session_id = ? AND task_id = ? AND exec_generation = ?`,
+          )
+          .run(execGeneration, sessionId, taskId, execGeneration).changes
+      } catch (e) {
+        // Evidence that cannot be persisted is NOT a returned attempt. Never
+        // swallow: converting this into "execution succeeded" would turn the crash
+        // window into a silent permanent strand.
+        throw new TaskError("TASK_PERSISTENCE_FAILURE", (e as Error).message)
+      }
+      if (changes === 1) return "RECORDED"
+      // The guard did not match. Nothing was written, so 6I's protection holds:
+      // an outcome is never attributed to a generation that is not current. These
+      // are results, not throws, because a throw is what wedged the Scheduler
+      // (6N F2).
+      const current = this.getTask(sessionId, taskId)
+      if (current === null) return "TASK_GONE"
+      return "SUPERSEDED"
+    })()
   }
 
   /**

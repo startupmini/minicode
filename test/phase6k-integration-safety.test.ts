@@ -567,6 +567,8 @@ describe("D5. active-claim reconciliation exemption", () => {
       taskId: t.id,
       claimRevision: store.getTask(S, t.id)!.revision,
       execGeneration: 2,
+      // [PHASE 6Q] an ActiveClaim also carries the session incarnation
+      sessionIncarnation: store.getSessionIncarnation(S),
     }
     expect(sc.reconcile()).toEqual([])
     expect(store.getTask(S, t.id)!.status).toBe("IN_PROGRESS")
@@ -603,7 +605,7 @@ describe("D5. active-claim reconciliation exemption", () => {
     // With the exemption present the OWNER is protected...
     const sc = new Scheduler(S, { store, runTurn: () => OK, instruction: "x" })
     sc.start()
-    sc["claim"] = { taskId: t.id, claimRevision: rev, execGeneration: 1 }
+    sc["claim"] = { taskId: t.id, claimRevision: rev, execGeneration: 1, sessionIncarnation: store.getSessionIncarnation(S) }
     expect(sc.reconcile()).toEqual([])
     expect(store.getTask(S, t.id)!.status).toBe("IN_PROGRESS")
     await sc.stop()

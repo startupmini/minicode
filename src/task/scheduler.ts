@@ -50,7 +50,7 @@ import {
   ownsSession,
   releaseSessionOwnership,
 } from "./session-ownership.ts"
-import type { TaskStore } from "./store.ts"
+import type { AttemptRecordOutcome, TaskStore } from "./store.ts"
 
 // ── lifecycle ────────────────────────────────────────────────────────────────
 
@@ -68,7 +68,16 @@ export type CycleStop =
   | "not-running"
 
 /** Why a work item could not be handed to the agent loop. */
-export type DispatchFailure = "scheduler-not-running" | "bridge-threw" | "bridge-not-callable"
+export type DispatchFailure =
+  | "scheduler-not-running"
+  | "bridge-threw"
+  | "bridge-not-callable"
+  /**
+   * [PHASE 6Q] The turn ended but no active claim identified which generation it
+   * belonged to, so no lineage was recorded. Distinct from a persistence error:
+   * the instance stays usable, which is the whole point.
+   */
+  | "attempt-unidentified"
 
 export type ExecutionObservation =
   /** The turn returned. `ok` is an OBSERVATION, not a verdict on the work. */
@@ -117,6 +126,16 @@ export type SchedulerEvent =
   | { readonly kind: "task:dispatch_started"; readonly taskId: string }
   | { readonly kind: "task:execution_started"; readonly taskId: string }
   | { readonly kind: "task:execution_completed"; readonly taskId: string; readonly ok: boolean }
+  /**
+   * [PHASE 6Q] The attempt ended but its completion could NOT be recorded, because
+   * the session was deleted under it or a later generation superseded it. Nothing
+   * was written; the task is left for the next owner to decide.
+   */
+  | {
+      readonly kind: "task:execution_abandoned"
+      readonly taskId: string
+      readonly outcome: AttemptRecordOutcome
+    }
   | { readonly kind: "cycle:invalid_graph" }
   | { readonly kind: "cycle:stopped"; readonly reason: CycleStop }
 
@@ -149,6 +168,16 @@ export interface ActiveClaim {
    * `execGeneration` advances only when a claim is accepted.
    */
   readonly execGeneration: number
+  /**
+   * [PHASE 6Q] The session INCARNATION the claim was made under.
+   *
+   * `taskId` is allocated per session and restarts at `t1`, so a session deleted
+   * and recreated under the same id has task ids indistinguishable from the
+   * deleted ones - and a `execGeneration` that a fresh claim can legitimately
+   * match. This token is how a late execution recognises that the row it is
+   * about to touch belongs to a DIFFERENT session lifetime. Deletion bumps it.
+   */
+  readonly sessionIncarnation: number
 }
 
 export class SchedulerError extends Error {
@@ -256,6 +285,25 @@ export class Scheduler {
     return this.claim
   }
 
+  /**
+   * [PHASE 6Q] Synchronously end this instance because its session is gone.
+   *
+   * Releases the process-local ownership token and moves to `STOPPED`, so a
+   * replacement Scheduler for a recreated session can acquire it.
+   *
+   * Deliberately NOT `stop()`: that awaits the in-flight cycle, and the only
+   * caller of this method is the in-flight cycle itself, so awaiting it would
+   * deadlock. Synchronous disposal is the only correct shape at this point.
+   */
+  private disposeSelf(): void {
+    if (this.state === "STOPPED") return
+    this.state = "STOPPED"
+    if (this.owner !== null) {
+      releaseSessionOwnership(this.sessionId, this.owner, "stopped")
+      this.owner = null
+    }
+  }
+
   // ── the cycle ──────────────────────────────────────────────────────────────
 
   /**
@@ -346,6 +394,7 @@ export class Scheduler {
       taskId,
       claimRevision: accepted.revision,
       execGeneration: claimResult.execGeneration,
+      sessionIncarnation: claimResult.sessionIncarnation,
     }
     this.emit({ kind: "task:claimed", taskId, revision: accepted.revision })
 
@@ -374,7 +423,13 @@ export class Scheduler {
       // Stop (or cancellation) happened after the claim. The claim is NOT
       // silently released; the task stays IN_PROGRESS for a legitimate authority
       // to move. Cancelling is not releasing.
-      return { ok: false, failure: "scheduler-not-running", observation: null, released: false }
+      return {
+        ok: false,
+        failure: "scheduler-not-running",
+        observation: null,
+        released: false,
+        lineage: "NOT_ATTEMPTED",
+      }
     }
     this.emit({ kind: "task:dispatch_started", taskId: work.taskId })
 
@@ -393,6 +448,7 @@ export class Scheduler {
         failure: "bridge-threw",
         observation: { kind: "rejected", detail },
         released,
+        lineage: "NOT_ATTEMPTED",
       }
     }
 
@@ -401,7 +457,13 @@ export class Scheduler {
       typeof (produced as ExecutionObservation)?.kind !== "string"
     ) {
       const released = this.releaseClaim("dispatch-failed")
-      return { ok: false, failure: "bridge-not-callable", observation: null, released }
+      return {
+        ok: false,
+        failure: "bridge-not-callable",
+        observation: null,
+        released,
+        lineage: "NOT_ATTEMPTED",
+      }
     }
 
     this.emit({ kind: "task:execution_started", taskId: work.taskId })
@@ -433,32 +495,72 @@ export class Scheduler {
     //    successful turn are both "an attempt ended"; conflating them with
     //    success is the bug this replaces. EXECUTION != VERIFICATION !=
     //    COMPLETION.
-    const generation = this.claim
-    if (generation === null) {
-      // The claim was cleared while the turn was in flight (stop() during
-      // dispatch). We no longer know which generation this was, so recording
-      // one would be a guess. Refuse rather than fabricate evidence.
-      throw new SchedulerError(
-        "persistence",
-        "attempt ended but no active claim identifies its generation",
-      )
-    }
-    this.store.recordAttemptReturned(this.sessionId, generation.taskId, generation.execGeneration)
-
-    // The claim is released from this Scheduler's bookkeeping, but the task's
-    // durable status is NOT rewritten here: a returned turn is not a verdict,
-    // and the verifier owns the next transition. Clearing the local claim lets
-    // a later cycle act; a later cycle re-reads authoritative state first.
     //
-    //    The marker's presence is what makes that safe: a later cycle will see
-    //    the completed generation and must not revert it. Before the marker
-    //    existed, this same line produced the unbounded re-execution loop.
+    // [PHASE 6Q] THE CLAIM IS RELEASED ON EVERY TERMINAL PATH.
+    //
+    //    This is the fix for 6N F2, and the reason it is a restructure rather than
+    //    a try/catch. Previously the claim was cleared on ONE line AFTER the
+    //    lineage write, so any failure in between - above all the "session was
+    //    deleted under this execution" case - escaped `cycle()` with the claim
+    //    still set. `runCycle` returns `already-dispatched` whenever a claim
+    //    exists, and `stop()` had already been passed, so the instance was
+    //    permanently wedged AND still held session ownership, which prevented any
+    //    replacement from starting.
+    //
+    //    The attempt HAS ended at this point, whatever the store says about
+    //    recording it. So the bookkeeping is settled first, unconditionally, and
+    //    the lineage write is a pure side effect whose result is reported rather
+    //    than allowed to strand the instance.
+    const generation = this.claim
     this.claim = null
+    if (generation === null) {
+      // The claim was cleared while the turn was in flight. We no longer know
+      // which generation this was, so recording one would be a guess. Refuse to
+      // fabricate evidence - and return rather than throw, so an unidentified
+      // attempt can never become a lifecycle wedge either.
+      this.emit({ kind: "task:execution_completed", taskId: work.taskId, ok: false })
+      return {
+        ok: observation.kind === "returned" && observation.ok,
+        failure: "attempt-unidentified",
+        observation,
+        released: true,
+        lineage: "TASK_GONE",
+      }
+    }
+    const lineage = this.store.recordAttemptReturned(
+      this.sessionId,
+      generation.taskId,
+      generation.execGeneration,
+      generation.sessionIncarnation,
+    )
+    if (lineage !== "RECORDED") {
+      // The attempt ended but its completion was NOT recorded. This is now an
+      // ordinary, classified outcome - the session was deleted under this
+      // execution, or a later generation superseded it. Nothing was written, so
+      // the task is left exactly as it was and the next owner decides its fate.
+      this.emit({ kind: "task:execution_abandoned", taskId: generation.taskId, outcome: lineage })
+    }
+    if (lineage === "TASK_GONE" || lineage === "SESSION_SUPERSEDED") {
+      // [PHASE 6Q] The session this Scheduler was executing FOR no longer exists
+      // (or exists as a different lifetime). That is durable evidence, learned
+      // from the store rather than announced by anyone, so it works across
+      // processes without a registry and without the deletion path having to know
+      // that any Scheduler exists.
+      //
+      // Self-dispose: release the session ownership token and become STOPPED, so
+      // a REPLACEMENT Scheduler can start. Without this the instance stayed IDLE
+      // but kept the ownership, which is precisely the second half of 6N F2.
+      //
+      // `stop()` cannot be used here: it awaits the in-flight cycle, and this IS
+      // the in-flight cycle, so awaiting it would deadlock.
+      this.disposeSelf()
+    }
     return {
       ok: observation.kind === "returned" && observation.ok,
       failure: null,
       observation,
       released: true,
+      lineage,
     }
   }
 
@@ -562,6 +664,14 @@ export interface DispatchResult {
   readonly failure: DispatchFailure | null
   readonly observation: ExecutionObservation | null
   readonly released: boolean
+  /**
+   * [PHASE 6Q] What became of the completion marker. `RECORDED` in the normal
+   * case; anything else means the session was deleted or superseded underneath
+   * this execution and NOTHING was written. `NOT_ATTEMPTED` is the pre-attempt
+   * shape: the bridge was never successfully entered, so there was never an
+   * attempt whose completion could be recorded.
+   */
+  readonly lineage: AttemptRecordOutcome | "NOT_ATTEMPTED"
 }
 
 export interface CycleResult {

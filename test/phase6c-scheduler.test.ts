@@ -323,10 +323,12 @@ describe("selection", () => {
     const t = store.listTasks(S)[0]!
     // [PHASE 6I] An ActiveClaim now carries the execution generation the claim
     // created. The test pokes the field directly, so it must supply a real one.
+    // [PHASE 6Q] and the session incarnation the claim was made under.
     sc["claim"] = {
       taskId: t.id,
       claimRevision: t.revision,
       execGeneration: store.getExecutionLineage(S, t.id)?.execGeneration ?? 1,
+      sessionIncarnation: store.getSessionIncarnation(S),
     }
     const r = await sc.cycle()
     expect(r.stop).toBe("already-dispatched")

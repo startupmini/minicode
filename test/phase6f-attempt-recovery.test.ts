@@ -514,9 +514,17 @@ describe("E. revision isolation", () => {
     const a = add("PENDING")
     const g1 = store.claimTask(S, a.id, 1)
     store.recordAttemptReturned(S, a.id, g1.execGeneration)
-    // Recording against a generation that is no longer current is refused
-    // rather than written, so evidence cannot be misattributed.
-    expect(() => store.recordAttemptReturned(S, a.id, 99)).toThrow(/no longer current/)
+    // Recording against a generation that is no longer current is REFUSED rather
+    // than written, so evidence cannot be misattributed.
+    //
+    // [PHASE 6Q] It is refused by being CLASSIFIED, not by throwing. The 6I
+    // protection - nothing is written - is unchanged and is what the assertions
+    // below pin. What changed is the mechanism: a throw escaped `cycle()` and,
+    // because the claim was only cleared after the write, left the Scheduler
+    // permanently wedged (6N F2). The outcome is still reported loudly, through
+    // the return value and the `task:execution_abandoned` event.
+    expect(store.recordAttemptReturned(S, a.id, 99)).toBe("SUPERSEDED")
+    // The load-bearing 6I property: the attempt marker was NOT moved.
     expect(lin(store, a.id)!.attemptGeneration).toBe(1)
   })
 

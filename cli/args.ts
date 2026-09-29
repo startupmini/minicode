@@ -11,6 +11,12 @@ const BOOLEAN_FLAGS = new Set([
   "--json", // dipakai `exec --json` dan `--help --json`
   "--budget-strict", // penegasan eksplisit fail-closed (kini juga default --budget)
   "--allow-local-config", // opt-in: baca .minicode/config.json + allowlist lokal (default mati)
+  // [PHASE 6U] Experimental. Opt-in gate for autonomous Scheduler execution.
+  // DEFAULT OFF. A CLI flag and not a config key or env var on purpose: env is
+  // inherited by sub-agents and MCP servers, and config is inherited globally or
+  // per-repo — both would let autonomous execution switch on without the person
+  // running the process asking for it. See src/task/production-scheduler.ts.
+  "--enable-scheduler",
 ])
 const VALUE_FLAGS = new Set([
   "--cwd",

@@ -189,6 +189,10 @@ if (args.includes("-h") || args.includes("--help")) {
             desc: "trust .minicode/config.json in workspace (default: ignore)",
           },
           { flag: "--resume <id>", desc: "resume session id" },
+          {
+            flag: "--enable-scheduler",
+            desc: "EXPERIMENTAL: allow autonomous background task execution (default: off)",
+          },
           { flag: "--model <name>", desc: "override model (provider::model)" },
           { flag: "--provider <id>", desc: "force provider id" },
           { flag: "--session <id>", desc: "session id" },
@@ -234,6 +238,14 @@ const cwd = cwdRaw ? resolvePath(cwdRaw) : undefined
 // eksplisit per-invokasi (flag atau env). Tanpa ini repo clone-an bisa
 // men-spawn MCP server dan menyedot prompt ke endpoint penyerang.
 const allowLocal = allowLocalConfig(args)
+// [PHASE 6U] Autonomous Scheduler opt-in. DEFAULT OFF.
+//
+// [DESIGN DECISION] `hasFlag` and nothing else — deliberately NOT `|| process.env…`,
+// unlike the permission and plan flags above. This one must not be inheritable:
+// `process.env` is passed to sub-agents, MCP servers and LSP servers, so an env
+// gate would switch autonomous execution on for children the person running the
+// process never asked for. This flag is the only mechanism, and it is per-invocation.
+const schedulerEnabled = hasFlag(args, "--enable-scheduler")
 const resumeId = getArg("--resume")
   ?.replace(/[^A-Za-z0-9._-]/g, "-")
   .slice(0, 64)
@@ -411,6 +423,8 @@ try {
     allowlist: effectiveAllowlist,
     verify,
     allowLocalConfig: allowLocal,
+    // [PHASE 6U] Off unless the token was literally passed.
+    schedulerEnabled,
     budget,
     budgetStrict,
     toolScope,

@@ -1,6 +1,6 @@
 import type { RecoveryAction } from "#minicore/core/errors.ts"
 import { ProviderError } from "#minicore/core/errors.ts"
-import type { Session, SessionConfig } from "#minicore/core/index.ts"
+import type { PermissionHandler, Session, SessionConfig } from "#minicore/core/index.ts"
 import { createSession as createCoreSession } from "#minicore/core/index.ts"
 import { defaultRecoveryPolicy } from "#minicore/core/recovery.ts"
 import { LIMITS } from "../constants.ts"
@@ -67,8 +67,23 @@ export async function createMinicodeSession(
      * menolak semua prompt — aman untuk headless/library). */
     ask?: PermissionAsk
     /** Hook observability persetujuan Fase 1 (diteruskan ke permission
-     * handler; tanpa ini gate identik seperti dulu). */
+     *  handler; tanpa ini gate identik seperti dulu). */
     onApprovalEvent?: ApprovalEventHook
+    /**
+     * [PHASE 6U] Inject a permission handler, bypassing the mode-derived one.
+     *
+     * [DESIGN DECISION] Exists so an unattended autonomous execution can carry the
+     * 6S `AutonomousPermissionHandler` instead of a `readonly` MODE. Without this
+     * seam a production autonomous child would silently get the interactive
+     * policy, which 6S proved is (a) revocable at runtime via `__setMode` and
+     * (b) admits `web_fetch`/`web_search`. That would be a real bypass of the
+     * autonomous permission policy, introduced purely by composing for
+     * production.
+     *
+     * When provided, `permissionMode` becomes kernel metadata only and
+     * `onPermissions` is not wired — there is no mode to control.
+     */
+    permissionHandler?: PermissionHandler
   },
 ): Promise<Session> {
   const planHint =
@@ -121,18 +136,29 @@ export async function createMinicodeSession(
     writeConcurrency > 0
       ? Math.floor(writeConcurrency)
       : undefined
-  const permissions = createPermissionHandler({
-    mode: permissionMode ?? "auto",
-    root: cwd,
-    ask,
-    allowLocalConfig,
-    onApprovalEvent,
-  })
+  const permissions =
+    opts.permissionHandler ??
+    createPermissionHandler({
+      mode: permissionMode ?? "auto",
+      root: cwd,
+      ask,
+      allowLocalConfig,
+      onApprovalEvent,
+    })
+  // [PHASE 6U] An INJECTED handler is not a mode, and has no mode control.
+  //
+  // [DESIGN DECISION] `onPermissions` and `livePermissionMode` are deliberately NOT
+  // wired when a handler was injected. The 6S autonomous handler is a policy, not a
+  // mode: it has no `__setMode`, and exposing one would hand a Shift+Tab caller the
+  // ability to revoke read-only on an unattended executor — precisely the hole 6S
+  // F1 closed. `permissionMode` stays `"readonly"` purely as kernel metadata
+  // (ToolContext's label); the DECISION is the handler's.
+  const injected = opts.permissionHandler !== undefined
   const withMode = permissions as typeof permissions & {
     __setMode(m: PermissionMode): void
     __getMode(): PermissionMode
   }
-  if (onPermissions) {
+  if (onPermissions && !injected) {
     onPermissions({
       setMode: (m) => withMode.__setMode(m),
       getMode: () => withMode.__getMode(),
@@ -140,7 +166,7 @@ export async function createMinicodeSession(
   }
   // Teruskan mode live ke kernel agar ToolContext.permissionMode selalu
   // mencerminkan Shift+Tab saat itu (bukan snapshot saat sesi dibuat).
-  const livePermissionMode = (): PermissionMode => withMode.__getMode()
+  const livePermissionMode = (): PermissionMode => (injected ? "readonly" : withMode.__getMode())
   return createCoreSession({
     ...rest,
     provider,

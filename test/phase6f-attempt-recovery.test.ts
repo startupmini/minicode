@@ -972,7 +972,18 @@ describe("J. migration, legacy, static architecture", () => {
     expect(users).toEqual(["src\\task\\store.ts"])
   })
 
-  test("J7. no production file constructs a Scheduler", async () => {
+  test("J7. production constructs a Scheduler in exactly ONE gated place", async () => {
+    // [PHASE 6U] The invariant CHANGED, and deliberately.
+    //
+    // Until 6U this read "no production file constructs a Scheduler". 6U is the
+    // phase whose whole purpose is to make the subsystem reachable from
+    // production, so "no construction at all" is no longer the requirement — the
+    // requirement is that construction is reachable ONLY through one gated
+    // composition root, and unreachable when the gate is off.
+    //
+    // Weakening this to "allow the one file" would let any future file construct a
+    // Scheduler freely, so the new assertion is STRICTER about where and HOW:
+    // one site, the composition root, and the gate in front of it.
     const root = join(import.meta.dir, "..")
     const files: string[] = []
     const walk = async (d: string) => {
@@ -991,6 +1002,19 @@ describe("J. migration, legacy, static architecture", () => {
       const code = text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ")
       if (/new\s+Scheduler\s*\(/.test(code)) offenders.push(rel)
     }
-    expect(offenders).toEqual([])
+    // Exactly one construction site in the whole of src/, and it is the
+    // composition root this phase added.
+    expect(offenders).toEqual(["src\\task\\production-scheduler.ts"])
+
+    // And that site is genuinely gated: the construction is unreachable unless the
+    // gate is open, because the early return precedes it.
+    const src = await readFile(join(root, "src", "task", "production-scheduler.ts"), "utf8")
+    const gate = src.indexOf("if (!gate.enabled) return inertHandle(gate)")
+    const construct = src.indexOf("new Scheduler(")
+    expect({
+      gate: gate >= 0,
+      construct: construct >= 0,
+      gated: gate >= 0 && construct > gate,
+    }).toEqual({ gate: true, construct: true, gated: true })
   })
 })

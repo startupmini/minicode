@@ -32,7 +32,6 @@ import {
   runWithSelfHeal,
 } from "../src/policy/verifier.ts"
 import { createPresentationAdapter, type PresentationAdapter } from "../src/presentation/adapter.ts"
-import { createTaskIdentityResolver } from "../src/task/sync.ts"
 import { type DomainEvent, DURABILITY } from "../src/presentation/events.ts"
 import { createInitialState, type PresentationState } from "../src/presentation/model.ts"
 import {
@@ -74,6 +73,13 @@ import {
 } from "../src/session/persistence.ts"
 import { snapshotTree } from "../src/session/shadow-git.ts"
 import type { Skill } from "../src/skills/loader.ts"
+import type { AutonomousSessionSpec } from "../src/task/autonomous-context.ts"
+import {
+  createProductionScheduler,
+  type ProductionSchedulerHandle,
+  schedulerGateFor,
+} from "../src/task/production-scheduler.ts"
+import { createTaskIdentityResolver } from "../src/task/sync.ts"
 import {
   classifyToolResult,
   denyReasonOf,
@@ -132,6 +138,15 @@ export interface CliSessionOptions {
   budgetStrict?: boolean
   /** Harness-P2: scope tool sesi — explore = subset read-only. */
   toolScope?: "full" | "explore"
+  /**
+   * [PHASE 6U] Opt-in autonomous Scheduler. DEFAULT OFF - `undefined` and
+   * `false` behave identically, and for both the composition root is never called.
+   *
+   * [DESIGN DECISION] A CLI flag rather than a config key or an env var, so it
+   * cannot be inherited by a sub-agent, an MCP server, or an unrelated project.
+   * See `src/task/production-scheduler.ts` for why the alternatives were rejected.
+   */
+  schedulerEnabled?: boolean
   maxSteps?: number
   contextWindowTokens?: number
   /** F3.2: override keepRecentTurns kompaksi kernel (berapa turn terakhir
@@ -493,6 +508,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     budget,
     budgetStrict,
     toolScope,
+    schedulerEnabled,
     allowLocalConfig,
     maxSteps,
     contextWindowTokens,
@@ -1504,7 +1520,98 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     } catch {}
   }
 
+  // ── [PHASE 6U] AUTONOMOUS SCHEDULER COMPOSITION ────────────────────────────
+  //
+  // [DESIGN DECISION] One call, one function, behind one boolean that defaults to
+  // false. Everything that makes autonomous execution possible — the TaskStore
+  // handle, the session factory, the scheduler, the trigger, the cancellation
+  // subscription — lives INSIDE the `deps` thunk, which
+  // `createProductionScheduler` does not invoke when the gate is shut. So the
+  // default configuration cannot open a database handle, cannot allocate a
+  // provider chain, cannot subscribe to a deletion channel, and cannot start
+  // autonomous work even by accident.
+  //
+  // The gate is read from `schedulerEnabled`, which only `cli/index.ts` sets, and
+  // only from an explicit `--enable-scheduler` token.
+  const productionScheduler: ProductionSchedulerHandle = await createProductionScheduler(
+    schedulerGateFor(schedulerEnabled),
+    async () => {
+      const { TaskStore } = await import("../src/task/store.ts")
+      const { AUTONOMOUS_TOOL_NAMES } = await import("../src/task/autonomous-policy.ts")
+      const store = new TaskStore(cwd, { authority: "SCHEDULER" })
+      const autonomousCwd = cwd ?? process.cwd()
+
+      // [DESIGN DECISION] The REAL tool objects, filtered to the 6S allow-list —
+      // not freshly constructed look-alikes and not the whole session tool set. The
+      // jailing inside the real `read_file` is part of the security boundary, and a
+      // re-implemented tool would be a second implementation to keep correct.
+      // `AUTONOMOUS_TOOL_NAMES` is the 6S matrix's own output, so this cannot widen.
+      const autonomousTools = AUTONOMOUS_TOOL_NAMES.map((name) =>
+        sessionTools.find((t) => t.name === name),
+      ).filter((t): t is NonNullable<typeof t> => t !== undefined)
+
+      return {
+        sessionId,
+        cwd: autonomousCwd,
+        store,
+        instruction: "Work autonomously on the assigned task. Report what you found.",
+        model: modelRef.current,
+        adapter: {
+          store,
+          tools: autonomousTools,
+          provider: router,
+          model: modelRef.current,
+          cwdFor: () => autonomousCwd,
+          // [PHASE 6U] The autonomous child session is a REAL MiniCode session
+          // over the REAL provider chain — the same `router` the user session
+          // uses — so autonomous work does not run a different model or a weaker
+          // tool stack than the interactive session.
+          sessionFactory: async (spec: AutonomousSessionSpec) =>
+            createMinicodeSession({
+              provider: spec.provider as never,
+              tools: spec.tools as never,
+              cwd: spec.cwd,
+              systemExtra: spec.systemExtra,
+              // [PHASE 6U] The child conversation id is NOT a kernel config field.
+              timeoutMs: spec.timeoutMs,
+              // [PHASE 6U][SECURITY] The 6S handler, not a `readonly` MODE. This
+              // seam is what keeps 6S's policy in force in production: the
+              // mode-derived handler is revocable via `__setMode` and admits
+              // `web_fetch`, both of which 6S ruled out for an unattended run.
+              permissionHandler: spec.permissionHandler as never,
+              permissionMode: "readonly",
+            }),
+        },
+        // [PHASE 6U] The binding is read from DURABLE state at dispatch time. The
+        // claim was accepted microseconds ago, so the store's current generation IS
+        // this claim's generation — and reading it durably means a binding can
+        // never be a guess about in-memory state.
+        bindingFor: (taskId: string) => ({
+          parentSessionId: sessionId,
+          taskId,
+          execGeneration: store.getExecutionLineage(sessionId, taskId)?.execGeneration ?? 0,
+          sessionIncarnation: store.getSessionIncarnation(sessionId),
+        }),
+      }
+    },
+  )
   async function close(): Promise<void> {
+    // [PHASE 6U] SHUTDOWN ORDERING. Stop autonomous work FIRST, before the
+    // presentation layer is detached and before background jobs are killed.
+    //
+    // [DESIGN DECISION] The scheduler goes first because it is the only thing
+    // here that can still start new work. Detaching UI first would leave a live
+    // autonomous turn running with nothing to report to, and killing background
+    // jobs first would race an autonomous turn that might legitimately use one.
+    //
+    // Idempotent and inert when the gate is off, so this line costs nothing in
+    // the default configuration.
+    try {
+      await productionScheduler.stop("shutdown")
+    } catch {
+      // Teardown must not fail because a scheduler could not stop. Durable
+      // recovery remains authoritative for anything still in flight.
+    }
     flushPresentationEvents()
     await presentationWriteTail
     detachUI()

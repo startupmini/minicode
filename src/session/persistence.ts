@@ -771,6 +771,20 @@ async function deleteSessionCompletely(id: string, cwd?: string): Promise<void> 
 
   // 1. Invalidate in-flight executions BEFORE removing anything they could write.
   tasks.bumpSessionIncarnation(id)
+  // [PHASE 6U] Tell live local executions to STOP, before their rows disappear.
+  //
+  // [DESIGN DECISION] The incarnation bump above is the AUTHORITATIVE barrier: it
+  // is durable, cross-process, and nothing can write after it. This notification
+  // is strictly an OPTIMISATION layered in front of it — it makes a running
+  // autonomous turn stop now instead of running to completion against a session
+  // that no longer exists.
+  //
+  // Ordering is deliberate and matches 6Q's: invalidate durably FIRST, then
+  // signal, then delete. A subscriber that somehow still writes is refused by the
+  // bump regardless of what this notification did, so a broken subscriber cannot
+  // turn into a resurrected session.
+  const { notifySessionInvalidated } = await import("../task/session-ownership.ts")
+  notifySessionInvalidated(id)
 
   // 2. TaskStore rows, NOT best-effort, and still first among the deletions.
   try {

@@ -109,13 +109,7 @@ export interface TaskVerification {
   checkedAt: string
 }
 
-export type TaskEvidenceKind =
-  | "completion"
-  | "receipt"
-  | "test"
-  | "verify"
-  | "checkpoint"
-  | "file"
+export type TaskEvidenceKind = "completion" | "receipt" | "test" | "verify" | "checkpoint" | "file"
 
 /**
  * Evidence record appended on every synchronization.
@@ -232,6 +226,13 @@ export type ClaimOutcome =
   | "CLAIM_REJECTED_STALE"
   /** No such row in this session. Never recreated by a claim. */
   | "NOT_FOUND"
+  /**
+   * [PHASE 6T] The row was claimable, but ANOTHER task in this session already
+   * holds a live Scheduler execution. Reported by the SAME statement that would
+   * otherwise have claimed, so a contention rejection is as invisible as a lost
+   * revision race: no generation, no owner, no status change, no attempt.
+   */
+  | "CLAIM_REJECTED_BUSY"
   /** The row exists and the revision matched, but the status is not claimable. */
   | "WRONG_STATE"
 

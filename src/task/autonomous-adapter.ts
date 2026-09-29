@@ -25,7 +25,7 @@ import {
   type AutonomousTurnResult,
   assertAutonomousToolScope,
 } from "./autonomous-context.ts"
-import type { ExecutionObservation, SchedulerWorkItem } from "./scheduler.ts"
+import type { ExecutionHandle, ExecutionObservation, SchedulerWorkItem } from "./scheduler.ts"
 import type { TaskStore } from "./store.ts"
 
 /** The durable facts a Scheduler execution carries, read at claim time. */
@@ -122,13 +122,16 @@ export function planAutonomousContext(
 export function buildAutonomousRunTurn(
   bindingFor: (taskId: string) => AutonomousExecutionBinding,
   config: AutonomousAdapterConfig,
-): (work: SchedulerWorkItem) => Promise<ExecutionObservation> {
+): (work: SchedulerWorkItem, active?: ExecutionHandle) => Promise<ExecutionObservation> {
   // Fail at ADAPTER construction, not on first dispatch: a wider tool set is a
   // configuration error and should never reach the point of granting an
   // unattended executor write access.
   assertAutonomousToolScope(config.tools.map((t) => t.name))
 
-  return async (work: SchedulerWorkItem): Promise<ExecutionObservation> => {
+  return async (
+    work: SchedulerWorkItem,
+    active?: ExecutionHandle,
+  ): Promise<ExecutionObservation> => {
     // [DESIGN DECISION] A refusal to plan is allowed to THROW. The Scheduler
     // treats a synchronous throw from the bridge as a DISPATCH failure and
     // releases the claim, which is correct: an execution that was never planned
@@ -137,6 +140,11 @@ export function buildAutonomousRunTurn(
       planAutonomousContext(work, bindingFor(work.taskId), config),
     )
     try {
+      // [PHASE 6T] Publish the context's cancel to the lifecycle handle BEFORE
+      // initializing, so a session deletion racing startup still lands. `attach`
+      // fires immediately if the cancel already happened, which is the whole
+      // reason the handle records a request it cannot yet deliver.
+      active?.attach(() => context.cancel("session-deleted"))
       const result = await context.execute()
       return toExecutionObservation(result)
     } finally {

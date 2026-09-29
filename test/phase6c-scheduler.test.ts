@@ -523,7 +523,15 @@ describe("dispatch", () => {
     expect(sc.getActiveClaim()).toBeNull()
   })
 
-  test("25b. a refused dispatch (cancellation) does NOT release the claim", async () => {
+  test("25b. a cancellation known BEFORE evaluation consumes nothing at all", async () => {
+    // [PHASE 6T] This case used to be a post-claim refusal, and it asserted
+    // "a refused dispatch does NOT release the claim" — the task sat IN_PROGRESS
+    // with a spent generation, stranded until an authority moved it.
+    //
+    // 6T moved the capacity check BEFORE the claim, so the task is now never
+    // claimed at all: it stays PENDING, no generation is consumed, no owner is
+    // written. Strictly better than "IN_PROGRESS but unreleased", and the
+    // original property is preserved where it still applies — see 25c.
     const claimed = add("PENDING")
     let calls = 0
     const sc = new Scheduler(S, {
@@ -537,7 +545,44 @@ describe("dispatch", () => {
     })
     sc.start()
     const r = await sc.cycle()
-    // Cancelling is not releasing: the claim stays for a legitimate authority.
+    expect(calls).toBe(0)
+    expect(r.stop).toBe("pre-cancelled")
+    expect(r.dispatched).toBeNull()
+    // Nothing durable happened: the task is untouched and no attempt exists.
+    const after = store.getTask(S, claimed.id)!
+    expect(after.status).toBe("PENDING")
+    expect(store.getExecutionOwnership(S, claimed.id)?.executionOwner ?? null).toBeNull()
+    expect(store.getExecutionLineage(S, claimed.id)?.execGeneration ?? 0).toBe(0)
+  })
+
+  test("25c. a cancellation arriving AFTER the claim still does NOT release it", async () => {
+    // [PHASE 6T] The TOCTOU window 6T deliberately keeps: the pre-claim capacity
+    // check is a READ, and another executor can take the slot between it and the
+    // claim. The post-claim guard in `dispatch()` is defence in depth.
+    //
+    // 6C's property is unchanged and still required here: cancelling is not
+    // releasing. The task stays IN_PROGRESS for a legitimate authority to move —
+    // the Scheduler must not invent a status for work it merely stopped.
+    const claimed = add("PENDING")
+    let probes = 0
+    let calls = 0
+    const sc = new Scheduler(S, {
+      store,
+      runTurn: () => {
+        calls++
+        return { kind: "returned", ok: true }
+      },
+      instruction: "x",
+      // false for the pre-claim probe, true for the post-claim dispatch guard
+      cancellation: {
+        isCancelled: () => {
+          probes++
+          return probes > 1
+        },
+      },
+    })
+    sc.start()
+    const r = await sc.cycle()
     expect(calls).toBe(0)
     expect(r.dispatched?.failure).toBe("scheduler-not-running")
     expect(r.dispatched?.released).toBe(false)

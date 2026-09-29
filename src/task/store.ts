@@ -985,6 +985,43 @@ export class TaskStore {
     sessionId: string,
     taskId: string,
     expectedRevision: number,
+    /**
+     * [PHASE 6T] `exclusive` adds the CAPACITY PREDICATE to the same statement
+     * that performs the claim.
+     *
+     * [DESIGN DECISION] 6O selected this shape and it was never built: contention
+     * was detected AFTER the claim, so a turn that never ran still consumed an
+     * execution generation and left the task `IN_PROGRESS` and stranded. The fix
+     * has to be atomic for the reason 6O gave — `exec_generation` is the unit that
+     * must not be spent on a non-attempt, and a read-then-write check outside the
+     * UPDATE would reopen exactly the window the revision predicate closes.
+     *
+     * The predicate is "no OTHER task in this session holds a LIVE Scheduler
+     * execution", which is the Scheduler's own serial guarantee expressed durably,
+     * so it holds across processes and not merely within one.
+     *
+     * [PHASE 6T][DESIGN DECISION] "LIVE" is not the same as "IN_PROGRESS", and
+     * conflating them is a bug this predicate was written and then caught with.
+     * After every completed turn the task deliberately REMAINS `IN_PROGRESS`
+     * awaiting a verifier that does not exist yet (6N's "no verifier" limit), so
+     * a naive `IN_PROGRESS` test finds a live execution forever and the Scheduler
+     * can never run a second task. Live means the current generation's attempt has
+     * not ended:
+     *
+     *     attempt_generation IS NULL OR attempt_generation < exec_generation
+     *
+     * which is exactly the condition reconciliation already uses to tell a
+     * crashed execution (REVERT) from finished work (LEAVE). Capacity and
+     * recovery therefore read one fact, and cannot disagree.
+     *
+     * A crashed execution still occupies capacity until a cycle reconciles it —
+     * which is correct: an execution of unknown liveness is not free capacity,
+     * and `runCycle` reconciles before it selects.
+     *
+     * Off by default: every existing caller keeps its exact behaviour, and only a
+     * caller that means to be exclusive asks for it.
+     */
+    opts: { readonly exclusive?: boolean } = {},
   ): {
     outcome: ClaimOutcome
     task: Task | null
@@ -1016,7 +1053,21 @@ export class TaskStore {
             SET status = 'IN_PROGRESS', updated_at = ?, revision = revision + 1,
                 exec_generation = exec_generation + 1,
                 execution_owner = 'scheduler'
-          WHERE session_id = ? AND task_id = ? AND revision = ? AND status IN (${statuses})`,
+          WHERE session_id = ? AND task_id = ? AND revision = ? AND status IN (${statuses})${
+            opts.exclusive === true
+              ? `
+            AND NOT EXISTS (
+              SELECT 1 FROM tasks AS busy
+               WHERE busy.session_id = tasks.session_id
+                 AND busy.execution_owner = 'scheduler'
+                 AND busy.status = 'IN_PROGRESS'
+                 AND busy.exec_generation > 0
+                 AND (busy.attempt_generation IS NULL
+                      OR busy.attempt_generation < busy.exec_generation)
+                 AND busy.task_id <> tasks.task_id
+            )`
+              : ""
+          }`,
       )
       .run(nowIso(), sessionId, taskId, expectedRevision)
 
@@ -1046,7 +1097,40 @@ export class TaskStore {
     if (current.revision !== expectedRevision) {
       return { outcome: "CLAIM_REJECTED_STALE", task: current, execGeneration, sessionIncarnation }
     }
+    // [PHASE 6T] The row is claimable and the revision matched, so the ONLY
+    // reason the UPDATE did not land is the capacity predicate. Classify it as
+    // contention rather than lumping it in with WRONG_STATE: the caller must be
+    // able to tell "someone else is running" (skip, no state spent) from
+    // "this task is not claimable" (a different question entirely).
+    if (opts.exclusive === true && this.hasLiveSchedulerClaim(sessionId, taskId)) {
+      return { outcome: "CLAIM_REJECTED_BUSY", task: current, execGeneration, sessionIncarnation }
+    }
     return { outcome: "WRONG_STATE", task: current, execGeneration, sessionIncarnation }
+  }
+
+  /**
+   * [PHASE 6T] Does another task in this session hold a LIVE Scheduler execution?
+   *
+   * "Live" means the current generation's attempt has not ended — see the note on
+   * the capacity predicate. A task still `IN_PROGRESS` after a completed attempt
+   * is awaiting verification, not occupying capacity.
+   *
+   * The read side of that predicate. It classifies a REJECTION; it is never used
+   * to decide whether to attempt a claim, because only the atomic statement can
+   * make that decision safely.
+   */
+  private hasLiveSchedulerClaim(sessionId: string, excludeTaskId: string): boolean {
+    const row = handle(this.cwd)
+      .prepare(
+        `SELECT 1 FROM tasks
+          WHERE session_id = ? AND execution_owner = 'scheduler'
+            AND status = 'IN_PROGRESS' AND exec_generation > 0
+            AND (attempt_generation IS NULL OR attempt_generation < exec_generation)
+            AND task_id <> ?
+          LIMIT 1`,
+      )
+      .get(sessionId, excludeTaskId)
+    return row !== undefined && row !== null
   }
 
   /**

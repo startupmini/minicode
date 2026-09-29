@@ -42,9 +42,21 @@
 // prevents concurrent ownership *within* a process, and refuses to act when
 // ownership is uncertain.
 
+import {
+  type CancelReason,
+  type ExecutionHandle,
+  newExecutionHandle,
+  type PerTurnCancellation,
+} from "./execution-cancellation.ts"
 import { TaskGraph } from "./graph.ts"
 import type { ClaimOutcome, TaskSnapshot } from "./model.ts"
+import { selectTask } from "./scheduling-policy.ts"
 import type { SessionOwner } from "./session-ownership.ts"
+
+// Re-exported so a composition root needs one import to wire a cancellation-aware
+// bridge, and so the Scheduler's public vocabulary stays in one file.
+export type { CancelReason, ExecutionHandle } from "./execution-cancellation.ts"
+
 import {
   acquireSessionOwnership,
   ownsSession,
@@ -66,6 +78,21 @@ export type CycleStop =
   | "ownership-unavailable"
   | "already-dispatched"
   | "not-running"
+  /**
+   * [PHASE 6T] The runtime was already busy when the cycle was evaluated.
+   *
+   * NON-CONSUMING, and that is the entire point of the outcome. No claim, no
+   * generation, no owner, no attempt lineage. The task is left exactly as it was
+   * and the next trigger re-evaluates it.
+   */
+  | "contended"
+  /** [PHASE 6T] Contention was known before evaluation began; nothing was read. */
+  | "pre-cancelled"
+  /**
+   * [PHASE 6T] The session this instance was serving no longer exists in the
+   * lifetime it started for. Self-disposed; ownership released for a replacement.
+   */
+  | "session-superseded"
 
 /** Why a work item could not be handed to the agent loop. */
 export type DispatchFailure =
@@ -108,6 +135,14 @@ export interface SchedulerWorkItem {
  */
 export type RunTurn = (
   work: SchedulerWorkItem,
+  /**
+   * [PHASE 6T] The per-execution cancellation handle for THIS dispatch.
+   *
+   * Optional so every existing bridge keeps compiling unchanged. A bridge that
+   * ignores it simply cannot be cancelled mid-turn — which is a capability gap,
+   * not a correctness gap, and the composition root chooses whether to close it.
+   */
+  active?: ExecutionHandle,
 ) => Promise<ExecutionObservation> | ExecutionObservation
 
 /**
@@ -203,6 +238,36 @@ export class Scheduler {
   private claim: ActiveClaim | null = null
 
   /**
+   * [PHASE 6T] The cancellation handle for the turn currently in flight, or null.
+   *
+   * One at a time, because V1 is serial — the same guarantee `inFlight` provides
+   * for cycles. Replacing it rather than stacking is deliberate: a second handle
+   * could only mean a second concurrent turn, which this Scheduler never starts.
+   */
+  private active: PerTurnCancellation | null = null
+
+  /**
+   * [PHASE 6T] The session incarnation this instance started under.
+   *
+   * [DESIGN DECISION] 6Q taught the Scheduler to self-dispose when a lineage
+   * write comes back `TASK_GONE`/`SESSION_SUPERSEDED` — but that only happens on
+   * the CLAIM path, while a turn is ending. A scheduler that is merely IDLE when
+   * its session is deleted never writes anything, never learns, and keeps
+   * holding the process-local ownership token, which wedges every replacement:
+   * a recreated session cannot start, because a dead instance still owns it.
+   * Proved by probe before this fix.
+   *
+   * The fix reuses 6Q's own fact rather than inventing a liveness mechanism: the
+   * incarnation is captured at `start()` and compared at the top of every cycle.
+   * If it moved, this session was deleted or superseded, and the instance's work
+   * is meaningless. This STRENGTHENS 6Q — same durable evidence, checked at cycle
+   * granularity instead of only at lineage-write time — and it is the answer to
+   * 6T's requirement that a Scheduler never need a restart because of stale
+   * internal ownership.
+   */
+  private incarnationAtStart: number | null = null
+
+  /**
    * V1 is SERIAL. A cycle in progress makes any further call wait for it, which
    * is why N concurrent `cycle()` calls can never produce two dispatches. This
    * is the Scheduler serializing ITSELF — TaskStore is not asked to do it.
@@ -250,6 +315,9 @@ export class Scheduler {
         )
       }
       this.owner = owner
+      // [PHASE 6T] Remember which lifetime of this session we are serving, so a
+      // deletion that happens while we sit idle cannot go unnoticed.
+      this.incarnationAtStart = this.store.getSessionIncarnation(this.sessionId)
     }
     this.state = "RUNNING"
   }
@@ -266,6 +334,14 @@ export class Scheduler {
   async stop(): Promise<void> {
     if (this.state === "STOPPED" || this.state === "STOPPING") return
     this.state = "STOPPING"
+    // [PHASE 6T] Ask the live turn to stop, THEN let the cycle finish unwinding.
+    //
+    // The await below is what makes this a graceful stop rather than a crash-like
+    // one: the abort gives the turn a chance to unwind and release its resources
+    // before we return, so the attempt can still be recorded as an attempt. The
+    // durable outcome does not depend on this succeeding — 6Q's reconciliation
+    // covers a turn that never came back.
+    this.cancelActive("scheduler-stopped")
     // Let an in-flight cycle finish so a dispatch is never half-abandoned.
     if (this.inFlight !== null) {
       try {
@@ -286,6 +362,42 @@ export class Scheduler {
   }
 
   /**
+   * [PHASE 6T] The handle for the turn in flight, or null when nothing is running.
+   *
+   * Exposed so a lifecycle owner can observe cancellation state without being able
+   * to fabricate it. Cancelling is `cancelActive`.
+   */
+  getActiveExecution(): ExecutionHandle | null {
+    return this.active
+  }
+
+  /**
+   * [PHASE 6T] CANCEL THE TURN IN FLIGHT.
+   *
+   * Returns true when there was something to cancel. Safe to call repeatedly and
+   * safe to call when nothing is running — it simply reports that there was
+   * nothing to do.
+   *
+   * [DESIGN DECISION] This CANCELS, it does not RELEASE. The task stays
+   * IN_PROGRESS and keeps its generation: cancelling the work is not the same as
+   * declaring the work finished, and a cancelled task is moved by a legitimate
+   * authority (a verifier, an operator, or a later reconciliation), never by the
+   * thing that stopped it. Writing a status here would be exactly the scheduler
+   * inventing a verdict, which 6C/6I forbade.
+   *
+   * This is the LIVE half of the cancellation story. 6Q's incarnation check remains
+   * the durable half and is untouched: cancelling cannot be relied on (the turn may
+   * be blocked in a syscall the abort cannot reach, or the process may die first),
+   * so the write-time protection stays.
+   */
+  cancelActive(reason: CancelReason): boolean {
+    const handle = this.active
+    if (handle === null) return false
+    handle.cancel(reason)
+    return true
+  }
+
+  /**
    * [PHASE 6Q] Synchronously end this instance because its session is gone.
    *
    * Releases the process-local ownership token and moves to `STOPPED`, so a
@@ -297,7 +409,19 @@ export class Scheduler {
    */
   private disposeSelf(): void {
     if (this.state === "STOPPED") return
+    // [PHASE 6T] Stop the WORK as well as the instance.
+    //
+    // 6Q made a late return harmless; it did not stop the turn from running. Now
+    // that a cancellation handle exists, session deletion asks the live execution
+    // to stop, which is the invariant 6T requires: deletion should end autonomous
+    // work as early as the runtime permits, with 6Q's incarnation check still
+    // there as the final boundary if the request is ignored or arrives too late.
+    //
+    // Ordering matters: cancel BEFORE releasing ownership, so nothing can start a
+    // replacement and race this instance's dying turn.
+    this.cancelActive("session-deleted")
     this.state = "STOPPED"
+    this.incarnationAtStart = null
     if (this.owner !== null) {
       releaseSessionOwnership(this.sessionId, this.owner, "stopped")
       this.owner = null
@@ -327,6 +451,43 @@ export class Scheduler {
       return { stop: "not-running", dispatched: null, recovered: [] }
     }
 
+    // [PHASE 6T] IS THIS SESSION STILL THE ONE I STARTED FOR?
+    //
+    // Checked before anything else, because every later step assumes the task
+    // namespace still means something. A session that was deleted underneath us is
+    // not "an empty queue" — it is a queue that no longer exists, and treating the
+    // two alike is what left an idle Scheduler holding ownership forever.
+    //
+    // Uses 6Q's incarnation, so it works across processes with no registry and no
+    // notification from the deletion path.
+    if (this.incarnationAtStart !== null) {
+      const current = this.store.getSessionIncarnation(this.sessionId)
+      if (current !== this.incarnationAtStart) {
+        this.emit({ kind: "cycle:stopped", reason: "session-superseded" })
+        this.disposeSelf()
+        return { stop: "session-superseded", dispatched: null, recovered: [] }
+      }
+    }
+
+    // [PHASE 6T] CAPACITY, checked BEFORE anything durable happens.
+    //
+    // [DESIGN DECISION] This is the cheap half of the contention policy and it
+    // costs nothing: if the runtime is known to be busy, the cycle stops before it
+    // reads a snapshot, builds a graph, or attempts a claim. A trigger that cannot
+    // be serviced must not leave a mark — 6O's requirement that "contention is
+    // indistinguishable from a real attempt" is satisfied here by not acting at
+    // all.
+    //
+    // It is NOT sufficient on its own: a probe is a read, and another process (or
+    // another session) can take the slot between this check and the claim. The
+    // atomic capacity predicate inside `claimTask` is the half that actually
+    // holds. This one just avoids the wasted work in the overwhelmingly common
+    // case of a live user turn.
+    if (this.cancellation?.isCancelled() === true) {
+      this.emit({ kind: "cycle:stopped", reason: "pre-cancelled" })
+      return { stop: "pre-cancelled", dispatched: null, recovered: [] }
+    }
+
     // 1. Reconciliation first, so a cycle never plans around stranded work.
     const recovered = this.reconcile()
 
@@ -352,11 +513,25 @@ export class Scheduler {
 
     this.state = "IDLE"
 
-    // 6. V1 selection: first candidate in TaskGraph's deterministic order.
-    //    No queue, no priority, no fairness.
-    const taskId = ready[0]
-    if (taskId === undefined) {
-      this.emit({ kind: "cycle:stopped", reason: "no-candidates" })
+    // 6. Selection is a NAMED POLICY, not an expression.
+    //
+    // [PHASE 6T] This used to read `ready[0]` inline. That was the same
+    // behaviour, but nothing recorded that it WAS a policy, so there was no place
+    // to state what selection guarantees and no single function to point a
+    // property test at. Routing through `selectTask` makes ORDER ASC -> ID ASC a
+    // decision that can be read, argued and mutated, rather than a coincidence
+    // of array indexing.
+    //
+    // The policy does NOT re-derive readiness; it is handed the graph's answer and
+    // only chooses among it. A second readiness implementation here is the way a
+    // scheduler starts disagreeing with its own graph.
+    const selection = selectTask(ready, snapshot)
+    const taskId = selection.taskId
+    if (taskId === null) {
+      this.emit({
+        kind: "cycle:stopped",
+        reason: selection.reason === "no-ready-tasks" ? "no-candidates" : "no-candidates",
+      })
       return { stop: "no-candidates", dispatched: null, recovered }
     }
     this.emit({ kind: "task:selected", taskId })
@@ -370,7 +545,13 @@ export class Scheduler {
     }
 
     // 8. Atomic, revision-guarded claim. Never retried in a loop, never slept on.
-    const claimResult = this.store.claimTask(this.sessionId, taskId, current.revision)
+    //
+    // [PHASE 6T] `exclusive: true` adds the capacity predicate to this same
+    // statement, so losing the slot to another executor is reported exactly like
+    // losing the revision race: the row is untouched, and no generation is spent.
+    const claimResult = this.store.claimTask(this.sessionId, taskId, current.revision, {
+      exclusive: true,
+    })
     if (claimResult.outcome !== "CLAIM_ACCEPTED") {
       this.emit({ kind: "task:claim_rejected", taskId, outcome: claimResult.outcome })
       const stop: CycleStop =
@@ -378,7 +559,9 @@ export class Scheduler {
           ? "claim-rejected-stale"
           : claimResult.outcome === "NOT_FOUND"
             ? "claim-not-found"
-            : "claim-wrong-state"
+            : claimResult.outcome === "CLAIM_REJECTED_BUSY"
+              ? "contended"
+              : "claim-wrong-state"
       this.emit({ kind: "cycle:stopped", reason: stop })
       return { stop, dispatched: null, recovered }
     }
@@ -413,6 +596,21 @@ export class Scheduler {
   }
 
   private async dispatch(work: SchedulerWorkItem): Promise<DispatchResult> {
+    // [PHASE 6T] One cleanup point for the per-turn handle.
+    //
+    // `dispatchTracked` has seven terminal returns and more will be added over
+    // time; clearing the handle in each of them is exactly the kind of thing that
+    // rots silently when a path is missed. A `finally` makes "the handle never
+    // outlives its turn" a structural property instead of a per-branch intention.
+    try {
+      return await this.dispatchTracked(work)
+    } finally {
+      this.active?.dispose()
+      this.active = null
+    }
+  }
+
+  private async dispatchTracked(work: SchedulerWorkItem): Promise<DispatchResult> {
     // An injected cancellation contract may refuse NEW work. It cannot abort an
     // in-flight agent loop — that ability is the composition root's, not ours.
     if (
@@ -433,9 +631,19 @@ export class Scheduler {
     }
     this.emit({ kind: "task:dispatch_started", taskId: work.taskId })
 
+    // [PHASE 6T] Create the per-execution cancellation handle and publish it
+    // BEFORE the bridge is called, so a cancel racing dispatch is recorded rather
+    // than lost. The bridge attaches its abort function; if cancellation already
+    // happened, `attach` fires immediately.
+    //
+    // Held on the instance, not in a closure, so `cancelActive()` can reach it.
+    // Cleared on every terminal path below, so a dead turn is never retained.
+    const handle = newExecutionHandle()
+    this.active = handle
+
     let produced: Promise<ExecutionObservation> | ExecutionObservation
     try {
-      produced = this.runTurn(work)
+      produced = this.runTurn(work, handle)
     } catch (e) {
       // A. Dispatch/setup failure: the attempt was NEVER established. The claim
       //    is released back to PENDING so the task is not stranded by our own

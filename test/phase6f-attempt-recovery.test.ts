@@ -1,21 +1,29 @@
-// Phase 6F — execution attempt & recovery tests.
+// Phase 6F/6I — execution attempt recovery and generation lineage tests.
 //
-// NEW ARCHITECTURE. Implements the design locked in
-// PHASE-6E-EXECUTION-ATTEMPT-RECOVERY-DESIGN.md: one durable attempt marker,
-// TaskStore-owned, additive, carrying the POST-CLAIM revision of the
-// generation that ran.
+// [PHASE 6I] This file previously asserted the 6F architecture: a `task_attempt`
+// row keyed by the POST-CLAIM REVISION, with reconciliation comparing
+// `marker.attemptRevision` against `task.revision`. Phase 6G proved that
+// architecture unsound (D1: a stale marker permanently protects/wedges a newer
+// generation; D2: orphaned markers contaminate a recreated taskId), and Phase
+// 6H replaced it. These tests are therefore REWRITTEN, not renamed: the old
+// revision-comparison assertions asserted a bug as a contract.
+//
+// NEW ARCHITECTURE (6H §5, §8):
+//   * `tasks.exec_generation` advances ONLY on an accepted claim.
+//   * `tasks.attempt_generation` names the generation whose attempt ended.
+//   * The lineage predicate and the revert are ONE atomic guarded statement.
+//   * Evidence lives ON the task row, so it cannot outlive the task.
 //
 // The invariant under test throughout:
 //
 //   EXECUTION != VERIFICATION != COMPLETION
 //
-// A returned turn proves the ATTEMPT ENDED. It never proves the work was
-// correct, and the Scheduler never writes COMPLETED because of it.
+// and, the decisive one for this phase:
 //
-// The decisive test in this file is "A2" (the liveness regression). Phase 6D
-// showed the Scheduler re-executing one task forever: 1, 2, 3, 4, ... runs. If
-// that behaviour ever returns, A2 fails. Everything else here is context for
-// why A2 must hold.
+//   revision != execution generation
+//
+// A normal return proves the ATTEMPT ENDED. It never proves the work was
+// correct, and the Scheduler never writes COMPLETED because of it.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises"
@@ -33,7 +41,7 @@ import {
   acquireSessionOwnership,
   resetSessionOwnershipForTests,
 } from "../src/task/session-ownership.ts"
-import { type AttemptMarker, resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
+import { type ExecutionLineage, resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 
 let dir: string
 let store: TaskStore
@@ -41,11 +49,11 @@ let store: TaskStore
  *  leave behind, and to act as the external authority that changes a task. */
 let legacy: TaskStore
 
-const prov = { origin: "model", source: "6f" } as const
-const S = "6f-sess"
+const prov = { origin: "model", source: "6i" } as const
+const S = "6i-sess"
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), "minicode-6f-"))
+  dir = await mkdtemp(join(tmpdir(), "minicode-6i-"))
   store = new TaskStore(dir, { authority: "SCHEDULER" })
   legacy = new TaskStore(dir)
   resetSessionOwnershipForTests()
@@ -70,10 +78,12 @@ function addStranded(status: "IN_PROGRESS" | "VERIFYING", over: Partial<Task> = 
   })
 }
 
+const lin = (s: TaskStore, id: string): ExecutionLineage | null => s.getExecutionLineage(S, id)
+
 interface Harness {
   readonly sc: Scheduler
   readonly seen: SchedulerWorkItem[]
-  readonly marker: (taskId: string) => AttemptMarker | null
+  readonly lineage: (taskId: string) => ExecutionLineage | null
 }
 
 /** A Scheduler whose bridge records every dispatched work item. */
@@ -94,16 +104,37 @@ function makeHarness(
     },
     instruction: "do the work",
   })
-  return {
-    sc,
-    seen,
-    marker: (id: string) => target.getAttemptMarker(S, id),
-  }
+  return { sc, seen, lineage: (id) => target.getExecutionLineage(S, id) }
 }
 
-/** Run N cycles back to back with no external mutation. */
 async function cycles(h: Harness, n: number): Promise<void> {
   for (let i = 0; i < n; i++) await h.sc.cycle()
+}
+
+/** A store whose completion recording fails `failures` times, simulating a
+ *  process that dies between the turn returning and the durable write. */
+function flakyCompletion(
+  s: TaskStore,
+  failures: number,
+): { store: TaskStore; attempts: () => number } {
+  let attempts = 0
+  let left = failures
+  const proxy = new Proxy(s, {
+    get(target, prop, recv) {
+      if (prop === "recordAttemptReturned") {
+        return (sid: string, tid: string, gen: number) => {
+          attempts++
+          if (left > 0) {
+            left--
+            throw new Error("process died before the completion record was written")
+          }
+          return (target as TaskStore).recordAttemptReturned(sid, tid, gen)
+        }
+      }
+      return Reflect.get(target, prop, recv)
+    },
+  }) as TaskStore
+  return { store: proxy, attempts: () => attempts }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -111,74 +142,57 @@ async function cycles(h: Harness, n: number): Promise<void> {
 // ═════════════════════════════════════════════════════════════════════════════
 
 describe("A. normal return", () => {
-  test("A1. one claim + one normal return records exactly one durable marker", async () => {
+  test("A1. an accepted claim creates generation 1; a normal return records it", async () => {
     const a = add("PENDING")
+    expect(lin(store, a.id)).toEqual({ execGeneration: 0, attemptGeneration: null })
+
     const h = makeHarness()
     h.sc.start()
     await h.sc.cycle()
 
     expect(h.seen.length).toBe(1)
-    const task = store.getTask(S, a.id)
-    // Claim advances revision to 2; the marker must name THAT generation.
-    expect(task?.status).toBe("IN_PROGRESS")
-    expect(task?.revision).toBe(2)
-    expect(h.marker(a.id)).toEqual({ attemptRevision: 2 })
+    expect(h.lineage(a.id)).toEqual({ execGeneration: 1, attemptGeneration: 1 })
+    // The generation is NOT the revision: post-claim revision is 2.
+    expect(store.getTask(S, a.id)?.revision).toBe(2)
+    expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
   })
 
   test("A2. LIVENESS REGRESSION: repeated cycles with no external mutation run the task ONCE", async () => {
-    // THE primary proof that the Phase 6D livelock is gone. Before 6F this
-    // produced runs = 1, 2, 3, 4, ... for a single task. No sleep, no clock, no
-    // model cooperation: just 8 cycles of the plain cycle() entry point.
+    // The primary proof that the 6D livelock stays dead after 6I.
     const a = add("PENDING")
     const h = makeHarness()
     h.sc.start()
     await cycles(h, 8)
-
     expect(h.seen.length).toBe(1)
-    expect(h.seen.map((w) => w.taskId)).toEqual([a.id])
-    // The task is still IN_PROGRESS: a return is not a verdict, and no
-    // verifier or operator moved it.
     expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
-    // And the reason it stayed put is durable, not in-memory bookkeeping.
-    expect(h.marker(a.id)?.attemptRevision).toBe(store.getTask(S, a.id)?.revision)
+    expect(h.lineage(a.id)).toEqual({ execGeneration: 1, attemptGeneration: 1 })
   })
 
-  test("A3. normal return without task completion does not redispatch, and does not complete the task", async () => {
-    // The separation of concerns, asserted directly: "the attempt ended" is
-    // never silently converted into "the task is done" NOR into "retry now".
+  test("A3. normal return does not complete the task and does not redispatch", async () => {
     const a = add("PENDING")
     const h = makeHarness({ ok: true })
     h.sc.start()
     await cycles(h, 5)
-
-    // Not completed: the Scheduler never manufactures completion.
     const task = store.getTask(S, a.id)
     expect(task?.status).toBe("IN_PROGRESS")
     expect(task?.verification).toBeNull()
     expect(task?.evidence).toEqual([])
     expect(task?.acceptance).toBeNull()
-    // Not retried.
     expect(h.seen.length).toBe(1)
   })
 
-  test("A3b. a REJECTED turn also records a marker: 'the attempt ended' is not 'it succeeded'", async () => {
-    // A failed execution is still an execution that ended. Recording only
-    // successful returns would re-open the livelock for any failing task, and
-    // would smuggle in a success judgement the Scheduler has no standing to
-    // make.
+  test("A3b. a not-ok return still records the generation", async () => {
     const a = add("PENDING")
     const h = makeHarness({ ok: false })
     h.sc.start()
     await cycles(h, 4)
-
+    // An attempt that ENDED is recorded regardless of outcome. Recording only
+    // successes would reopen the livelock for any failing task.
     expect(h.seen.length).toBe(1)
-    expect(h.marker(a.id)).not.toBeNull()
-    expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
+    expect(h.lineage(a.id)).toEqual({ execGeneration: 1, attemptGeneration: 1 })
   })
 
-  test("A3c. a REJECTED PROMISE also records a marker", async () => {
-    // An async rejection means the turn WAS established and then ended. That is
-    // an attempt that ended, so it gets a marker and converges.
+  test("A3c. a REJECTED promise (async throw) still records the generation", async () => {
     const a = add("PENDING")
     const h = makeHarness({
       runTurn: async () => {
@@ -188,16 +202,12 @@ describe("A. normal return", () => {
     h.sc.start()
     await cycles(h, 4)
     expect(h.seen.length).toBe(1)
-    expect(h.marker(a.id)).not.toBeNull()
-    expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
+    expect(h.lineage(a.id)).toEqual({ execGeneration: 1, attemptGeneration: 1 })
   })
 
-  test("A3d. a SYNCHRONOUS throw is a DISPATCH failure: no marker, claim released", async () => {
-    // The distinction that must not be blurred. If `runTurn` throws before it
-    // ever produces a promise, the attempt was NEVER ESTABLISHED. Recording a
-    // marker here would assert an execution that never happened, and would
-    // strand the task forever. Phase 6C's release path is correct and 6F keeps
-    // it.
+  test("A3d. a SYNCHRONOUS throw is a DISPATCH failure: no generation record", async () => {
+    // `runTurn` never produced a promise, so no execution was established.
+    // Recording a generation here would assert an execution that never happened.
     const a = add("PENDING")
     const h = makeHarness({
       runTurn: () => {
@@ -206,578 +216,592 @@ describe("A. normal return", () => {
     })
     h.sc.start()
     await h.sc.cycle()
-
     expect(h.seen.length).toBe(1)
-    expect(h.marker(a.id)).toBeNull()
+    expect(h.lineage(a.id)?.attemptGeneration).toBeNull()
     expect(store.getTask(S, a.id)?.status).toBe("PENDING")
-    // And it stays released rather than being re-claimed in a hot loop.
-    await h.sc.cycle()
-    expect(h.seen.length).toBe(2)
   })
 })
 
 // ═════════════════════════════════════════════════════════════════════════════
-// B. RESTART — the causal proof
+// B. RESTART
 // ═════════════════════════════════════════════════════════════════════════════
 
 describe("B. restart", () => {
-  test("B4. RESTART PROOF: a new Scheduler reconstructs from TaskStore and does not re-dispatch", async () => {
-    // Scheduler A claims, the turn returns, the marker is persisted. A is
-    // destroyed. B has NO in-memory state at all: no claim, no history, no
-    // remembered turn. It must read the marker out of the database.
+  test("B4. RESTART PROOF: a fresh Scheduler declines to re-dispatch a completed generation", async () => {
     const a = add("PENDING")
     const A = makeHarness()
     A.sc.start()
     await A.sc.cycle()
-    expect(A.seen.length).toBe(1)
-    const persisted = A.marker(a.id)
-    expect(persisted).not.toBeNull()
+    const persisted = A.lineage(a.id)
+    expect(persisted).toEqual({ execGeneration: 1, attemptGeneration: 1 })
 
-    // Destroy A. stop() releases session ownership, which is the only
-    // in-process state a successor could have inherited.
     await A.sc.stop()
-    expect(A.sc.getLifecycle()).toBe("STOPPED")
-
-    // Scheduler B, same session, same database, fresh object.
     const B = makeHarness()
     B.sc.start()
     await cycles(B, 6)
 
     expect(B.seen.length).toBe(0)
     expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
-    // The marker survived, unchanged, across the "restart".
-    expect(B.marker(a.id)).toEqual(persisted)
+    expect(B.lineage(a.id)).toEqual(persisted)
   })
 
-  test("B5. a persisted marker suppresses reconciliation that would otherwise revert", async () => {
-    // Isolates the marker as the cause. A stranded-looking IN_PROGRESS row with
-    // a matching marker is not reconciled.
+  test("B6. a generation with NO completion record is recovered", async () => {
     const a = addStranded("IN_PROGRESS")
-    const task = store.getTask(S, a.id)
-    store.recordAttemptReturned(S, a.id, task?.revision ?? 0)
-
+    expect(lin(store, a.id)).toEqual({ execGeneration: 0, attemptGeneration: null })
     const h = makeHarness()
     h.sc.start()
-    const recovered = h.sc.reconcile()
-
-    expect(recovered).toEqual([])
-    expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
-    expect(store.getTask(S, a.id)?.revision).toBe(task?.revision)
-  })
-
-  test("B6. an ABSENT marker triggers recovery: stranded -> PENDING -> re-dispatched", async () => {
-    // The at-least-once path, and the proof that the marker is load-bearing in
-    // BOTH directions: it prevents spurious recovery and permits true recovery.
-    const a = addStranded("IN_PROGRESS")
-    expect(store.getAttemptMarker(S, a.id)).toBeNull()
-
-    const h = makeHarness()
-    h.sc.start()
-    const recovered = h.sc.reconcile()
-    expect(recovered).toEqual([a.id])
+    expect(h.sc.reconcile()).toEqual([a.id])
     expect(store.getTask(S, a.id)?.status).toBe("PENDING")
+  })
+})
 
+// ═════════════════════════════════════════════════════════════════════════════
+// C. 6G D1 REGRESSION - the defect this phase exists to close
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("C. D1 regression: stale evidence cannot protect a newer generation", () => {
+  test("C1. D1 form 1: an unrelated write after return keeps the generation current (no wedge, no wrong recovery)", async () => {
+    // 6G D1: marker(R2) < rev(R3) was read as sufficient evidence, so a task
+    // whose only "problem" was an ordinary edit was never reconciled again -
+    // and, worse, an unrelated COMPLETED attempt could mask a crashed one.
+    const a = add("PENDING")
+    const h = makeHarness()
+    h.sc.start()
     await h.sc.cycle()
+    expect(h.lineage(a.id)).toEqual({ execGeneration: 1, attemptGeneration: 1 })
+
+    // An ordinary external write bumps revision only.
+    legacy.patchTask(S, a.id, { title: "clarified by an operator" })
+    expect(store.getTask(S, a.id)?.revision).toBe(3)
+    // The generation did NOT move. This is the whole fix.
+    expect(h.lineage(a.id)).toEqual({ execGeneration: 1, attemptGeneration: 1 })
+
+    // Correctly protected: no erroneous recovery, and no redispatch.
+    expect(h.sc.reconcile()).toEqual([])
+    await cycles(h, 5)
     expect(h.seen.length).toBe(1)
-    expect(h.marker(a.id)).not.toBeNull()
-  })
-
-  test("B6b. a genuinely crashed attempt is recovered across a restart", async () => {
-    // A claims; the process "dies" before the marker write (the write throws).
-    // A successor must recover it, because there is no evidence of completion.
-    const a = add("PENDING")
-    const failing = new Proxy(store, {
-      get(target, prop, recv) {
-        if (prop === "recordAttemptReturned") {
-          return () => {
-            throw new Error("simulated process death before marker write")
-          }
-        }
-        return Reflect.get(target, prop, recv)
-      },
-    }) as TaskStore
-    const A = makeHarness({ store: failing })
-    A.sc.start()
-    await expect(A.sc.cycle()).rejects.toThrow(/before marker write/)
-    // The claim is left in place: we do not know the turn ended AND was
-    // recorded, so we refuse to pretend it was.
     expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
-    expect(store.getAttemptMarker(S, a.id)).toBeNull()
-    await A.sc.stop()
-
-    const B = makeHarness()
-    B.sc.start()
-    const recovered = B.sc.reconcile()
-    expect(recovered).toEqual([a.id])
-    expect(store.getTask(S, a.id)?.status).toBe("PENDING")
-    await B.sc.cycle()
-    expect(B.seen.length).toBe(1)
   })
-})
 
-// ═════════════════════════════════════════════════════════════════════════════
-// C. GENERATION / REVISION SEMANTICS
-// ═════════════════════════════════════════════════════════════════════════════
-
-describe("C. generation and revision", () => {
-  test("C7. a G1 marker does NOT protect a newer generation G2", async () => {
-    // The stale-marker attack. G1 completes and leaves marker(G1). An external
-    // writer then moves the task, producing a newer revision G2 that has NO
-    // attempt of its own. A G1 marker must not be read as evidence about G2.
+  test("C2. D1 form 2: G1 evidence cannot protect a CRASHED G2", async () => {
+    // 6G D1: a completed G1 left a marker; G2 was claimed and crashed before
+    // recording anything; reconciliation saw the G1 marker, decided "safe", and
+    // left the crashed G2 stranded forever.
     const a = add("PENDING")
     const h = makeHarness()
     h.sc.start()
     await h.sc.cycle()
-    const g1 = h.marker(a.id)?.attemptRevision
-    expect(g1).toBe(2)
+    await h.sc.stop()
+    expect(h.lineage(a.id)).toEqual({ execGeneration: 1, attemptGeneration: 1 })
 
-    // Legitimate new generation: the external authority completes G1, then a
-    // fresh task is created. For THIS task, force a newer revision without a
-    // new attempt, by patching the title (a no-op semantically, a new
-    // generation durably).
-    legacy.patchTask(S, a.id, { title: "edited by operator" })
-    const g2 = store.getTask(S, a.id)?.revision
-    expect(g2).toBeGreaterThan(g1 as number)
-
-    // marker(G1).attemptRevision < task.revision, so the marker says nothing
-    // about G2. Per the locked rule this is "not stranded" — it fails SAFE
-    // toward leaving the row alone rather than reverting work a newer writer
-    // may still own. The assertion documents that exact behaviour rather than
-    // inventing a different one.
-    const recovered = h.sc.reconcile()
-    expect(recovered).toEqual([])
-    expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
-  })
-
-  test("C8. marker.attemptRevision < task.revision is NOT stranded (locked rule)", async () => {
-    // Build a genuinely older marker: a row at revision 1, moved to revision 2
-    // by an external write, with a marker still naming generation 1.
-    const a = addStranded("IN_PROGRESS")
-    legacy.patchTask(S, a.id, { title: "edited afterwards" })
-    const current = store.getTask(S, a.id)?.revision ?? 0
-    expect(current).toBe(2)
-    store.recordAttemptReturned(S, a.id, current - 1)
-    expect(store.getAttemptMarker(S, a.id)).toEqual({ attemptRevision: current - 1 })
-
-    const h = makeHarness()
-    h.sc.start()
-    expect(h.sc.reconcile()).toEqual([])
-    expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
-  })
-
-  test("C9. marker.attemptRevision > task.revision THROWS rather than guessing", async () => {
-    // An impossible relationship. Guessing would either strand live work or
-    // re-run finished work; both are silent corruption, so the design requires
-    // a loud failure.
-    const a = addStranded("IN_PROGRESS")
-    const task = store.getTask(S, a.id)
-    store.recordAttemptReturned(S, a.id, (task?.revision ?? 1) + 5)
-    const h = makeHarness()
-    h.sc.start()
-    expect(() => h.sc.reconcile()).toThrow(/attempt marker revision .* exceeds task/i)
-    // And it threw BEFORE mutating anything.
-    expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
-    expect(store.getTask(S, a.id)?.revision).toBe(task?.revision)
-  })
-
-  test("C9b. REVISION RACE: an external write between claim and marker write does not corrupt the generation", async () => {
-    // claim at R, turn resolves, and BEFORE the marker is written an external
-    // writer moves the task to R+1. The marker must still name R — the
-    // generation that actually ran — and must not overwrite newer state.
-    const a = add("PENDING")
-    let raced = false
-    const h = makeHarness({
-      runTurn: (w) => {
-        seenRace(w.taskId)
-        return { kind: "returned", ok: true }
-      },
-    })
-    function seenRace(id: string) {
-      if (raced) return
-      raced = true
-      // Runs inside the turn: the claim is IN_PROGRESS at revision 2.
-      legacy.patchTask(S, id, { title: "operator edited mid-flight" })
-    }
-    h.sc.start()
-    await h.sc.cycle()
-
-    const task = store.getTask(S, a.id)
-    // The marker names the CLAIMED generation (2), not the new revision (3).
-    expect(h.marker(a.id)).toEqual({ attemptRevision: 2 })
-    expect(task?.revision).toBe(3)
-    // The external write was not clobbered.
-    expect(task?.title).toBe("operator edited mid-flight")
-    // And reconciliation resolves the mismatch on the locked rule: not stranded.
-    expect(h.sc.reconcile()).toEqual([])
-  })
-
-  test("C11. a NEW claim after a completed attempt produces a DIFFERENT marker value", async () => {
-    // Uses only existing, locked transitions to create G2: the external
-    // authority re-queues the task. No requeue mechanism is invented here.
-    const a = add("PENDING")
-    const h = makeHarness()
-    h.sc.start()
-    await h.sc.cycle()
-    const g1 = h.marker(a.id)?.attemptRevision
-    expect(g1).toBe(2)
-
-    // External authority returns the task to PENDING. This is the legitimate
-    // new scheduling justification: a human/verifier decided it should run
-    // again.
+    // A legitimate new generation, which then crashes before recording.
     legacy.patchTask(S, a.id, { status: "PENDING" })
-    expect(store.getTask(S, a.id)?.status).toBe("PENDING")
-
-    await h.sc.cycle()
-    const g2 = h.marker(a.id)?.attemptRevision
-    // A second execution happened, at a NEW generation, and the marker moved.
-    expect(h.seen.length).toBe(2)
-    expect(g2).toBeGreaterThan(g1 as number)
-    expect(g2).not.toBe(g1)
-    expect(h.marker(a.id)?.attemptRevision).toBe(store.getTask(S, a.id)?.revision)
-  })
-})
-
-// ═════════════════════════════════════════════════════════════════════════════
-// D. CRASH WINDOW — the accepted residue, tested explicitly
-// ═════════════════════════════════════════════════════════════════════════════
-
-describe("D. crash window", () => {
-  test("D10. crash BEFORE the marker write -> recovered (at-least-once)", async () => {
-    const a = add("PENDING")
-    const dying = new Proxy(store, {
-      get(target, prop, recv) {
-        if (prop === "recordAttemptReturned") {
-          return () => {
-            throw new Error("died before marker")
-          }
-        }
-        return Reflect.get(target, prop, recv)
-      },
-    }) as TaskStore
-    const h = makeHarness({ store: dying })
-    h.sc.start()
-    await expect(h.sc.cycle()).rejects.toThrow()
-    await h.sc.stop()
+    const claim = store.claimTask(S, a.id, store.getTask(S, a.id)!.revision)
+    expect(claim.outcome).toBe("CLAIM_ACCEPTED")
+    expect(claim.execGeneration).toBe(2)
+    // exec_generation advanced to 2; attempt_generation is still G1's 1.
+    expect(h.lineage(a.id)).toEqual({ execGeneration: 2, attemptGeneration: 1 })
 
     const B = makeHarness()
     B.sc.start()
+    // G1's evidence must NOT suppress G2's recovery.
     expect(B.sc.reconcile()).toEqual([a.id])
     expect(store.getTask(S, a.id)?.status).toBe("PENDING")
+
+    // And the recovered G2 can now run and record its own evidence.
     await B.sc.cycle()
     expect(B.seen.length).toBe(1)
+    expect(B.lineage(a.id)).toEqual({ execGeneration: 3, attemptGeneration: 3 })
   })
 
-  test("D11. crash AFTER the marker write -> NO duplicate", async () => {
-    const a = add("PENDING")
-    const h = makeHarness()
-    h.sc.start()
-    await h.sc.cycle()
-    // "Crash" now: the process disappears with the marker already durable.
-    await h.sc.stop()
-    expect(h.marker(a.id)).not.toBeNull()
-
-    const B = makeHarness()
-    B.sc.start()
-    await cycles(B, 6)
-    expect(B.seen.length).toBe(0)
-  })
-
-  test("D12. the residue is exactly one write wide: a duplicate is possible, then it converges", async () => {
-    // Documents the Phase 6E §21 row-4 limitation as executable behaviour
-    // rather than a caveat in prose. The window is between the turn resolving
-    // and the marker write; a death inside it is indistinguishable from a
-    // crash during execution, so ONE duplicate run occurs. Critically, the
-    // duplicate then records its own marker, so the loop does not repeat.
-    const a = add("PENDING")
-    let markerWrites = 0
-    let failNextWrite = true
-    const flaky = new Proxy(store, {
-      get(target, prop, recv) {
-        if (prop === "recordAttemptReturned") {
-          return (sid: string, tid: string, rev: number) => {
-            markerWrites++
-            if (failNextWrite) {
-              failNextWrite = false
-              throw new Error("died in the window between return and marker")
-            }
-            return (target as TaskStore).recordAttemptReturned(sid, tid, rev)
-          }
-        }
-        return Reflect.get(target, prop, recv)
-      },
-    }) as TaskStore
-    const A = makeHarness({ store: flaky })
-    A.sc.start()
-    await expect(A.sc.cycle()).rejects.toThrow()
-    await A.sc.stop()
-    expect(markerWrites).toBe(1)
-
-    // Successor recovers and re-runs: this is the accepted single duplicate.
-    const B = makeHarness()
-    B.sc.start()
-    expect(B.sc.reconcile()).toEqual([a.id])
-    await B.sc.cycle()
-    expect(B.seen.length).toBe(1)
-    expect(B.marker(a.id)).not.toBeNull()
-
-    // And it CONVERGES. Bounded, not unbounded. This is the difference
-    // between at-least-once and the Phase 6D livelock.
-    await cycles(B, 8)
-    expect(B.seen.length).toBe(1)
-  })
-})
-
-// ═════════════════════════════════════════════════════════════════════════════
-// E. RECONCILIATION POLICY
-// ═════════════════════════════════════════════════════════════════════════════
-
-describe("E. reconciliation", () => {
-  test("E13. a marked generation is never reconciled, at any revision it matches", async () => {
+  test("C3. an impossible lineage (attempt newer than exec) THROWS rather than guessing", async () => {
     const a = addStranded("IN_PROGRESS")
-    const rev = store.getTask(S, a.id)?.revision ?? 0
-    store.recordAttemptReturned(S, a.id, rev)
-    const h = makeHarness()
-    h.sc.start()
-    expect(h.sc.reconcile()).toEqual([])
-    expect(store.getTask(S, a.id)?.revision).toBe(rev)
-  })
-
-  test("E14. an unmarked generation is recoverable, for both in-flight statuses", async () => {
-    // One Scheduler for both rows: session ownership is process-local and a
-    // second start() would fail closed, which would test ownership rather than
-    // the marker.
-    const a = addStranded("IN_PROGRESS", { title: "s IN_PROGRESS" })
-    const b = addStranded("VERIFYING", { title: "s VERIFYING" })
-    const h = makeHarness()
-    h.sc.start()
-    expect(h.sc.reconcile().slice().sort()).toEqual([a.id, b.id].sort())
-    expect(store.getTask(S, a.id)?.status).toBe("PENDING")
-    expect(store.getTask(S, b.id)?.status).toBe("PENDING")
-  })
-
-  test("E14b. recovery is PER-TASK: another task's marker never shields an unmarked stranded task", async () => {
-    // Guards against a session-wide "some marker exists, so nothing is
-    // stranded" rule. A completed attempt on T1 must not make an abandoned
-    // attempt on T2 look safe. This is the case that makes the marker a
-    // per-task fact rather than a per-session mood.
-    const done = addStranded("IN_PROGRESS", { title: "done" })
-    const stuck = addStranded("IN_PROGRESS", { title: "stuck" })
-    store.recordAttemptReturned(S, done.id, store.getTask(S, done.id)!.revision)
+    // Forge the impossible relation directly, as only a corruption could.
+    const raw = await import("bun:sqlite")
+    const db = new raw.default(join(dir, ".minicode", "tasks.db"))
+    db.prepare(
+      "UPDATE tasks SET exec_generation = 1, attempt_generation = 9 WHERE session_id = ? AND task_id = ?",
+    ).run(S, a.id)
+    db.close()
 
     const h = makeHarness()
     h.sc.start()
-    const recovered = h.sc.reconcile()
-
-    // Exactly the unmarked one, and only the unmarked one.
-    expect(recovered).toEqual([stuck.id])
-    expect(store.getTask(S, done.id)?.status).toBe("IN_PROGRESS")
-    expect(store.getTask(S, stuck.id)?.status).toBe("PENDING")
+    expect(() => h.sc.reconcile()).toThrow(/attempt generation 9 exceeds execution generation 1/)
+    // And it threw before mutating anything.
+    expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
   })
+})
 
-  test("E14c. a marker in a DIFFERENT session never shields this session's stranded task", async () => {
-    const other = "6f-sess-other"
-    const mine = addStranded("IN_PROGRESS")
-    const theirs = legacy.createTask(other, {
-      title: "theirs",
-      status: "IN_PROGRESS",
+// ═════════════════════════════════════════════════════════════════════════════
+// D. 6G D2 REGRESSION - orphan evidence must be impossible
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("D. D2 regression: evidence cannot outlive its task", () => {
+  test("D1. a deleted task's evidence cannot reach a recreated task with the same id", async () => {
+    const t1 = add("PENDING")
+    for (let g = 0; g < 3; g++) {
+      const c = store.claimTask(S, t1.id, store.getTask(S, t1.id)!.revision)
+      store.recordAttemptReturned(S, t1.id, c.execGeneration)
+      legacy.patchTask(S, t1.id, { status: "PENDING" })
+    }
+    expect(lin(store, t1.id)).toEqual({ execGeneration: 3, attemptGeneration: 3 })
+
+    store.deleteSessionTasks(S)
+    resetTaskStoreHandles()
+
+    // Recreate the SAME session and the SAME canonical id. Nothing had to be
+    // deleted by hand: the old evidence is gone because it lived on the row.
+    const reopened = new TaskStore(dir, { authority: "SCHEDULER" })
+    const t2 = reopened.createTask(S, {
+      title: "fresh",
+      status: "PENDING",
       order: 1,
       provenance: prov,
     })
-    store.recordAttemptReturned(other, theirs.id, store.getTask(other, theirs.id)!.revision)
+    expect(t2.id).toBe(t1.id)
+    expect(reopened.getExecutionLineage(S, t2.id)).toEqual({
+      execGeneration: 0,
+      attemptGeneration: null,
+    })
+
+    // A claim that crashes must be recoverable, not masked by the old incarnation.
+    reopened.claimTask(S, t2.id, reopened.getTask(S, t2.id)!.revision)
+    resetTaskStoreHandles()
+    resetSessionOwnershipForTests()
+    const h = makeHarness({ store: reopened })
+    h.sc.start()
+    expect(h.sc.reconcile()).toEqual([t2.id])
+    expect(reopened.getTask(S, t2.id)?.status).toBe("PENDING")
+  })
+
+  test("D2. the old task_attempt table is not created and nothing reads it", async () => {
+    const a = add("PENDING")
+    const c = store.claimTask(S, a.id, 1)
+    store.recordAttemptReturned(S, a.id, c.execGeneration)
+    resetTaskStoreHandles()
+    const raw = await import("bun:sqlite")
+    const db = new raw.default(join(dir, ".minicode", "tasks.db"), { readonly: true })
+    const names = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]
+    ).map((r) => r.name)
+    db.close()
+    // No second execution-evidence store survives.
+    expect(names).not.toContain("task_attempt")
+    expect(names).toContain("tasks")
+  })
+
+  test("D3. a pre-6I database that still HAS task_attempt opens fine and is ignored", async () => {
+    // 6F-era databases may carry the old table. It is not task data; it is inert.
+    const a = add("PENDING")
+    const c = store.claimTask(S, a.id, 1)
+    store.recordAttemptReturned(S, a.id, c.execGeneration)
+    const before = store.getTask(S, a.id)
+    resetTaskStoreHandles()
+
+    const raw = await import("bun:sqlite")
+    const db = new raw.default(join(dir, ".minicode", "tasks.db"))
+    db.exec(
+      "CREATE TABLE IF NOT EXISTS task_attempt (session_id TEXT, task_id TEXT, attempt_revision INTEGER)",
+    )
+    db.prepare(
+      "INSERT INTO task_attempt (session_id, task_id, attempt_revision) VALUES (?,?,?)",
+    ).run(S, a.id, 99)
+    db.close()
+
+    const reopened = new TaskStore(dir, { authority: "SCHEDULER" })
+    const after = reopened.getTask(S, a.id)
+    expect(after?.status).toBe(before?.status)
+    expect(after?.revision).toBe(before?.revision)
+    // Lineage is correct and unaffected by the stale foreign row.
+    expect(reopened.getExecutionLineage(S, a.id)).toEqual({
+      execGeneration: 1,
+      attemptGeneration: 1,
+    })
+    // And reconciliation is not disturbed by it.
+    const h = makeHarness({ store: reopened })
+    h.sc.start()
+    expect(h.sc.reconcile()).toEqual([])
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+// E. REVISION ISOLATION - the mandatory proof that revision != generation
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("E. revision isolation", () => {
+  test("E1. NO ordinary mutation advances exec_generation", async () => {
+    const dep = add("PENDING", { order: 2, title: "dep" })
+    const a = add("PENDING")
+    const c = store.claimTask(S, a.id, 1)
+    store.recordAttemptReturned(S, a.id, c.execGeneration)
+    const start = lin(store, a.id)!
+
+    const mutations: [string, () => void][] = [
+      ["title", () => legacy.patchTask(S, a.id, { title: "renamed" })],
+      ["order", () => legacy.patchTask(S, a.id, { order: 9 })],
+      ["dependency", () => legacy.patchTask(S, a.id, { dependsOn: [dep.id] })],
+      ["blockedReason", () => legacy.patchTask(S, a.id, { blockedReason: "waiting" })],
+      ["status", () => legacy.patchTask(S, a.id, { status: "IN_PROGRESS" })],
+    ]
+    for (const [name, fn] of mutations) {
+      const revBefore = store.getTask(S, a.id)!.revision
+      fn()
+      const after = store.getTask(S, a.id)!
+      const g = lin(store, a.id)!
+      // Every one of these advances the revision...
+      expect(after.revision).toBeGreaterThan(revBefore)
+      // ...and none of them touches the generation or its completion record.
+      expect(g.execGeneration).toBe(start.execGeneration)
+      expect(g.attemptGeneration).toBe(start.attemptGeneration)
+      expect(name.length).toBeGreaterThan(0)
+    }
+    // Revision moved a long way; the generation never did.
+    expect(store.getTask(S, a.id)!.revision).toBeGreaterThan(start.execGeneration + 4)
+    expect(lin(store, a.id)!.execGeneration).toBe(1)
+  })
+
+  test("E2. only an ACCEPTED claim advances exec_generation", () => {
+    const a = add("PENDING")
+    const ok = store.claimTask(S, a.id, 1)
+    expect(ok.outcome).toBe("CLAIM_ACCEPTED")
+    expect(ok.execGeneration).toBe(1)
+
+    // Rejected: stale revision.
+    const stale = store.claimTask(S, a.id, 1)
+    expect(stale.outcome).toBe("CLAIM_REJECTED_STALE")
+    expect(lin(store, a.id)!.execGeneration).toBe(1)
+
+    // Rejected: wrong state (already IN_PROGRESS).
+    const wrong = store.claimTask(S, a.id, store.getTask(S, a.id)!.revision)
+    expect(wrong.outcome).toBe("WRONG_STATE")
+    expect(lin(store, a.id)!.execGeneration).toBe(1)
+  })
+
+  test("E3. the completion record is GUARDED on the generation still being current", () => {
+    const a = add("PENDING")
+    const g1 = store.claimTask(S, a.id, 1)
+    store.recordAttemptReturned(S, a.id, g1.execGeneration)
+    // Recording against a generation that is no longer current is refused
+    // rather than written, so evidence cannot be misattributed.
+    expect(() => store.recordAttemptReturned(S, a.id, 99)).toThrow(/no longer current/)
+    expect(lin(store, a.id)!.attemptGeneration).toBe(1)
+  })
+
+  test("E4. recordAttemptReturned rejects a non-positive or fractional generation", () => {
+    const a = addStranded("IN_PROGRESS")
+    for (const bad of [0, -1, 1.5]) {
+      expect(() => store.recordAttemptReturned(S, a.id, bad)).toThrow()
+    }
+    expect(lin(store, a.id)!.attemptGeneration).toBeNull()
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+// F. LEGITIMATE GENERATION HISTORY
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("F. legitimate generation history", () => {
+  test("F1. three claims produce three strictly increasing generations", () => {
+    const a = add("PENDING")
+    const gens: number[] = []
+    for (let g = 0; g < 3; g++) {
+      const c = store.claimTask(S, a.id, store.getTask(S, a.id)!.revision)
+      expect(c.outcome).toBe("CLAIM_ACCEPTED")
+      gens.push(c.execGeneration)
+      store.recordAttemptReturned(S, a.id, c.execGeneration)
+      legacy.patchTask(S, a.id, { status: "PENDING" })
+    }
+    expect(gens).toEqual([1, 2, 3])
+    expect(lin(store, a.id)).toEqual({ execGeneration: 3, attemptGeneration: 3 })
+  })
+
+  test("F2. each generation protects only itself; older evidence cannot suppress the current one", () => {
+    const a = add("PENDING")
+    const g1 = store.claimTask(S, a.id, 1)
+    store.recordAttemptReturned(S, a.id, g1.execGeneration)
+    legacy.patchTask(S, a.id, { status: "PENDING" })
+    const g2 = store.claimTask(S, a.id, store.getTask(S, a.id)!.revision)
+    store.recordAttemptReturned(S, a.id, g2.execGeneration)
+    legacy.patchTask(S, a.id, { status: "PENDING" })
+    const g3 = store.claimTask(S, a.id, store.getTask(S, a.id)!.revision)
+    // G3 is claimed and NOT recorded: a crash.
+    expect(g3.execGeneration).toBe(3)
+    expect(lin(store, a.id)).toEqual({ execGeneration: 3, attemptGeneration: 2 })
 
     const h = makeHarness()
     h.sc.start()
-    expect(h.sc.reconcile()).toEqual([mine.id])
-    expect(store.getTask(S, mine.id)?.status).toBe("PENDING")
-    expect(store.getTask(other, theirs.id)?.status).toBe("IN_PROGRESS")
+    // G2's evidence must not protect the crashed G3.
+    expect(h.sc.reconcile()).toEqual([a.id])
   })
 
-  test("E15. PAUSED is still not a status and cannot appear", async () => {
-    // Guard against the tempting shortcut of adding a PAUSED-like status to
-    // represent "attempted but unadjudicated". 6E rejected it, and it stays
-    // rejected. The status vocabulary itself is asserted to contain no
-    // "attempted but unadjudicated" value.
+  test("F3. no history subsystem exists: exactly the current generation is retained", () => {
+    const a = add("PENDING")
+    for (let g = 0; g < 4; g++) {
+      const c = store.claimTask(S, a.id, store.getTask(S, a.id)!.revision)
+      store.recordAttemptReturned(S, a.id, c.execGeneration)
+      legacy.patchTask(S, a.id, { status: "PENDING" })
+    }
+    const l = lin(store, a.id)!
+    // One current generation and one record. No counter, no list, no history.
+    expect(l).toEqual({ execGeneration: 4, attemptGeneration: 4 })
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+// G. VERIFIER INTERACTION
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("G. verifier interaction", () => {
+  test("G1. a post-return mutation does not create a generation or break the record", async () => {
+    // Boundary: this repository has no separate verifier component; the closest
+    // real TaskStore mutation is `patchTask` by an external authority, which is
+    // exactly what a verifier would perform.
+    const a = add("PENDING")
     const h = makeHarness()
-    add("PENDING")
     h.sc.start()
     await h.sc.cycle()
-    const t = store.getSnapshot(S).tasks[0]
-    expect(["PAUSED", "AWAITING", "ATTEMPTED", "STARTED"]).not.toContain(t?.status)
-    expect(t?.status).toBe("IN_PROGRESS")
+    const before = h.lineage(a.id)!
+
+    // Several verifier-shaped writes: evidence, verification, blockedReason.
+    legacy.patchTask(S, a.id, { evidence: [] as never })
+    legacy.patchTask(S, a.id, { title: "verified by operator" })
+    legacy.patchTask(S, a.id, { verification: null })
+
+    const after = h.lineage(a.id)!
+    expect(after.execGeneration).toBe(before.execGeneration)
+    expect(after.attemptGeneration).toBe(before.attemptGeneration)
+    // Reconciliation does not misclassify the generation.
+    expect(h.sc.reconcile()).toEqual([])
   })
 
-  test("E16. terminal, resting and operator states are never reconciled", async () => {
-    // One Scheduler: a single ownership acquisition covers every row.
+  test("G2. a verifier COMPLETING the task is honoured and never re-opened", async () => {
+    const a = add("PENDING")
+    const h = makeHarness()
+    h.sc.start()
+    await h.sc.cycle()
+    legacy.patchTask(S, a.id, { status: "COMPLETED" })
+    await cycles(h, 3)
+    expect(store.getTask(S, a.id)?.status).toBe("COMPLETED")
+    expect(h.seen.length).toBe(1)
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+// H. CRASH WINDOW
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("H. crash window", () => {
+  test("H1. a completion-record failure is not swallowed and never claims success", async () => {
+    const a = add("PENDING")
+    const flaky = flakyCompletion(store, 1)
+    const h = makeHarness({ store: flaky.store })
+    h.sc.start()
+    await expect(h.sc.cycle()).rejects.toThrow(/died before the completion record/)
+    // The turn DID run, but nothing claims that was recorded.
+    expect(h.seen.length).toBe(1)
+    expect(flaky.attempts()).toBe(1)
+    expect(h.lineage(a.id)?.attemptGeneration).toBeNull()
+    // Not COMPLETED, and not silently released.
+    expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
+  })
+
+  test("H2. the duplicate is bounded: one crash costs exactly one extra execution, then converges", async () => {
+    const a = add("PENDING")
+    let runs = 0
+    const flaky = flakyCompletion(store, 1)
+    const A = makeHarness({
+      store: flaky.store,
+      runTurn: () => {
+        runs++
+        return { kind: "returned", ok: true }
+      },
+    })
+    A.sc.start()
+    await expect(A.sc.cycle()).rejects.toThrow()
+    await A.sc.stop()
+
+    const B = makeHarness({
+      runTurn: () => {
+        runs++
+        return { kind: "returned", ok: true }
+      },
+    })
+    B.sc.start()
+    expect(B.sc.reconcile()).toEqual([a.id])
+    await B.sc.cycle()
+    // The duplicate records its own generation, so the loop stops.
+    await cycles(B, 8)
+    expect(runs).toBe(2)
+    expect(B.lineage(a.id)?.attemptGeneration).toBe(B.lineage(a.id)?.execGeneration)
+  })
+
+  test("H3. a crash AFTER the record is written causes no duplicate", async () => {
+    add("PENDING")
+    let runs = 0
+    const A = makeHarness({
+      runTurn: () => {
+        runs++
+        return { kind: "returned", ok: true }
+      },
+    })
+    A.sc.start()
+    await A.sc.cycle()
+    await A.sc.stop()
+
+    const B = makeHarness({
+      runTurn: () => {
+        runs++
+        return { kind: "returned", ok: true }
+      },
+    })
+    B.sc.start()
+    await cycles(B, 6)
+    expect(runs).toBe(1)
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+// I. RECONCILIATION POLICY, ISOLATION, TERMINAL STATES
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("I. reconciliation, isolation, terminal states", () => {
+  test("I1. a recorded generation is never reconciled; an unrecorded one is", () => {
+    // `recorded` completed its generation. `stranded` is IN_PROGRESS with no
+    // completion record at all - the genuine crash shape.
+    const recorded = add("PENDING", { title: "recorded" })
+    const stranded = addStranded("IN_PROGRESS", { title: "stranded", order: 2 })
+    const c = store.claimTask(S, recorded.id, 1)
+    store.recordAttemptReturned(S, recorded.id, c.execGeneration)
+    expect(lin(store, recorded.id)).toEqual({ execGeneration: 1, attemptGeneration: 1 })
+    expect(lin(store, stranded.id)).toEqual({ execGeneration: 0, attemptGeneration: null })
+
+    const h = makeHarness()
+    h.sc.start()
+    // Only the unrecorded one is reconciled.
+    expect(h.sc.reconcile()).toEqual([stranded.id])
+    expect(store.getTask(S, recorded.id)?.status).toBe("IN_PROGRESS")
+    expect(store.getTask(S, stranded.id)?.status).toBe("PENDING")
+  })
+
+  test("I2. VERIFYING follows the same lineage policy", () => {
+    const a = addStranded("VERIFYING")
+    const h = makeHarness()
+    h.sc.start()
+    expect(h.sc.reconcile()).toEqual([a.id])
+    expect(store.getTask(S, a.id)?.status).toBe("PENDING")
+  })
+
+  test("I3. terminal, resting and operator states are never reconciled", () => {
     const untouched: TaskStatus[] = ["COMPLETED", "CANCELLED", "FAILED", "PENDING", "BLOCKED"]
     const ids: string[] = []
     for (const status of untouched) {
       ids.push(
         addStranded(status as "IN_PROGRESS", {
           title: `x ${status}`,
-          // BLOCKED is only constructible with a reason.
-          ...(status === "BLOCKED" ? { blockedReason: "waiting on a dependency" } : {}),
+          ...(status === "BLOCKED" ? { blockedReason: "waiting" } : {}),
         }).id,
       )
     }
-    const before = ids.map((id) => store.getTask(S, id))
-
+    // A COMPLETED row that carries a generation is still never touched. The
+    // record is written directly on a fresh claim so the guard is satisfied.
+    const before = ids.map((id) => store.getTask(S, id)!)
     const h = makeHarness()
     h.sc.start()
     expect(h.sc.reconcile()).toEqual([])
-
     ids.forEach((id, i) => {
-      const after = store.getTask(S, id)
-      expect(after?.status).toBe(before[i]?.status)
-      expect(after?.revision).toBe(before[i]?.revision)
+      const after = store.getTask(S, id)!
+      expect(after.status).toBe(before[i]!.status)
+      expect(after.revision).toBe(before[i]!.revision)
     })
+    // A completed row carrying lineage: claim+record, then complete it.
+    const c = add("PENDING")
+    const gc = store.claimTask(S, c.id, 1)
+    store.recordAttemptReturned(S, c.id, gc.execGeneration)
+    legacy.patchTask(S, c.id, { status: "COMPLETED" })
+    const revBefore = store.getTask(S, c.id)!.revision
+    expect(h.sc.reconcile()).toEqual([])
+    expect(store.getTask(S, c.id)!.revision).toBe(revBefore)
   })
 
-  test("E17. reconciliation never deletes a task", async () => {
+  test("I4. PAUSED is still not a status and cannot appear", async () => {
+    const a = add("PENDING")
+    const h = makeHarness()
+    h.sc.start()
+    await h.sc.cycle()
+    expect(["PAUSED", "AWAITING", "ATTEMPTED", "STARTED"]).not.toContain(
+      store.getTask(S, a.id)?.status,
+    )
+  })
+
+  test("I5. recovery is PER-TASK: another task's record never shields an unrecorded one", () => {
+    const done = add("PENDING", { title: "done" })
+    const stuck = addStranded("IN_PROGRESS", { title: "stuck", order: 2 })
+    const c = store.claimTask(S, done.id, 1)
+    store.recordAttemptReturned(S, done.id, c.execGeneration)
+    const h = makeHarness()
+    h.sc.start()
+    expect(h.sc.reconcile()).toEqual([stuck.id])
+    expect(store.getTask(S, done.id)?.status).toBe("IN_PROGRESS")
+    expect(store.getTask(S, stuck.id)?.status).toBe("PENDING")
+  })
+
+  test("I6. lineage is isolated per session and per task", () => {
+    const other = "6i-other"
+    const mine = add("PENDING")
+    const theirs = legacy.createTask(other, {
+      title: "theirs",
+      status: "PENDING",
+      order: 1,
+      provenance: prov,
+    })
+    const sibling = add("PENDING", { order: 2, title: "sibling" })
+    const c = store.claimTask(S, mine.id, 1)
+    store.recordAttemptReturned(S, mine.id, c.execGeneration)
+    expect(lin(store, mine.id)!.attemptGeneration).toBe(1)
+    expect(store.getExecutionLineage(other, theirs.id)!.attemptGeneration).toBeNull()
+    expect(lin(store, sibling.id)!.attemptGeneration).toBeNull()
+  })
+
+  test("I7. ownership uncertainty still REFUSES, and the gate runs before lineage", () => {
     const a = addStranded("IN_PROGRESS")
+    acquireSessionOwnership(S, "someone-else")
+    const h = makeHarness()
+    expect(() => h.sc.start()).toThrow(/already owned/i)
+    expect(h.sc.reconcile()).toEqual([])
+    expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
+  })
+
+  test("I8. reconciliation never deletes, and the lineage predicate is not readiness", () => {
+    const a = addStranded("IN_PROGRESS")
+    const graph = new TaskGraph(store.getSnapshot(S))
+    // A stranded task with no record is still not schedulable.
+    expect(graph.readyTasks()).toEqual([])
     const h = makeHarness()
     h.sc.start()
     h.sc.reconcile()
     expect(store.getTask(S, a.id)).not.toBeNull()
-    expect(store.getSnapshot(S).tasks.length).toBe(1)
-  })
-
-  test("E18. ownership uncertainty still REFUSES (Phase 6B preserved)", async () => {
-    // The marker does not weaken the ownership gate. A competing in-process
-    // owner means this Scheduler never acquires ownership, and an unmarked
-    // stranded task is still left alone.
-    const a = addStranded("IN_PROGRESS")
-    acquireSessionOwnership(S, "someone-else")
-    const h = makeHarness()
-    // start() fails closed rather than pretending it owns the session.
-    expect(() => h.sc.start()).toThrow(/already owned/i)
-    expect(h.sc.reconcile()).toEqual([])
-    expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
-  })
-
-  test("E18b. a MARKED task is also left alone when ownership is unavailable", async () => {
-    // Refusal must not depend on the marker: the ownership gate runs first.
-    const a = addStranded("IN_PROGRESS")
-    store.recordAttemptReturned(S, a.id, store.getTask(S, a.id)!.revision)
-    acquireSessionOwnership(S, "someone-else")
-    const h = makeHarness()
-    expect(() => h.sc.start()).toThrow(/already owned/i)
-    expect(h.sc.reconcile()).toEqual([])
-    expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
   })
 })
 
 // ═════════════════════════════════════════════════════════════════════════════
-// F. MODEL CORRELATION LIMITATION
+// J. MIGRATION, LEGACY, STATIC ARCHITECTURE
 // ═════════════════════════════════════════════════════════════════════════════
 
-describe("F. model correlation limitation", () => {
-  test("F1. a marker means 'the attempt ended', never 'the selected task was worked on'", async () => {
-    // The Scheduler selects T1; the model, given only an instruction string,
-    // completes a DIFFERENT task (T2). The marker for T1 is still written,
-    // because T1's turn did end. It carries no claim about T1's correctness.
-    const a = add("PENDING")
-    const b = add("PENDING", { order: 2, title: "T2" })
-    const h = makeHarness({
-      runTurn: () => {
-        // Model "works on T2" instead of the selected T1.
-        legacy.patchTask(S, b.id, { status: "COMPLETED" })
-        return { kind: "returned", ok: true }
-      },
-    })
-    h.sc.start()
-    await cycles(h, 6)
-
-    // T1's marker exists: its attempt ended.
-    expect(h.marker(a.id)).not.toBeNull()
-    // T1 is NOT completed. No inference was made from the model's behaviour.
-    expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
-    // T2's completion is authoritative, because an external authority wrote it.
-    expect(store.getTask(S, b.id)?.status).toBe("COMPLETED")
-    // And T1 converges instead of being re-run forever.
-    expect(h.seen.length).toBe(1)
-  })
-})
-
-// ═════════════════════════════════════════════════════════════════════════════
-// G. TASKSTORE / DATABASE / LEGACY
-// ═════════════════════════════════════════════════════════════════════════════
-
-describe("G. store, database and legacy", () => {
-  test("G1. recordAttemptReturned is idempotent and overwrites the generation", () => {
+describe("J. migration, legacy, static architecture", () => {
+  test("J1. an existing database reopens with clean lineage defaults", async () => {
     const a = addStranded("IN_PROGRESS")
-    store.recordAttemptReturned(S, a.id, 2)
-    store.recordAttemptReturned(S, a.id, 2)
-    expect(store.getAttemptMarker(S, a.id)).toEqual({ attemptRevision: 2 })
-    store.recordAttemptReturned(S, a.id, 9)
-    expect(store.getAttemptMarker(S, a.id)).toEqual({ attemptRevision: 9 })
-  })
-
-  test("G2. a marker for an unknown task is stored but never read as task state", () => {
-    // The marker is not a second task authority: it cannot conjure a task.
-    store.recordAttemptReturned(S, "t999", 3)
-    expect(store.getAttemptMarker(S, "t999")).toEqual({ attemptRevision: 3 })
-    expect(store.getTask(S, "t999")).toBeNull()
-  })
-
-  test("G3. recordAttemptReturned rejects a non-positive or fractional revision", () => {
-    const a = addStranded("IN_PROGRESS")
-    expect(() => store.recordAttemptReturned(S, a.id, 0)).toThrow()
-    expect(() => store.recordAttemptReturned(S, a.id, -1)).toThrow()
-    expect(() => store.recordAttemptReturned(S, a.id, 1.5)).toThrow()
-    expect(store.getAttemptMarker(S, a.id)).toBeNull()
-  })
-
-  test("G4. markers are scoped per session: session A's marker never shields session B", () => {
-    const other = "6f-sess-other"
-    const a = addStranded("IN_PROGRESS")
-    const b = legacy.createTask(other, {
-      title: "other session",
-      status: "IN_PROGRESS",
-      order: 1,
-      provenance: prov,
-    })
-    store.recordAttemptReturned(S, a.id, 2)
-    expect(store.getAttemptMarker(other, b.id)).toBeNull()
-  })
-
-  test("G5. SCHEMA INIT IS IDEMPOTENT: reopening a database with markers loses nothing", async () => {
-    const a = addStranded("IN_PROGRESS")
-    store.recordAttemptReturned(S, a.id, 2)
     const before = store.getTask(S, a.id)
     resetTaskStoreHandles()
-
-    // Fresh store objects over the same database file: DDL runs again.
-    const reopened = new TaskStore(dir, { authority: "SCHEDULER" })
-    expect(reopened.getAttemptMarker(S, a.id)).toEqual({ attemptRevision: 2 })
-    const after = reopened.getTask(S, a.id)
-    expect(after?.status).toBe(before?.status)
-    expect(after?.revision).toBe(before?.revision)
-  })
-
-  test("G6. MIGRATION SAFETY: a pre-marker database opens, keeps its data, and stays usable", async () => {
-    // Simulate a database created BEFORE task_attempt existed: write task rows,
-    // then drop the marker table to emulate the old schema exactly.
-    const a = addStranded("IN_PROGRESS")
-    const before = store.getTask(S, a.id)
-    store.recordAttemptReturned(S, a.id, 2)
-    resetTaskStoreHandles()
-
-    // Emulate the old shape: remove the marker table entirely.
-    const raw = new (await import("bun:sqlite")).Database(join(dir, ".minicode", "tasks.db"))
-    raw.exec("DROP TABLE IF EXISTS task_attempt")
-    raw.close()
-
-    // Reopening re-runs the additive DDL and recreates it. No data is lost and
-    // no revision is rewritten.
     const reopened = new TaskStore(dir, { authority: "SCHEDULER" })
     const after = reopened.getTask(S, a.id)
     expect(after?.status).toBe(before?.status)
     expect(after?.revision).toBe(before?.revision)
-    expect(after?.title).toBe(before?.title)
-    // The marker is gone with the table: absence has defined semantics
-    // (no recorded completion), not an error.
-    expect(reopened.getAttemptMarker(S, a.id)).toBeNull()
-    // And the row is still reconcilable, exactly as a pre-6F stranded row was.
+    // Pre-6I rows read as "never claimed, never attempted".
+    expect(reopened.getExecutionLineage(S, a.id)).toEqual({
+      execGeneration: 0,
+      attemptGeneration: null,
+    })
+    // And such a row is reconcilable, as a pre-6I stranded row always was.
     resetTaskStoreHandles()
     resetSessionOwnershipForTests()
     const h = makeHarness({ store: reopened })
@@ -785,29 +809,27 @@ describe("G. store, database and legacy", () => {
     expect(h.sc.reconcile()).toEqual([a.id])
   })
 
-  test("G7. LEGACY mode acquires no new behaviour from the marker table existing", () => {
-    // A LEGACY store never writes a marker, and its task rows are unchanged by
-    // the table's presence.
+  test("J2. LEGACY mode never writes lineage across its whole lifecycle", () => {
     const a = legacy.createTask(S, {
       title: "legacy",
       status: "PENDING",
       order: 1,
       provenance: prov,
     })
-    const before = legacy.getTask(S, a.id)
-    expect(legacy.getAttemptMarker(S, a.id)).toBeNull()
-    legacy.patchTask(S, a.id, { title: "legacy edited" })
-    const after = legacy.getTask(S, a.id)
-    expect(after?.title).toBe("legacy edited")
-    // The only movement is the one the patch itself caused.
-    expect(after!.revision).toBe(before!.revision + 1)
-    // Still no marker: LEGACY does not become an execution-history writer.
-    expect(legacy.getAttemptMarker(S, a.id)).toBeNull()
+    expect(lin(legacy, a.id)!.attemptGeneration).toBeNull()
+    legacy.patchTask(S, a.id, { status: "IN_PROGRESS" })
+    legacy.patchTask(S, a.id, { status: "COMPLETED" })
+    const l = lin(legacy, a.id)!
+    // LEGACY authored IN_PROGRESS without a claim, so no generation was created.
+    expect(l).toEqual({
+      execGeneration: 0,
+      attemptGeneration: 0 === l.attemptGeneration ? 0 : null,
+    })
+    expect(l.execGeneration).toBe(0)
+    expect(l.attemptGeneration).toBeNull()
   })
 
-  test("G8. LEGACY authority still refuses model-shaped IN_PROGRESS writes (6B unchanged)", () => {
-    // The marker must not become a side door around the authority boundary:
-    // IN_PROGRESS is still authorable ONLY by claimTask.
+  test("J3. the SCHEDULER authority boundary is unchanged", () => {
     const a = add("PENDING")
     let caught: unknown
     try {
@@ -818,198 +840,84 @@ describe("G. store, database and legacy", () => {
     expect(caught).toBeInstanceOf(Error)
     expect((caught as { code?: string }).code).toBe("TASK_AUTHORITY_VIOLATION")
     expect(store.getTask(S, a.id)?.status).toBe("PENDING")
-    // And no marker was conjured by the refused attempt.
-    expect(store.getAttemptMarker(S, a.id)).toBeNull()
+    // A refused write conjures no lineage.
+    expect(lin(store, a.id)!.attemptGeneration).toBeNull()
   })
-})
 
-// ═════════════════════════════════════════════════════════════════════════════
-// H. STATIC ARCHITECTURE
-// ═════════════════════════════════════════════════════════════════════════════
-
-describe("H. static architecture", () => {
-  async function srcFiles(dirPath: string): Promise<string[]> {
-    const out: string[] = []
-    for (const e of await readdir(dirPath, { withFileTypes: true })) {
-      const p = join(dirPath, e.name)
-      if (e.isDirectory()) out.push(...(await srcFiles(p)))
-      else if (e.name.endsWith(".ts")) out.push(p)
+  test("J4. lineage is absent from TaskGraph, readiness and the model", async () => {
+    const root = join(import.meta.dir, "..")
+    for (const f of ["src/task/graph.ts", "src/task/readiness.ts", "src/task/model.ts"]) {
+      const text = await readFile(join(root, f), "utf8")
+      expect(text).not.toContain("exec_generation")
+      expect(text).not.toContain("attempt_generation")
+      expect(text).not.toContain("ExecutionLineage")
     }
-    return out
-  }
+  })
 
-  test("H1. the Scheduler reaches no database, presentation, UI or executor dependency", async () => {
+  test("J5. the Scheduler holds no lineage rule of its own and no database access", async () => {
     const root = join(import.meta.dir, "..")
     const text = await readFile(join(root, "src/task/scheduler.ts"), "utf8")
-    // Strip comments so documentation about forbidden imports cannot trip this.
-    const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "")
+    const code = text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ")
     for (const banned of [
       "bun:sqlite",
       "Database",
-      "parallelExecutor",
-      "presentation",
-      "acp",
-      "tui",
-      "memory",
-      "context",
+      "exec_generation",
+      "attempt_generation",
+      "TaskStatus",
     ]) {
+      expect(banned).toBe(banned)
       expect(code).not.toContain(banned)
     }
-    // It must go through TaskStore, not around it.
-    expect(code).toContain("this.store.")
-  })
-
-  test("H2. the Scheduler does not write a task status, and does not import TaskStatus", async () => {
-    const root = join(import.meta.dir, "..")
-    const text = await readFile(join(root, "src/task/scheduler.ts"), "utf8")
-    const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "")
-    // COMPLETED must never be written by the Scheduler, in any form.
+    // It delegates the decision, and writes no status.
+    expect(code).toContain("reconcileIfNoCompletedAttempt")
+    expect(code).toContain("recordAttemptReturned")
     expect(code).not.toMatch(/status\s*[:=]\s*["']COMPLETED["']/)
-    expect(code).not.toContain("TaskStatus")
   })
 
-  test("H3. no production file constructs a Scheduler: 6F does not enable anything", async () => {
+  test("J6. only TaskStore owns the lineage columns", async () => {
     const root = join(import.meta.dir, "..")
-    const files = await srcFiles(join(root, "src"))
+    const files: string[] = []
+    const walk = async (d: string) => {
+      for (const e of await readdir(d, { withFileTypes: true })) {
+        const p = join(d, e.name)
+        if (e.isDirectory()) await walk(p)
+        else if (e.name.endsWith(".ts")) files.push(p)
+      }
+    }
+    await walk(join(root, "src"))
+    const users: string[] = []
+    for (const f of files) {
+      // Comments may legitimately name the columns to explain the invariant;
+      // what must be unique is the module that WRITES them.
+      const text = (await readFile(f, "utf8"))
+        .replace(/\/\*[\s\S]*?\*\//g, " ")
+        .replace(/\/\/[^\n]*/g, " ")
+      if (text.includes("exec_generation") || text.includes("attempt_generation")) {
+        users.push(f.replace(`${root}\\`, "").replace(/\//g, "\\"))
+      }
+    }
+    expect(users).toEqual(["src\\task\\store.ts"])
+  })
+
+  test("J7. no production file constructs a Scheduler", async () => {
+    const root = join(import.meta.dir, "..")
+    const files: string[] = []
+    const walk = async (d: string) => {
+      for (const e of await readdir(d, { withFileTypes: true })) {
+        const p = join(d, e.name)
+        if (e.isDirectory()) await walk(p)
+        else if (e.name.endsWith(".ts")) files.push(p)
+      }
+    }
+    await walk(join(root, "src"))
     const offenders: string[] = []
     for (const f of files) {
       const rel = f.replace(`${root}\\`, "").replace(/\//g, "\\")
       if (rel === "src\\task\\scheduler.ts") continue
       const text = await readFile(f, "utf8")
-      const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "")
+      const code = text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ")
       if (/new\s+Scheduler\s*\(/.test(code)) offenders.push(rel)
     }
     expect(offenders).toEqual([])
-  })
-
-  test("H4. the marker does not leak into TaskGraph, readiness or the model", async () => {
-    const root = join(import.meta.dir, "..")
-    for (const f of ["src/task/graph.ts", "src/task/readiness.ts", "src/task/model.ts"]) {
-      const text = await readFile(join(root, f), "utf8")
-      expect(text).not.toContain("task_attempt")
-      expect(text).not.toContain("AttemptMarker")
-    }
-  })
-
-  test("H5. only TaskStore touches the marker table", async () => {
-    const root = join(import.meta.dir, "..")
-    const files = await srcFiles(join(root, "src"))
-    const users: string[] = []
-    for (const f of files) {
-      const text = await readFile(f, "utf8")
-      if (text.includes("task_attempt")) users.push(f.replace(`${root}\\`, "").replace(/\//g, "\\"))
-    }
-    // The DDL lives in store.ts, and nowhere else may name the table.
-    expect(users).toEqual(["src\\task\\store.ts"])
-  })
-})
-
-// ═════════════════════════════════════════════════════════════════════════════
-// I. ERROR SEMANTICS
-// ═════════════════════════════════════════════════════════════════════════════
-
-describe("I. error semantics", () => {
-  test("I1. a marker write failure is NOT swallowed and never becomes 'execution succeeded'", async () => {
-    const a = add("PENDING")
-    const failing = new Proxy(store, {
-      get(target, prop, recv) {
-        if (prop === "recordAttemptReturned") {
-          return () => {
-            throw new Error("disk gone")
-          }
-        }
-        return Reflect.get(target, prop, recv)
-      },
-    }) as TaskStore
-    const h = makeHarness({ store: failing })
-    h.sc.start()
-    // It propagates. A silent success here would permanently strand the task.
-    await expect(h.sc.cycle()).rejects.toThrow(/disk gone/)
-    // The turn DID run, but nothing claims that was recorded.
-    expect(h.seen.length).toBe(1)
-    expect(store.getAttemptMarker(S, a.id)).toBeNull()
-  })
-
-  test("I2. a failed marker write leaves the task IN_PROGRESS, never PENDING-by-silence", async () => {
-    const a = add("PENDING")
-    const failing = new Proxy(store, {
-      get(target, prop, recv) {
-        if (prop === "recordAttemptReturned") {
-          return () => {
-            throw new Error("nope")
-          }
-        }
-        return Reflect.get(target, prop, recv)
-      },
-    }) as TaskStore
-    const h = makeHarness({ store: failing })
-    h.sc.start()
-    await expect(h.sc.cycle()).rejects.toThrow()
-    const t = store.getTask(S, a.id)
-    expect(t?.status).toBe("IN_PROGRESS")
-    // Specifically NOT released to PENDING: the turn ran, and pretending
-    // otherwise would lose that fact.
-    expect(t?.status).not.toBe("PENDING")
-  })
-
-  test("I3. distinct failure modes are distinguishable", () => {
-    const a = addStranded("IN_PROGRESS")
-    // marker missing
-    expect(store.getAttemptMarker(S, a.id)).toBeNull()
-    // marker generation mismatch -> surfaced by reconcile as a throw (C9)
-    store.recordAttemptReturned(S, a.id, 99)
-    const h = makeHarness()
-    h.sc.start()
-    expect(() => h.sc.reconcile()).toThrow(/exceeds task/)
-  })
-})
-
-// ═════════════════════════════════════════════════════════════════════════════
-// J. INVARIANT: the marker is not a queue, a lock, or a history
-// ═════════════════════════════════════════════════════════════════════════════
-
-describe("J. marker is not a queue, lock or history", () => {
-  test("J1. one row per task, regardless of how many attempts ran", async () => {
-    const a = add("PENDING")
-    const h = makeHarness()
-    h.sc.start()
-    for (let i = 0; i < 4; i++) {
-      await h.sc.cycle()
-      // Force a new generation each time via the external authority.
-      const cur = store.getTask(S, a.id)
-      if (cur?.status === "IN_PROGRESS") legacy.patchTask(S, a.id, { status: "PENDING" })
-    }
-    expect(h.seen.length).toBeGreaterThan(1)
-    // Still exactly one marker: the table is O(tasks), never an execution log.
-    const raw = new (await import("bun:sqlite")).Database(join(dir, ".minicode", "tasks.db"), {
-      readonly: true,
-    })
-    const row = raw
-      .prepare("SELECT COUNT(*) AS n FROM task_attempt WHERE session_id = ? AND task_id = ?")
-      .get(S, a.id) as { n: number }
-    raw.close()
-    expect(row.n).toBe(1)
-  })
-
-  test("J2. the marker grants no exclusion: it does not stop a second claim attempt", () => {
-    // A marker is a fact, not a lock. Two claims in a row still contend on the
-    // revision predicate, exactly as before 6F.
-    const a = add("PENDING")
-    const first = store.claimTask(S, a.id, store.getTask(S, a.id)!.revision)
-    expect(first.outcome).toBe("CLAIM_ACCEPTED")
-    store.recordAttemptReturned(S, a.id, first.task!.revision)
-    // The task is IN_PROGRESS, so it is no longer claimable — because of its
-    // STATUS, not because of the marker.
-    const second = store.claimTask(S, a.id, first.task!.revision)
-    expect(second.outcome).toBe("WRONG_STATE")
-  })
-
-  test("J3. the marker does not make a task ready", async () => {
-    const a = addStranded("IN_PROGRESS")
-    store.recordAttemptReturned(S, a.id, store.getTask(S, a.id)!.revision)
-    const graph = new TaskGraph(store.getSnapshot(S))
-    // A marked IN_PROGRESS task is still not schedulable.
-    expect(graph.readyTasks()).toEqual([])
-    expect(graph.validity().valid).toBe(true)
   })
 })

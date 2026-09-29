@@ -216,26 +216,29 @@ describe("discovery", () => {
     expect(bridge.seen.map((w) => w.taskId)).toEqual([a.id, b.id])
   })
 
-  test("10b. a normal return is NOT re-dispatched: the marker records that the attempt ended", async () => {
+  test("10b. a normal return is NOT re-dispatched: the lineage records that the generation ended", async () => {
     // [PHASE 6F] This test previously asserted the opposite: it encoded the
     // unbounded re-execution loop that Phase 6D identified as a liveness
     // failure. `expect(seen).toEqual([a.id, a.id])` was only satisfiable by
     // re-running a task whose turn had already returned.
     //
-    // The new contract: a returned turn leaves a durable attempt marker, the
-    // task stays IN_PROGRESS (a return is not a verdict), and reconciliation
-    // must NOT revert a generation that recorded completion. So repeated cycles
-    // dispatch exactly once.
+    // [PHASE 6I] The completion evidence is now the task's execution lineage, not
+    // a revision-keyed marker. The contract is unchanged: a returned turn leaves
+    // a durable record, the task stays IN_PROGRESS (a return is not a verdict),
+    // and reconciliation must NOT revert a generation that recorded completion.
     const a = add("PENDING")
     const { sc, bridge } = makeScheduler()
     sc.start()
     await sc.cycle()
     expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
 
-    // The marker is durable, and names the post-claim generation.
-    const marker = store.getAttemptMarker(S, a.id)
-    expect(marker).not.toBeNull()
-    expect(marker?.attemptRevision).toBe(store.getTask(S, a.id)?.revision)
+    // The record is durable, and names the generation the claim created.
+    const lineage = store.getExecutionLineage(S, a.id)
+    expect(lineage).not.toBeNull()
+    expect(lineage?.execGeneration).toBe(1)
+    expect(lineage?.attemptGeneration).toBe(1)
+    // It is NOT a revision: the post-claim revision is 2, and the generation is 1.
+    expect(store.getTask(S, a.id)?.revision).toBe(2)
 
     // Three further cycles with no external mutation: still exactly one turn.
     await sc.cycle()
@@ -243,9 +246,12 @@ describe("discovery", () => {
     await sc.cycle()
     expect(bridge.seen.map((w) => w.taskId)).toEqual([a.id])
     expect(bridge.seen.length).toBe(1)
-    // Untouched: still IN_PROGRESS, and the marker still matches.
+    // Untouched: still IN_PROGRESS, and the generation is still recorded.
     expect(store.getTask(S, a.id)?.status).toBe("IN_PROGRESS")
-    expect(store.getAttemptMarker(S, a.id)?.attemptRevision).toBe(store.getTask(S, a.id)?.revision)
+    expect(store.getExecutionLineage(S, a.id)).toEqual({
+      execGeneration: 1,
+      attemptGeneration: 1,
+    })
   })
 
   test("11. an invalid graph aborts the cycle with zero dispatch", async () => {
@@ -294,7 +300,13 @@ describe("selection", () => {
     // The bridge reported success, so the local claim was cleared; re-claim a
     // live one explicitly and assert selection is suppressed.
     const t = store.listTasks(S)[0]!
-    sc["claim"] = { taskId: t.id, claimRevision: t.revision }
+    // [PHASE 6I] An ActiveClaim now carries the execution generation the claim
+    // created. The test pokes the field directly, so it must supply a real one.
+    sc["claim"] = {
+      taskId: t.id,
+      claimRevision: t.revision,
+      execGeneration: store.getExecutionLineage(S, t.id)?.execGeneration ?? 1,
+    }
     const r = await sc.cycle()
     expect(r.stop).toBe("already-dispatched")
     expect(bridge.seen.length).toBe(1)

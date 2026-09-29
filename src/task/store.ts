@@ -103,18 +103,48 @@ interface TaskRow {
   created_at: string
   updated_at: string
   revision: number
+  exec_generation: number
+  attempt_generation: number | null
 }
 
 /**
- * [PHASE 6F] Proof that an execution attempt for one task generation ended.
+ * [PHASE 6I] Execution lineage for one task, read through a dedicated accessor so
+ * it never becomes part of the public `Task` shape.
  *
- * NOT a task state, NOT a lock, NOT a completion. `attemptRevision` is the
- * POST-CLAIM revision of the generation that ran, and is the only value
- * reconciliation compares against a task's current revision.
+ * `execGeneration` is the CURRENT execution generation. It advances ONLY when
+ * `claimTask` accepts a claim - never on a title, order, dependency, parent,
+ * blockedReason, evidence, verification or status write. That invariance is the
+ * whole point: it makes the lineage decision immune to arbitrary task mutation,
+ * which is what 6G D1 proved revision could not be.
+ *
+ * `attemptGeneration` is the generation whose execution attempt reached its end,
+ * or `null` when no attempt of the current generation has completed. It records
+ * that an ATTEMPT ENDED - never that the task is correct or complete.
+ *
+ * It is NOT a task status, NOT a lock, NOT a lease, NOT a counter of attempts
+ * and NOT a history: exactly one generation is retained, and evidence lives on
+ * the task row so it cannot outlive the task.
  */
-export interface AttemptMarker {
-  readonly attemptRevision: number
+export interface ExecutionLineage {
+  readonly execGeneration: number
+  readonly attemptGeneration: number | null
 }
+
+/**
+ * [PHASE 6I] Outcome of `reconcileIfNoCompletedAttempt`.
+ *
+ * Distinct from the 6B `ReconcileOutcome` because the decision now also carries
+ * lineage meaning: `RECONCILED` means "this execution generation has no recorded
+ * completion, so it is stranded", whereas `NOT_STRANDED` means the current
+ * generation DID record completion (or the row is not reconcilable at all).
+ * `REFUSED_NO_OWNERSHIP` keeps 6B's fail-closed contract.
+ */
+export type LineageReconcileOutcome =
+  | "RECONCILED"
+  | "NOT_STRANDED"
+  | "REJECTED_STALE"
+  | "NOT_FOUND"
+  | "REFUSED_NO_OWNERSHIP"
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS tasks (
@@ -133,18 +163,14 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   revision INTEGER NOT NULL,
+  exec_generation INTEGER NOT NULL DEFAULT 0,
+  attempt_generation INTEGER,
   PRIMARY KEY (session_id, task_id)
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_session_order ON tasks(session_id, task_order);
 CREATE TABLE IF NOT EXISTS task_meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS task_attempt (
-  session_id TEXT NOT NULL,
-  task_id TEXT NOT NULL,
-  attempt_revision INTEGER NOT NULL,
-  PRIMARY KEY (session_id, task_id)
 );
 `
 
@@ -525,8 +551,8 @@ export class TaskStore {
       const ts = nowIso()
       try {
         db.prepare(
-          `INSERT INTO tasks (session_id, task_id, title, status, task_order, parent_id, depends_on_json, blocked_reason, verification_json, evidence_json, acceptance_json, provenance_json, created_at, updated_at, revision)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+          `INSERT INTO tasks (session_id, task_id, title, status, task_order, parent_id, depends_on_json, blocked_reason, verification_json, evidence_json, acceptance_json, provenance_json, created_at, updated_at, revision, exec_generation, attempt_generation)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, NULL)`,
         ).run(
           sessionId,
           chosen,
@@ -662,32 +688,49 @@ export class TaskStore {
     sessionId: string,
     taskId: string,
     expectedRevision: number,
-  ): { outcome: ClaimOutcome; task: Task | null } {
+  ): { outcome: ClaimOutcome; task: Task | null; execGeneration: number } {
     if (!isTaskId(taskId)) throw new TaskError("TASK_INVALID_ID", `not a canonical id: ${taskId}`)
     const db = handle(this.cwd)
     const statuses = sqlList(CLAIMABLE_STATUSES)
 
     // THE revision predicate lives here, in SQL. One statement = one atomic
     // decision; there is no read-then-write window.
+    //
+    // [PHASE 6I] The execution generation is created by the SAME statement that
+    // accepts the claim, so the two can never disagree and a rejected claim
+    // cannot advance it. It is the only place in the entire store that
+    // increments `exec_generation` - see the invariant at the column DDL.
     const result = db
       .prepare(
         `UPDATE tasks
-            SET status = 'IN_PROGRESS', updated_at = ?, revision = revision + 1
+            SET status = 'IN_PROGRESS', updated_at = ?, revision = revision + 1,
+                exec_generation = exec_generation + 1
           WHERE session_id = ? AND task_id = ? AND revision = ? AND status IN (${statuses})`,
       )
       .run(nowIso(), sessionId, taskId, expectedRevision)
 
     if (result.changes === 1) {
-      return { outcome: "CLAIM_ACCEPTED", task: this.getTask(sessionId, taskId) }
+      const lineage = this.getExecutionLineage(sessionId, taskId)
+      return {
+        outcome: "CLAIM_ACCEPTED",
+        task: this.getTask(sessionId, taskId),
+        execGeneration: lineage?.execGeneration ?? 0,
+      }
     }
 
-    // Lost the race, or never was claimable. Classify for the caller.
+    // Lost the race, or never was claimable. Classify for the caller. A rejected
+    // claim creates NO generation: execGeneration reports the unchanged current
+    // value so a caller can never mistake a rejection for a claim.
     const current = this.getTask(sessionId, taskId)
-    if (current === null) return { outcome: "NOT_FOUND", task: null }
-    if (current.revision !== expectedRevision) {
-      return { outcome: "CLAIM_REJECTED_STALE", task: current }
+    if (current === null) {
+      return { outcome: "NOT_FOUND", task: null, execGeneration: 0 }
     }
-    return { outcome: "WRONG_STATE", task: current }
+    const lineage = this.getExecutionLineage(sessionId, taskId)
+    const execGeneration = lineage?.execGeneration ?? 0
+    if (current.revision !== expectedRevision) {
+      return { outcome: "CLAIM_REJECTED_STALE", task: current, execGeneration }
+    }
+    return { outcome: "WRONG_STATE", task: current, execGeneration }
   }
 
   /**
@@ -744,69 +787,176 @@ export class TaskStore {
   }
 
   /**
-   * [PHASE 6F] Record that an execution attempt reached its end.
+   * [PHASE 6I] Read the execution lineage of one task.
    *
-   * This is the ONE durable fact the attempt-recovery design adds. It answers
-   * exactly one question: "did an attempt for this task, at this generation,
-   * finish?" It is deliberately NOT:
+   * Deliberately NOT part of the public `Task` shape: execution provenance is
+   * not task state, and exposing it on `Task` would let it leak into TaskGraph,
+   * readiness and presentation. It is reachable only through these accessors.
    *
-   *   - a task status. The task row is untouched; `IN_PROGRESS` stays
-   *     `IN_PROGRESS`. A returned turn is not a verdict.
-   *   - a completion claim. It says the ATTEMPT ENDED, never that the work was
-   *     correct. EXECUTION != VERIFICATION != COMPLETION.
-   *   - a lock, lease or heartbeat. It grants no exclusion and expires on
-   *     nothing. There is no clock here by design.
-   *   - a counter or a history. One row per task, overwritten per generation, so
-   *     the table stays O(tasks) and is never an execution log.
-   *
-   * `attemptRevision` MUST be the POST-CLAIM revision of the generation that ran.
-   * It is written verbatim: the store does not re-read the task and does not
-   * substitute current task state, because inferring the generation from mutable
-   * state is precisely the confusion this marker exists to eliminate.
-   *
-   * Upsert, so a new generation overwrites the previous marker. That is what
-   * keeps a historical marker from suppressing recovery of a newer one.
+   * Returns `null` for a task that does not exist. `attemptGeneration === null`
+   * means "no attempt of the current generation has completed" - a meaningful
+   * value, not an error.
    */
-  recordAttemptReturned(sessionId: string, taskId: string, attemptRevision: number): void {
+  getExecutionLineage(sessionId: string, taskId: string): ExecutionLineage | null {
     if (!isTaskId(taskId)) throw new TaskError("TASK_INVALID_ID", `not a canonical id: ${taskId}`)
-    if (!Number.isSafeInteger(attemptRevision) || attemptRevision < 1) {
+    const db = handle(this.cwd)
+    const row = db
+      .prepare(
+        `SELECT exec_generation, attempt_generation FROM tasks WHERE session_id = ? AND task_id = ?`,
+      )
+      .get(sessionId, taskId) as
+      | { exec_generation: number; attempt_generation: number | null }
+      | null
+      | undefined
+    if (row === null || row === undefined) return null
+    return { execGeneration: row.exec_generation, attemptGeneration: row.attempt_generation }
+  }
+
+  /**
+   * [PHASE 6I] Record that the execution attempt for one generation ended.
+   *
+   * This is the ONE durable fact the lineage design adds. It answers exactly one
+   * question: "did the attempt for generation `execGeneration` reach its end?" It
+   * is deliberately NOT:
+   *
+   *   - a task status. `IN_PROGRESS` stays `IN_PROGRESS`; a returned turn is not
+   *     a verdict. EXECUTION != VERIFICATION != COMPLETION.
+   *   - a completion claim, a lock, a lease, a heartbeat, a retry counter, or an
+   *     attempt history. One generation is retained per task and nothing here
+   *     expires on a clock.
+   *   - a revision. `execGeneration` comes from the claim that ran, never from
+   *     the task's current revision - that conflation is 6G defect D1.
+   *
+   * The write is GUARDED on `exec_generation = ?`. If the generation moved while
+   * the attempt was in flight the record would be misleading, so it is refused
+   * rather than written.
+   *
+   * The task's durable status is NOT touched, and no other column is written.
+   */
+  recordAttemptReturned(sessionId: string, taskId: string, execGeneration: number): void {
+    if (!isTaskId(taskId)) throw new TaskError("TASK_INVALID_ID", `not a canonical id: ${taskId}`)
+    if (!Number.isSafeInteger(execGeneration) || execGeneration < 1) {
       throw new TaskError(
         "TASK_INVALID_ID",
-        `attempt revision must be a positive integer: ${attemptRevision}`,
+        `execution generation must be a positive integer: ${execGeneration}`,
       )
     }
     const db = handle(this.cwd)
+    let changes = 0
     try {
-      db.prepare(
-        `INSERT INTO task_attempt (session_id, task_id, attempt_revision)
-              VALUES (?, ?, ?)
-         ON CONFLICT(session_id, task_id) DO UPDATE SET attempt_revision = excluded.attempt_revision`,
-      ).run(sessionId, taskId, attemptRevision)
+      changes = db
+        .prepare(
+          `UPDATE tasks
+              SET attempt_generation = ?
+            WHERE session_id = ? AND task_id = ? AND exec_generation = ?`,
+        )
+        .run(execGeneration, sessionId, taskId, execGeneration).changes
     } catch (e) {
-      // A marker that cannot be persisted is NOT a returned attempt. The caller
-      // must treat this as a persistence failure, never as "execution
-      // succeeded": swallowing it would convert a crash window into a silent
-      // permanent strand.
+      // Evidence that cannot be persisted is NOT a returned attempt. Never
+      // swallow: converting this into "execution succeeded" would turn the crash
+      // window into a silent permanent strand.
       throw new TaskError("TASK_PERSISTENCE_FAILURE", (e as Error).message)
+    }
+    if (changes !== 1) {
+      // The generation moved under us. Recording it now would attribute an
+      // outcome to the wrong generation, which is worse than recording nothing.
+      throw new TaskError(
+        "TASK_PERSISTENCE_FAILURE",
+        `execution generation ${execGeneration} is no longer current for ${sessionId}/${taskId}; refusing to record a stale completion`,
+      )
     }
   }
 
   /**
-   * [PHASE 6F] Read the attempt marker for one task, or `null` when none exists.
+   * [PHASE 6I] Revert a stranded in-flight task, deciding strandedness by
+   * EXECUTION LINEAGE rather than by revision.
    *
-   * The absence of a marker is meaningful and is the ONLY intended positive
-   * evidence that a generation has no recorded completion. A caller that finds
-   * `null` must not treat it as an error, and must not fill the gap with a
-   * heuristic.
+   * This replaces the 6F `reconcileStranded`-after-marker-read sequence. The
+   * lineage predicate and the revert are ONE statement, so there is no
+   * read-then-write window: a concurrent completion record cannot slip between
+   * the decision and the mutation. That property was 6B's and 6G re-confirmed it
+   * must not be regressed.
+   *
+   * The rule, exactly as 6H specified it:
+   *
+   *   attempt_generation IS NULL            -> STRANDED  (never completed)
+   *   attempt_generation <  exec_generation -> STRANDED  (a later generation
+   *                                               superseded an earlier one; the
+   *                                               current one has no record)
+   *   attempt_generation =  exec_generation -> not stranded
+   *   attempt_generation >  exec_generation -> impossible -> THROW
+   *
+   * The `IS NULL` disjunct is explicit rather than a comparison because
+   * `NULL < 0` is NULL, not true: a LEGACY-created `IN_PROGRESS` row that was
+   * never claimed (`exec_generation = 0`, no attempt) must be reconciled.
+   *
+   * The relation is STRICTLY `<`, and that strictness is load-bearing twice over.
+   * `<>` would wrongly match the impossible `attempt > exec` and silently revert
+   * a row on corrupt data; `<` excludes it, so the row is left alone, `changes`
+   * is 0, and the classification below raises instead of guessing. `<=` would be
+   * worse still: it would match `attempt = exec`, i.e. a COMPLETED generation,
+   * and reintroduce the 6D livelock in lineage form.
+   *
+   * Because `exec_generation` advances ONLY on an accepted claim, NO ordinary
+   * mutation - title, order, dependency, parent, blockedReason, evidence,
+   * verification, or status - can change the outcome of this rule. That is the
+   * structural end of 6G D1.
+   *
+   * The caller MUST hold session ownership; without it this refuses and mutates
+   * nothing (6B, unchanged). Never deletes. Never writes lineage. Never
+   * manufactures verification or evidence. Never reads a graph.
    */
-  getAttemptMarker(sessionId: string, taskId: string): AttemptMarker | null {
+  reconcileIfNoCompletedAttempt(
+    sessionId: string,
+    taskId: string,
+    expectedRevision: number,
+    opts: { ownsSession: boolean },
+  ): { outcome: LineageReconcileOutcome; task: Task | null } {
     if (!isTaskId(taskId)) throw new TaskError("TASK_INVALID_ID", `not a canonical id: ${taskId}`)
+    if (!opts.ownsSession) {
+      // Fail closed. Uncertainty about ownership is not permission to act.
+      return { outcome: "REFUSED_NO_OWNERSHIP", task: null }
+    }
     const db = handle(this.cwd)
-    const row = db
-      .prepare(`SELECT attempt_revision FROM task_attempt WHERE session_id = ? AND task_id = ?`)
-      .get(sessionId, taskId) as { attempt_revision: number } | null | undefined
-    if (row === null || row === undefined) return null
-    return { attemptRevision: row.attempt_revision }
+    const statuses = sqlList(RECONCILABLE_STATUSES)
+
+    const result = db
+      .prepare(
+        `UPDATE tasks
+            SET status = 'PENDING', updated_at = ?, revision = revision + 1
+          WHERE session_id = ? AND task_id = ? AND revision = ? AND status IN (${statuses})
+            AND (attempt_generation IS NULL OR attempt_generation < exec_generation)`,
+      )
+      .run(nowIso(), sessionId, taskId, expectedRevision)
+
+    if (result.changes === 1) {
+      return { outcome: "RECONCILED", task: this.getTask(sessionId, taskId) }
+    }
+
+    // Zero changes: the lineage predicate said "not stranded", or the row moved
+    // under us, or it is gone. One read classifies, exactly as 6B did.
+    const current = this.getTask(sessionId, taskId)
+    if (current === null) return { outcome: "NOT_FOUND", task: null }
+    if (current.revision !== expectedRevision) {
+      // Someone else moved it. Do not overwrite newer state.
+      return { outcome: "REJECTED_STALE", task: current }
+    }
+    const lineage = this.getExecutionLineage(sessionId, taskId)
+    if (lineage !== null && lineage.attemptGeneration !== null) {
+      if (lineage.attemptGeneration > lineage.execGeneration) {
+        // The recorded attempt names a generation NEWER than the current one.
+        // No legitimate sequence produces this. Do not guess which side is wrong:
+        // guessing either strands live work or re-runs finished work.
+        throw new TaskError(
+          "TASK_PERSISTENCE_FAILURE",
+          `attempt generation ${lineage.attemptGeneration} exceeds execution generation ${lineage.execGeneration} for ${sessionId}/${taskId}`,
+        )
+      }
+      return { outcome: "NOT_STRANDED", task: current }
+    }
+    // In flight with no completion record, yet the update matched nothing: the
+    // row is not in a reconcilable status. Leave it alone.
+    return { outcome: "NOT_STRANDED", task: current }
   }
 
   /**

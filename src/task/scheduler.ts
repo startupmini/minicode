@@ -135,10 +135,20 @@ export interface ActiveClaim {
   readonly taskId: string
   /**
    * The revision AFTER the accepted claim. Never the pre-claim revision, never
-   * the graph's revision, never a timestamp, never `sourceMaxRevision` — a
-   * release must address the state the claim actually produced.
+   * the graph's revision, never a timestamp, never `sourceMaxRevision` -
+   * a release must address the state the claim actually produced.
    */
   readonly claimRevision: number
+  /**
+   * [PHASE 6I] The EXECUTION GENERATION created by the accepted claim, returned
+   * by `claimTask` from the same atomic statement that set `IN_PROGRESS`.
+   *
+   * This is the identity an attempt belongs to, and it is deliberately NOT the
+   * revision: `claimRevision` changes on every unrelated task write, which is
+   * exactly what let a stale completion protect a later generation (6G D1).
+   * `execGeneration` advances only when a claim is accepted.
+   */
+  readonly execGeneration: number
 }
 
 export class SchedulerError extends Error {
@@ -332,7 +342,11 @@ export class Scheduler {
       // persistence inconsistency rather than pretending it is fine.
       throw new SchedulerError("persistence", "claim accepted but task is unreadable")
     }
-    this.claim = { taskId, claimRevision: accepted.revision }
+    this.claim = {
+      taskId,
+      claimRevision: accepted.revision,
+      execGeneration: claimResult.execGeneration,
+    }
     this.emit({ kind: "task:claimed", taskId, revision: accepted.revision })
 
     // 10. Dispatch through the injected bridge only.
@@ -406,30 +420,30 @@ export class Scheduler {
       ok: observation.kind === "returned" && observation.ok,
     })
 
-    // [PHASE 6F] The attempt ENDED. Record that one durable fact, for THIS
-    //    generation, before dropping the in-memory claim.
+    // [PHASE 6I] Record that this EXECUTION GENERATION's attempt ended, before
+    //    dropping the in-memory claim.
     //
-    //    The generation is the POST-CLAIM revision captured at claim time. It is
-    //    NOT re-read from the task here: current task state is mutable, and
-    //    inferring the generation from it is exactly the confusion the marker
-    //    exists to remove. If an external writer moved the task between claim
-    //    and return, the marker still names the generation that actually ran,
-    //    and reconciliation resolves the mismatch on its own terms.
+    //    The generation is the one the accepted claim created. It is NOT the
+    //    revision, and it is NOT re-read from the task: inferring lineage from
+    //    mutable task state is precisely the confusion 6G D1 exposed. An
+    //    unrelated write that bumped `revision` after the claim cannot change
+    //    what is recorded here.
     //
-    //    `ok` is deliberately NOT consulted. A rejected turn and a successful
-    //    turn are both "an attempt ended"; conflating them with success is the
-    //    bug this replaces. EXECUTION != VERIFICATION != COMPLETION.
+    //    `observation.ok` is deliberately NOT consulted. A rejected turn and a
+    //    successful turn are both "an attempt ended"; conflating them with
+    //    success is the bug this replaces. EXECUTION != VERIFICATION !=
+    //    COMPLETION.
     const generation = this.claim
     if (generation === null) {
       // The claim was cleared while the turn was in flight (stop() during
-      // dispatch). We no longer know which generation this was, so writing a
-      // marker would be a guess. Refuse rather than fabricate evidence.
+      // dispatch). We no longer know which generation this was, so recording
+      // one would be a guess. Refuse rather than fabricate evidence.
       throw new SchedulerError(
         "persistence",
         "attempt ended but no active claim identifies its generation",
       )
     }
-    this.store.recordAttemptReturned(this.sessionId, generation.taskId, generation.claimRevision)
+    this.store.recordAttemptReturned(this.sessionId, generation.taskId, generation.execGeneration)
 
     // The claim is released from this Scheduler's bookkeeping, but the task's
     // durable status is NOT rewritten here: a returned turn is not a verdict,
@@ -509,37 +523,23 @@ export class Scheduler {
       // Never revert the task this Scheduler is actively executing.
       if (this.claim?.taskId === task.id) continue
 
-      // [PHASE 6F] Read the marker BEFORE reverting. The comparison is against
-      // the task's CURRENT revision, and the marker names the generation that
-      // actually ran.
-      const marker = this.store.getAttemptMarker(this.sessionId, task.id)
-      if (marker !== null) {
-        if (marker.attemptRevision > task.revision) {
-          // The marker names a generation NEWER than the task row, which cannot
-          // happen through any legitimate sequence. Do not guess which one is
-          // wrong: guessing here either strands a live task or re-runs a
-          // finished one, and both are silent corruption.
-          throw new SchedulerError(
-            "persistence",
-            `attempt marker revision ${marker.attemptRevision} exceeds task ${task.id} revision ${task.revision}`,
-          )
-        }
-        // marker.attemptRevision === task.revision: this exact generation
-        //   recorded completion. Do not revert it.
-        // marker.attemptRevision < task.revision: a newer generation exists
-        //   (an external writer moved the task after the attempt ended), so
-        //   this marker is not evidence about the current generation. Still do
-        //   not revert: reverting here would fight a legitimate newer writer,
-        //   and the revision-guarded UPDATE below is the only thing allowed to
-        //   move the row anyway. Fails safe toward leaving work alone.
-        continue
-      }
-
-      // No marker: positive evidence that this generation has no recorded
-      // completion. This is the ONLY path to a revert.
-      const result = this.store.reconcileStranded(this.sessionId, task.id, task.revision, {
-        ownsSession: owned,
-      })
+      // [PHASE 6I] The lineage decision belongs to TaskStore, which owns both
+      // generation columns and can make it in ONE atomic guarded statement. The
+      // Scheduler contributes ownership and nothing else: it does not read the
+      // lineage, does not compare generations, and has no rule of its own.
+      //
+      // This is what closes 6G D1. The decision cannot be influenced by an
+      // unrelated task write, because `exec_generation` advances only on an
+      // accepted claim - not by the title, order, dependency, evidence or status
+      // writes that also advance `revision`.
+      const result = this.store.reconcileIfNoCompletedAttempt(
+        this.sessionId,
+        task.id,
+        task.revision,
+        {
+          ownsSession: owned,
+        },
+      )
       if (result.outcome === "RECONCILED") stranded.push(task.id)
     }
     if (stranded.length > 0) this.emit({ kind: "task:recovered", taskIds: stranded })

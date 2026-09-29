@@ -3,26 +3,33 @@
 Base: `c671337` (`fix: close scheduler integration safety gaps`)
 **Audit only. No production change. No enablement. No lineage redesign.**
 
+> **SUPERSEDED IN PART by Phase 6M.** D6 and D7 are **CLOSED** in
+> `docs/audit/PHASE-6M-SCHEDULER-HYGIENE.md`, and D8's accounting is
+> reconstructed there from real commits. **D6's attribution below was wrong**
+> and is corrected in place: the architecture-map gate was already red *before*
+> the Scheduler programme. No runtime finding in this report is changed.
+
 ---
 
 ## 1. Executive result
 
-# GREEN — no P0/P1 runtime-correctness defect. Two P2 repo-integrity defects, both introduced by the Scheduler programme itself.
+# GREEN — no P0/P1 runtime-correctness defect. Two P2 repo-integrity defects, neither of which originated in the Scheduler runtime.
 
 | | |
 |---|---|
 | **P0 / P1 runtime defects found** | **0** |
-| **D6** architecture map omits 8 Scheduler `src/task/*` files | **P2 — OPEN, attributable to 6B/6C** |
-| **D7** `test/phase6k-integration-safety.test.ts` carries a UTF-8 BOM | **P2 — OPEN, introduced by 6K itself** |
-| **D8** 6K's recorded baseline (4 failures) is wrong; true count is 5 | **P3 — OPEN** |
+| **D6** architecture map omits 8 `src/task/*` files | **P2 — CLOSED in 6M.** *Pre-existing* (6 of 8 predate the Scheduler); aggravated by the Scheduler era (6 → 8) |
+| **D7** `test/phase6k-integration-safety.test.ts` carries a UTF-8 BOM | **P2 — CLOSED in 6M.** Introduced by 6K itself |
+| **D8** 6K's recorded baseline (4 failures) is wrong | **P3 — CORRECTED in 6M**; 6K's total was 5, incl. one it created |
 | **I1** `RETRYING` is a declared-but-unwritable, permanently inert status | **INFO** |
-| **D5′** cross-process live-owner recovery, now with a real witness | **P2 — ACCEPTED/DEFERRED (by design)** |
+| **D5′** cross-process live-owner recovery, now with a real witness | **P2 — ACCEPTED/DEFERRED (by design)**, preserved unchanged in 6M |
 | line collision search (exhaustive, 5 910 transitions) | **0 collisions** |
 | system property testing (500 seeds) | **20 774 checks, 0 violations** |
 | production `new Scheduler(` | **0** |
-| full suite at `c671337` | **3 044 pass / 23 skip / 5 fail** |
+| full suite at `c671337` | **3 043 pass / 23 skip / 5 fail** (6M re-measurement; 6K reported 3045/23/**4**) |
 
 **Recommendation:** the Scheduler design is sound and safe to *continue building*. D6 and D7 must be fixed before any enablement, because the repository's own quality gates are red and were reported as green.
+
 
 ---
 
@@ -75,7 +82,15 @@ Evidence labels: `[FACT]` observed/executed, `[OBSERVATION]` pattern seen, `[INF
 
 ## 4. Findings
 
-### D6 — P2 — Architecture map omits 8 Scheduler source files (OPEN)
+### D6 — P2 — Architecture map omits 8 `src/task` files (CLOSED in 6M)
+
+> **CORRECTED in Phase 6M.** The attribution below was **wrong**. The
+> architecture-map gate was **already red before the Scheduler programme**:
+> 6 of the 8 files were missing at the pre-Scheduler baseline `99980db`. The
+> Scheduler era added only `scheduler.ts` + `session-ownership.ts` (6 → 8) and
+> did not notice the gate was already failing. So D6 is a **pre-existing defect
+> aggravated by the Scheduler era**, not a defect the Scheduler era created.
+> See `docs/audit/PHASE-6M-SCHEDULER-HYGIENE.md` §2.
 
 **Severity P2 · Confidence HIGH**
 
@@ -92,6 +107,7 @@ src/task/identity.ts        src/task/sync.ts
 
 `[INFERENCE]` The Scheduler programme added runtime source files without updating the architecture map, and no phase ran or reported this gate. It is a release-hygiene failure, not a runtime defect.
 
+
 ### D7 — P2 — 6K's own test file carries a UTF-8 BOM (OPEN)
 
 **Severity P2 · Confidence HIGH**
@@ -106,17 +122,24 @@ src/task/identity.ts        src/task/sync.ts
 
 `[INFERENCE]` Phase 6K introduced a repository-encoding violation in the very commit that added the safety tests, and did not notice because it did not run the encoding gate.
 
-### D8 — P3 — The recorded baseline is wrong (OPEN)
+> **CLOSED in Phase 6M.** The BOM was stripped by byte-slicing; the payload
+> SHA-256 is unchanged (`ae6b6ef1…`), the file is 3 bytes shorter, and it now
+> begins `2F 2F 20` (`// `). The encoding gate is green.
+
+### D8 — P3 — The recorded baseline is wrong (CORRECTED in 6M)
 
 **Severity P3 · Confidence HIGH**
 
 `[FACT]` `PHASE-6K-INTEGRATION-SAFETY-CORRECTIONS.md` §1 states: *"full suite — 3045 pass / 23 skip / 4 fail — the same 4 pre-existing"*.
 
-`[FACT]` At that identical commit (`c671337`, working tree clean) the suite yields **3 044 pass / 23 skip / 5 fail**.
+`[FACT]` At that identical commit (`c671337`, working tree clean) the suite yields **3 043 pass / 23 skip / 5 repo-state fail** (6M re-measurement from a real worktree at that commit).
 
-`[FACT]` Of the 5: **2 are Scheduler-attributable** (D6, D7). The remaining 3 — two `VENDOR.md` fingerprint mismatches and one `web ssg` nested-list check — are genuine pre-existing failures unrelated to task execution.
+`[FACT]` **CORRECTED:** the 4 failures 6K named are all genuinely **pre-existing** — measured at the pre-Scheduler baseline `99980db` the suite gives 2901/23/**4**, the identical 4. 6K was right that the *set* was pre-existing and wrong about the *total*.
 
-`[INFERENCE]` The baseline was not re-verified at the final commit, so two self-inflicted regressions were filed as "pre-existing". This is an audit-process defect: it is precisely how a real regression gets normalised away.
+`[FACT]` The 5th failure is one 6K itself created (D7, the BOM). So the architecture-map failure is **pre-existing, not Scheduler-introduced** — 6 of its 8 missing files predate the Scheduler programme.
+
+`[INFERENCE]` The baseline was not re-verified at the final commit, so a self-inflicted regression was filed as "pre-existing". This is an audit-process defect: it is precisely how a real regression gets normalised away.
+
 
 ### I1 — INFO — `RETRYING` is a dead, permanently inert status
 

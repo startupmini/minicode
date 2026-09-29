@@ -552,6 +552,48 @@ repository. Gates on the actual working tree:
 The 4 failures are the same pre-existing set (architecture-map, two `audit #11`
 vendor/pack hash, `web ssg`). **No new failures.**
 
+### ERRATUM (Phase 6M) — the "4 fail" total above is wrong; 6K introduced a 5th
+
+**This corrects the factual record. The original claim above is preserved as the
+historical claim it was, not as fact.**
+
+`[FACT]` Re-measured at the exact 6K commit `c671337`, Phase 6M recorded
+**3043 pass / 23 skip / 5 repo-state fail** — not `3045 / 23 skip / 4 fail`.
+
+`[FACT]` The 4 failures named above are indeed all **pre-existing**, and 6K was
+right about that part. Measured at the pre-Scheduler baseline `99980db`
+(=`188e999^`): **2901 pass / 23 skip / 4 fail**, the identical 4
+(`architecture-map`, 2× `audit #11`, `web ssg`). The architecture-map gate was
+**already red before the Scheduler programme began**.
+
+`[FACT]` The 5th failure is **introduced by 6K itself**:
+`test/import-convention.test.ts` → *"SEMUA berkas teks terlacak tanpa BOM"*.
+`test/phase6k-integration-safety.test.ts`, added by `c671337`, begins with the
+bytes `EF BB BF` (a UTF-8 BOM). Byte-verified.
+
+`[INFERENCE]` 6K reported `4 fail` because it compared the *name* of the
+pre-existing set without recounting the total. The number `4` was correct for
+"pre-existing" and wrong for "total" — so the one failure 6K itself created was
+invisible in its own gate table. The claim "**No new failures**" is therefore
+**false**.
+
+`[FACT]` Both are fixed in Phase 6M: the BOM was stripped (payload SHA-256
+unchanged) and the architecture map now lists every tracked `src/**` file, so
+that gate went from red to green — meaning the architecture-map failure was
+**pre-existing but aggravated** by the Scheduler era, which added
+`scheduler.ts` and `session-ownership.ts` to the missing set (6 → 8) without
+noticing the gate was already failing.
+
+`[OBSERVATION]` Suite numbers are not perfectly stable: `bun test` reported
+3043/23/5 for `c671337` and 3044/23/5 for `37a62b3`, and one test
+(`test/phase4b-isolation-lifecycle.test.ts` → "MCP: one context is stable…")
+fails only when the suite runs from a git worktree whose `node_modules` is a
+junction. It is an **environment artifact of the measurement**, not a repo
+defect; it was excluded from the comparison and is disclosed here.
+
+`[DESIGN DECISION]` No 6K finding is downgraded. D3/D4/D5 remain closed and the
+runtime results stand. Only the gate accounting was wrong.
+
 One transient regression was caught and reverted during this phase: bumping
 `TASK_DATA_VERSION` to 2 broke `taskstore.test.ts` "H". It is recorded as K10
 rather than quietly fixed, because the reason for the revert is a design decision

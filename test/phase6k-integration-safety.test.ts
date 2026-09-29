@@ -1,4 +1,4 @@
-﻿// Phase 6K â€” integration safety corrections (D3 / D4 / D5).
+// Phase 6K â€” integration safety corrections (D3 / D4 / D5).
 
 //
 // NEW ARCHITECTURE (corrective, not redesign). Phase 6J found three integration

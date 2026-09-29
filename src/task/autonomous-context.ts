@@ -76,79 +76,16 @@ export function parseAutonomousSessionId(
 
 // ── tool scope ───────────────────────────────────────────────────────────────
 
-/**
- * [PHASE 6R][DESIGN DECISION] The ONLY tool set an autonomous context may hold.
- *
- * 6O ADR-7 selected this, and the reason is recorded in the source it came from:
- * `src/tools/task.ts:170-172` — *"satu approval delegate_task menjadi N aksi
- * tak-disetujui"*. One approval becoming N unapproved actions.
- *
- * An autonomous executor is strictly MORE dangerous than a sub-agent, because no
- * human is watching its approvals, and the kernel has no `DEFER` decision
- * (`vendor/minicore/src/core/permission.ts:12` returns only `allow` | `deny`, and
- * a handler needing approval is expected to BLOCK until it resolves). An
- * unattended turn that could write would therefore be either blocked forever or
- * auto-approved. Restricting the tool set means the question never arises.
- *
- * This is a subset of `EXPLORE_TOOL_NAMES` (read/search/reason), which is the
- * same scope `delegate_task` forces for a `plan`/`readonly`/`ask` parent.
- */
-export const AUTONOMOUS_TOOL_NAMES: readonly string[] = [
-  "read_file",
-  "glob",
-  "grep",
-  "read_memory",
-  "todo_read",
-  "git_status",
-  "git_log",
-  "lsp_diagnostics",
-  "lsp_definition",
-  "lsp_hover",
-  "lsp_workspace_symbols",
-  "mcp_list",
-]
+import {
+  AUTONOMOUS_TOOL_NAMES,
+  type AutonomousDenialReason,
+  type AutonomousPermissionHandler,
+  AutonomousPolicyLedger,
+  assertAutonomousToolScope,
+  createAutonomousPermissionHandler,
+} from "./autonomous-policy.ts"
 
-/** Tools an autonomous context may never hold, named explicitly for diagnosis. */
-export const FORBIDDEN_AUTONOMOUS_TOOLS: readonly string[] = [
-  "write_file",
-  "edit_file",
-  "bash",
-  "bash_output",
-  "bash_kill",
-  "git_commit",
-  "git_apply",
-  "todo_write",
-  "delegate_task",
-  "submit_result",
-  "ask_user",
-  "write_memory",
-  "forget_memory",
-  "mcp_call",
-]
-
-/**
- * [PHASE 6R] Structural enforcement of the autonomous tool scope.
- *
- * Throws when a tool outside `AUTONOMOUS_TOOL_NAMES` is present. This is a
- * GATE, not advice: a composition root that wires a wider tool set fails at
- * context construction rather than silently granting an unattended executor
- * shell, filesystem writes, or the ability to mutate its own task list.
- *
- * The allow-list is what is enforced. `FORBIDDEN_AUTONOMOUS_TOOLS` is diagnostic
- * only — it names the interesting cases so the error message is useful, and so a
- * test can assert on intent.
- */
-export function assertAutonomousToolScope(toolNames: readonly string[]): void {
-  const allowed = new Set(AUTONOMOUS_TOOL_NAMES)
-  const forbidden = new Set(FORBIDDEN_AUTONOMOUS_TOOLS)
-  const offending = toolNames.filter((n) => !allowed.has(n))
-  if (offending.length === 0) return
-  const named = offending.filter((n) => forbidden.has(n))
-  const detail = named.length > 0 ? ` (explicitly forbidden: ${named.join(", ")})` : ""
-  throw new Error(
-    `autonomous execution context refused: tool scope is not read-only. Offending: ${offending.join(", ")}${detail}`,
-  )
-}
+export { AUTONOMOUS_TOOL_NAMES, assertAutonomousToolScope }
 
 // ── the injected session primitive ───────────────────────────────────────────
 
@@ -181,6 +118,18 @@ export interface AutonomousSessionSpec {
   readonly sessionId: string
   readonly parentSessionId: string
   readonly model?: string
+  /**
+   * [PHASE 6S] The INVOCATION-TIME gate.
+   *
+   * [DESIGN DECISION] The creation-time tool-set check is necessary but not
+   * sufficient: `withMcpTools()` appends MCP tools to a registry at runtime, so
+   * a set that was correct when the context was built can be stale by the time a
+   * call is made. The kernel guarantees it consults `SessionConfig.permissions`
+   * before every tool execution, so this is the narrowest authoritative
+   * boundary, and the handler denies out-of-scope calls immediately and
+   * synchronously - it can never block waiting for a human who is not there.
+   */
+  readonly permissionHandler: AutonomousPermissionHandler
 }
 
 // ── outcomes ─────────────────────────────────────────────────────────────────
@@ -299,6 +248,13 @@ export class AutonomousExecutionContext {
    */
   private readonly abort: AbortController = new AbortController()
   private cancelRequested = false
+  /**
+   * [PHASE 6S] Per-execution denial record. Not module-global, so two concurrent
+   * contexts cannot read each other's denials. Its only purpose is to let
+   * `execute()` distinguish "the model asked for something forbidden" from a
+   * generic failure - the turn result alone cannot say.
+   */
+  private readonly ledger: AutonomousPolicyLedger = new AutonomousPolicyLedger()
 
   constructor(config: AutonomousContextConfig) {
     // [DESIGN DECISION] Identity is derived, never supplied, so two contexts for
@@ -322,6 +278,16 @@ export class AutonomousExecutionContext {
 
   getSession(): AutonomousSession | null {
     return this.session
+  }
+
+  /**
+   * [PHASE 6S] Every capability the policy refused during this execution.
+   *
+   * Exposed so the caller can attribute a failure, and so a test can assert the
+   * gate fired without inferring it from a turn's prose.
+   */
+  getDenials(): readonly { tool: string; reason: AutonomousDenialReason }[] {
+    return this.ledger.denials_
   }
 
   private emit(event: AutonomousContextEvent): void {
@@ -361,6 +327,8 @@ export class AutonomousExecutionContext {
       systemExtra: this.systemExtra(),
       sessionId: this.childSessionId,
       parentSessionId: this.parentSessionId,
+      // [PHASE 6S] the invocation-time gate, built from THIS context's ledger
+      permissionHandler: createAutonomousPermissionHandler(this.ledger),
       ...(this.config.model ? { model: this.config.model } : {}),
     })
     this.state = "ready"
@@ -441,6 +409,24 @@ export class AutonomousExecutionContext {
           childSessionId: this.childSessionId,
         })
       }
+      // [PHASE 6S] A refusal DISQUALIFIES the turn, even though it resolved.
+      //
+      // [DESIGN DECISION] The model can catch a denial, apologise in prose and
+      // return a confident summary - `run()` resolves normally and its exit code
+      // says nothing about what happened. Reporting `returned` in that case would
+      // be the worst available answer: it tells the Scheduler the autonomous
+      // execution SUCCEEDED, and 6P would then let it commit that claim while the
+      // work was never permitted, let alone done. A capability refusal is
+      // therefore a terminal outcome in its own right, checked before success.
+      if (this.ledger.denied) {
+        return settle({
+          outcome: "permission-denied",
+          ok: false,
+          detail: `autonomous policy refused: ${this.ledger.summary()}`,
+          steps: res.usage?.steps ?? 0,
+          childSessionId: this.childSessionId,
+        })
+      }
       return settle({
         outcome: "returned",
         ok: true,
@@ -455,6 +441,18 @@ export class AutonomousExecutionContext {
           outcome: "cancelled",
           ok: false,
           detail,
+          steps: 0,
+          childSessionId: this.childSessionId,
+        })
+      }
+      // [PHASE 6S] A refusal is deterministic; the `busy` classification below is a
+      // guess read out of an error message. A deterministic fact outranks a
+      // heuristic, so the policy verdict is consulted first.
+      if (this.ledger.denied) {
+        return settle({
+          outcome: "permission-denied",
+          ok: false,
+          detail: `autonomous policy refused: ${this.ledger.summary()}`,
           steps: 0,
           childSessionId: this.childSessionId,
         })

@@ -207,13 +207,28 @@ describe("B. the autonomous tool scope is structural, not advisory", () => {
   })
 
   test("B3. the error names the explicitly forbidden tools", () => {
-    let msg = ""
-    try {
-      assertAutonomousToolScope(["bash"])
-    } catch (e) {
-      msg = (e as Error).message
+    // [PHASE 6S] 6R asserted a literal phrase from the then-current message.
+    // The phrase moved when the allow-list became DERIVED from the capability
+    // matrix, so the assertion is restated as the property it was protecting:
+    // every offending tool is named, whatever the wording around it. Asserting
+    // on a fixed string would have pinned 6S to a message it is right to change.
+    for (const tool of ["bash", "write_file", "todo_write"]) {
+      let msg = ""
+      try {
+        assertAutonomousToolScope([tool])
+      } catch (e) {
+        msg = (e as Error).message
+      }
+      expect(msg).toContain(tool)
     }
-    expect(msg).toContain("explicitly forbidden: bash")
+    // and an unclassified tool is named too, rather than passing silently
+    let unknownMsg = ""
+    try {
+      assertAutonomousToolScope(["brand_new_tool"])
+    } catch (e) {
+      unknownMsg = (e as Error).message
+    }
+    expect(unknownMsg).toContain("brand_new_tool")
   })
 
   test("B4. the factory RECEIVES readonly, never the interactive permission mode", async () => {

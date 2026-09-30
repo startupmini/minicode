@@ -71,6 +71,9 @@ Options:
   --budget-strict     unknown cost + spend counts as over budget (fail-closed default)
   --tool-scope <s>    full (default) | explore (read-only subset)
   --tui               deprecated no-op (interactive mode is always the fullscreen TUI)
+  --enable-scheduler  EXPERIMENTAL: opt in to the autonomous scheduler (default: off).
+                      Manual only - run /scheduler run. No timer; autonomous turns are
+                      readonly. Inspect with /scheduler status; release with /scheduler stop.
 
 TUI: /help /provider /model /sync /status /sessions /init /exit /mode /undo /redo /clear /copy /history /compact /thinking /minimize
 Keys: Enter submit · Tab/Shift+Tab mode · Up/Down history · Mouse wheel/PgUp/PgDn scroll (Shift = half page)

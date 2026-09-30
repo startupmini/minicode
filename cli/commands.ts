@@ -4,6 +4,11 @@ import type { Usage } from "../src/policy/usage.ts"
 import { refreshProviderModels } from "../src/providers/provision.ts"
 import { listSessions, loadSession } from "../src/session/persistence.ts"
 import type { Skill } from "../src/skills/loader.ts"
+import type { ProductionSchedulerHandle } from "../src/task/production-scheduler.ts"
+import {
+  describeOperatorState,
+  type SchedulerObservability,
+} from "../src/task/scheduler-observability.ts"
 import { type MsgKey, t } from "../src/ui/i18n/locale.ts"
 import { formatUsd } from "../src/ui/render/money.ts"
 import { glyphs } from "../src/ui/render/theme.ts"
@@ -43,6 +48,23 @@ export interface CommandContext {
    * budgetStatus; /status menampilkannya eksplisit, bukan menyimpulkan dari
    * angka. */
   budgetState: () => "ok" | "over" | "unknown-strict"
+  /**
+   * [PHASE 6AB] The operator control surface for the Scheduler.
+   *
+   * [DESIGN DECISION] Optional and structurally narrow: it carries exactly two
+   * references, both owned by the composition root that built THIS session. A
+   * command handler therefore cannot reach another session's Scheduler, cannot
+   * reach a process-global one, and — when absent — has no scheduler vocabulary at
+   * all. `cli/router.ts`'s one-shot subcommands never set it, so `/scheduler` in a
+   * piped invocation reports the truthful OFF rather than pretending.
+   */
+  scheduler?: SchedulerControl
+}
+
+/** The two objects `/scheduler` needs, injected by the composition root. */
+export interface SchedulerControl {
+  readonly handle: ProductionSchedulerHandle
+  readonly observability: SchedulerObservability
 }
 
 /**
@@ -123,6 +145,11 @@ export const DRIVER_HELP_COMMANDS: BuiltinCommand[] = [
   { name: "clear", descKey: "help.desc.clear" },
   { name: "copy", args: "[n]", descKey: "help.desc.copy" },
   { name: "history", descKey: "help.desc.history" },
+  // [PHASE 6AB] Help-only, not in the dropdown: the scheduler is off in every
+  // default session, so advertising it in completion would put a command that
+  // always answers "not enabled" one keystroke away. It stays fully discoverable
+  // in /help, which is where an operator enabling the flag will look.
+  { name: "scheduler", args: "[status|run|stop]", descKey: "help.desc.scheduler" },
 ]
 
 /** Pintasan papan tombol TUI — didokumentasikan di /help, bukan hanya di kode. */
@@ -239,6 +266,155 @@ async function resumeById(target: string, ctx: CommandContext): Promise<boolean>
 
 /** Petunjuk ke daftar pintasan lengkap, dipakai di /help. */
 
+/**
+ * [PHASE 6AB] `/scheduler [status|run|stop]`.
+ *
+ * Three subcommands, because §2 asks for the MINIMUM justified surface:
+ *
+ *  - `run`    - one explicit scheduling cycle. This is the trigger.
+ *  - `stop`   - the operator stop §9 asked for, replacing "kill the process".
+ *  - `status` (default) - the observability §7 asked for, as a readable surface.
+ *
+ * [DESIGN DECISION] No `start`. Once stopped, an operator restarts the process. A
+ * hot-toggle would need a runtime switch 6U already rejected as unable to stop a
+ * live turn, and §11 explicitly says not to introduce one.
+ *
+ * [DESIGN DECISION] `run` awaits the cycle, so the operator sees the outcome on the
+ * same screen. That is a deliberate consequence of choosing the explicit-command
+ * surface over a background timer: there is no other moment at which the answer
+ * becomes available.
+ */
+async function handleSchedulerCommand(args: string, ctx: CommandContext): Promise<void> {
+  const sub = args.trim().toLowerCase()
+  const ctl = ctx.scheduler
+  // [DESIGN DECISION] One writer, not twenty-three.
+  //
+  // OAP-008 (test/writer-inventory.test.ts) caps direct console writers per file and
+  // refuses a silent increase. The first draft of this command emitted one line per
+  // output, which added 23 writers to `cli/commands.ts` - exactly the pattern the
+  // audit exists to prevent, and the audit was right to fail.
+  //
+  // Collecting into an array and emitting once keeps the whole command at a single
+  // writer. The bound still moves, 29 -> 30, and that one step is declared in the
+  // inventory with its reason rather than absorbed quietly.
+  const out: string[] = []
+  const emit = (): void => {
+    if (out.length) console.log(out.join("\n"))
+  }
+
+  // [DESIGN DECISION] An absent control surface and an inert handle are DIFFERENT
+  // failures and get different words. "OFF" is a decision the operator made;
+  // "unavailable" means this command has no route at all, and conflating them
+  // would hide a wiring regression behind a reassuring message.
+  if (!ctl) {
+    out.push(t("sched.unavailable"))
+    emit()
+    return
+  }
+
+  const { handle, observability } = ctl
+
+  if (sub === "" || sub === "status") {
+    schedulerStatusLines(ctx, ctl, out)
+    emit()
+    return
+  }
+
+  if (sub === "run") {
+    if (!handle.enabled) {
+      out.push(t("sched.notEnabled"))
+      emit()
+      return
+    }
+    if (!handle.isActive()) {
+      // Reachable after `/scheduler stop`, after `close()`, or after the renewal
+      // heartbeat observed a lost lease. Report it; do NOT silently succeed.
+      out.push(t("sched.notActive"))
+      schedulerStatusLines(ctx, ctl, out)
+      emit()
+      return
+    }
+    out.push(t("sched.running"))
+    const result = await handle.fire("explicit-command")
+    if (result === null) {
+      // The handle returns null only when inactive, which was just checked;
+      // reaching here means state changed underneath us. Report, never fake.
+      out.push(t("sched.refusedUnknown"))
+      schedulerStatusLines(ctx, ctl, out)
+      emit()
+      return
+    }
+    switch (result.outcome) {
+      case "EVALUATED":
+        out.push(
+          observability.lastCycleStopReason === "no-candidates"
+            ? t("sched.ranNothing")
+            : t("sched.ranDone"),
+        )
+        break
+      case "COALESCED":
+        out.push(t("sched.coalesced"))
+        break
+      case "REFUSED_NOT_RUNNING":
+        out.push(t("sched.refusedNotRunning"))
+        break
+      case "REFUSED_ALREADY_PENDING":
+        out.push(t("sched.refusedPending"))
+        break
+    }
+    schedulerStatusLines(ctx, ctl, out)
+    emit()
+    return
+  }
+
+  if (sub === "stop") {
+    if (!handle.enabled) {
+      out.push(t("sched.notEnabled"))
+      emit()
+      return
+    }
+    if (!handle.isActive()) {
+      // [PHASE 6AB] Section 10 idempotency, in the operator's hands: stopping a
+      // stopped scheduler is a no-op that says so, not an error.
+      out.push(t("sched.alreadyStopped"))
+      emit()
+      return
+    }
+    // [DESIGN DECISION] `scheduler-stopped`, not `emergency-stop`. The latter is
+    // reserved for authority loss; an operator deliberately pressing stop is the
+    // supported path, and the reason lands in the activity log.
+    await handle.stop("scheduler-stopped")
+    observability.noteStopped("scheduler-stopped")
+    out.push(t("sched.stopped"))
+    emit()
+    return
+  }
+
+  out.push(t("sched.usage"))
+  emit()
+}
+
+function schedulerStatusLines(ctx: CommandContext, ctl: SchedulerControl, out: string[]): void {
+  const { handle, observability } = ctl
+  const snap = observability.status(handle)
+  out.push(`\n${t("sched.title")}`)
+  out.push(`  ${t("sched.state")}: ${describeOperatorState(snap.state)}`)
+  out.push(`  ${t("sched.session")}: ${ctx.sessionId}`)
+  out.push(`  ${t("sched.authority")}: ${handle.isActive() ? t("sched.held") : t("sched.none")}`)
+  out.push(
+    `  ${t("sched.counts")}: ${t("sched.cEvaluated")}=${snap.counts.evaluations} ` +
+      `${t("sched.cCoalesced")}=${snap.counts.coalesced} ${t("sched.cRefused")}=${snap.counts.refused} ` +
+      `${t("sched.cExec")}=${snap.counts.executions} ${t("sched.cFail")}=${snap.counts.failures}`,
+  )
+  if (snap.lastTaskId) out.push(`  ${t("sched.lastTask")}: ${snap.lastTaskId}`)
+  if (snap.lastCycleStop) out.push(`  ${t("sched.lastStop")}: ${snap.lastCycleStop}`)
+  if (snap.lastError) out.push(`  ${t("sched.lastError")}: ${snap.lastError}`)
+  if (snap.recent.length > 0) {
+    out.push(`\n  ${t("sched.recent")}`)
+    for (const n of snap.recent.slice(-5)) out.push(`    ${n.line}`)
+  }
+}
+
 export async function handleBuiltinCommand(
   rawInput: string,
   ctx: CommandContext,
@@ -340,6 +516,14 @@ export async function handleBuiltinCommand(
       // one-shot/pipe ke scrollback. Jendela info dihapus bersama REPL linier
       // (satu-satunya tampilan interaktif = TUI fullscreen).
       printStatus(ctx)
+      return { handled: true }
+    }
+
+    case "scheduler": {
+      // [PHASE 6AB] THE production-reachable trigger. 6AA's blocker was that
+      // `fire()` had no caller: the handle existed, held a lease, and was reachable
+      // from nowhere. This case is that caller.
+      await handleSchedulerCommand(args, ctx)
       return { handled: true }
     }
 

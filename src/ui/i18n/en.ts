@@ -173,6 +173,45 @@ export const en = {
   "help.desc.clear": "Clear transcript",
   "help.desc.copy": "Copy the last 1–10 turns to clipboard (OSC 52)",
   "help.desc.history": "Show recent prompt history",
+  "help.desc.scheduler": "Inspect, trigger, or stop the autonomous scheduler",
+
+  // [PHASE 6AB] Operator strings for `/scheduler`. The STATE line itself is
+  // deliberately not localised - see `describeOperatorState`, which the
+  // production-path tests assert verbatim. Everything around it is.
+  "sched.usage": "usage: /scheduler [status|run|stop]",
+  "sched.title": "Autonomous scheduler",
+  "sched.state": "state",
+  "sched.session": "session",
+  "sched.authority": "authority",
+  "sched.held": "held (lease acquired)",
+  "sched.none": "not held",
+  "sched.counts": "counters",
+  "sched.cEvaluated": "evaluated",
+  "sched.cCoalesced": "coalesced",
+  "sched.cRefused": "refused",
+  "sched.cExec": "executions",
+  "sched.cFail": "failures",
+  "sched.lastTask": "last task",
+  "sched.lastStop": "last cycle stop",
+  "sched.lastError": "last error",
+  "sched.recent": "recent activity",
+  "sched.unavailable":
+    "scheduler control is unavailable in this invocation — the scheduler exists only in the interactive session.",
+  "sched.notEnabled":
+    "scheduler is OFF for this process. Start it with --enable-scheduler to enable it.",
+  "sched.notActive":
+    "scheduler is not active (stopped, shut down, or its session authority was lost). It cannot be triggered; restart the process to re-enable.",
+  "sched.running": "evaluating the task graph…",
+  "sched.ranDone": "scheduling cycle completed.",
+  "sched.ranNothing": "scheduling cycle completed: no task was ready to run.",
+  "sched.coalesced": "a cycle was already running; this request was folded into it.",
+  "sched.refusedNotRunning":
+    "trigger refused: the scheduler is not running. Nothing was scheduled.",
+  "sched.refusedPending": "trigger refused: a re-run is already pending. Nothing changed.",
+  "sched.refusedUnknown": "trigger refused for an unknown reason. Nothing was scheduled.",
+  "sched.stopped":
+    "scheduler stopped: no further triggers, no new claims, and session authority released.",
+  "sched.alreadyStopped": "scheduler was already stopped; nothing to do.",
   "tui.budgetOver":
     "[budget] {spent} > {budget} — over budget, new prompts rejected. /exit to quit.",
   "tui.budgetUnknown":

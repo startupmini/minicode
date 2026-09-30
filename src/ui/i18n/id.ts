@@ -174,6 +174,45 @@ export const id: Record<MsgKey, string> = {
   "help.desc.clear": "Bersihkan transkrip",
   "help.desc.copy": "Salin 1–10 turn terakhir ke clipboard (OSC 52)",
   "help.desc.history": "Tampilkan riwayat prompt",
+  "help.desc.scheduler": "Periksa, picu, atau hentikan scheduler otonom",
+
+  // [PHASE 6AB] Operator strings for `/scheduler`.
+  "sched.usage": "pakai: /scheduler [status|run|stop]",
+  "sched.title": "Scheduler otonom",
+  "sched.state": "keadaan",
+  "sched.session": "sesi",
+  "sched.authority": "otoritas",
+  "sched.held": "dimiliki (lease diambil)",
+  "sched.none": "tidak dimiliki",
+  "sched.counts": "penghitung",
+  "sched.cEvaluated": "dievaluasi",
+  "sched.cCoalesced": "digabung",
+  "sched.cRefused": "ditolak",
+  "sched.cExec": "eksekusi",
+  "sched.cFail": "kegagalan",
+  "sched.lastTask": "tugas terakhir",
+  "sched.lastStop": "henti siklus terakhir",
+  "sched.lastError": "galat terakhir",
+  "sched.recent": "aktivitas terbaru",
+  "sched.unavailable":
+    "kendali scheduler tidak tersedia pada pemanggilan ini — scheduler hanya ada di sesi interaktif.",
+  "sched.notEnabled":
+    "scheduler MATI untuk proses ini. Jalankan dengan --enable-scheduler untuk menyalakannya.",
+  "sched.notActive":
+    "scheduler tidak aktif (dihentikan, ditutup, atau otoritas sesinya hilang). Tidak dapat dipicu; jalankan ulang proses untuk menyalakan lagi.",
+  "sched.running": "mengevaluasi grafik tugas…",
+  "sched.ranDone": "siklus penjadwalan selesai.",
+  "sched.ranNothing": "siklus penjadwalan selesai: tidak ada tugas yang siap dijalankan.",
+  "sched.coalesced": "siklus sedang berjalan; permintaan ini digabung ke dalamnya.",
+  "sched.refusedNotRunning":
+    "pemicuan ditolak: scheduler tidak berjalan. Tidak ada yang dijadwalkan.",
+  "sched.refusedPending":
+    "pemicuan ditolak: sudah ada pengulangan yang tertunda. Tidak ada yang berubah.",
+  "sched.refusedUnknown":
+    "pemicuan ditolak karena alasan tidak diketahui. Tidak ada yang dijadwalkan.",
+  "sched.stopped":
+    "scheduler dihentikan: tidak ada pemicu lanjutan, tidak ada klaim baru, dan otoritas sesi dilepaskan.",
+  "sched.alreadyStopped": "scheduler sudah dihentikan; tidak ada yang perlu dilakukan.",
   "tui.budgetOver":
     "[budget] {spent} > {budget} — melebihi budget, prompt baru ditolak. /exit untuk keluar.",
   "tui.budgetUnknown":

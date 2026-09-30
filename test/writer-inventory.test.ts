@@ -18,7 +18,11 @@ import { join } from "node:path"
 
 const INVENTORY: Record<string, { max: number; owner: string }> = {
   "cli/auto-update.ts": { max: 4, owner: "human-cmd" },
-  "cli/commands.ts": { max: 29, owner: "human-cmd" },
+  // [PHASE 6AB] 29 -> 30 for exactly one `/scheduler` writer. The first draft used
+  // a `console.log` per output line (23 writers) and this audit failed it, which
+  // is the audit working: the command now collects into an array and emits once.
+  // Declared here rather than absorbed, per the rule above.
+  "cli/commands.ts": { max: 30, owner: "human-cmd" },
   "cli/index.ts": { max: 25, owner: "human-cmd" },
   "cli/model-manager.ts": { max: 2, owner: "human-cmd" },
   "cli/provider-manager.ts": { max: 3, owner: "human-cmd" },

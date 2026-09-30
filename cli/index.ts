@@ -194,7 +194,16 @@ if (args.includes("-h") || args.includes("--help")) {
           { flag: "--resume <id>", desc: "resume session id" },
           {
             flag: "--enable-scheduler",
-            desc: "EXPERIMENTAL: allow autonomous background task execution (default: off)",
+            // [PHASE 6AB] REWRITTEN. 6AA recorded this text as the single most
+            // misleading fact an operator would meet: it promised "autonomous
+            // background task execution" for a process that could not execute
+            // anything at all. The replacement says what the flag does, how to
+            // make it act, and — the part the old text omitted — that triggering
+            // is MANUAL and there is no recurring background loop.
+            desc:
+              "EXPERIMENTAL: opt in to the autonomous scheduler for this session (default: off). " +
+              "Runs on manual /scheduler run only — no background timer, no recurring polling. " +
+              "Autonomous turns are readonly. Use /scheduler status|stop inside the session.",
           },
           { flag: "--model <name>", desc: "override model (provider::model)" },
           { flag: "--provider <id>", desc: "force provider id" },

@@ -1,0 +1,224 @@
+{
+  "phase": "6AB",
+  "kind": "production-path mutation campaign",
+  "generated_at": "2026-09-30T14:26:57.512Z",
+  "totals": {
+    "planned": 14,
+    "executed": 14,
+    "killed": 14,
+    "survived": 0,
+    "unexecuted": 0
+  },
+  "campaign_failure": null,
+  "complete": true,
+  "rows": [
+    {
+      "id": "M1",
+      "target": "the production fire() call is removed from the operator command",
+      "file": "cli/commands.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ab-production-trigger.test.ts",
+        "test/phase6ab-process-boundary.test.ts"
+      ],
+      "note": "16 test(s) failed under mutant"
+    },
+    {
+      "id": "M10",
+      "target": "help text claims continuous background scheduling",
+      "file": "cli/index.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ab-production-trigger.test.ts"
+      ],
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "id": "M11",
+      "target": "--resume is no longer passed to the composition root",
+      "file": "cli/index.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ab-production-trigger.test.ts"
+      ],
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "id": "M12",
+      "target": "the Scheduler is constructed against a process-global session",
+      "file": "src/task/production-scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ab-production-trigger.test.ts",
+        "test/phase6ab-process-boundary.test.ts"
+      ],
+      "note": "10 test(s) failed under mutant"
+    },
+    {
+      "id": "M13",
+      "target": "session deletion no longer stops the scheduler",
+      "file": "src/task/production-scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ab-production-trigger.test.ts",
+        "test/phase6ab-process-boundary.test.ts"
+      ],
+      "note": "2 test(s) failed under mutant"
+    },
+    {
+      "id": "M14",
+      "target": "authority loss no longer self-disposes, so triggering could continue",
+      "file": "src/task/scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ab-production-trigger.test.ts",
+        "test/phase6ab-process-boundary.test.ts"
+      ],
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "id": "M2",
+      "target": "the trigger handle is dropped instead of exposed on the session",
+      "file": "cli/setup.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ab-production-trigger.test.ts",
+        "test/phase6ab-process-boundary.test.ts"
+      ],
+      "note": "33 test(s) failed under mutant"
+    },
+    {
+      "id": "M3",
+      "target": "the command context is given another session's identity",
+      "file": "cli/tui.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ab-production-trigger.test.ts"
+      ],
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "id": "M4",
+      "target": "the command no longer refuses a trigger after stop",
+      "file": "cli/commands.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ab-production-trigger.test.ts",
+        "test/phase6ab-process-boundary.test.ts"
+      ],
+      "note": "2 test(s) failed under mutant"
+    },
+    {
+      "id": "M5",
+      "target": "lease acquisition failures are swallowed at the composition root",
+      "file": "src/task/production-scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ab-production-trigger.test.ts",
+        "test/phase6ab-process-boundary.test.ts",
+        "test/phase6z-production-audit.test.ts"
+      ],
+      "note": "2 test(s) failed under mutant"
+    },
+    {
+      "id": "M6",
+      "target": "the cycle ignores graph readiness and treats every task as a candidate",
+      "file": "src/task/scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ab-production-trigger.test.ts",
+        "test/phase6ab-process-boundary.test.ts"
+      ],
+      "note": "7 test(s) failed under mutant"
+    },
+    {
+      "id": "M7",
+      "target": "the autonomous executor is given the full session tool set",
+      "file": "cli/setup.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ab-production-trigger.test.ts",
+        "test/phase6ab-process-boundary.test.ts"
+      ],
+      "note": "30 test(s) failed under mutant"
+    },
+    {
+      "id": "M8",
+      "target": "production observability sinks are removed",
+      "file": "cli/setup.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ab-production-trigger.test.ts"
+      ],
+      "note": "7 test(s) failed under mutant"
+    },
+    {
+      "id": "M9",
+      "target": "the shutdown stop wiring is dropped",
+      "file": "cli/setup.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ab-production-trigger.test.ts",
+        "test/phase6ab-process-boundary.test.ts",
+        "test/phase6z-production-audit.test.ts"
+      ],
+      "note": "3 test(s) failed under mutant"
+    }
+  ]
+}

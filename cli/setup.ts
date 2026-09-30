@@ -79,6 +79,7 @@ import {
   type ProductionSchedulerHandle,
   schedulerGateFor,
 } from "../src/task/production-scheduler.ts"
+import { SchedulerObservability } from "../src/task/scheduler-observability.ts"
 import { createTaskIdentityResolver } from "../src/task/sync.ts"
 import {
   classifyToolResult,
@@ -209,6 +210,24 @@ export interface CliSession {
   expandAllContent: () => ContentEntry[]
   getPresentationSnapshot: () => UiPresentationSnapshot
   onPresentationEvent: (handler: (event: UiPresentationEvent) => void) => () => void
+  /**
+   * [PHASE 6AB] The trigger handle, exposed.
+   *
+   * 6AA's blocker was precisely that this was NOT here: `createProductionScheduler`
+   * returned a real, authority-holding handle that `cli/setup.ts` kept in a local
+   * and called exactly one method on - `stop()`. Nothing else in the process could
+   * reach `fire()`, so an enabled Scheduler could never be made to do anything.
+   *
+   * [DESIGN DECISION] Ownership stays with the production runtime, which is what
+   * this object is. The handle is deliberately NOT written into TaskStore,
+   * TaskGraph, task state or a module-level singleton: it holds an AbortController,
+   * a lease token and a subscription, none of which belong in durable state, and a
+   * global would make the per-session scoping 6T designed for impossible to keep.
+   * Exactly one session owns exactly one handle, and that session is `sessionId`.
+   */
+  productionScheduler: ProductionSchedulerHandle
+  /** [PHASE 6AB] Operator projection fed by the Scheduler's own event stream. */
+  schedulerObservability: SchedulerObservability
 }
 
 export function toPresentationEvent(event: DomainEvent): UiPresentationEvent | null {
@@ -1520,6 +1539,13 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     } catch {}
   }
 
+  // [PHASE 6AB] The operator projection. Created here, unconditionally and cheaply
+  // (a few counters and an empty array - no I/O, no store handle, no Scheduler), so
+  // the OFF case can still ANSWER "is the scheduler on?" with a truthful OFF rather
+  // than by absence. It holds no reference to the Scheduler, the store or the UI:
+  // it is fed events and probed against the handle.
+  const schedulerObservability = new SchedulerObservability()
+
   // ── [PHASE 6U] AUTONOMOUS SCHEDULER COMPOSITION ────────────────────────────
   //
   // [DESIGN DECISION] One call, one function, behind one boolean that defaults to
@@ -1592,6 +1618,12 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           execGeneration: store.getExecutionLineage(sessionId, taskId)?.execGeneration ?? 0,
           sessionIncarnation: store.getSessionIncarnation(sessionId),
         }),
+        // [PHASE 6AB] The sinks 6AA proved nobody passed. Both events were already
+        // produced by 6U/6T's constructors; wiring them here is the entire
+        // observability fix. They live INSIDE the `deps` thunk, so with the gate
+        // shut they are never even constructed.
+        onSchedulerEvent: (e) => schedulerObservability.noteSchedulerEvent(e),
+        onTriggerEvent: (e) => schedulerObservability.noteTriggerEvent(e),
       }
     },
   )
@@ -1608,6 +1640,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     // the default configuration.
     try {
       await productionScheduler.stop("shutdown")
+      // [PHASE 6AB] `Scheduler.stop()` releases authority without emitting a
+      // `cycle:stopped`, so the projection is told explicitly. Otherwise the last
+      // activity line an operator sees after exit would describe work rather than
+      // the shutdown that ended it.
+      if (productionScheduler.constructed) schedulerObservability.noteStopped("shutdown")
     } catch {
       // Teardown must not fail because a scheduler could not stop. Durable
       // recovery remains authoritative for anything still in flight.
@@ -1666,6 +1703,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     runPromptWithVerify,
     permissions,
     close,
+    // [PHASE 6AB] The two objects the operator control surface needs. Exposed on
+    // the session, not through a registry: whoever holds a CliSession can operate
+    // the Scheduler of exactly that session and no other.
+    productionScheduler,
+    schedulerObservability,
     /** Counter reducer presentasi (divergensi harus 0). */
     getShadowDiagnostics,
     getPresentationSnapshot,

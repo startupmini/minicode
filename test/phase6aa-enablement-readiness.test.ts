@@ -90,10 +90,19 @@ describe("§1 enablement contract", () => {
     expect(resolveSchedulerGate(["--enable-scheduler"]).enabled).toBe(true)
   })
 
-  test("the flag is documented in --help with its default", () => {
+  test("the flag is documented in --help, truthfully (6AB corrected the text)", () => {
     const src = readSrc("cli/index.ts")
     expect(src).toContain('flag: "--enable-scheduler"')
-    expect(src).toMatch(/EXPERIMENTAL: allow autonomous background task execution \(default: off\)/)
+    // [PHASE 6AB] 6AA recorded the original text as the single most misleading fact
+    // an operator would meet: it promised "autonomous background task execution"
+    // for a process that could not execute anything. The replacement states what the
+    // flag does, how to make it act, and that triggering is MANUAL.
+    expect(src).toMatch(/EXPERIMENTAL: opt in to the autonomous scheduler/)
+    expect(src).toMatch(/default: off/)
+    expect(src).toContain("no background timer")
+    expect(src).toContain("/scheduler run")
+    // And it no longer claims the thing that was never true.
+    expect(src).not.toContain("allow autonomous background task execution")
   })
 })
 
@@ -232,32 +241,51 @@ describe("§3/§5/§6 explicit-ON semantics as built", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("§4 trigger reachability in the production wiring", () => {
-  test("production NEVER calls fire(), and never exposes the handle", () => {
+  // [PHASE 6AB] The two tests below INVERTED in 6AB. They are kept, inverted,
+  // rather than deleted, because a 6AA audit that simply stopped asserting the
+  // absence of a trigger would let the same regression return unnoticed - and the
+  // exact reason 6AA existed is that "the helper is correct" was proven while the
+  // product stayed inert.
+  test("CLOSED IN 6AB: production reaches fire() through exactly one command route", () => {
     // [FACT] Read from the production sources. This is the difference between
     // "technically possible" and "operationally ready".
     const setup = readSrc("cli/setup.ts")
-    const indexSrc = readSrc("cli/index.ts")
+    const commands = readSrc("cli/commands.ts")
 
-    // 1. The handle is CONSTRUCTED ... and `stop` is the ONLY method production
-    //    ever calls on it. Enumerated from the source, so adding a fire() here
-    //    would fail this test rather than silently change what the flag does.
-    const methods = [...setup.matchAll(/productionScheduler\s*\.\s*(\w+)/g)].map((m) => m[1])
-    expect(methods).toEqual(["stop"])
-    expect(setup).not.toMatch(/productionScheduler\s*\.\s*fire\s*\(/)
-    expect(indexSrc).not.toMatch(/\.\s*fire\s*\(\s*"(startup|task-mutation|explicit-command)"/)
-    expect(setup).not.toContain("onSchedulerEvent")
-    expect(setup).not.toContain("onTriggerEvent")
+    // 1. The handle is EXPOSED, not kept in a local. 6AA found it constructed and
+    //    callable by nobody outside this file.
+    expect(setup).toMatch(/^ {4}productionScheduler,$/m)
+
+    // 2. Production calls `fire()` from exactly ONE place, and it is the operator
+    //    command - not a timer, not a hook, not startup.
+    const fireSites = [...commands.matchAll(/\.\s*fire\s*\(\s*"([a-z-]+)"\s*\)/g)].map((m) => m[1])
+    expect(fireSites).toEqual(["explicit-command"])
+
+    // 3. Still no automatic triggering: nothing schedules itself.
+    expect(setup).not.toMatch(/setInterval[\s\S]{0,120}fire\(/)
+    expect(setup).not.toMatch(/setTimeout[\s\S]{0,120}fire\(/)
   })
 
-  test("the scheduler's own event stream exists but reaches no operator surface", () => {
-    // [FACT] The events are well-defined and 6Y/6Z assert on them directly. But the
-    // production composition passes no `onSchedulerEvent`, so they are constructed
-    // and discarded. Auditability therefore rests entirely on durable task state.
+  test("CLOSED IN 6AB: the scheduler's event stream now reaches an operator surface", () => {
+    // [FACT] The events were always well-defined. 6AA proved production passed no
+    // sink, so they were constructed and discarded; auditability rested entirely on
+    // durable task state. 6AB wires both sinks at the composition root.
     const prod = readSrc("src/task/production-scheduler.ts")
     expect(prod).toContain("onSchedulerEvent")
     expect(prod).toContain("onTriggerEvent")
+
     const setup = readSrc("cli/setup.ts")
-    expect(setup).not.toMatch(/on(Scheduler|Trigger)Event\s*:/)
+    expect(setup).toMatch(/onSchedulerEvent\s*:/)
+    expect(setup).toMatch(/onTriggerEvent\s*:/)
+
+    // ...and the projection is exposed so the operator command can read it.
+    expect(setup).toMatch(/^ {4}schedulerObservability,$/m)
+    // The sinks live INSIDE the deps thunk, so OFF still constructs nothing.
+    const thunkStart = setup.indexOf("async () => {")
+    const sink = setup.indexOf("onSchedulerEvent:")
+    const compose = setup.indexOf("createProductionScheduler(")
+    expect(sink).toBeGreaterThan(thunkStart)
+    expect(sink).toBeGreaterThan(compose)
   })
 })
 

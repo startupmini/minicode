@@ -117,6 +117,8 @@ export async function runTui(ctx: CliSession): Promise<void> {
     persistCurrent,
     runPromptWithVerify,
     close,
+    productionScheduler,
+    schedulerObservability,
   } = ctx
   const { session } = ctx
   const getPresentationSnapshot = () =>
@@ -153,6 +155,21 @@ export async function runTui(ctx: CliSession): Promise<void> {
     cwd,
     sessionId,
     allowLocalConfig,
+    // [PHASE 6AB] THE operator control surface. `/scheduler` is the single
+    // production-reachable path to `fire()` and to `stop()`; 6AA proved nothing
+    // else could reach either. Both objects belong to THIS session, so the command
+    // cannot address another session's Scheduler (section 12).
+    //
+    // Omitted entirely when absent, so the command reports "unavailable" - a
+    // different and more honest answer than "off".
+    ...(productionScheduler && schedulerObservability
+      ? {
+          scheduler: {
+            handle: productionScheduler,
+            observability: schedulerObservability,
+          },
+        }
+      : {}),
     get currentModel() {
       return modelRef.current ?? cfg.providers[0]?.models[0]
     },
@@ -174,6 +191,25 @@ export async function runTui(ctx: CliSession): Promise<void> {
       return budgetStatus(budget, u.cost, budgetStrict ?? false, u.totalTokens)
     },
   }
+
+  // [PHASE 6AB] Live scheduler notices -> transcript as SYSTEM entries.
+  //
+  // [DESIGN DECISION] `pushInfo` appends with `kind: "system"`, which is a
+  // distinct transcript kind from `user`/`assistant`/`activity`/`approval`. That
+  // is exactly the separation §8 asks for: a scheduler lifecycle line is NOT a
+  // user turn, NOT assistant prose, and NOT tool output. Nothing here synthesises
+  // a model message, and no tool result is duplicated — these lines originate in
+  // `Scheduler.emit`/`TriggerCoordinator.emit` and are passed through verbatim.
+  //
+  // [DESIGN DECISION] Attached HERE, after the Transcript exists, rather than in
+  // `createCliSession`. See `SchedulerObservability.onSchedulerNotice`: anything
+  // emitted before this line still reaches `/scheduler status` through the bounded
+  // log, so the delay loses no information.
+  //
+  // [DESIGN DECISION] Guarded. `runTui` is also driven by test fixtures that build
+  // a partial CliSession, and a projection that is absent must degrade to "no live
+  // notices" rather than take the whole TUI down on the first scheduler event.
+  schedulerObservability?.onSchedulerNotice((line) => transcript.pushInfo([`[scheduler] ${line}`]))
 
   const suggestions = (line: string): string[] => {
     if (!line.startsWith("/")) return []

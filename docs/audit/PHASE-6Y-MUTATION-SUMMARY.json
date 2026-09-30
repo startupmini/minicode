@@ -1,0 +1,473 @@
+{
+  "checkpoint": "964c0b7",
+  "generated_by": "scripts/phase6y-mutation.ts",
+  "totals": {
+    "executed": 31,
+    "killed": 28,
+    "survived": 1,
+    "equivalent": 2,
+    "unexecuted": 0,
+    "planned": 31
+  },
+  "campaign_failure": null,
+  "rows": [
+    {
+      "mutation": "M1",
+      "target": "lease never expires (expiry clause disabled)",
+      "file": "src/task/store.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "25 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M2",
+      "target": "an active lease can be stolen (expiry always true)",
+      "file": "src/task/store.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "12 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M3",
+      "target": "acquisition drops the owner-token comparison entirely",
+      "file": "src/task/store.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "12 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M4",
+      "target": "renewal does not check the owner token",
+      "file": "src/task/store.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "15 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M5",
+      "target": "renewal accepts a token that is NOT the owner",
+      "file": "src/task/store.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "15 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M6",
+      "target": "release is not token-guarded",
+      "file": "src/task/store.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "15 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M7",
+      "target": "the 6X bug: takeover refreshes deadline/pid but leaves owner_token stale",
+      "file": "src/task/store.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "24 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M8",
+      "target": "holdsSessionAuthority ignores the token",
+      "file": "src/task/store.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "14 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M9",
+      "target": "the Scheduler continues scheduling after losing authority",
+      "file": "src/task/scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "3 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M10",
+      "target": "reconcile runs without authority",
+      "file": "src/task/scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "3 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M11",
+      "target": "start() ignores a refused lease",
+      "file": "src/task/scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M12",
+      "target": "authority is per-session, not per-(session,incarnation)",
+      "file": "src/task/store.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "60 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M13",
+      "target": "the lease is never renewed",
+      "file": "src/task/scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts",
+        "test/phase6y-process-lease.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "2 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M14",
+      "target": "the lease is shorter than a legitimate execution window",
+      "file": "src/task/session-authority.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts",
+        "test/phase6y-process-lease.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "2 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M15",
+      "target": "expiry is extended without limit",
+      "file": "src/task/store.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [],
+      "result": "EQUIVALENT",
+      "note": "EQUIVALENT: renewal IS \"extend the expiry\", so a holder extending its own lease is the\n       intended semantics, not a defect. The security-relevant variants - extending\n       SOMEONE ELSE's lease (M5) and a renewal that always reports success (M22) -\n       are both killed."
+    },
+    {
+      "mutation": "M16",
+      "target": "getSessionAuthority ignores the incarnation",
+      "file": "src/task/store.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "60 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M17",
+      "target": "a recreated session's lease is keyed to a fixed incarnation",
+      "file": "src/task/store.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "7 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M18",
+      "target": "session deletion does not invalidate authority",
+      "file": "src/task/scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "2 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M19",
+      "target": "self-dispose does not release the lease",
+      "file": "src/task/scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [],
+      "result": "EQUIVALENT",
+      "note": "EQUIVALENT: disposeSelf()'s releaseAuthority() is unreachable for any path where the\n       lease would still be held. disposeSelf is called from (a) loseAuthority(),\n       where the lease is already lost so a token-guarded release is a no-op, and\n       (b) the runCycle session-superseded path, where the 6Q incarnation bump has\n       already re-keyed the lease. The TASK_GONE path - the one where a release is\n       load-bearing - does NOT go through disposeSelf: dispatchTracked calls the\n       deleted-session handler, which releases at scheduler.ts:530. Verified by\n       stack-tracing releaseSessionAuthority under the mutant."
+    },
+    {
+      "mutation": "M20",
+      "target": "a restarted process reuses a predictable owner token",
+      "file": "src/task/session-authority.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "2 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M21",
+      "target": "the authority check moves after autonomous scheduling begins",
+      "file": "src/task/scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "3 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M22",
+      "target": "renewal always reports success",
+      "file": "src/task/store.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "12 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M23",
+      "target": "a stale instance can release another incarnation's lease",
+      "file": "src/task/store.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "30 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M24",
+      "target": "the expiry comparison is inverted",
+      "file": "src/task/store.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "23 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M25",
+      "target": "clock units are wrong (ms treated as s)",
+      "file": "src/task/store.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-lease-core.test.ts",
+        "test/phase6y-production-and-lifecycle.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "19 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M26",
+      "target": "the production gate accepts value forms again (F01 regression)",
+      "file": "src/task/production-scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-production-and-lifecycle.test.ts",
+        "test/phase6v-adversarial-audit.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "2 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M27",
+      "target": "the production CLI gate is bypassed for the permissive matcher (F01)",
+      "file": "cli/index.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-production-and-lifecycle.test.ts",
+        "test/phase6v-adversarial-audit.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M28",
+      "target": "an environment variable enables the Scheduler",
+      "file": "cli/index.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-production-and-lifecycle.test.ts",
+        "test/phase6v-adversarial-audit.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "2 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M29",
+      "target": "the gate is applied after construction",
+      "file": "src/task/production-scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-production-and-lifecycle.test.ts",
+        "test/phase6v-adversarial-audit.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "2 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M30",
+      "target": "a second production Scheduler is constructed",
+      "file": "src/task/production-scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [
+        "test/phase6y-production-and-lifecycle.test.ts",
+        "test/phase6v-adversarial-audit.test.ts"
+      ],
+      "result": "KILLED",
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "mutation": "M31",
+      "target": "an injected 6S permission handler stops suppressing onPermissions",
+      "file": "src/app/session.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "testsFailed": [],
+      "result": "SURVIVED",
+      "note": "no test detected the mutation"
+    }
+  ]
+}

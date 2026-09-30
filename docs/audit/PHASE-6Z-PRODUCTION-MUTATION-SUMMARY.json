@@ -1,0 +1,179 @@
+{
+  "phase": "6Z",
+  "kind": "production-path mutation campaign",
+  "totals": {
+    "planned": 15,
+    "executed": 15,
+    "killed": 15,
+    "survived": 0,
+    "unexecuted": 0
+  },
+  "campaign_failure": null,
+  "rows": [
+    {
+      "mutation": "P1",
+      "target": "the scheduler gate is removed",
+      "file": "src/task/production-scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "note": "2 test(s) failed under mutant"
+    },
+    {
+      "mutation": "P2",
+      "target": "the gate accepts =false (F01 regression)",
+      "file": "src/task/production-scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "mutation": "P3",
+      "target": "onPermissions is reconnected to the injected autonomous handler",
+      "file": "src/app/session.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "note": "4 test(s) failed under mutant"
+    },
+    {
+      "mutation": "P4",
+      "target": "the Scheduler is constructed before the gate is consulted",
+      "file": "src/task/production-scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "mutation": "P5",
+      "target": "lease acquisition is skipped",
+      "file": "src/task/scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "note": "non-zero exit null"
+    },
+    {
+      "mutation": "P6",
+      "target": "the authority check before reconciliation is removed",
+      "file": "src/task/scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "note": "2 test(s) failed under mutant"
+    },
+    {
+      "mutation": "P7",
+      "target": "holdsSessionAuthority accepts any token",
+      "file": "src/task/store.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "note": "9 test(s) failed under mutant"
+    },
+    {
+      "mutation": "P8",
+      "target": "the autonomous child reuses the parent session id",
+      "file": "src/task/autonomous-context.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "mutation": "P9",
+      "target": "the autonomous child shares the parent abort controller",
+      "file": "src/task/autonomous-context.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "note": "22 test(s) failed under mutant"
+    },
+    {
+      "mutation": "P10",
+      "target": "the readonly autonomous policy is bypassed",
+      "file": "src/task/autonomous-policy.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "note": "4 test(s) failed under mutant"
+    },
+    {
+      "mutation": "P11",
+      "target": "TaskStore authority mode is downgraded to LEGACY",
+      "file": "src/task/autonomous-policy.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "note": "2 test(s) failed under mutant"
+    },
+    {
+      "mutation": "P12",
+      "target": "session incarnation is not propagated to the lineage write",
+      "file": "src/task/scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "note": "4 test(s) failed under mutant"
+    },
+    {
+      "mutation": "P13",
+      "target": "the trigger can fire after shutdown",
+      "file": "src/task/production-scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "note": "2 test(s) failed under mutant"
+    },
+    {
+      "mutation": "P14",
+      "target": "an old Scheduler may act after the session is recreated",
+      "file": "src/task/scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "note": "2 test(s) failed under mutant"
+    },
+    {
+      "mutation": "P15",
+      "target": "autonomous event attribution is removed",
+      "file": "src/task/autonomous-context.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "note": "1 test(s) failed under mutant"
+    }
+  ]
+}

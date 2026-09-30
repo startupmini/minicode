@@ -10,6 +10,9 @@ import { resolveSandbox, sandboxRefusalReason } from "../src/policy/sandbox-poli
 import { budgetStatus } from "../src/policy/usage.ts"
 import { attachMutationJournal } from "../src/session/journal.ts"
 import { findSkill, renderSkill } from "../src/skills/loader.ts"
+// [PHASE 6X] The ONE production gate resolver, imported directly so the call site
+// and its tests cannot drift apart. See the note at the `schedulerEnabled` line.
+import { GATE_ENABLED, resolveSchedulerGate } from "../src/task/production-scheduler.ts"
 import { writeTrace } from "../src/telemetry/trace.ts"
 import { setSubAgentSessionFactory } from "../src/tools/task.ts"
 import { formatError, takePendingError } from "../src/ui/assistant/simple.ts"
@@ -240,12 +243,23 @@ const cwd = cwdRaw ? resolvePath(cwdRaw) : undefined
 const allowLocal = allowLocalConfig(args)
 // [PHASE 6U] Autonomous Scheduler opt-in. DEFAULT OFF.
 //
-// [DESIGN DECISION] `hasFlag` and nothing else — deliberately NOT `|| process.env…`,
+// [DESIGN DECISION] `hasFlag` and nothing else - deliberately NOT `|| process.env.`,
 // unlike the permission and plan flags above. This one must not be inheritable:
 // `process.env` is passed to sub-agents, MCP servers and LSP servers, so an env
 // gate would switch autonomous execution on for children the person running the
 // process never asked for. This flag is the only mechanism, and it is per-invocation.
-const schedulerEnabled = hasFlag(args, "--enable-scheduler")
+//
+// [PHASE 6X] ...but `hasFlag` is the WRONG matcher here (6V FINDING-01). It accepts
+// any `name=value` form, so `--enable-scheduler=false`, `=0` and even `=whatever`
+// all ENABLED the Scheduler - the exact opposite of what the person asked for. The
+// gate itself was already correct and unit-tested; the production CALLER was not
+// using it. So the call site now uses the same resolver the tests pin, which makes
+// "the flag is absent" and "the flag is negated" the same answer, as they must be.
+//
+// The generic `hasFlag` is deliberately left alone: its value-form behaviour is
+// correct for the permission and plan flags, and changing it would alter unrelated
+// CLI semantics. The bug was in choosing it for a valueless flag.
+const schedulerEnabled = resolveSchedulerGate(args) === GATE_ENABLED
 const resumeId = getArg("--resume")
   ?.replace(/[^A-Za-z0-9._-]/g, "-")
   .slice(0, 64)

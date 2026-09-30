@@ -45,6 +45,7 @@ import {
   type TaskVerification,
   taskIdFromIndex,
 } from "./model.ts"
+import type { SessionAuthority } from "./session-authority.ts"
 
 const TASK_DB_FILENAME = "tasks.db"
 
@@ -284,6 +285,20 @@ CREATE INDEX IF NOT EXISTS idx_tasks_session_order ON tasks(session_id, task_ord
 CREATE TABLE IF NOT EXISTS task_meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS session_authority (
+  -- [PHASE 6X] One row per (session, incarnation): a bounded, self-expiring
+  -- claim on the RIGHT TO SCHEDULE, never proof of liveness.
+  session_id       TEXT    NOT NULL,
+  incarnation      INTEGER NOT NULL,
+  owner_token      TEXT    NOT NULL,
+  owner_pid        INTEGER NOT NULL,
+  acquired_at      INTEGER NOT NULL,
+  lease_expires_at INTEGER NOT NULL,
+  -- Keyed by incarnation as well as session, so a session deleted and recreated
+  -- (6Q bumps the incarnation) can never inherit its predecessor's lease.
+  PRIMARY KEY (session_id, incarnation)
 );
 `
 
@@ -1635,6 +1650,144 @@ export class TaskStore {
    *  database. Diagnostics only; the guard above is what enforces safety. */
   inTransaction(): boolean {
     return (txDepth.get(dbFile(this.cwd)) ?? 0) > 0
+  }
+  // â”€â”€ [PHASE 6X] session-level autonomous authority (6W ADR-20/21) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  //
+  // [DESIGN DECISION] The lease is a SESSION fact, kept deliberately separate from
+  // the tasks table and from 6Q's per-task lineage. The two layers never read each
+  // other, so authority can never be half-updated alongside a task row.
+  //
+  // Its existence is NOT evidence of liveness - it is a bounded claim on the right
+  // to schedule. That distinction is the whole fix for 6V FINDING-02, which needed
+  // two reconcilers to coexist on one session so one could revert the other's live
+  // execution. Exactly one of them can hold this row at a time.
+
+  /**
+   * Read the authority record for a session's current incarnation, or null.
+   *
+   * [DESIGN DECISION] Fail-closed on an undecodable row: it reads as "no authority
+   * exists", the safe direction for a caller deciding whether it may schedule. It is
+   * NOT treated as free for a *renewal*, which additionally requires our own token.
+   */
+  getSessionAuthority(sessionId: string, incarnation?: number): SessionAuthority | null {
+    const inc = incarnation ?? this.getSessionIncarnation(sessionId)
+    const row = handle(this.cwd)
+      .prepare(
+        `SELECT owner_token AS ownerToken,
+                owner_pid AS ownerPid,
+                acquired_at AS acquiredAt,
+                lease_expires_at AS leaseExpiresAt,
+                incarnation
+           FROM session_authority
+          WHERE session_id = ? AND incarnation = ?`,
+      )
+      .get(sessionId, inc) as Record<string, unknown> | undefined | null
+    if (row === undefined || row === null) return null
+    return {
+      sessionId,
+      incarnation: Number(row.incarnation),
+      ownerToken: String(row.ownerToken),
+      ownerPid: Number(row.ownerPid),
+      acquiredAt: Number(row.acquiredAt),
+      leaseExpiresAt: Number(row.leaseExpiresAt),
+    }
+  }
+
+  /**
+   * Take the lease, or renew it, in ONE atomic statement.
+   *
+   * [DESIGN DECISION] This is the mutual-exclusion primitive, so it must be one SQL
+   * statement. Split into a read-then-write it would reintroduce precisely the race
+   * F02 needed, and a concurrent pair of acquirers would then have two winners.
+   *
+   * The `ON CONFLICT ... WHERE` clause is the whole trick: the upsert lands only when
+   * no row exists, or when the existing row is still OURS. A live lease belonging to
+   * somebody else fails the WHERE, is left untouched, and `changes` reports 0.
+   */
+  acquireSessionAuthority(
+    sessionId: string,
+    ownerToken: string,
+    leaseMs: number,
+    now = Date.now(),
+  ): "ACQUIRED" | "REFUSED_LEASE_HELD" {
+    const inc = this.getSessionIncarnation(sessionId)
+    const result = handle(this.cwd)
+      .prepare(
+        `INSERT INTO session_authority
+           (session_id, incarnation, owner_token, owner_pid, acquired_at, lease_expires_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (session_id, incarnation) DO UPDATE SET
+           -- [PHASE 6X] owner_token MUST be updated here, not just the deadline.
+           -- On a takeover the new owner has to become the recorded owner, or the
+           -- row would keep naming the previous owner while its lease was extended -
+           -- so the old token would still pass holdsSessionAuthority and both
+           -- parties would believe they were authoritative.
+           owner_token      = excluded.owner_token,
+           owner_pid        = excluded.owner_pid,
+           acquired_at      = excluded.acquired_at,
+           lease_expires_at = excluded.lease_expires_at
+         WHERE session_authority.owner_token = excluded.owner_token
+            OR session_authority.lease_expires_at <= ?`,
+      )
+      .run(sessionId, inc, ownerToken, process.pid, now, now + leaseMs, now)
+    return result.changes === 1 ? "ACQUIRED" : "REFUSED_LEASE_HELD"
+  }
+
+  /**
+   * Extend OUR lease. Refused when the token is not the current owner's, which is
+   * what stops a paused or partitioned process from reclaiming a session whose lease
+   * has already been taken over.
+   */
+  renewSessionAuthority(
+    sessionId: string,
+    ownerToken: string,
+    leaseMs: number,
+    now = Date.now(),
+  ): "AUTHORITY_HELD" | "AUTHORITY_LOST" {
+    const inc = this.getSessionIncarnation(sessionId)
+    const result = handle(this.cwd)
+      .prepare(
+        `UPDATE session_authority
+            SET lease_expires_at = ?
+          WHERE session_id = ? AND incarnation = ? AND owner_token = ?`,
+      )
+      .run(now + leaseMs, sessionId, inc, ownerToken)
+    return result.changes === 1 ? "AUTHORITY_HELD" : "AUTHORITY_LOST"
+  }
+
+  /**
+   * Give the lease back.
+   *
+   * [DESIGN DECISION] A clean stop is an unambiguous handover, so the row is DELETED
+   * rather than left to expire. Keeping it would leave a released session with an
+   * "authority record" a later reader could mistake for a live owner. The EXPIRY
+   * path is the one that preserves the row, so a crashed owner's takeover history
+   * stays inspectable.
+   *
+   * Token-guarded, so a stale instance can only ever fail to release - never evict
+   * the successor that holds the session now.
+   */
+  releaseSessionAuthority(sessionId: string, ownerToken: string): boolean {
+    const inc = this.getSessionIncarnation(sessionId)
+    const result = handle(this.cwd)
+      .prepare(
+        `DELETE FROM session_authority
+          WHERE session_id = ? AND incarnation = ? AND owner_token = ?`,
+      )
+      .run(sessionId, inc, ownerToken)
+    return result.changes === 1
+  }
+
+  /**
+   * Is OUR authority still valid right now?
+   *
+   * The single predicate every scheduling boundary consults. A lease is ACTIVE while
+   * `lease_expires_at > now`; the strict inequality means an expired row is already
+   * free, so expiry and takeover can never both succeed at the same instant.
+   */
+  holdsSessionAuthority(sessionId: string, ownerToken: string, now = Date.now()): boolean {
+    const a = this.getSessionAuthority(sessionId)
+    return a !== null && a.ownerToken === ownerToken && a.leaseExpiresAt > now
   }
 }
 

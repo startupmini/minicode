@@ -51,6 +51,7 @@ import {
 import { TaskGraph } from "./graph.ts"
 import type { ClaimOutcome, TaskSnapshot } from "./model.ts"
 import { selectTask } from "./scheduling-policy.ts"
+import { newOwnerToken, SESSION_LEASE_MS, SESSION_RENEW_INTERVAL_MS } from "./session-authority.ts"
 import type { SessionOwner } from "./session-ownership.ts"
 
 // Re-exported so a composition root needs one import to wire a cancellation-aware
@@ -93,6 +94,8 @@ export type CycleStop =
    * lifetime it started for. Self-disposed; ownership released for a replacement.
    */
   | "session-superseded"
+  /** [PHASE 6X] Cross-process authority was lost; the instance self-disposed. */
+  | "authority-lost"
 
 /** Why a work item could not be handed to the agent loop. */
 export type DispatchFailure =
@@ -183,6 +186,11 @@ export interface SchedulerOptions {
   readonly onEvent?: (event: SchedulerEvent) => void
   /** Optional cancellation the composition root owns. Scheduler never invents one. */
   readonly cancellation?: { readonly isCancelled: () => boolean }
+  /**
+   * [PHASE 6X] Pre-existing authority token, when the composition root owns the
+   * lease. Omit and the Scheduler mints its own at start().
+   */
+  readonly authorityToken?: string
 }
 
 export interface ActiveClaim {
@@ -267,6 +275,14 @@ export class Scheduler {
    */
   private incarnationAtStart: number | null = null
 
+  // -- [PHASE 6X] cross-process authority ---------------------------------------
+  /** The durable lease token for THIS authority. Null until start(). */
+  private authorityToken: string | null = null
+  /** Set when a lease is lost; from then on this instance must not schedule. */
+  private authorityLost = false
+  /** Renewal heartbeat. unref'd, and cleared on every stop path. */
+  private renewTimer: ReturnType<typeof setInterval> | null = null
+
   /**
    * V1 is SERIAL. A cycle in progress makes any further call wait for it, which
    * is why N concurrent `cycle()` calls can never produce two dispatches. This
@@ -315,11 +331,77 @@ export class Scheduler {
         )
       }
       this.owner = owner
-      // [PHASE 6T] Remember which lifetime of this session we are serving, so a
+      // [PHASE 6W/6X] Remember which lifetime of this session we are serving, so a
       // deletion that happens while we sit idle cannot go unnoticed.
       this.incarnationAtStart = this.store.getSessionIncarnation(this.sessionId)
     }
+
+    // [PHASE 6X] DURABLE, CROSS-PROCESS AUTHORITY.
+    //
+    // [DESIGN DECISION] Acquired HERE, before any cycle can run, and it is what
+    // closes FINDING-02. F02 required TWO reconcilers to coexist on one session;
+    // process-local ownership cannot see another OS process, so a second process
+    // used to sail past it and revert the first one's live execution. This is a
+    // single atomic statement, so a race has exactly one winner.
+    //
+    // The token is generated per `start()` and is never a PID or an object
+    // identity, so a restarted process can never present its predecessor's token.
+    const token = this.authorityToken ?? newOwnerToken()
+    this.authorityToken = token
+    const acquired = this.store.acquireSessionAuthority(this.sessionId, token, SESSION_LEASE_MS)
+    if (acquired === "REFUSED_LEASE_HELD") {
+      // Fail CLOSED, and release the process-local token we just took so the loser
+      // leaves nothing half-installed.
+      if (this.owner !== null) {
+        releaseSessionOwnership(this.sessionId, this.owner, "stopped")
+        this.owner = null
+      }
+      this.state = "STOPPED"
+      throw new SchedulerError(
+        "ownership-unavailable",
+        `session ${this.sessionId} already has a valid autonomous lease held by another process`,
+      )
+    }
+
+    // [PHASE 6X] Renewal while the scheduler is live. `unref()` so it never keeps
+    // the process alive on its own, and cleared on every stop path.
+    this.renewTimer = setInterval(() => {
+      if (this.authorityToken === null) return
+      if (
+        this.store.renewSessionAuthority(this.sessionId, this.authorityToken, SESSION_LEASE_MS) ===
+        "AUTHORITY_LOST"
+      ) {
+        this.loseAuthority()
+      }
+    }, SESSION_RENEW_INTERVAL_MS)
+    this.renewTimer.unref?.()
+
     this.state = "RUNNING"
+  }
+
+  /**
+   * [PHASE 6X] Authority lost: a lease expired and someone else took it, or the
+   * session was deleted out from under us.
+   *
+   * [DESIGN DECISION] Fail closed IMMEDIATELY and loudly. The alternative —
+   * carrying on and discovering the loss at the next write — would mean scheduling
+   * without authority in the meantime, which is exactly what F02 exploited. We
+   * cancel the in-flight turn because continuing to spend a provider on work we
+   * may no longer write is worse than stopping; 6Q's incarnation check remains the
+   * durable backstop if the turn completes anyway.
+   */
+  private loseAuthority(): void {
+    if (this.state === "STOPPED") return
+    this.authorityLost = true
+    this.emit({ kind: "cycle:stopped", reason: "authority-lost" })
+    this.cancelActive("emergency-stop")
+    this.disposeSelf()
+  }
+
+  /** True only while this instance still holds valid cross-process authority. */
+  hasAuthority(): boolean {
+    if (this.authorityToken === null || this.authorityLost) return false
+    return this.store.holdsSessionAuthority(this.sessionId, this.authorityToken)
   }
 
   /**
@@ -351,6 +433,7 @@ export class Scheduler {
       }
     }
     this.state = "STOPPED"
+    this.releaseAuthority()
     if (this.owner !== null) {
       releaseSessionOwnership(this.sessionId, this.owner, "stopped")
       this.owner = null
@@ -407,7 +490,29 @@ export class Scheduler {
    * caller of this method is the in-flight cycle itself, so awaiting it would
    * deadlock. Synchronous disposal is the only correct shape at this point.
    */
+  /**
+   * [PHASE 6X] Stop renewing and give the lease back — but only if it is still
+   * OURS. A stale instance whose lease was taken over must not clear the
+   * successor's authority (6X section 8).
+   */
+  private releaseAuthority(): void {
+    if (this.renewTimer !== null) {
+      clearInterval(this.renewTimer)
+      this.renewTimer = null
+    }
+    if (this.authorityToken !== null) {
+      this.store.releaseSessionAuthority(this.sessionId, this.authorityToken)
+      this.authorityToken = null
+    }
+  }
+
   private disposeSelf(): void {
+    // [PHASE 6X] Give the lease back here too, not just in stop(). 6Q's whole
+    // point is that a self-disposed instance must leave the session USABLE, and
+    // a retained lease would lock the replacement out for a full lease period.
+    // Safe on the authority-lost path as well: release is token-guarded, so a
+    // stale instance can only ever fail to release, never evict its successor.
+    this.releaseAuthority()
     if (this.state === "STOPPED") return
     // [PHASE 6T] Stop the WORK as well as the instance.
     //
@@ -420,6 +525,10 @@ export class Scheduler {
     // Ordering matters: cancel BEFORE releasing ownership, so nothing can start a
     // replacement and race this instance's dying turn.
     this.cancelActive("session-deleted")
+    // [PHASE 6X] ...and give the lease back, for the same reason: a superseded
+    // session must be immediately schedulable by its replacement. Ordering is
+    // unchanged - cancel first, then release.
+    this.releaseAuthority()
     this.state = "STOPPED"
     this.incarnationAtStart = null
     if (this.owner !== null) {
@@ -467,6 +576,26 @@ export class Scheduler {
         this.disposeSelf()
         return { stop: "session-superseded", dispatched: null, recovered: [] }
       }
+    }
+
+    // [PHASE 6X] THE RECONCILIATION BOUNDARY.
+    //
+    // [DESIGN DECISION] This is the heart of the F02 fix, so it gates every durable
+    // effect - before reconciliation, before readiness, before a claim. A Scheduler
+    // that has lost its cross-process lease must not touch durable state at all, and
+    // `reconcile()` is precisely the code that reverts other people's work.
+    //
+    // Deliberately AFTER the 6T incarnation check, and that ordering is the point.
+    // A deleted-and-recreated session also stops us holding the lease, because the
+    // lease is keyed by (session, incarnation) - but "the session I serve was
+    // deleted" is the true cause and it has its own accurate diagnosis, release
+    // ordering and 6Q backstop. Reporting that as `authority-lost` would be a lie
+    // about WHY we stopped, and it would also point at the wrong suspect.
+    // `authority-lost` therefore means exactly one thing: our lease is gone and the
+    // session is still ours, so another process is the live owner.
+    if (!this.hasAuthority()) {
+      if (!this.authorityLost) this.loseAuthority()
+      return { stop: "authority-lost", dispatched: null, recovered: [] }
     }
 
     // [PHASE 6T] CAPACITY, checked BEFORE anything durable happens.
@@ -819,6 +948,13 @@ export class Scheduler {
    * attempt never recorded completion.
    */
   reconcile(): readonly string[] {
+    // [PHASE 6X] No authority, no reconciliation. Unconditionally: this is the single
+    // function that reverts another party's in-flight work, and it is exactly what
+    // FINDING-02 used.
+    if (!this.hasAuthority()) {
+      if (!this.authorityLost) this.loseAuthority()
+      return []
+    }
     const owned = ownsSession(this.sessionId, this.owner)
     if (!owned) {
       this.emit({ kind: "cycle:stopped", reason: "ownership-unavailable" })

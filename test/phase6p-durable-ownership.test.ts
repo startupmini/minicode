@@ -171,11 +171,17 @@ describe("A. history table: H1/H2/H5 are separated by durable ownership", () => 
     expect(store.getTask(S, t.id)?.status).toBe("PENDING")
   })
 
-  test("H7. H5 shape survives a Scheduler restart and is still left alone", () => {
+  test("H7. H5 shape survives a Scheduler restart and is still left alone", async () => {
     const t = add("PENDING")
     claim(t)
-    reconcileOnly().reconcile()
+    const first = reconcileOnly()
+    first.reconcile()
     legacy.patchTask(S, t.id, { status: "IN_PROGRESS" })
+    // [PHASE 6X] A process that exits releases its lease. Stopping is that exit:
+    // the successor is then free to acquire, which is what a graceful shutdown
+    // does. The CRASH case (no stop, lease held until expiry) is 6X's to test -
+    // here we only assert the shape survives a clean handover.
+    await first.stop()
 
     // new store handle + new Scheduler = a fresh process
     resetTaskStoreHandles()

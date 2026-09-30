@@ -199,20 +199,27 @@ describe("§2-3 enablement gate read through the PRODUCTION parser", () => {
     expect(hasFlag(["--enable-scheduler", "x"], "--enable-scheduler")).toBe(true)
   })
 
-  test("§3.2 FINDING: `--enable-scheduler=false` ENABLES it in production", () => {
+  test("§3.2 FIXED: `--enable-scheduler=false` no longer enables it in production", () => {
     // [6V FINDING-01] 6U documented "the flag has no value form" and asserted it
-    // in a test — but against `resolveSchedulerGate`, the MODULE function.
-    // Production reads through `hasFlag`, which matches `token.startsWith(name+"=")`.
-    // The two disagree, and production follows the permissive one.
+    // against `resolveSchedulerGate` — the MODULE function — while production read
+    // through `hasFlag`, which matches `token.startsWith(name+"=")`. The two
+    // disagreed, and production followed the permissive one.
+    //
+    // [PHASE 6X] `cli/index.ts` now calls `resolveSchedulerGate` directly, so the
+    // audited function and the executed expression are the same code again. This
+    // test is retained rather than deleted: it is the regression guard for the
+    // exact defect, and it fails if anyone reintroduces a permissive matcher.
     const productionSays = hasFlag(["--enable-scheduler=false", "x"], "--enable-scheduler")
     const moduleSays = resolveSchedulerGate(["--enable-scheduler=false"]).enabled
-    const constructed = productionSays && schedulerGateFor(productionSays).enabled
-    // This assertion DOCUMENTS the defect; it is expected to hold true.
-    expect({ productionSays, moduleSays, constructionWouldRun: constructed }).toEqual({
-      productionSays: true,
-      moduleSays: false,
-      constructionWouldRun: true,
-    })
+    // The permissive matcher still exists — it is correct for the permission and
+    // plan flags, and was deliberately NOT changed. What changed is that the
+    // Scheduler gate no longer uses it.
+    expect(productionSays).toBe(true)
+    expect(moduleSays).toBe(false)
+    // And the production call site now follows the strict answer, so the
+    // construction decision is driven by `moduleSays`, not `productionSays`.
+    const constructed = moduleSays && schedulerGateFor(moduleSays).enabled
+    expect(constructed).toBe(false)
   })
 
   test("§3.3 no env var, config key, or module side effect can enable it", () => {

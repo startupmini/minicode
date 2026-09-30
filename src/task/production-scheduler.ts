@@ -93,10 +93,22 @@ export const GATE_ENABLED: SchedulerGate = { enabled: true, source: "cli-flag" }
  * a default — leaves it off.
  */
 export function resolveSchedulerGate(argv: readonly string[]): SchedulerGate {
-  // Exact token match. Deliberately NOT `argv.includes`-with-fuzzy-matching and
-  // NOT `--enable-scheduler=false` semantics: the flag has no value form, so
-  // `--enable-scheduler=anything` does not enable it.
-  return argv.some((a) => a === SCHEDULER_FLAG) ? GATE_ENABLED : GATE_DISABLED
+  // Exact token match, and nothing else. Deliberately NOT `argv.includes`-with-
+  // fuzzy-matching and NOT `--enable-scheduler=false` semantics: the flag has no
+  // value form, so `--enable-scheduler=anything` does not enable it.
+  //
+  // [PHASE 6X] The scan also STOPS at `--`, which `Array.prototype.some` did not.
+  // `--` is the conventional end-of-options marker, and everything after it is the
+  // user's prompt text, not flags. Without this, `minicode "explain -- --enable-scheduler"`
+  // would switch autonomous execution ON from inside a quoted prompt - a fail-open
+  // from a non-flag position, and strictly worse than the value-form bug it fixed.
+  // `hasFlag` already behaved this way, so this preserves the pre-6X parsing shape
+  // while making the flag itself strict.
+  for (const token of argv) {
+    if (token === "--") break
+    if (token === SCHEDULER_FLAG) return GATE_ENABLED
+  }
+  return GATE_DISABLED
 }
 
 /**

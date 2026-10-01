@@ -129,6 +129,20 @@ interface Base {
   ts: number
   sessionId: string
   turnId: number
+  // M1 correlator (ADR-002, additive-optional): korelasi execution tanpa
+  // mengganti domain identity. Absent = event legacy / jalur belum wiring
+  // (M10 yang memasang penuh); parser lama tetap membaca (decode hanya
+  // mensyaratkan Base + shape per-tipe, lihat persistence.ts).
+  /** Identity instance execution (allocated `exec_<UUIDv4>` / derived 32-hex). */
+  executionId?: string
+  /** Parent execution (absent pada root — bukan null/placeholder). */
+  parentExecutionId?: string
+  /** Root forest korelasi (immutable; retry/detach tak boleh rewrite — M7). */
+  rootExecutionId?: string
+  /** Kind datar M1: turn | tool_call | task | child | background. */
+  executionKind?: string
+  /** Owner menurut arsitektur (session/task id); bukan authority user input. */
+  ownerId?: string
 }
 
 export interface UserMessageEvent extends Base {

@@ -54,6 +54,20 @@ export interface JournalRecord {
   argsHash?: string
   /** Tautan delegasi: id sesi anak (parent-side record). */
   childSessionId?: string
+  // M1 correlator (ADR-002, additive-optional): korelasi execution pada intent
+  // + terminal. Absent = record legacy / jalur belum wiring; recovery lama
+  // (consolidate per `id` session:seq) tak berubah. Jangan jadikan pengganti
+  // `id` — `id` tetap identity utama jurnal.
+  /** Identity instance execution (allocated / derived stabil). */
+  executionId?: string
+  /** Parent execution (absent pada root). */
+  parentExecutionId?: string
+  /** Root forest korelasi (immutable). */
+  rootExecutionId?: string
+  /** Kind datar M1. */
+  executionKind?: string
+  /** Owner menurut arsitektur; bukan authority user input. */
+  ownerId?: string
   /** Marker finalize: semua seq ≤ ini durable. */
   uptoSeq?: number
   /** Marker undo/redo: turn target manifest. */
@@ -394,6 +408,15 @@ export interface IntentInput {
    * retry id-sama pasca-crash dieksekusi ulang buta).
    */
   note?: string
+  // M1 correlator (ADR-002, passthrough): korelasi execution opsional dari
+  // pemanggil (Host M3+). Absent = jalur belum wiring — perilaku lama utuh.
+  // Validasi bentuk BUKAN di sini (allocator/helper yang menjamin); jurnal
+  // hanya menyalin string yang diberikan (tanpa rahasia: id/korelasi publik).
+  executionId?: string
+  parentExecutionId?: string
+  rootExecutionId?: string
+  executionKind?: string
+  ownerId?: string
 }
 
 /** Tulis intent pending. Tak pernah throw (degraded-loud, lihat header). */
@@ -420,6 +443,12 @@ export async function appendMutationIntent(input: IntentInput): Promise<JournalR
       ...(input.paths?.length ? { paths: input.paths } : {}),
       ...(input.argsHash ? { argsHash: input.argsHash } : {}),
       ...(input.childSessionId ? { childSessionId: input.childSessionId } : {}),
+      // M1 correlator passthrough (absent = tak ada perubahan perilaku).
+      ...(input.executionId ? { executionId: input.executionId } : {}),
+      ...(input.parentExecutionId ? { parentExecutionId: input.parentExecutionId } : {}),
+      ...(input.rootExecutionId ? { rootExecutionId: input.rootExecutionId } : {}),
+      ...(input.executionKind ? { executionKind: input.executionKind } : {}),
+      ...(input.ownerId ? { ownerId: input.ownerId } : {}),
       // Kunci idempotency sejak intent (lihat IntentInput.note).
       ...(input.note ? { outcome: { note: input.note } } : {}),
       state: "pending",
@@ -446,7 +475,15 @@ export async function appendMutationTerminal(
   state: "committed" | "failed",
   outcome?: { code?: number | null; note?: string },
   childSessionId?: string,
-  opts: { dedup?: boolean } = {},
+  opts: {
+    dedup?: boolean
+    // M1 correlator passthrough (absent = terminal legacy tanpa korelasi).
+    executionId?: string
+    parentExecutionId?: string
+    rootExecutionId?: string
+    executionKind?: string
+    ownerId?: string
+  } = {},
 ): Promise<void> {
   const root = resolve(cwd ?? process.cwd())
   const path = journalPath(session, root)
@@ -467,6 +504,12 @@ export async function appendMutationTerminal(
       ...(childSessionId ? { childSessionId } : {}),
       // Bukti dedup idempotency (mis. MCP request id): dipertahankan sweep.
       ...(opts.dedup ? { dedup: true as const } : {}),
+      // M1 correlator passthrough terminal (diwariskan dari intent pemanggil).
+      ...(opts.executionId ? { executionId: opts.executionId } : {}),
+      ...(opts.parentExecutionId ? { parentExecutionId: opts.parentExecutionId } : {}),
+      ...(opts.rootExecutionId ? { rootExecutionId: opts.rootExecutionId } : {}),
+      ...(opts.executionKind ? { executionKind: opts.executionKind } : {}),
+      ...(opts.ownerId ? { ownerId: opts.ownerId } : {}),
       ts: Date.now(),
     }
     const st = writers.get(key)

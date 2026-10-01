@@ -1,0 +1,289 @@
+{
+  "phase": "6AD",
+  "kind": "production-path mutation campaign",
+  "generated_at": "2026-10-01T04:33:43.033Z",
+  "totals": {
+    "planned": 18,
+    "executed": 18,
+    "killed": 18,
+    "survived": 0,
+    "equivalent": 0,
+    "unexecuted": 0
+  },
+  "campaign_failure": null,
+  "complete": true,
+  "rows": [
+    {
+      "id": "M1",
+      "target": "the production gate is removed",
+      "file": "src/task/production-scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "3 test(s) failed under mutant"
+    },
+    {
+      "id": "M10",
+      "target": "incarnation propagation is removed from the autonomous binding",
+      "file": "cli/setup.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "id": "M11",
+      "target": "ownership propagation is removed from the autonomous binding",
+      "file": "cli/setup.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "id": "M12",
+      "target": "the Scheduler treats a not-ok autonomous return as a successful one",
+      "file": "src/task/scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "id": "M13",
+      "target": "duplicate triggers are permitted to run concurrently",
+      "file": "src/task/trigger.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "id": "M14",
+      "target": "a trigger after stop is allowed through",
+      "file": "cli/commands.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "7 test(s) failed under mutant"
+    },
+    {
+      "id": "M15",
+      "target": "an old Scheduler may keep scheduling after session recreation",
+      "file": "src/task/production-scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "2 test(s) failed under mutant"
+    },
+    {
+      "id": "M16",
+      "target": "scheduler events are routed into the user conversation",
+      "file": "cli/tui.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "id": "M17",
+      "target": "cancellation is suppressed on stop",
+      "file": "src/task/production-scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "id": "M18",
+      "target": "the production trigger call is removed",
+      "file": "cli/commands.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "15 test(s) failed under mutant"
+    },
+    {
+      "id": "M2",
+      "target": "the false form of the flag is accepted as enabled",
+      "file": "src/task/production-scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "id": "M3",
+      "target": "the autonomous executor is given the full session tool set",
+      "file": "cli/setup.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "30 test(s) failed under mutant"
+    },
+    {
+      "id": "M4",
+      "target": "the autonomous permission handler is bypassed in the child session",
+      "file": "src/app/session.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6z-m31-permission-composition.test.ts",
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "5 test(s) failed under mutant"
+    },
+    {
+      "id": "M5",
+      "target": "lease acquisition is skipped at the composition root",
+      "file": "src/task/production-scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-process-authority.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "4 test(s) failed under mutant"
+    },
+    {
+      "id": "M6",
+      "target": "the cycle ignores graph readiness",
+      "file": "src/task/scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "13 test(s) failed under mutant"
+    },
+    {
+      "id": "M7",
+      "target": "the autonomous child reuses the parent session id",
+      "file": "cli/setup.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "1 test(s) failed under mutant"
+    },
+    {
+      "id": "M8",
+      "target": "the autonomous context is wired to a SHARED global abort controller",
+      "file": "src/task/autonomous-context.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "2 test(s) failed under mutant"
+    },
+    {
+      "id": "M9",
+      "target": "the cycle selects from every task rather than ready ones",
+      "file": "src/task/scheduler.ts",
+      "resolved": true,
+      "occurrences": 1,
+      "mutated": true,
+      "executed": true,
+      "result": "KILLED",
+      "tests": [
+        "test/phase6ac-controlled-enablement.test.ts",
+        "test/phase6ad-adversarial.test.ts"
+      ],
+      "note": "1 test(s) failed under mutant"
+    }
+  ]
+}

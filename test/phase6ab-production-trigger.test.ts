@@ -36,6 +36,7 @@ import { loadSession } from "../src/session/persistence.ts"
 import { resetSessionOwnershipForTests } from "../src/task/session-ownership.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 import { type FakeProvider, type FakeReply, startFakeProvider } from "./helpers/fake-provider.ts"
+import { normalizeSourceEol } from "./helpers/source-eol.ts"
 
 const REPO = import.meta.dir.replace(/[\\/]test$/, "").replace(/\\/g, "/")
 
@@ -813,7 +814,21 @@ describe("6AB S13 - the --resume flag reaches the composition root", () => {
    * M11 ("--resume is no longer passed to the composition root") destroys.
    */
   test("S13: cli/index.ts forwards the parsed resumeId into createCliSession", async () => {
-    const src = await Bun.file(join(REPO, "cli/index.ts")).text()
+    // [PHASE 6AE] Normalize EOL before asserting on source structure.
+    //
+    // The committed blob of cli/index.ts is LF-only (.gitattributes sets
+    // `*.ts text eol=lf`), but a Windows checkout with core.autocrlf=true
+    // rewrites it to CRLF. This regex requires a bare `\n`, so under CRLF it
+    // could never match - the suite was reporting a GREEN-CLEAN `git diff` and
+    // a FAILING test for the same file, which is only possible because git
+    // normalizes `text` files when comparing and this test did not.
+    //
+    // The assertion itself is UNCHANGED and NOT weakened: it still requires the
+    // shorthand `resumeId,` at four-space indent inside the options object,
+    // which is exactly the shape M11 destroys. Only the line-ending
+    // representation is normalized, so a CRLF checkout can no longer be
+    // mistaken for a wiring regression.
+    const src = normalizeSourceEol(await Bun.file(join(REPO, "cli/index.ts")).text())
     // The flag is read...
     expect(src).toContain('getArg("--resume")')
     // ...and forwarded by shorthand into the composition options. `resumeId,

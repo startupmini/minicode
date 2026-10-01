@@ -9,10 +9,17 @@
 //     hilang = "Cannot find module" pasca-publish; fixture test ikut = gate
 //     `gate:pack` merah; install-script = eksekusi saat install.
 // Semua murni baca-lokal; pemeriksaan tarball nyata ada di `gate:pack`.
+//
+// [FASE 6AE] Kontrak hash vendor sekarang EOL-independent, dan file ini
+// menghitung ULANG hash yang sama untuk memverifikasi pin di VENDOR.md.
+// Kalau algoritmanya menyimpang dari `scripts/vendor-minicore.ts`, test ini
+// menjadi ukuran kedua yang berbeda dari ukuran pertama - dan salah satunya
+// akan selalu salah tanpa ada yang menyadarinya. Daripada menggandakan logika,
+// keduanya membaca satu helper yang sama.
 import { describe, expect, test } from "bun:test"
-import { createHash } from "node:crypto"
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { join, relative } from "node:path"
+import { vendorFileHash, vendorShippedHash } from "./helpers/vendor-hash.ts"
 
 const repoRoot = process.cwd()
 const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
@@ -57,15 +64,13 @@ describe("audit #11: pin vendor berlaku tanpa sibling", () => {
     }
     return files.sort()
   }
+  // [FASE 6AE] Dulu `hashOf` di sini menduplikasi algoritma script dan
+  // meng-hash byte mentah. Itu membuat audit #11 dependent pada
+  // `core.autocrlf` - pada checkout CRLF dia melaporkan drift yang tidak ada,
+  // sementara `vendor:check` (yang sudah dinormalkan) bilang sinkron. Dua
+  // gate untuk satu kontrak yang sama, dengan jawaban yang berbeda.
   function hashOf(files: string[]): string {
-    const h = createHash("sha256")
-    for (const f of files) {
-      h.update(f)
-      h.update("\0")
-      h.update(readFileSync(join(vendorDir, f)))
-      h.update("\0")
-    }
-    return h.digest("hex").slice(0, 16)
+    return vendorFileHash(vendorDir, files)
   }
 
   test("VENDOR.md files+hash cocok dengan tree (dilarang edit manual)", () => {
@@ -122,14 +127,10 @@ describe("audit #11: permukaan pack tepat", () => {
       .filter((f) => f !== "test/fakes.ts")
       .sort()
     expect(all.length).toBeGreaterThan(0)
-    const h = createHash("sha256")
-    for (const f of all) {
-      h.update(f)
-      h.update("\0")
-      h.update(readFileSync(join(vendorDir, f)))
-      h.update("\0")
-    }
-    expect(h.digest("hex").slice(0, 16)).toBe(shipped)
+    // [FASE 6AE] Hash shipped juga lewat helper yang sama - ia menghitung
+    // exclude-set sendiri, jadi script dan test ini tidak bisa menyimpang
+    // soal file mana yang ikut paket.
+    expect(vendorShippedHash(vendorDir, all)).toBe(shipped)
   })
 
   test("pola files tak melebar ke test/bench/experiments", () => {

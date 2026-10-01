@@ -14,9 +14,16 @@
 //   bun scripts/vendor-minicore.ts          # sync dari ../minicore
 //   bun scripts/vendor-minicore.ts --check  # exit 1 bila beda / tidak sinkron
 
-import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join, relative, resolve } from "node:path"
+// [FASE 6AE] Kontrak hash tinggal di SATU tempat. Script ini adalah tempat
+// itu, dan test/pack-integrity.test.ts mengimpor helper yang sama. Sebelumnya
+// keduanya menduplikasi algoritma raw-byte; saat checkout CRLF keduanya
+// melapor drift yang tidak ada, dan tidak satu pun bisa menangkap yang lain
+// karena tidak ada yang memanggil siapa pun.
+// Impor relatif, bukan subpath `#...`: aturan repo menandai itu hanya untuk
+// package.json `imports`.
+import { SHIPPED_EXCLUDE, vendorFileHash, vendorShippedHash } from "../test/helpers/vendor-hash.ts"
 
 const repoRoot = resolve(import.meta.dir, "..")
 // Nama direktori, BUKAN spesifier import. Jangan pakai prefix "#" di sini —
@@ -51,36 +58,22 @@ function collect(root: string): string[] {
   return files.sort()
 }
 
-function hashOf(root: string, files: string[]): string {
-  const h = createHash("sha256")
-  for (const f of files) {
-    h.update(f)
-    h.update("\0")
-    const p = join(root, f)
-    h.update(existsSync(p) ? readFileSync(p) : Buffer.alloc(0))
-    h.update("\0")
-  }
-  return h.digest("hex").slice(0, 16)
-}
-
-// Fingerprint kedua: file vendor yang BENAR-BENAR ikut paket npm (field
-// `files` di package.json minicode). Dua file SENGAJA dikecualikan:
-// - test/fakes.ts — fixture test, tidak tercantum di `files` (dijaga
-//   test/pack-integrity.test.ts), jadi hash N-file di atas TIDAK BISA
-//   direproduksi dari tarball terbit.
-// - LICENSE — vendor/minicore/LICENSE tidak tercantum di `files` minicode
-//   (yang terkemas: vendor/minicore/src + package.json + VENDOR.md; LICENSE
-//   paket memakai berkas root). Tanpa pengecualian ini, sink pertama setelah
-//   upstream menambah LICENSE menggeser shipped hash dan guard provenance
-//   test/pack-integrity.test.ts (yang menghitung dari src + package.json)
-//   berubah merah.
-// Hash ini menjembatani: siapa pun bisa menghitungnya dari vendor/minicore
-// di dalam paket yang diunduh dan mencocokkannya dengan angka di VENDOR.md.
-const SHIPPED_EXCLUDE = new Set(["test/fakes.ts", "LICENSE"])
-function hashShipped(root: string, files: string[]): string {
-  const shipped = files.filter((f) => !SHIPPED_EXCLUDE.has(f))
-  return hashOf(root, shipped)
-}
+// [FASE 6AE] Kontrak hash tinggal di test/helpers/vendor-hash.ts, dan diimpor
+// di atas. Rasional dan batasnya ada di sana -+EOL dinormalkan untuk hash, file
+// biner tetap byte mentah, tidak ada trim/indentasi/Unicode yang disentuh.
+//
+// Normalisasi ini berlaku untuk PERBANDINGAN saja. Jalur sync di bawah menyalin
+// byte mentah apa adanya, jadi tidak ada file vendor yang ditulis ulang.
+//
+// Yang TIDAK berubah dari sebelumnya, dan itu disengaja: cakupan file
+// (INCLUDE_DIRS/INCLUDE_FILES), aturan SHIPPED_EXCLUDE, perilaku saat sibling
+// ../minicore tidak ada (tetap exit 0 dengan pesan), penolakan menimpa vendor
+// kosong, dan jalur sync. Yang berubah hanya cara byte dibaca untuk hash.
+//
+// Fungsi ini tetap menjadi nama yang dipakai script ini, jadi diff-nya kecil dan
+// disable-nyaris-tidak-ada yang perlu diubah di bawah.
+const hashOf = vendorFileHash
+const hashShipped = vendorShippedHash
 
 const vendorFiles = collect(target)
 

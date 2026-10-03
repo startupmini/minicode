@@ -31,6 +31,11 @@ const VALUE_FLAGS = new Set([
   "--ratelimit",
   "--budget",
   "--tool-scope", // full | explore (read-only) — tanpa ini jadi kata prompt!
+  // [P1 M15] Mode runtime produksi (off | constructed | owned). HARUS terdaftar:
+  // flag tak dikenal menghentikan scan `hasFlag`/`getArg` (dianggap prompt
+  // boundary), sehingga flag yang diletakkan SETELAH `--runtime` akan hilang
+  // diam-diam — tepat kebocoran semantik yang ingin dicegah audit flag.
+  "--runtime",
   "--output-format", // `exec --output-format=json`
   "--prompt",
   // subcommand flags — harus dikenal agar tidak bocor ke prompt one-shot

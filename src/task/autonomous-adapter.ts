@@ -16,6 +16,7 @@
 // default here would mean an executor running in the wrong workspace or against
 // the wrong generation.
 
+import type { ProductionExecutionRunner } from "../runtime/production-execution.ts"
 import {
   type AutonomousContextConfig,
   type AutonomousContextEvent,
@@ -47,6 +48,12 @@ export interface AutonomousAdapterConfig {
   /** [DESIGN DECISION] REQUIRED. Never defaulted to `process.cwd()`. */
   readonly cwdFor: (sessionId: string) => string
   readonly onContextEvent?: (event: AutonomousContextEvent) => void
+  /**
+   * [P1 M15] Admission runtime untuk turn otonom (opsional; default = legacy).
+   * Diteruskan apa adanya ke `AutonomousContextConfig` — adapter tak pernah
+   * membuat runner sendiri, jadi tak ada jalur kedua ke runtime.
+   */
+  readonly executionRunner?: ProductionExecutionRunner
 }
 
 /**
@@ -108,6 +115,7 @@ export function planAutonomousContext(
     sessionFactory: config.sessionFactory,
     tools: config.tools,
     ...(config.onContextEvent ? { onEvent: config.onContextEvent } : {}),
+    ...(config.executionRunner ? { executionRunner: config.executionRunner } : {}),
   }
 }
 

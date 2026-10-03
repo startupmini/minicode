@@ -10,6 +10,7 @@ import {
   machineError,
   toMachineEnvelope,
 } from "../../src/presentation/projection.ts"
+import { resolveRuntimeMode } from "../../src/runtime/production-execution.ts"
 import { clearSubmittedResult, getSubmittedResult } from "../../src/tools/submit_result.ts"
 import { formatError } from "../../src/ui/assistant/simple.ts"
 import { formatUsd } from "../../src/ui/render/money.ts"
@@ -131,6 +132,9 @@ export async function handleExec(
     plan,
     allowlist,
     verify: hasFlag(subArgs, "--verify"),
+    // [P1 M15] Mode runtime produksi, deterministik per invokasi (sama seperti
+    // entry utama). Nilai tak dikenal = off + warning (fail-closed).
+    runtimeMode: resolveRuntimeMode(subArgs).mode,
     allowLocalConfig: allowLocal,
     budget,
     budgetStrict,

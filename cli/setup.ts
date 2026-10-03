@@ -52,6 +52,20 @@ import {
   createContentStore,
 } from "../src/presentation/store.ts"
 import {
+  createProductionExecutionRunner,
+  inspectStartupRecovery,
+  type ProductionExecutionRunner,
+  type RuntimeProductionMode,
+  runtimeModeFor,
+  type StartupRecoveryReport,
+} from "../src/runtime/production-execution.ts"
+import {
+  createProductionRuntime,
+  type ProductionRuntimeHandle,
+  runtimeGateFor,
+  runtimeJournalPath,
+} from "../src/runtime/production-runtime.ts"
+import {
   beginTurnSnapshot,
   reconcileUndoRedoPointer,
   recordCheckpointFromSnapshots,
@@ -89,7 +103,7 @@ import {
 } from "../src/telemetry/trace.ts"
 import { setAskApprovalHook, setAskTextFn } from "../src/tools/ask_user.ts"
 import { killAllBackgroundJobs } from "../src/tools/bash.ts"
-import { setSubAgentParentRouting } from "../src/tools/task.ts"
+import { setSubAgentExecutionRunner, setSubAgentParentRouting } from "../src/tools/task.ts"
 import {
   reconcileCompletionEvidence,
   setCompletionEvidence,
@@ -148,6 +162,17 @@ export interface CliSessionOptions {
    * See `src/task/production-scheduler.ts` for why the alternatives were rejected.
    */
   schedulerEnabled?: boolean
+  /**
+   * [P1 M15] Mode produksi runtime. `off` (default) = jalur legacy utuh;
+   * `constructed` = runtime + jurnal dibangun, eksekusi masih legacy;
+   * `owned` = admission WAJIB lewat M13 → Kernel (satu jalur, fail-closed).
+   *
+   * [DESIGN DECISION] Mode, bukan boolean. Boolean M14 (`constructed`) tak dapat
+   * membedakan "runtime untuk observasi" dari "runtime yang memiliki eksekusi",
+   * dan dua klaim itu tidak boleh ter confuse saat rollback. Nilai tak dikenal
+   * gagal ke `off`.
+   */
+  runtimeMode?: RuntimeProductionMode
   maxSteps?: number
   contextWindowTokens?: number
   /** F3.2: override keepRecentTurns kompaksi kernel (berapa turn terakhir
@@ -226,6 +251,14 @@ export interface CliSession {
    * Exactly one session owns exactly one handle, and that session is `sessionId`.
    */
   productionScheduler: ProductionSchedulerHandle
+  /** [P1 M14] Operator/runtime projection — the P1 runtime owner of this session. */
+  productionRuntime: ProductionRuntimeHandle
+  /** [P1 M15] Mode runtime sesi ini (off | constructed | owned). */
+  runtimeMode: RuntimeProductionMode
+  /** [P1 M15] Admission runtime untuk turn sesi ini. */
+  executionRunner: ProductionExecutionRunner
+  /** [P1 M15] Bukti durable saat start: integritas jurnal + tafsir M12. */
+  startupRecovery: StartupRecoveryReport | null
   /** [PHASE 6AB] Operator projection fed by the Scheduler's own event stream. */
   schedulerObservability: SchedulerObservability
 }
@@ -528,6 +561,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     budgetStrict,
     toolScope,
     schedulerEnabled,
+    runtimeMode,
     allowLocalConfig,
     maxSteps,
     contextWindowTokens,
@@ -1335,7 +1369,23 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       })
       try {
         try {
-          await session.run(prompt, { model: modelRef.current, signal: ctl.signal })
+          // [P1 M15] SATU jalur eksekusi turn. Mode `off`/`constructed`:
+          // `session.run` dipanggil apa adanya (perilaku sebelum M15, nol
+          // overhead). Mode `owned`: lebih dulu admission M13 → Kernel, lalu
+          // `session.run` yang SAMA dieksekusi di dalam eksekusi itu dan
+          // didaftarkan ke `track()` (drain M14 menutup turn yang masih jalan).
+          // Tidak pernah dua kali: legacy run tetap SATU-SATUNYA eksekusi fisik.
+          await executionRunner.run(
+            {
+              kind: "turn",
+              schedulerSource: "cli-session",
+              authorityHeld: true,
+              ownerId: presentationSessionId,
+              provenance: { requestedBy: "user", reason: "prompt" },
+            },
+            () => session.run(prompt, { model: modelRef.current, signal: ctl.signal }),
+            { signal: ctl.signal },
+          )
         } catch (e) {
           // Kernel diam pada gagal/abort/timeout (turn:completed hanya sukses):
           // adaptor merekonstruksi turn.failed/cancelled dari sini. Error asli
@@ -1546,6 +1596,62 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // it is fed events and probed against the handle.
   const schedulerObservability = new SchedulerObservability()
 
+  // ── [P1 M14] RUNTIME COMPOSITION ───────────────────────────────────────────
+  //
+  // [DESIGN DECISION] One call, behind one MODE that defaults to `off`, with its
+  // dependencies in a THUNK — the same shape as the Scheduler below, on purpose.
+  // The alternative ("just construct it here and ignore it") satisfies the letter
+  // of "gated" while opening a SQLite handle and constructing a host, a kernel
+  // and a supervisor on every single run.
+  //
+  // [DESIGN DECISION] The journal path comes from the RESUMED identity
+  // (`resumeId ?? sessionId`, the same one the presentation layer already uses),
+  // not from `sessionId`. A resume that minted a fresh path would silently start
+  // from an empty history while looking exactly like a successful resume. If the
+  // resumed session has no runtime journal at all, the journal is created fresh
+  // AT THAT PATH — never at a new path derived from the new session id.
+  //
+  // [P1 M15] Placed BEFORE the Scheduler composition on purpose: the runner must
+  // already exist when the scheduler's deps thunk asks for it, and fail-closed
+  // journal open must abort startup before any autonomous machinery is built.
+  const runtimeCwd = cwd ?? process.cwd()
+  const productionRuntime: ProductionRuntimeHandle = await createProductionRuntime(
+    runtimeGateFor(runtimeMode),
+    () => ({
+      sessionId: presentationSessionId,
+      workspaceCwd: runtimeCwd,
+      journalPath: runtimeJournalPath(runtimeCwd, presentationSessionId),
+    }),
+  )
+
+  // ── [P1 M15] EXECUTION RUNNER: admission runtime untuk setiap turn ─────────
+  //
+  // [DESIGN DECISION] Runner hidup di composition root, bukan di dalam Session
+  // atau tool. Alasannya: jalur eksekusi yang DIREMOTE harus tetap punya satu
+  // pemilik (composition root), dan `session.run()` sendiri tidak boleh tahu
+  // soal dispatch/journal — supaya eksekusi legacy (mode off/constructed) tetap
+  // persis seperti sebelumnya M15.
+  const effectiveRuntimeMode = runtimeModeFor(runtimeMode)
+  const executionRunner: ProductionExecutionRunner = createProductionExecutionRunner({
+    mode: effectiveRuntimeMode,
+    runtime: productionRuntime.runtime(),
+  })
+
+  // [P1 M15 §19] Bukti durable dari proses sebelumnya: integritas jurnal +
+  // tafsir M12 untuk eksekusi yang berakhir non-terminal. Sengaja TIDAK
+  // mendispatch (M12 hanya merencanakan; authority/budget/deadline tetap
+  // berlaku) — hasil startup diekspos agar operator/REPL bisa
+  // memutuskan, dan supaya startup punya bukti bahwa restart tidak diam-diam
+  // mengulang pekerjaan.
+  const startupRecovery: StartupRecoveryReport | null = productionRuntime.runtime()
+    ? inspectStartupRecovery(productionRuntime.runtime()!, { authorityHeld: false })
+    : null
+
+  // [P1 M15] Runner dipasang ke tool sub-agen HANYA saat runtime memiliki
+  // eksekusi (mode owned). Mode lain: tak ada setter call sama sekali, jadi
+  // jalur legacy anak benar-benar tak tersentuh (nol overhead).
+  if (executionRunner.owns) setSubAgentExecutionRunner(executionRunner)
+
   // ── [PHASE 6U] AUTONOMOUS SCHEDULER COMPOSITION ────────────────────────────
   //
   // [DESIGN DECISION] One call, one function, behind one boolean that defaults to
@@ -1588,6 +1694,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           provider: router,
           model: modelRef.current,
           cwdFor: () => autonomousCwd,
+          // [P1 M15] Turn otonom melewati admission runtime yang sama dengan turn
+          // user: M13 → Kernel, lalu eksekusi fisiknya (child session) di dalam
+          // execution itu. `undefined` pada mode selain `owned` = jalur lama.
+          ...(executionRunner.owns ? { executionRunner } : {}),
           // [PHASE 6U] The autonomous child session is a REAL MiniCode session
           // over the REAL provider chain — the same `router` the user session
           // uses — so autonomous work does not run a different model or a weaker
@@ -1627,6 +1737,23 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       }
     },
   )
+
+  // ── [P1 M14] RUNTIME COMPOSITION ─────────────────────────────────────────────
+  //
+  // [DESIGN DECISION] One call, behind one boolean that defaults to false, with
+  // its dependencies in a THUNK — the same shape as the Scheduler above, on
+  // purpose. The alternative ("just construct it here and ignore it") satisfies
+  // the letter of "gated" while opening a SQLite handle and constructing a host,
+  // a kernel and a supervisor on every single run.
+  //
+  // [DESIGN DECISION] The journal path comes from the RESUMED identity
+  // (`resumeId ?? sessionId`, the same one the presentation layer already uses),
+  // not from `sessionId`. A resume that minted a fresh path would silently start
+  // from an empty history while looking exactly like a successful resume; this is
+  // the class of bug `--resume` exists to prevent. If the resumed session has no
+  // runtime journal at all, the journal is created fresh AT THAT PATH — never at a
+  // new path derived from the new session id, which would strand the old history
+  // and invent a second file for one resume.
   async function close(): Promise<void> {
     // [PHASE 6U] SHUTDOWN ORDERING. Stop autonomous work FIRST, before the
     // presentation layer is detached and before background jobs are killed.
@@ -1648,6 +1775,31 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     } catch {
       // Teardown must not fail because a scheduler could not stop. Durable
       // recovery remains authoritative for anything still in flight.
+    }
+    // [P1 M14] Runtime goes SECOND: after autonomous work has stopped (so nothing
+    // new can be admitted) but before the UI is detached and background jobs are
+    // killed (so a live kernel transition still has a journal to land in). Its
+    // own close order is: admission latch → host drain → execution/event drain →
+    // journal flush → journal close → host close.
+    //
+    // Inert when the gate is off, so this line costs nothing by default.
+    //
+    // [DESIGN DECISION] NO extra stderr writer for an incomplete shutdown. The
+    // writer inventory (OAP-008) exists so writer count in this file only goes
+    // DOWN, and every other teardown path here is deliberately silent; the truth
+    // is not lost either — `productionRuntime.shutdownResult()` carries the
+    // structured per-phase result (including a non-confirmed durability verdict)
+    // for tests and diagnostics, which is where a teardown warning would end up
+    // anyway. Silent teardown + inspectable result beats a new writer slot.
+    // [P1 M15] Lepas DI sub-agen saat teardown: proses boleh punya beberapa sesi
+    // dalam masa pakainya (test/embed), dan runner milik sesi yang sudah tutup
+    // tak boleh menerima turn baru.
+    if (executionRunner.owns) setSubAgentExecutionRunner(undefined)
+    try {
+      await productionRuntime.stop()
+    } catch {
+      // Same rule as the scheduler: teardown never fails on a runtime that could
+      // not close. Whatever is unrecorded stays recoverable from the journal.
     }
     flushPresentationEvents()
     await presentationWriteTail
@@ -1708,6 +1860,15 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     // the Scheduler of exactly that session and no other.
     productionScheduler,
     schedulerObservability,
+    // [P1 M14] Same rule as the Scheduler handle above: one session owns one
+    // runtime, reachable only through the session, never through a registry.
+    productionRuntime,
+    /** [P1 M15] Mode runtime yang benar-benar dipakai sesi ini. */
+    runtimeMode: effectiveRuntimeMode,
+    /** [P1 M15] Admission runtime untuk turn sesi ini (mode off = pass-through). */
+    executionRunner,
+    /** [P1 M15] Laporan bukti durable saat start (integritas + tafsir M12). */
+    startupRecovery,
     /** Counter reducer presentasi (divergensi harus 0). */
     getShadowDiagnostics,
     getPresentationSnapshot,

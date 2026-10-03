@@ -8,6 +8,7 @@ import { parseCompactKeepTurns } from "../src/policy/compaction.ts"
 import { createRateLimiter } from "../src/policy/ratelimit.ts"
 import { resolveSandbox, sandboxRefusalReason } from "../src/policy/sandbox-policy.ts"
 import { budgetStatus } from "../src/policy/usage.ts"
+import { resolveRuntimeMode } from "../src/runtime/production-execution.ts"
 import { attachMutationJournal } from "../src/session/journal.ts"
 import { findSkill, renderSkill } from "../src/skills/loader.ts"
 // [PHASE 6X] The ONE production gate resolver, imported directly so the call site
@@ -74,6 +75,11 @@ Options:
   --enable-scheduler  EXPERIMENTAL: opt in to the autonomous scheduler (default: off).
                       Manual only - run /scheduler run. No timer; autonomous turns are
                       readonly. Inspect with /scheduler status; release with /scheduler stop.
+  --runtime <mode>    off (default) | constructed | owned. Execution architecture:
+                      off = current behaviour, unchanged. constructed = runtime + durable
+                      journal built, turns still run the legacy way. owned = every turn is
+                      admitted through the runtime (kernel + durable journal); a rejected
+                      admission runs nothing. Unknown value = off.
 
 TUI: /help /provider /model /sync /status /sessions /init /exit /mode /undo /redo /clear /copy /history /compact /thinking /minimize
 Keys: Enter submit · Tab/Shift+Tab mode · Up/Down history · Mouse wheel/PgUp/PgDn scroll (Shift = half page)
@@ -272,6 +278,16 @@ const allowLocal = allowLocalConfig(args)
 // correct for the permission and plan flags, and changing it would alter unrelated
 // CLI semantics. The bug was in choosing it for a valueless flag.
 const schedulerEnabled = resolveSchedulerGate(args) === GATE_ENABLED
+// [P1 M15] Mode runtime produksi. Deterministik per invokasi (flag CLI, bukan
+// env): `off` (default) = jalur legacy utuh, `constructed` = runtime + jurnal
+// dibangun tanpa memiliki eksekusi, `owned` = admission wajib lewat M13 →
+// Kernel. Nilai tak dikenal gagal ke `off` + warning (fail-closed, bukan
+// jatuh ke mode yang lebih agresif tanpa diminta).
+const runtimeModeResolution = resolveRuntimeMode(args)
+if (runtimeModeResolution.warning) {
+  process.stderr.write(`[warn] ${runtimeModeResolution.warning}\n`)
+}
+const runtimeMode = runtimeModeResolution.mode
 const resumeId = getArg("--resume")
   ?.replace(/[^A-Za-z0-9._-]/g, "-")
   .slice(0, 64)
@@ -451,6 +467,8 @@ try {
     allowLocalConfig: allowLocal,
     // [PHASE 6U] Off unless the token was literally passed.
     schedulerEnabled,
+    // [P1 M15] Reroute runtime (default `off`).
+    runtimeMode,
     budget,
     budgetStrict,
     toolScope,

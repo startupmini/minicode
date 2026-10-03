@@ -2,6 +2,7 @@ import { basename, resolve as resolvePath } from "node:path"
 import { loadConfig, saveLastModel } from "../src/config.ts"
 import type { Usage } from "../src/policy/usage.ts"
 import { refreshProviderModels } from "../src/providers/provision.ts"
+import type { RuntimeProductionMode } from "../src/runtime/production-execution.ts"
 import { listSessions, loadSession } from "../src/session/persistence.ts"
 import type { Skill } from "../src/skills/loader.ts"
 import type { ProductionSchedulerHandle } from "../src/task/production-scheduler.ts"
@@ -59,6 +60,12 @@ export interface CommandContext {
    * piped invocation reports the truthful OFF rather than pretending.
    */
   scheduler?: SchedulerControl
+  /**
+   * [P1 M15] Runtime mode sesi ini — diteruskan ke proses resume agar mode
+   * tidak turun diam-diam (F1b). Opsional dan narrow seperti `scheduler`:
+   * absen = child default `off` (fail-closed, perilaku sebelum F1b).
+   */
+  runtimeMode?: RuntimeProductionMode
 }
 
 /** The two objects `/scheduler` needs, injected by the composition root. */
@@ -256,12 +263,34 @@ async function resumeById(target: string, ctx: CommandContext): Promise<boolean>
   const entryPath = resolvePath(import.meta.dir, "index.ts")
   const child = spawn(
     process.execPath,
-    [entryPath, `--resume=${target}`, ...(ctx.cwd ? [`--cwd=${ctx.cwd}`] : [])],
+    buildResumeSpawnArgs(entryPath, target, ctx.cwd, ctx.runtimeMode),
     { stdio: "inherit", env: { ...process.env, MINICODE_RESUME_NEW: "1" } },
   )
   void waitChildExit(child).then((code) => process.exit(code ?? 0))
   process.stdin.pause()
   return true
+}
+
+/**
+ * [P1 Hygiene F1b] Argv untuk proses resume. Murni + diekspor untuk test.
+ *
+ * Mode runtime diteruskan apa adanya (`off`/`constructed`/`owned`): anak
+ * mem-parse argv-nya sendiri dan default `off` bila flag absen, jadi TIDAK
+ * meneruskan = diam-diam downgrade. Tidak ada derivasi dari env, tidak ada
+ * upgrade diam-diam, dan identitas resume (`--resume=<target>`) tak berubah.
+ */
+export function buildResumeSpawnArgs(
+  entryPath: string,
+  target: string,
+  cwd: string | undefined,
+  runtimeMode: RuntimeProductionMode | undefined,
+): string[] {
+  return [
+    entryPath,
+    `--resume=${target}`,
+    ...(cwd ? [`--cwd=${cwd}`] : []),
+    ...(runtimeMode ? ["--runtime", runtimeMode] : []),
+  ]
 }
 
 /** Petunjuk ke daftar pintasan lengkap, dipakai di /help. */

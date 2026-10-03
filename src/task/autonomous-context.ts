@@ -29,6 +29,7 @@
 // constructed with everything it needs (DI), so isolation cannot depend on
 // module-level configuration that another call could mutate.
 
+import type { ProductionExecutionRunner } from "../runtime/production-execution.ts"
 import type { TaskStore } from "./store.ts"
 
 // ── identity ─────────────────────────────────────────────────────────────────
@@ -200,6 +201,17 @@ export interface AutonomousContextConfig {
   readonly sessionFactory: (spec: AutonomousSessionSpec) => Promise<AutonomousSession>
   readonly tools: readonly { name: string }[]
   readonly onEvent?: (event: AutonomousContextEvent) => void
+  /**
+   * [P1 M15] Admission runtime (DI) untuk turn otonom.
+   *
+   * [DESIGN DECISION] Opsional dan default TIDAK ada: tanpa ini, `execute()`
+   * persis seperti sebelum M15. Xiang dispatcher tidak boleh mengarang eksekusi —
+   * ia hanya meneruskan intent ke M13 yang sudah memutuskan.
+   *
+   * Tidak ada jalur ganda: kalau runner ada, turn ini SELALU lewat runner; kalau
+   * tidak, SELALU legacy. Tidak pernah keduanya untuk satu intent.
+   */
+  readonly executionRunner?: ProductionExecutionRunner
 }
 
 export type AutonomousContextEvent =
@@ -394,10 +406,35 @@ export class AutonomousExecutionContext {
 
     this.emit({ kind: "turn:started", childSessionId: this.childSessionId })
     try {
-      const res = await session.run(this.config.instruction, {
-        signal: this.abort.signal,
-        ...(this.config.model ? { model: this.config.model } : {}),
-      })
+      // [P1 M15] Turn otonom melewati admission runtime bila ada runner (mode
+      // `owned`). Kegagalan admission = TIDAK ada eksekusi (fail-closed) dan
+      // dilaporkan sebagai hasil turn yang gagal — bukan "jalankan legacy saja",
+      // yang akan membuat dua jalur untuk satu intent.
+      const runner = this.config.executionRunner
+      const runTurn = () =>
+        session.run(this.config.instruction, {
+          signal: this.abort.signal,
+          ...(this.config.model ? { model: this.config.model } : {}),
+        })
+      const outcome = runner
+        ? await runner.run(
+            {
+              kind: "background",
+              schedulerSource: "autonomous",
+              // Authority adalah milik lease Scheduler, bukan milik konteks: ia
+              // sudah dibuktikan di claim (store.claimTask + session lease).
+              authorityHeld: true,
+              provenance: { requestedBy: "scheduler", reason: `task=${this.config.taskId}` },
+              taskId: this.config.taskId,
+              generation: this.config.execGeneration,
+            },
+            runTurn,
+            { signal: this.abort.signal },
+          )
+        : null
+      const res = outcome
+        ? (outcome.result as Awaited<ReturnType<typeof runTurn>>)
+        : await runTurn()
       // A run that resolves after our own cancellation is a CANCELLED turn, not a
       // successful one: the abort may have been observed late.
       if (this.cancelRequested || this.abort.signal.aborted) {

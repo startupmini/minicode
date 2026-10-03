@@ -23,7 +23,11 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // is the audit working: the command now collects into an array and emits once.
   // Declared here rather than absorbed, per the rule above.
   "cli/commands.ts": { max: 30, owner: "human-cmd" },
-  "cli/index.ts": { max: 25, owner: "human-cmd" },
+  // [P1 M15] 25 -> 26 for exactly ONE writer: the warning when `--runtime` is
+  // given an unknown value. Silent fail-closed here would be an expectation
+  // trap — the operator would believe the runtime is active while the process
+  // runs the legacy path. Declared, not absorbed, per the rule above.
+  "cli/index.ts": { max: 26, owner: "human-cmd" },
   "cli/model-manager.ts": { max: 2, owner: "human-cmd" },
   "cli/provider-manager.ts": { max: 3, owner: "human-cmd" },
   "cli/setup.ts": { max: 26, owner: "diagnostic" },

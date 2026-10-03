@@ -7,6 +7,7 @@ import { LIMITS } from "../constants.ts"
 import type { RateLimiter } from "../policy/ratelimit.ts"
 import { buildProviderListAsync } from "../providers/build.ts"
 import { createRouterProvider } from "../providers/router.ts"
+import type { ProductionExecutionRunner } from "../runtime/production-execution.ts"
 import { appendMutationIntent, appendMutationTerminal, hashArgs } from "../session/journal.ts"
 import { todoSession } from "./todo.ts"
 
@@ -82,11 +83,28 @@ export function setSubAgentSessionFactory(factory: SubAgentSessionFactory): void
   sessionFactory = factory
 }
 
+// ── [P1 M15] Admission runtime untuk turn anak ───────────────────────────────
+//
+// Kenapa DI, bukan import langsung: `src/tools/` tidak boleh tahu soal host /
+// journal runtime, dan composition root adalah satu-satunya pemilik runtime
+// sesi. Tanpa setter, tool ini kembali persis ke perilaku sebelum M15 (legacy run
+// langsung) — jadi mode `off` tak pernah berubah bentuk.
+let childExecutionRunner: ProductionExecutionRunner | undefined
+
+export function setSubAgentExecutionRunner(runner: ProductionExecutionRunner | undefined): void {
+  childExecutionRunner = runner
+}
+
+export function getSubAgentExecutionRunner(): ProductionExecutionRunner | undefined {
+  return childExecutionRunner
+}
+
 // Seam uji: kembalikan ke fail-closed tanpa factory (isolasi antar test file,
 // karena factory adalah state module-global).
 export function clearSubAgentSessionFactory(): void {
   sessionFactory = undefined
   parentRouting = {}
+  childExecutionRunner = undefined
 }
 
 /**
@@ -316,7 +334,32 @@ export const delegateTaskTool: Tool = {
         })
 
         try {
-          const res = await session.run(String(prompt), { signal: ctx.signal })
+          // [P1 M15] Turn anak mengikuti admission runtime bila runtime punya
+          // sesi ini (mode `owned`); tanpa runner = perilaku lama persis.
+          // `parentExecutionId` memakai id anak yang sudah ada (dialihkan lewat
+          // M7 lewat admission M13), jadi lineage tetap satu parental, bukan
+          // dua mechanism penomoran.
+          const runChild = () => session.run(String(prompt), { signal: ctx.signal })
+          const runner = childExecutionRunner
+          // Parent lineage diambil dari runner (turn parent yang sedang berjalan),
+          // bukan dari ToolContext: vendor ToolContext tak membawa execution id,
+          // dan mengarangnya di sini berarti lineage child jadi mechanism kedua.
+          const parent = runner?.parentExecutionId() ?? undefined
+          const res = runner
+            ? ((
+                await runner.run(
+                  {
+                    kind: "child",
+                    schedulerSource: "delegate_task",
+                    authorityHeld: true,
+                    provenance: { requestedBy: "delegate_task", reason: `mode=${m}` },
+                    ...(parent ? { parentExecutionId: parent } : {}),
+                  },
+                  runChild,
+                  { signal: ctx.signal },
+                )
+              ).result as Awaited<ReturnType<typeof runChild>>)
+            : await runChild()
           return `sub-agent (${m}) done: ${res.finalText?.slice(0, 2000) ?? "(no output)"} [steps ${res.usage.steps}]`
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e)

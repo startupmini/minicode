@@ -145,10 +145,18 @@ let counter = 0
  * not shared state. Two executions can never be handed the same identity, and
  * nothing can be *cancelled* through it by accident, because the handle is only
  * reachable from the Scheduler that created it.
+ *
+ * [P1 M15] Prefix `cancel-`, BUKAN `exec-`. Handle ini BUKAN execution identity:
+ * ia adalah alamat pembatalan dalam memori, tidak pernah masuk jurnal durable dan
+ * tak pernah dibandingkan dengan id eksekusi runtime. Prefiks `exec-` pernah
+ * menabrak namespace `exec_<uuid>` milik M1 (`isExecutionId`), jadi dua "execution
+ * id" berbeda bisa tampak sama di log — dan M15 swore there is exactly one
+ * execution-identity authority. Mengganti prefix menghapus tabrakan itu tanpa
+ * mengubah satu pun semantik pembatalan.
  */
 export function newExecutionHandle(): PerTurnCancellation {
   counter += 1
-  return new PerTurnCancellation(`exec-${counter}`)
+  return new PerTurnCancellation(`cancel-${counter}`)
 }
 
 /** Test-only reset, so ids are reproducible across runs. */

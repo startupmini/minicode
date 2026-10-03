@@ -225,6 +225,17 @@ export interface ExecutionBackend {
 /** Bound default wait (ms). Konservatif; configurable per-call. */
 export const DEFAULT_BACKEND_WAIT_MS = 5_000
 
+/**
+ * [P1 M16] SATU allocator untuk id handle backend (namespace `be_`).
+ *
+ * Sebelumnya dua adapter (host + docker) masing-masing mencetak `be_<8 hex>`;
+ * itu dua sumber untuk satu namespace dan pemanggil bisa menulis handle dengan
+ * prefix berbeda di jalur berbeda. Sekarang satu fungsi, satu format.
+ */
+function allocateBackendHandleId(): string {
+  return `be_${randomUUID().slice(0, 8)}`
+}
+
 // ── Mekanik kill bersama (cermin bash.ts:96-124 + F-23; didokumentasikan,
 // bukan diimpor dari tool layer agar backend tak bergantung pada tools). ──
 
@@ -327,7 +338,7 @@ export function createHostBackend(): ExecutionBackend {
           resolveStart({ started: false as const, reason: (e as Error).message })
           return
         }
-        const id = `be_${randomUUID().slice(0, 8)}`
+        const id = allocateBackendHandleId()
         const rec: HostRecord = {
           proc,
           startedAt: Date.now(),
@@ -480,7 +491,7 @@ function createRunToCompletionShim(
     async start(req: BackendExecRequest): Promise<BackendStartResult> {
       const admission = this.admit(req)
       if (!admission.admitted) return { started: false as const, reason: admission.reason }
-      const id = `be_${randomUUID().slice(0, 8)}`
+      const id = allocateBackendHandleId()
       try {
         const res = await runToCompletion(req)
         records.set(id, { done: true, code: res.code, output: res.output })

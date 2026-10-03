@@ -155,6 +155,9 @@ export async function runTui(ctx: CliSession): Promise<void> {
     cwd,
     sessionId,
     allowLocalConfig,
+    // [P1 Hygiene F1b] Mode runtime sesi ini — diteruskan ke proses popup-resume
+    // agar owned/constructed tidak turun diam-diam menjadi off.
+    runtimeMode: ctx.runtimeMode,
     // [PHASE 6AB] THE operator control surface. `/scheduler` is the single
     // production-reachable path to `fire()` and to `stop()`; 6AA proved nothing
     // else could reach either. Both objects belong to THIS session, so the command

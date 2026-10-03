@@ -58,15 +58,28 @@ export interface JournalRecord {
   // + terminal. Absent = record legacy / jalur belum wiring; recovery lama
   // (consolidate per `id` session:seq) tak berubah. Jangan jadikan pengganti
   // `id` — `id` tetap identity utama jurnal.
-  /** Identity instance execution (allocated / derived stabil). */
+  //
+  // [P1 M15][DEPRECATED] Lima field di bawah USED to be the staged place for
+  // runtime correlation. Produksi TIDAK PERNAH mengisinya (nol caller), dan M15
+  // menetapkan satu history eksekusi durable: jurnal runtime M11
+  // (`src/runtime/execution-journal.ts`) yang memegang executionId/parent/
+  // lineageRoot/version. Jurnal ini tetap milik domain mutation/undo (git
+  // checkpoints), dan sengaja TIDAK menjadi bridge kedua ke runtime.
+  //
+  // Aturan: JANGAN menambah caller produksi yang mengisinya. Kalau sebuah record
+  // butuh korelasi runtime, tulislah ke jurnal runtime; kalau butuh jejak
+  // mutation, field ini tetap `absent`. Field tak dihapus agar record lama
+  // (yang mungkin sudah tertulis) tetap terbaca — penghapusan adalah M16+ dan
+  // butuh migrasi reader.
+  /** Identity instance execution (allocated / derived stabil). DEPRECATED — see above. */
   executionId?: string
-  /** Parent execution (absent pada root). */
+  /** Parent execution (absen pada root). DEPRECATED — see above. */
   parentExecutionId?: string
-  /** Root forest korelasi (immutable). */
+  /** Root forest korelasi (immutable). DEPRECATED — see above. */
   rootExecutionId?: string
-  /** Kind datar M1. */
+  /** Kind datar M1. DEPRECATED — see above. */
   executionKind?: string
-  /** Owner menurut arsitektur; bukan authority user input. */
+  /** Owner menurut arsitektur; bukan authority user input. DEPRECATED — see above. */
   ownerId?: string
   /** Marker finalize: semua seq ≤ ini durable. */
   uptoSeq?: number

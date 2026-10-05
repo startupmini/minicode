@@ -212,6 +212,8 @@ test("M14 wiring: resume memakai path jurnal sesi yang di-resume", async () => {
   const originalJournal = join(dir, ".minicode", "runtime-journal-m14p-orig.db")
   try {
     expect(existsSync(originalJournal)).toBe(true)
+    // P2.1: resume butuh baris sesi durable (bukan hanya artefak runtime).
+    await first.persistCurrent({})
   } finally {
     await first.close()
   }

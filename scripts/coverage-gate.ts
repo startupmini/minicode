@@ -68,8 +68,12 @@ function getArg(name: string, fallback: number): number {
 // lines tetap 84,5 (margin 0,14 pp sudah disengaja anti-flaky sejak 0.10.x).
 // Phase 2 parity: 84,46 funcs / 85,46 lines, 2559 pass / 22 skip. Kunci di
 // 84/85 sesuai aturan repo (naikkan minimum bila coverage naik).
-const MIN_LINES = getArg("--lines", 85)
-const MIN_FUNCS = getArg("--funcs", 84)
+// P2.10 Verification (ToolInvocationId + EffectIntent/Receipt + VerificationRecord
+// + idempotency + read-back verifier + 50 test baru, verification.ts 97,01/99,66,
+// evidence.ts 100/100): 86,65 funcs / 87,54 lines satu run. Kunci di 85/86
+// (margin ~1,6/1,5 pp anti-flaky, konsisten praktik repo).
+const MIN_LINES = getArg("--lines", 86)
+const MIN_FUNCS = getArg("--funcs", 85)
 
 // ── lantai per-berkas modul kritis (audit F5) ──
 // Gate agregat BUTA terhadap modul tunggal yang jatuh: policy/jail 97% → 5%

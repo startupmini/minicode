@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto"
 import { resolve as resolvePath } from "node:path"
 import { NoProviderError } from "../../src/app/provider-layer.ts"
 import { createRateLimiter } from "../../src/policy/ratelimit.ts"
@@ -56,10 +55,8 @@ export async function handleExec(
   const cwd = cwdRaw ? resolvePath(cwdRaw) : undefined
   const modelOverride = getArg("--model")
   const providerOverride = getArg("--provider")
-  const sessionId =
-    getArg("--session")
-      ?.replace(/[^A-Za-z0-9._-]/g, "-")
-      .slice(0, 64) || randomUUID().slice(0, 8)
+  // P2.1: flag mentah; identitas kanonik diputus di resolver (satu sanitizer).
+  const sessionFlag = getArg("--session") ?? ""
   const allowAll = hasFlag(subArgs, "--allow-all")
   const ask = hasFlag(subArgs, "--ask")
   const plan = hasFlag(subArgs, "--plan")
@@ -120,7 +117,7 @@ export async function handleExec(
 
   const ctx = await createCliSession({
     cwd,
-    sessionId,
+    sessionId: sessionFlag,
     modelOverride,
     providerOverride,
     prompt: effectivePrompt,
@@ -164,7 +161,10 @@ export async function handleExec(
   // {type:"text",delta} terpisah — delta bukan lifecycle.
   const unsubMachine = ctx.onPresentationEvent
     ? ctx.onPresentationEvent((event) => {
-        const envelope = toMachineEnvelope(event, { sessionId, timestamp: Date.now() })
+        const envelope = toMachineEnvelope(event, {
+          sessionId: ctx.sessionId,
+          timestamp: Date.now(),
+        })
         if (!envelope) return
         streamed++
         if (jsonMode) writeMachineLine(JSON.stringify(envelope))
@@ -208,7 +208,7 @@ export async function handleExec(
       // tak perlu menebak batas JSON dari prosa turn terakhir.
       const submitted = getSubmittedResult()
       const result = machineSummary(true, {
-        sessionId,
+        sessionId: ctx.sessionId,
         model: ctx.modelRef.current,
         prompt: effectivePrompt,
         durationMs: Date.now() - t0,
@@ -230,6 +230,15 @@ export async function handleExec(
     unsubMachine()
     unsubText()
     await ctx.persistCurrent(ue)
+    // P2.2: histori yang tak durable = kegagalan jujur (bukan exit 0).
+    if (ctx.isWriterStale()) {
+      const msg = `[writer] stale writer, history NOT durable: ${ctx.writerStaleNote()}`
+      if (jsonMode)
+        writeMachineLine(JSON.stringify(machineFailure(effectivePrompt, new Error(msg))))
+      else process.stderr.write(`${msg}\n`)
+      await ctx.close()
+      process.exit(1)
+    }
     await ctx.close()
     process.exit(0)
   } catch (e) {

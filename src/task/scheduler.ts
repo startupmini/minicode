@@ -297,6 +297,11 @@ export class Scheduler {
     this.instruction = opts.instruction
     this.onEvent = opts.onEvent
     this.cancellation = opts.cancellation
+    // P2.2: token otoritas milik composition root (satu penulis per boot).
+    // Tanpa ini opsi authorityToken mati (selalu mint sendiri) dan sesi +
+    // scheduler-nya saling menolak lease. Bukan redesign protokol: acquire/
+    // renew/release/holds tak berubah; hanya sumber token disatukan.
+    this.authorityToken = opts.authorityToken ?? null
   }
 
   // ── lifecycle ──────────────────────────────────────────────────────────────

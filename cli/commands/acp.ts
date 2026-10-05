@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto"
 import { resolve as resolvePath } from "node:path"
 import { createInterface } from "node:readline"
 import { LIMITS } from "../../src/constants.ts"
@@ -10,6 +9,7 @@ import {
   machineSeverity,
   machineStatus,
 } from "../../src/presentation/projection.ts"
+import { mintSessionId } from "../../src/session/identity.ts"
 import { clearSubmittedResult, getSubmittedResult } from "../../src/tools/submit_result.ts"
 import { formatError } from "../../src/ui/assistant/simple.ts"
 import type { UiPresentationEvent, UiPresentationSnapshot } from "../../src/ui/contract.ts"
@@ -331,7 +331,9 @@ export async function runAcpSession(
     return
   }
   const rp = parsed.value
-  const sessionId = randomUUID().slice(0, 8)
+  // P2.1: tiap run = sesi kanonik BARU (tanpa thread/resume); id fresh
+  // sekali via mint terpusat.
+  const sessionId = mintSessionId()
   const ac = new AbortController()
   deps.startFlight(() => ac.abort())
   const t0 = Date.now()
@@ -411,7 +413,7 @@ export async function runAcpSession(
         write(
           acpOk(id, {
             ok: true,
-            sessionId,
+            sessionId: ctx.sessionId,
             model: ctx.modelRef.current,
             tokens: ue.totalTokens,
             inputTokens: ue.inputTokens,
@@ -434,6 +436,14 @@ export async function runAcpSession(
         const persist = (ctx as { persistCurrent?: (usage: unknown) => Promise<void> })
           .persistCurrent
         if (typeof persist === "function") await persist(ctx.usage.getSession(ctx.modelRef.current))
+        // P2.2: respons sukses sudah terkirim di atas (tepat-sekali per run);
+        // histori yang tak durable dilaporkan via stderr diagnostik, bukan
+        // pesan protokol kedua.
+        if (ctx.isWriterStale()) {
+          process.stderr.write(
+            `[writer] stale writer sid=${ctx.sessionId}, history NOT durable: ${ctx.writerStaleNote()}\n`,
+          )
+        }
       } catch {}
       await ctx.close()
     }

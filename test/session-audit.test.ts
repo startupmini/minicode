@@ -24,9 +24,12 @@ import {
 } from "../src/session/checkpoint.ts"
 import {
   branchSession,
+  DEFAULT_THREAD_ID,
   listPersistedTurns,
   loadSession,
+  RefusedHistoryRewriteError,
   saveSession,
+  shrinkThreadHistory,
 } from "../src/session/persistence.ts"
 
 function memCwd(): string {
@@ -77,7 +80,12 @@ test("audit: history menyusut → rewrite penuh tanpa sisa pesan lama", async ()
   try {
     await saveSession("s1", dir, undefined, MSGS, undefined)
     expect(loadSession("s1", dir)?.messages.length).toBe(3)
-    await saveSession("s1", dir, undefined, MSGS.slice(0, 1), undefined)
+    // P2.7: saveSession append-only (menolak shrink); jalur eksplisit =
+    // shrinkThreadHistory. Invariant audit tetap sama: tak ada pesan lama.
+    await expect(saveSession("s1", dir, undefined, MSGS.slice(0, 1), undefined)).rejects.toThrow(
+      RefusedHistoryRewriteError,
+    )
+    shrinkThreadHistory("s1", DEFAULT_THREAD_ID, MSGS.slice(0, 1), dir, { expectedEpoch: 0 })
     const loaded = loadSession("s1", dir)
     expect(loaded?.messages.length).toBe(1)
     expect((loaded!.messages[0] as { content: string }).content).toBe("satu")

@@ -25,9 +25,48 @@ import { mkdir, open, readFile } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { atomicWriteText } from "../lib/atomic-write.ts"
 import { sanitizeSessionPart } from "../lib/session-id.ts"
+import { scrubSecrets } from "../policy/scrub.ts"
 import { isMcpToolName } from "../presentation/label.ts"
 
 export type JournalState = "pending" | "committed" | "failed"
+
+export type VerificationMethod =
+  | "filesystem-read-back"
+  | "checkpoint-diff"
+  | "git-state"
+  | "external-acknowledgement"
+  | "existing-verifier"
+  | "human-resolution"
+
+export type VerificationVerdict = "present" | "absent" | "inconclusive"
+
+const VERIFICATION_METHODS: ReadonlySet<VerificationMethod> = new Set([
+  "filesystem-read-back",
+  "checkpoint-diff",
+  "git-state",
+  "external-acknowledgement",
+  "existing-verifier",
+  "human-resolution",
+])
+
+export function isVerificationMethod(method: string): method is VerificationMethod {
+  return VERIFICATION_METHODS.has(method as VerificationMethod)
+}
+
+export interface JournalOutcome {
+  code?: number | null
+  note?: string
+  /** Application-observed acknowledgement only; never universal effect proof. */
+  ack?: string | number | boolean | null
+  ackSource?: "bash-exit" | "sandbox-exit" | "git-commit" | "external-response" | "absent"
+  ackAuthority?: "application-observed"
+  truncated?: true
+  timeout?: true
+  aborted?: true
+  loss?: "none" | "response" | "persistence" | "unknown"
+  uncertainty?: "none" | "ambiguous-effect" | "unverified-external" | "evidence-incomplete"
+  observedAt?: number
+}
 
 export interface JournalRecord {
   v: 1
@@ -40,8 +79,8 @@ export interface JournalRecord {
   turn?: number | null
   seq: number
   tool: string
-  /** mutation (default) | undo | redo | finalize. Marker bukan intent. */
-  kind?: "mutation" | "undo" | "redo" | "finalize"
+  /** mutation (default) | verification | undo | redo | finalize. Marker bukan intent. */
+  kind?: "mutation" | "verification" | "undo" | "redo" | "finalize"
   /** true = klaim sukses berasal dari pihak remote (MCP), bukan komit lokal. */
   remote?: true
   /** Backend code_run ("docker"|"os"|...) — alat interpretasi, bukan kontrol. */
@@ -50,6 +89,12 @@ export interface JournalRecord {
   cwd: string
   /** Path relatif-workspace untuk verification (allowlist per kelas-tool). */
   paths?: string[]
+  /** Canonical history thread for this intent (P2.10 invocation scope). */
+  threadId?: string
+  /** Application-owned invocation key (provider call identifiers are locators only). */
+  invocationId?: string
+  /** Provider call identifier, when available; never canonical by itself. */
+  providerToolCallId?: string
   /** SHA-256 JSON kanonisal argumen — identitas, BUKAN replay (tanpa raw args). */
   argsHash?: string
   /** Tautan delegasi: id sesi anak (parent-side record). */
@@ -95,7 +140,14 @@ export interface JournalRecord {
   files?: number
   /** Hanya untuk kind mutation. Terminal immutable (lihat consolidate). */
   state?: JournalState
-  outcome?: { code?: number | null; note?: string }
+  outcome?: JournalOutcome
+  /** Hanya untuk kind verification: explicit observation method and verdict. */
+  method?: VerificationMethod
+  verdict?: VerificationVerdict
+  /** Scrubbed, length-capped pointer to the external observation (never raw content). */
+  evidenceReference?: string
+  /** When the external observation occurred (may differ from append time). */
+  observedAt?: number
   /**
    * Bukti dedup idempotency (audit #08 P0): terminal yang ditandai ini
    * dipertahankan sweep (lihat sweepInner) agar retry id-sama pasca-restart
@@ -172,6 +224,14 @@ export function isMutationTool(name: string): boolean {
   // classifyTool tetap mengembalikan "unknown" (taksonomi untuk test-time
   // guard `tool belum diklasifikasikan` di journal.test.ts).
   return classifyTool(name) !== "none"
+}
+
+/** P2.10 canonical coverage: plain registry tools handled by an awaited wrapper. */
+export function isCanonicalEvidenceCovered(name: string): boolean {
+  // Independent special paths keep their own single intent/terminal pair:
+  // delegate_task writes explicitly, and dotted runtime MCP tools remain on
+  // the event path while MCP server mode has its own awaited instrumentation.
+  return isMutationTool(name) && !NO_AUTO_JOURNAL.has(name) && !isMcpToolName(name)
 }
 
 // delegate_task dicatat eksplisit oleh tool-nya sendiri (butuh childSessionId
@@ -408,6 +468,12 @@ export interface IntentInput {
   childOf?: string
   turn?: number | null
   tool: string
+  threadId?: string
+  /** Provisional or canonical application-owned invocation key. */
+  invocationId?: string
+  providerToolCallId?: string
+  /** Allocate the canonical key from the reserved journal sequence inside the lock. */
+  allocateInvocationId?: (allocationSequence: number) => string
   remote?: true
   backend?: string
   cwd?: string
@@ -442,6 +508,9 @@ export async function appendMutationIntent(input: IntentInput): Promise<JournalR
     // Alokasi seq SYNCHRONOUS di dalam lock: tanpa ini dua pemanggil konkuren
     // mendapat seq sama (tabrakan id — P0, ditemukan AUDIT #01D).
     const seq = st.nextSeq
+    const invocationId = input.allocateInvocationId
+      ? input.allocateInvocationId(seq)
+      : input.invocationId
     const rec: JournalRecord = {
       v: 1,
       id: `${input.session}:${seq}`,
@@ -450,6 +519,9 @@ export async function appendMutationIntent(input: IntentInput): Promise<JournalR
       turn: input.turn ?? null,
       seq,
       tool: input.tool,
+      ...(input.threadId ? { threadId: input.threadId } : {}),
+      ...(invocationId ? { invocationId } : {}),
+      ...(input.providerToolCallId ? { providerToolCallId: input.providerToolCallId } : {}),
       ...(input.remote ? { remote: true as const } : {}),
       ...(input.backend ? { backend: input.backend } : {}),
       cwd: root,
@@ -486,10 +558,15 @@ export async function appendMutationTerminal(
   seq: number,
   tool: string,
   state: "committed" | "failed",
-  outcome?: { code?: number | null; note?: string },
+  outcome?: JournalOutcome,
   childSessionId?: string,
   opts: {
     dedup?: boolean
+    threadId?: string
+    invocationId?: string
+    providerToolCallId?: string
+    argsHash?: string
+    receipt?: Omit<JournalOutcome, "code" | "note">
     // M1 correlator passthrough (absent = terminal legacy tanpa korelasi).
     executionId?: string
     parentExecutionId?: string
@@ -511,7 +588,19 @@ export async function appendMutationTerminal(
       tool,
       state,
       cwd: root,
-      ...(outcome ? { outcome } : {}),
+      ...(opts.threadId ? { threadId: opts.threadId } : {}),
+      ...(opts.invocationId ? { invocationId: opts.invocationId } : {}),
+      ...(opts.providerToolCallId ? { providerToolCallId: opts.providerToolCallId } : {}),
+      ...(opts.argsHash ? { argsHash: opts.argsHash } : {}),
+      ...(outcome || opts.receipt
+        ? {
+            outcome: {
+              ...(outcome ?? {}),
+              ...(opts.receipt ?? {}),
+              ...(opts.receipt?.observedAt === undefined ? { observedAt: Date.now() } : {}),
+            },
+          }
+        : {}),
       // Tautan delegasi diwariskan ke terminal agar pembaca tak perlu
       // join intent-terminal untuk mengetahui anak mana yang dirujuk.
       ...(childSessionId ? { childSessionId } : {}),
@@ -527,6 +616,71 @@ export async function appendMutationTerminal(
     }
     const st = writers.get(key)
     if (!(await appendLine(path, rec)) && st) markDegraded(session, root, "terminal append gagal")
+  })
+}
+
+/** Append a standalone explicit external-effect observation (P2.10 VerificationRecord). */
+export async function appendVerificationRecord(input: {
+  session: string
+  threadId?: string
+  tool: string
+  invocationId: string
+  method: VerificationMethod
+  verdict: VerificationVerdict
+  evidenceReference: string
+  observedAt?: number
+  cwd?: string
+  childOf?: string
+  childSessionId?: string
+  providerToolCallId?: string
+}): Promise<{ record: JournalRecord; durable: boolean }> {
+  if (!input.tool) throw new Error("verification: refusing record without tool")
+  if (!input.invocationId) throw new Error("verification: refusing record without invocationId")
+  if (!VERIFICATION_METHODS.has(input.method)) {
+    throw new Error(`verification: unsupported method ${String(input.method)}`)
+  }
+  if (
+    input.verdict !== "present" &&
+    input.verdict !== "absent" &&
+    input.verdict !== "inconclusive"
+  ) {
+    throw new Error(`verification: unsupported verdict ${String(input.verdict)}`)
+  }
+  const evidenceReference = scrubSecrets(String(input.evidenceReference ?? "")).slice(0, 1000)
+  if (!evidenceReference) throw new Error("verification: refusing record without evidenceReference")
+  const root = resolve(input.cwd ?? process.cwd())
+  const path = journalPath(input.session, root)
+  const key = writerKey(input.session, root)
+  return withFileLock(key, async () => {
+    const st = await stateFor(path, key)
+    const seq = st.nextSeq
+    const observedAt =
+      typeof input.observedAt === "number" && Number.isFinite(input.observedAt)
+        ? input.observedAt
+        : Date.now()
+    const rec: JournalRecord = {
+      v: 1,
+      id: `${input.session}:v${seq}`,
+      session: input.session,
+      seq,
+      tool: input.tool,
+      kind: "verification",
+      ...(input.childOf ? { childOf: input.childOf } : {}),
+      ...(input.threadId ? { threadId: input.threadId } : {}),
+      invocationId: input.invocationId,
+      ...(input.providerToolCallId ? { providerToolCallId: input.providerToolCallId } : {}),
+      ...(input.childSessionId ? { childSessionId: input.childSessionId } : {}),
+      method: input.method,
+      verdict: input.verdict,
+      evidenceReference,
+      observedAt,
+      cwd: root,
+      ts: Date.now(),
+    }
+    const durable = await appendLine(path, rec)
+    if (durable) st.nextSeq = seq + 1
+    else markDegraded(input.session, root, "verification append gagal")
+    return { record: rec, durable }
   })
 }
 
@@ -642,6 +796,10 @@ async function sweepInner(sessionId: string, root: string): Promise<number> {
   const keep = loaded.records.filter((r) => {
     if (r.kind === "finalize") return r.seq === maxFinalizeSeq(loaded.records)
     if (r.kind === "undo" || r.kind === "redo") return r.seq > maxUpto
+    // P2.10 verification evidence is retained like dedup terminals: it may be
+    // the only durable external-effect observation after finalize/sweep.
+    // Bound by per-session files + orphan TTL, not by finalize.
+    if (r.kind === "verification") return true
     if (r.state === "pending" && paired.has(r.id)) return false
     if (r.state === "pending") return !isSuperseded(r, committedKeys)
     // Bukti dedup idempotency (dedup: true, mis. MCP request id) BUKAN sampah
@@ -766,6 +924,20 @@ function isRecordShape(r: unknown): r is JournalRecord {
   if (o.v !== 1 || typeof o.id !== "string" || typeof o.session !== "string") return false
   if (typeof o.seq !== "number" || !Number.isFinite(o.seq)) return false
   if (o.kind === "finalize" || o.kind === "undo" || o.kind === "redo") return true
+  if (o.kind === "verification") {
+    return (
+      typeof o.tool === "string" &&
+      o.tool !== "" &&
+      typeof o.invocationId === "string" &&
+      o.invocationId !== "" &&
+      VERIFICATION_METHODS.has(o.method as VerificationMethod) &&
+      (o.verdict === "present" || o.verdict === "absent" || o.verdict === "inconclusive") &&
+      typeof o.evidenceReference === "string" &&
+      o.evidenceReference !== "" &&
+      typeof o.observedAt === "number" &&
+      Number.isFinite(o.observedAt)
+    )
+  }
   if (typeof o.tool !== "string" || !o.tool) return false
   return o.state === "pending" || o.state === "committed" || o.state === "failed"
 }
@@ -1124,8 +1296,8 @@ export function attachMutationJournal(
     childOf?: string
     /**
      * Fase 4 V2.1: kabar terminal committed (paths+journalSeq) → composition
-     * root memancarkan file.changed (receipt). Opsional — tanpa hook, jurnal
-     * tetap berjalan seperti dulu.
+     * root memancarkan file.changed (receipt paths+journalSeq) ke adapter.
+     * Opsional — tanpa hook, jurnal tetap berjalan seperti dulu.
      */
     onCommitted?: (info: {
       toolCallId: string
@@ -1134,6 +1306,12 @@ export function attachMutationJournal(
       sessionId: string
       turnId?: number
     }) => void
+    /**
+     * P2.10 canonical mode: registry tools covered by an awaited wrapper
+     * already wrote one intent/terminal pair. Event fallback stays only for
+     * special paths and uncovered tools, so production has no double evidence.
+     */
+    evidenceMode?: "events" | "canonical"
   },
 ): void {
   const root = resolve(opts.cwd ?? process.cwd())
@@ -1181,6 +1359,7 @@ export function attachMutationJournal(
     if (ev.forwardedChild != null) return
     const name = typeof ev.execution?.call?.name === "string" ? ev.execution.call.name : ""
     if (!name || NO_AUTO_JOURNAL.has(name) || !isMutationTool(name)) return
+    if (opts.evidenceMode === "canonical" && isCanonicalEvidenceCovered(name)) return
     const callId =
       typeof ev.execution?.call?.id === "string" ? (ev.execution.call.id as string) : ""
     const base = isMcpToolName(name) ? "mcp_call" : name
@@ -1219,6 +1398,7 @@ export function attachMutationJournal(
         if (ev.forwardedChild != null) return
         const name = typeof ev.execution?.call?.name === "string" ? ev.execution.call.name : ""
         if (!name || NO_AUTO_JOURNAL.has(name) || !isMutationTool(name)) return
+        if (opts.evidenceMode === "canonical" && isCanonicalEvidenceCovered(name)) return
         const callId =
           typeof ev.execution?.call?.id === "string" ? (ev.execution.call.id as string) : ""
         const q = callId ? (inflight.get(callId) ?? []) : []

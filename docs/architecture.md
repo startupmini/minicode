@@ -19,7 +19,7 @@ L3 vendor/minicore  → kernel STATE/MODEL/ACTION/LOOP (freeze, zero-dep, via #m
 
 ## Alur satu prompt
 
-`prompt → permission check → validateArgs (kernel) → executor (order/cap/abort-aware) → tool realpath+atomic → execute → checkpoint shadow-git + journal + step-trace → compaction (mekanikal sinkron; LLM async via seam `compactAsync`) → usage/pricing per-segmen longest-key → trace`.
+`prompt → permission check → validateArgs (kernel) → executor (order/cap/abort-aware) → P2.10 canonical tool wrapper (await EffectIntent → execute → await EffectReceipt) → tool realpath+atomic → checkpoint shadow-git + journal + step-trace → compaction (mekanikal sinkron; LLM async via seam `compactAsync`) → usage/pricing per-segmen longest-key → trace`.
 
 ## Konteks & state durable
 
@@ -69,10 +69,10 @@ todo_write (model) ─► normalizeTodos ─► .minicode/todos/<id>.json   (sta
 
 Tiga aturan yang menjaga domain ini:
 
-1. **Identitas sesi kanonik.** Todo terikat ke `presentationSessionId`
-   (`resumeId ?? sessionId`), bukan `sessionId`. `sessionId` dari
-   `cli/index.ts` acak saat `--resume` tanpa `--session`; mengikat ke sana
-   membuat task state hilang di batas resume dan meninggalkan file yatim.
+1. **Identitas sesi kanonik (P2.1).** Todo terikat ke `sid` kanonik dari
+    `resolveSessionIdentity` (`src/session/identity.ts`), bukan id volatil
+    proses (`bootId`). `--resume` tanpa `--session` tidak lagi menempa id
+    acak; `--resume` tak dikenal gagal eksplisit (`SESSION_NOT_FOUND`).
 2. **Completion butuh bukti.** `setCompletionEvidence()` menyuntikkan verdict   (`unverified` | `passed` | `failed`) dari composition root. `failed` menolak
    `completed` → task jadi `blocked` + alasannya, dan hasilnya dilaporkan ke
    model. Default `unverified` menjaga pemakaian tanpa `--verify` tetap
@@ -86,6 +86,14 @@ Batas saat ini (NOT IMPLEMENTED, lihat `docs/TASK_ARCHITECTURE_AUDIT.md`):
 tanpa dependency/graph, tanpa scheduler, tanpa surface user (`/tasks`),
 `/undo` hanya revert file (todo tetap `completed`), dan tidak ada TTL/GC untuk
 file todo di luar SQLite.
+
+## Bukti verifikasi (P2.10)
+
+`src/session/verification.ts` + `src/tools/evidence.ts` menulis identitas
+invokasi, intent pra-efek, receipt pasca-eksekusi, dan observasi eksplisit ke
+jurnal mutasi yang sama (`src/session/journal.ts`). `committed` berarti return
+tool terobservasi, bukan efek eksternal terbukti; `pending` tetap UNKNOWN.
+Verifikasi tak menulis `messages`, proyeksi, presentasi, Run, atau kursor.
 
 ## UI/UX terminal (kontrak FROZEN)
 
@@ -102,6 +110,8 @@ Satu-satunya arbitrator transient: `src/ui/runtime/statusline.ts` (`acquireTrans
 Enam primitif tampilan (semuanya di dalam TUI fullscreen saat interaktif): transkrip `minicode ›` tampil saat boot/idle dan kembali otomatis setelah turn selesai + jawaban model + ledger `  › name target` hijau / `  › name: …` merah; status bar satu baris `✦ 00.00.00 mode  model  cwd` (timer redup idle; saat aktif hanya detik putih, menit ikut terang setelah 60 dtk, jam setelah 1 jam; sparkle proses; konteks rata kanan; tanpa bullet separator; `src/ui/tui/app.ts` merender composer dots dan satu spacer di atas footer per frame); popup komposit satu kotak (`/model`, `/provider`, `/sessions`, form, approval) via `openAltScreen`/`paintRegion`; thinking redup tanpa marker transcript (composer dots; isi via `/expand`); error `✗ pesan actionable` sekali per kegagalan (`takePendingError`). `✓`/`✗` tetap untuk status/konfirmasi perintah (sync, auth, config, spinner).
 
 ## Modul kunci
+
+- `src/session/verification.ts` + `src/tools/evidence.ts`: identitas invokasi milik aplikasi, intent/receipt yang di-await, observasi eksplisit, idempotency, dan korelasi efek anak — semuanya di jurnal mutasi yang sama.
 
 - `src/ui/render/`: `theme.ts` (getter `c`/`glyphs`), `width.ts` (kolom), `sanitize.ts` (hanya SGR lewat), `markdown.ts`, `markdown-table.ts` (parser pipe-table streaming), `table-grid.ts` (grid budget terminal), `highlight.ts diff.ts table.ts wrap.ts money.ts errors.ts`.
 - `src/presentation/`: `events.ts` (25 semantic event types + proposed marker), `adapter.ts` (runtime → DomainEvent), `reducer.ts`/`model.ts` (replayable bounded state + derived summary), `store.ts` (content refs), `projection.ts` (policy node/mode + envelope `minicode.output.v1` + kategori error machine, murni), dan `src/session/persistence.ts` (`presentation_events` durable log + `messages` dengan fidelity `reasoning`/`is_error`). `cli/setup.ts` memiliki exhaustive `toPresentationEvent()` bridge; renderer TUI/linear/machine memakai keputusan policy via injeksi `PresentationPolicy` (rollback flag dihapus di Phase 8).

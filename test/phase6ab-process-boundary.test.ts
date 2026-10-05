@@ -445,23 +445,30 @@ describe("6AB S19 P6 - resume", () => {
     seedTask("p6-orig", "resumable")
     const first = await runChild("p6-orig", { action: "none", withProvider: true })
     expect(first.report.ok).toBe(true)
+    // P2.1: resume butuh baris sesi durable. Child "none" tak persist
+    // (harness tak diubah) — parent menegakkan barisnya langsung; isi
+    // histori tak relevan untuk komposisi scheduler yang diuji di sini.
+    const { saveSession } = await import("../src/session/persistence.ts")
+    await saveSession("p6-orig", dir, undefined, [], undefined)
 
-    // Resume into a NEW live id: a fork, matching persistCurrent's dual write.
+    // P2.1: fork resume DIHAPUS. Resume melanjutkan sesi kanonik yang SAMA:
+    // report.sessionId adalah "p6-orig" (bukan id flag), dengan lease baru
+    // (token berbeda) atas namespace yang sama.
     const resumed = await runChild("p6-2", {
       resumeId: "p6-orig",
       action: "fire",
       withProvider: true,
     })
     expect(resumed.report.ok).toBe(true)
-    expect(resumed.report.sessionId).toBe("p6-2")
+    expect(resumed.report.sessionId).toBe("p6-orig")
     expect(resumed.report.constructed).toBe(true)
     expect(resumed.report.hasAuthority).toBe(true)
     expect(resumed.report.token).not.toBe(first.report.token)
-    // The live session has no ready task; the resumed session's task is untouched.
+    // Scheduler namespace kanonik MEMILIKI task p6-orig → dieksekusi.
     expect(resumed.report.evaluations).toBe(1)
-    expect(resumed.report.executions).toBe(0)
+    expect(resumed.report.executions).toBe(1)
     expect(new TaskStore(dir, { authority: "SCHEDULER" }).listTasks("p6-orig")[0]!.status).toBe(
-      "PENDING",
+      "IN_PROGRESS",
     )
   }, 120_000)
 })

@@ -624,6 +624,8 @@ test("S15b resume: identitas jurnal tetap resumeId, shutdown+reopen menemukan hi
   const first = await createCliSession({ ...base, sessionId: "m14-orig" })
   const firstRuntime = first.productionRuntime.runtime()!
   const executionId = admitAndRun(firstRuntime)
+  // P2.1: resume butuh baris sesi durable (bukan hanya artefak runtime).
+  await first.persistCurrent({})
   await first.close()
 
   const resumed = await createCliSession({ ...base, sessionId: "m14-new", resumeId: "m14-orig" })

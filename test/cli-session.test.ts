@@ -599,12 +599,12 @@ describe("cli: --resume", () => {
     expect(files).toEqual(["s-task.json"])
   })
 
-  test("id sesi tak dikenal -> peringatan, mulai baru, tetap exit 0", async () => {
+  test("id sesi tak dikenal -> error eksplisit, bukan sesi baru diam-diam (P2.1)", async () => {
     const { run: r } = await runWithProvider(
       [{ kind: "text", text: "sesi baru" }],
       ["apa saja", "--resume", "tidak-ada-ini"],
     )
-    expect(r.code).toBe(0)
+    expect(r.code).not.toBe(0)
     expect(r.stderr).toContain("not found")
   })
 })

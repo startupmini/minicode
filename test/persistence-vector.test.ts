@@ -4,7 +4,13 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { addMemory, deleteMemoryByQuery, searchHybrid } from "../src/memory/vector.ts"
-import { deleteSession, loadSession, saveSession } from "../src/session/persistence.ts"
+import {
+  DEFAULT_THREAD_ID,
+  deleteSession,
+  loadSession,
+  saveSession,
+  shrinkThreadHistory,
+} from "../src/session/persistence.ts"
 
 // pakai OS temp dir — hermetic & tidak mengotori repo root (sqlite WAL bisa
 // meninggalkan file lock di Windows)
@@ -126,17 +132,18 @@ test("persistence compaction (history menyusut) tulis ulang penuh", async () => 
     {},
   )
   expect(loadSession(id, tmp)?.messages.length).toBe(6)
-  // compaction: hanya 2 pesan terakhir
-  await saveSession(
+  // compaction: hanya 2 pesan terakhir. P2.7: jalur shrink EKSPLISIT
+  // (saveSession kini append-only dan menolak rewrite implisit).
+  shrinkThreadHistory(
     id,
-    tmp,
-    "sys",
+    DEFAULT_THREAD_ID,
     [
       { role: "user", content: "summary" },
       { role: "user", content: "u3" },
       { role: "assistant", content: "a3" },
     ] as never,
-    {},
+    tmp,
+    { expectedEpoch: 0 },
   )
   const loaded = loadSession(id, tmp)
   expect(loaded?.messages.length).toBe(3)

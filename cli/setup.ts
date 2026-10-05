@@ -66,6 +66,14 @@ import {
   runtimeJournalPath,
 } from "../src/runtime/production-runtime.ts"
 import {
+  acquireSessionWriter,
+  checkWriterFresh,
+  releaseSessionWriter,
+  renewSessionWriter,
+  StaleWriterError,
+  writerTokenFor,
+} from "../src/session/authority.ts"
+import {
   beginTurnSnapshot,
   reconcileUndoRedoPointer,
   recordCheckpointFromSnapshots,
@@ -74,16 +82,36 @@ import {
   validateResumeWorkspace,
 } from "../src/session/checkpoint.ts"
 import {
+  assembleContext,
+  type ContextOnlyArtifact,
+  stripContextOnly,
+} from "../src/session/context-assembly.ts"
+import { formatSessionIdentityLine, resolveSessionIdentity } from "../src/session/identity.ts"
+import {
   attachMutationJournal,
   finalizeJournal,
   planRecoveryForSession,
 } from "../src/session/journal.ts"
 import {
   appendPresentationEvents,
+  backfillHistoryEventIds,
+  completeRun,
+  createRun,
+  DEFAULT_THREAD_ID,
+  ensureDefaultThread,
+  failRun,
+  interruptRun,
   listPersistedTurns,
   loadPresentationEvents,
   loadSession,
+  RefusedHistoryRewriteError,
   saveSession,
+  shrinkThreadHistory,
+  ThreadArchivedError,
+  terminalizeChildRuns,
+  tombstoneDeadRuns,
+  tombstoneOrphanChildRuns,
+  transitionRun,
 } from "../src/session/persistence.ts"
 import { snapshotTree } from "../src/session/shadow-git.ts"
 import type { Skill } from "../src/skills/loader.ts"
@@ -94,6 +122,7 @@ import {
   schedulerGateFor,
 } from "../src/task/production-scheduler.ts"
 import { SchedulerObservability } from "../src/task/scheduler-observability.ts"
+import { SESSION_RENEW_INTERVAL_MS } from "../src/task/session-authority.ts"
 import { createTaskIdentityResolver } from "../src/task/sync.ts"
 import {
   classifyToolResult,
@@ -103,7 +132,11 @@ import {
 } from "../src/telemetry/trace.ts"
 import { setAskApprovalHook, setAskTextFn } from "../src/tools/ask_user.ts"
 import { killAllBackgroundJobs } from "../src/tools/bash.ts"
-import { setSubAgentExecutionRunner, setSubAgentParentRouting } from "../src/tools/task.ts"
+import {
+  setSubAgentExecutionRunner,
+  setSubAgentParentRouting,
+  setSubAgentParentRunId,
+} from "../src/tools/task.ts"
 import {
   reconcileCompletionEvidence,
   setCompletionEvidence,
@@ -133,6 +166,9 @@ export interface CliSessionOptions {
   cwd?: string
   sessionId: string
   resumeId?: string
+  // P2.1: id volatil per proses untuk korelasi diagnostik (tak pernah jadi
+  // kunci persistensi). Diisi CLI; bila absen, identity resolver yang mint.
+  bootId?: string
   modelOverride?: string
   providerOverride?: string
   prompt: string
@@ -197,6 +233,14 @@ export interface CliSession {
   cfg: MinicodeConfig
   cwd?: string
   sessionId: string
+  // P2.1: identitas kanonik (durable) vs volatil (proses) — jangan tertukar.
+  bootId: string
+  // P2.2: generasi pagar penulis saat admission (observability; mutasi
+  // memakai CAS in-txn, bukan nilai ini). Token otoritas SENGAJA tak
+  // diekspos — tak ada konsumen yang butuh mencetaknya.
+  writerEpoch: number
+  isWriterStale: () => boolean
+  writerStaleNote: () => string
   modelRef: { current?: string }
   effectiveInitialModel: string
   effectiveTimeoutMs: number
@@ -544,8 +588,9 @@ export function parseVerifyTestEvidence(
 export async function createCliSession(opts: CliSessionOptions): Promise<CliSession> {
   const {
     cwd,
-    sessionId,
+    sessionId: sessionFlag,
     resumeId,
+    bootId: bootIdOpt,
     modelOverride,
     providerOverride,
     prompt,
@@ -571,7 +616,137 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     sandboxNotice,
   } = opts
   const modelRef = { current: modelOverride }
-  const presentationSessionId = resumeId ?? sessionId
+  // P2.1 — SATU-SATUNYA keputusan identitas sesi. Sesudah baris ini,
+  // `sessionId` adalah identitas kanonik durable; id volatil hanya `bootId`
+  // (diagnostik). Tak ada jalur persistensi khusus alias: semua turunan
+  // (jurnal, checkpoint, todos, runtime journal, scheduler) memakai sid.
+  // --resume tak dikenal melempar SessionNotFoundError (eksplisit, bukan
+  // sesi baru diam-diam).
+  const identity = resolveSessionIdentity({
+    sessionFlag: sessionFlag,
+    resumeFlag: resumeId,
+    cwd,
+    ...(bootIdOpt ? { bootId: bootIdOpt } : {}),
+  })
+  const sessionId = identity.sid
+  const bootId = identity.bootId
+  process.stderr.write(`${c.dim(formatSessionIdentityLine(identity))}\n`)
+
+  // P2.2 — admission penulis tunggal. Lease = admission; pagar mutasi =
+  // writer_epoch (CAS di transaksi tulis). Komposisi ini MEMEGANG lease
+  // selama hidupnya (token milik boot ini, dibagi dengan scheduler-nya
+  // sendiri) dan melepasnya saat close. Penulis asing yang hidup →REFUSED
+  // di sini (fail-closed); penulis basi ditolak di tiap mutasi (CAS).
+  const writerToken = writerTokenFor(bootId)
+  const admission = acquireSessionWriter({ sessionId, cwd, bootId, token: writerToken })
+  if (!admission.ok) throw admission.error
+  let expectedEpoch = admission.admission.epoch
+  let writerStale = false
+  let writerStaleNote = ""
+  const markWriterStale = (note: string): void => {
+    if (!writerStale) {
+      writerStale = true
+      writerStaleNote = note
+      process.stderr.write(
+        `${c.yellow(`[writer] STALE sid=${sessionId} boot=${bootId} epoch=${expectedEpoch}: ${note} — history NOT durable; resume/restart to re-acquire\n`)}`,
+      )
+    }
+  }
+  process.stderr.write(
+    `${c.dim(`[writer] admitted sid=${sessionId} boot=${bootId} epoch=${expectedEpoch}${admission.admission.tookOver ? " (takeover)" : ""}${admission.admission.fresh ? " (fresh)" : ""}\n`)}`,
+  )
+  // P2.6 — kubur residu crash: RUNNING tanpa holder hidup (admission di atas
+  // membuktikan tak ada penulis hidup) → INTERRUPTED/UNKNOWN. BUKAN
+  // auto-continue/replay; tanpa ini satu crash mengganjal RUNNING unik
+  // selamanya. Fenced, idempoten.
+  tombstoneDeadRuns(sessionId, cwd, { expectedEpoch })
+  // P2.9 — orphan Sub-Agent: Run anak yang masih RUNNING sementara parent
+  // sudah terminal/crash → INTERRUPTED + UNKNOWN (P2.6 semantics: kematian tak
+  // terobservasi, JANGAN pernah disimpulkan COMPLETED). Tidak ada auto-continue.
+  try {
+    const orphans = tombstoneOrphanChildRuns(sessionId, cwd, { expectedEpoch })
+    if (orphans.length > 0) {
+      process.stderr.write(
+        `${c.yellow(`[child] ${orphans.length} orphaned sub-agent run(s) tombstoned (INTERRUPTED/UNKNOWN)\n`)}`,
+      )
+    }
+  } catch {}
+  // P2.2 — heartbeat lease milik boot ini (pola yang sama dengan scheduler:
+  // unref + dibersihkan saat close). Tanpa ini sesi REPL yang idle > lease
+  // kehilangan admission dan take-over asing menjadi mungkin di tengah sesi.
+  // Perpanjangan TAK PERNAH menyentuh writer_epoch (§16).
+  let writerRenewTimer: ReturnType<typeof setInterval> | undefined
+  let renewWarned = false
+  writerRenewTimer = setInterval(() => {
+    const out = renewSessionWriter(sessionId, writerToken, cwd)
+    if (out === "AUTHORITY_LOST" && !renewWarned) {
+      renewWarned = true
+      process.stderr.write(
+        `${c.yellow(`[writer] lease lost sid=${sessionId} boot=${bootId} — another writer took over; next mutation will be refused unless re-acquired\n`)}`,
+      )
+      try {
+        if (writerRenewTimer !== undefined) clearInterval(writerRenewTimer)
+      } catch {}
+      writerRenewTimer = undefined
+    }
+  }, SESSION_RENEW_INTERVAL_MS)
+  writerRenewTimer.unref?.()
+
+  // P2.2 — pagar pra-turn. JANGAN belanjakan provider untuk turn yang tak
+  // bisa persist: basi → lewati turn (histori kernel utuh) + flag untuk
+  // exit jujur one-shot / transcript TUI. Tak melempar (aman loop TUI).
+  // Akuisisi-ulang di sini menutup kasus lease bersama yang dilepas
+  // scheduler-stop di tengah sesi (baris hilang ≠ asing hidup).
+  function ensureWriterFresh(): boolean {
+    if (writerStale) return false
+    const seen = checkWriterFresh(sessionId, writerToken, expectedEpoch, cwd)
+    if (seen.fresh) return true
+    if (seen.epoch === expectedEpoch) {
+      const re = acquireSessionWriter({ sessionId, cwd, bootId, token: writerToken })
+      if (re.ok) {
+        if (re.admission.epoch !== expectedEpoch) {
+          process.stderr.write(
+            `${c.dim(`[writer] re-acquired sid=${sessionId} boot=${bootId} epoch=${re.admission.epoch}\n`)}`,
+          )
+        }
+        expectedEpoch = re.admission.epoch
+        return true
+      }
+      markWriterStale("pre-turn authority refused (lease held by another writer)")
+      return false
+    }
+    markWriterStale(`pre-turn epoch mismatch (expected ${expectedEpoch}, actual ${seen.epoch})`)
+    return false
+  }
+
+  // P2.6 — Run durably per turn-invokasi (komposisi, BUKAN loop: kernel tak
+  // tersentuh). Satu invokasi = satu Run: dibuat RUNNING saat mulai, kursor
+  // maju di persistCurrent (atomik histori+kursor), terminal DITANDAI saat
+  // turn berikutnya dimulai / close (persist selalu mendahului penandaan,
+  // sehingga kursor tak pernah maju di baris terminal). Crash di antaranya =
+  // baris RUNNING → kuburan resume (tombstone) menandainya INTERRUPTED/UNKNOWN.
+  let currentRunId: string | null = null
+  let lastTurnOutcome: "completed" | "failed" | "interrupted" | null = null
+
+  function markPreviousRunTerminal(): void {
+    if (currentRunId === null || lastTurnOutcome === null) return
+    const runId = currentRunId
+    const outcome = lastTurnOutcome
+    currentRunId = null
+    lastTurnOutcome = null
+    if (outcome === "completed") completeRun(runId, cwd, { expectedEpoch })
+    else if (outcome === "interrupted") interruptRun(runId, cwd, { expectedEpoch })
+    else failRun(runId, cwd, { expectedEpoch })
+  }
+
+  function classifyTurnError(e: unknown, aborted: boolean): "failed" | "interrupted" {
+    if (aborted) return "interrupted"
+    // Struktural (tanpa import kelas vendor): kind kernel aborted/timeout =
+    // interupsi; sisanya kegagalan. Tak ada tebakan "selesai".
+    const kind = (e as { kind?: unknown })?.kind
+    if (kind === "aborted" || kind === "timeout") return "interrupted"
+    return "failed"
+  }
 
   // Diagnosis startup lambat: MINICODE_DEBUG_STARTUP=1 mencetak durasi tiap
   // fase session-setup ke stderr (`[startup] rag 8432ms`). Tanpa env = diam.
@@ -675,21 +850,62 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     }),
   )
 
-  // resume: load full history from DB -> seed into kernel ContextStore
+  // resume: load full history dari baris kanonik → seed ke ContextStore.
+  // --resume tak dikenal sudah melempar di resolver identitas (eksplisit);
+  // tak ada lagi "not found → sesi baru diam-diam".
   let initialMessages: readonly Message[] | undefined
   let resumeTurnCount: number | undefined
   let recoveryAppendix = ""
-  if (resumeId) {
+  // P2.8 forensics: artefak context-only yang ditanam di buffer konteks pada
+  // resume ini (bila proyeksi CURRENT). Dipakai persistCurrent untuk membuang
+  // artefak turunan SEBELUM menulis ke histori kanonik. Tanpa deklarasi ini
+  // ringkasan proyeksi bisa bocor ke `messages`.
+  let contextOnlyArtifact: ContextOnlyArtifact | undefined
+  // Baseline kanonik saat resume (isi `messages` yang SUDAH durable). Setelah
+  // proyeksi menutupi prefix, buffer konteks TIDAK lagi superset histori
+  // kanonik — jadi persist harus menyusun ulang: baseline ++ ekor baru.
+  let contextCanonicalBaseline: readonly unknown[] | undefined
+  if (identity.resumed) {
+    // P2.4: aktivasi default Thread SEBELUM seed kernel — backfill aditif
+    // berpagar (konten/seq tak tersentuh). Basi di sini = gagal loud
+    // (dunia bergerak pasca-admission); warn-swallow di bawah tak berlaku.
+    // P2.5: backfill event_id legacy deterministik (NULL → evt_migr_*,
+    // idempoten) agar SEMUA baris durable beridentitas stabil.
+    const defaultThread = ensureDefaultThread(sessionId, cwd, { expectedEpoch })
+    const backfilled = backfillHistoryEventIds(sessionId, cwd, { expectedEpoch })
+    process.stderr.write(
+      `${c.dim(`[thread sid=${sessionId} tid=${defaultThread.thread_id} head=${defaultThread.head_seq}${backfilled > 0 ? ` backfilled=${backfilled}` : ""}]\n`)}`,
+    )
     try {
-      const prev = loadSession(resumeId, cwd)
+      const prev = loadSession(sessionId, cwd)
       if (prev?.messages.length) {
-        initialMessages = prev.messages as readonly Message[]
+        // P2.8 — perakitan konteks (baca-saja, turunan, RAM): pakai ringkasan
+        // proyeksi HANYA bila CURRENT; state lain/absen → fallback histori
+        // kanonik utuh (identik replay sebelum P2.8). Tak pernah menulis apa pun.
+        const view = assembleContext(sessionId, defaultThread.thread_id, cwd)
+        initialMessages = view.messages as readonly Message[]
+        if (view.contextOnly) {
+          contextOnlyArtifact = view.contextOnly
+          contextCanonicalBaseline = prev.messages
+        }
         resumeTurnCount = prev.turnCount
-        console.error(c.dim(`[resumed session ${resumeId} (${prev.messages.length} messages)]\n`))
+        console.error(
+          c.dim(
+            // "(N messages)" dipertahankan VERBATIM (kontrak diagnostik yang
+            // sudah dipakai test/CLI); detail perakitan P2.8 menyusul sebagai
+            // segmen terpisah agar tak mengubah string yang sudah diam.
+            `[resumed session ${sessionId} (${prev.messages.length} messages)]\n`,
+          ),
+        )
+        console.error(
+          c.dim(
+            `[context sid=${sessionId} source=${view.source} status=${view.status} covered=${view.coveredSeq}]\n`,
+          ),
+        )
         // P3 — validasi resume: bukan replay buta. Bila workspace berubah
         // sejak checkpoint terakhir (edit manual / run lain), beri tahu —
         // /undo tersedia bila perlu kembali. Best-effort, tak menggagalkan resume.
-        const div = await validateResumeWorkspace(cwd ?? ".", resumeId).catch(() => null)
+        const div = await validateResumeWorkspace(cwd ?? ".", sessionId).catch(() => null)
         if (div && div.diverged > 0) {
           console.error(
             c.yellow(
@@ -698,11 +914,13 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           )
         }
       } else {
-        console.error(
-          c.yellow(`[resume] session ${resumeId} not found - starting new ${sessionId}\n`),
-        )
+        // Defensif (tak terjangkau normal: resolver menjamin baris ada).
+        console.error(c.yellow(`[resume] session ${sessionId} has no messages yet\n`))
       }
     } catch (e) {
+      // P2.2/P2.4: pagar basi TIDAK boleh jadi warning — lempar ulang agar
+      // startup gagal loud (dunia bergerak pasca-admission).
+      if (e instanceof StaleWriterError || e instanceof ThreadArchivedError) throw e
       process.stderr.write(`[warn] resume failed: ${(e as Error).message}\n`)
     }
   }
@@ -712,8 +930,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // teruskan sebagai SYSTEM appendix (bukan pesan user/assistant palsu).
   // Tanpa jurnal (sesi baru/bersih) = no-op. Tak pernah memblokir resume.
   try {
-    const persistedTurns = listPersistedTurns(resumeId ?? sessionId, cwd)
-    const rec = await planRecoveryForSession(resumeId ?? sessionId, cwd, { persistedTurns })
+    const persistedTurns = listPersistedTurns(sessionId, cwd)
+    const rec = await planRecoveryForSession(sessionId, cwd, { persistedTurns })
     for (const w of rec.warnings) process.stderr.write(c.yellow(`[recovery] ${w}\n`))
     if (rec.directive) {
       process.stderr.write(
@@ -727,7 +945,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
 
   let durablePresentationEvents: DomainEvent[] = []
   try {
-    durablePresentationEvents = loadPresentationEvents(presentationSessionId, cwd)
+    durablePresentationEvents = loadPresentationEvents(sessionId, cwd)
   } catch (e) {
     process.stderr.write(`[warn] presentation replay load failed: ${(e as Error).message}\n`)
   }
@@ -736,7 +954,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     rebuiltPresentation = rebuildFromDurable(
       durablePresentationEvents,
       createReducerDiagnostics(),
-      presentationSessionId,
+      sessionId,
     )
   } catch (e) {
     process.stderr.write(`[warn] presentation replay failed: ${(e as Error).message}\n`)
@@ -783,8 +1001,12 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     const batch = pendingPresentationEvents.splice(0)
     if (batch.length === 0) return
     presentationWriteTail = presentationWriteTail
-      .then(() => appendPresentationEvents(presentationSessionId, cwd, batch))
+      .then(() => appendPresentationEvents(sessionId, cwd, batch, { expectedEpoch }))
       .catch((error) => {
+        if (error instanceof StaleWriterError) {
+          markWriterStale(`presentation flush refused (expected epoch ${error.expectedEpoch})`)
+          return
+        }
         process.stderr.write(
           `[warn] presentation event persist failed: ${(error as Error).message}\n`,
         )
@@ -979,17 +1201,17 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         },
       })
     : undefined
-  const { sessionTools } = await startupPhase("tool-layer", () =>
-    setupToolLayer(cfg, toolScope ?? "full", permissionMode),
+  const { sessionTools, evidenceMode } = await startupPhase("tool-layer", () =>
+    setupToolLayer(cfg, toolScope ?? "full", permissionMode, {
+      sessionId,
+      threadId: DEFAULT_THREAD_ID,
+      cwd: cwd ?? process.cwd(),
+    }),
   )
 
-  // todo_write/todo_read menyimpan state per sesi di .minicode/todos/<id>.json.
-  // WAJIB pakai presentationSessionId (resumeId ?? sessionId), BUKAN sessionId:
-  // `sessionId` di-cek cli/index.ts adalah acak saat --resume tanpa --session,
-  // jadi mengikat ke sana membuat task state hilang tepat di batas resume —
-  // todo_read mengembalikan "(no todos yet)" padahal .minicode/todos/<resumeId>.json
-  // ada. Id kanonik sudah didefinisikan di atas; jangan sidestep.
-  todoSession.id = presentationSessionId
+  // todo_write/todo_read menyimpan state per sesi di .minicode/todos/<id>.json,
+  // terikat pada identitas kanonik (P2.1: satu sid untuk semua komponen).
+  todoSession.id = sessionId
   todoSession.cwd = cwd
   // View pertanyaan ask_user — composition root meng-inject, tool menolak
   // jalan tanpanya (fail-closed, sama seperti `ask` pada permission).
@@ -1005,6 +1227,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     ...(rateLimiter ? { rateLimiter } : {}),
     ...(providerOverride ? { defaultProviderId: providerOverride } : {}),
   })
+  // P2.9 — lineage parent Run untuk anak Sub-Agent. Composition root satu-
+  //-satunya pemilik Run hidup; tooltak pernah mengarang id ini (vendor
+  // ToolContext tak membawa execution id).
+  setSubAgentParentRunId(() => currentRunId)
 
   let permissions: PermissionControl | undefined
   // Validasi concurrency: 0, NaN, Infinity → fallback ke default (jangan teruskan 0 ke executor)
@@ -1062,12 +1288,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // Adaptor mulai mengamati sejak bus hidup (closure onApprovalEvent di atas
   // aman: check() pertama selalu terjadi setelah wiring ini, saat run()).
   presentation = createPresentationAdapter(session.events, {
-    // PF-05: WAJIB `presentationSessionId`, bukan `sessionId`. `sessionId` acak
-    // saat `--resume` tanpa `--session`, sehingga `payload.sessionId` dan
-    // `planId` pada event plan merujuk ke sesi fiktif sementara barisnya
-    // ditulis dengan id kanonik - dua identitas untuk satu sesi, dan plan
-    // bercabang alih-alih berevolusi.
-    sessionId: presentationSessionId,
+    // P2.1: identitas kanonik tunggal — payload dan baris memakai sid yang sama.
+    sessionId,
     ...(contentStore ? { contentStore } : {}),
     // PHASE 4A.4 - canonical task identity for the plan projection. TaskStore is
     // the authority: an id is reported only when that row really exists for this
@@ -1077,7 +1299,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     ...(shadowState ? { initialSeq: shadowState.seq, initialTurn, initialTurnStartTs } : {}),
   })
   try {
-    if (!shadowState) shadowState = createInitialState(presentationSessionId)
+    if (!shadowState) shadowState = createInitialState(sessionId)
     if (!shadowDiag) shadowDiag = createReducerDiagnostics()
     presentation.setTurnSummaryProvider(({ sessionId: eventSessionId, turnId, fallback }) => {
       return shadowState
@@ -1106,6 +1328,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   attachMutationJournal(session, {
     sessionId,
     cwd,
+    evidenceMode,
     onCommitted: (info) => {
       try {
         presentation?.noteFileChanged(info)
@@ -1306,6 +1529,19 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   }
 
   async function runPromptWithVerify(p: string, signal?: AbortSignal): Promise<void> {
+    // P2.2: pagar pra-turn (lihat ensureWriterFresh). Basi → turn dilewati
+    // sebelum provider dibelanjakan; histori tak tersentuh.
+    if (!ensureWriterFresh()) return
+    // P2.6: tutup Run sebelumnya (terminal dari outcome-nya), lalu buka Run
+    // RUNNING baru untuk invokasi ini. Urutan penting: terminal LAMA dulu
+    // (UNIQUE RUNNING per sesi), lalu create. Gagal di sini = gagal loud
+    // (lebih baik daripada fork diam-diam).
+    markPreviousRunTerminal()
+    const thread = ensureDefaultThread(sessionId, cwd, { expectedEpoch })
+    const created = createRun(sessionId, thread.thread_id, cwd, { expectedEpoch })
+    transitionRun(created.run_id, "RUNNING", cwd, { expectedEpoch })
+    currentRunId = created.run_id
+    lastTurnOutcome = null
     // Listener UI segar tiap turn (pagar turn yatim — lihat attachUI).
     attachUI()
     try {
@@ -1322,6 +1558,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     } catch {}
     try {
       await runPromptWithVerifyInner(p, signal)
+      lastTurnOutcome = "completed"
+    } catch (e) {
+      lastTurnOutcome = classifyTurnError(e, signal?.aborted === true)
+      throw e
     } finally {
       detachUI()
       try {
@@ -1380,7 +1620,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
               kind: "turn",
               schedulerSource: "cli-session",
               authorityHeld: true,
-              ownerId: presentationSessionId,
+              ownerId: sessionId,
               provenance: { requestedBy: "user", reason: "prompt" },
             },
             () => session.run(prompt, { model: modelRef.current, signal: ctl.signal }),
@@ -1478,14 +1718,14 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       // `reconcileCompletionEvidence` sudah best-effort + menulis diagnostik
       // sendiri, jadi pemanggil tak perlu try/catch (dan tak perlu menambah
       // writer di file ini — pagu OAP-008).
-      const reconciled = await reconcileCompletionEvidence(presentationSessionId, cwd ?? ".", {
+      const reconciled = await reconcileCompletionEvidence(sessionId, cwd ?? ".", {
         verdict: "failed",
         detail: `last verification failed (${lastVerify.command}): ${lastVerify.output.slice(0, 200)}`,
       })
       if (reconciled) {
         presentation?.notePlanReconciled({
           todos: reconciled,
-          sessionId: presentationSessionId,
+          sessionId: sessionId,
           turnId: session.state.turnCount,
         })
       }
@@ -1579,14 +1819,62 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     try {
       flushPresentationEvents()
       await presentationWriteTail
-      await saveSession(sessionId, cwd, undefined, session.state.history, usageData)
-      if (resumeId) await saveSession(resumeId, cwd, undefined, session.state.history, usageData)
+      // P2.2: pagar generasi di dalam txn saveSession. Basi → markWriterStale
+      // (diagnostik eksplisit + flag untuk exit jujur one-shot); JANGAN
+      // retry buta (akan menimpa penulis baru) dan JANGAN telan diam-diam.
+      // P2.6: runId mengikat baris baru ke Run live + memajukan kursor ke
+      // head DALAM txn yang sama (atomik histori+kursor).
+      // P2.8 forensics: session.state.history adalah buffer KONTEKS vendor —
+      // ia memuat artefak ringkasan proyeksi (context-only) yang TAK BOLEH
+      // jadi histori kanonik. Bila artefak itu masih di depan buffer, buang
+      // DAN susun ulang: baseline kanonik ++ ekor yang benar-benar baru.
+      // (Membuang saja tak cukup: setelah prefix ditutup proyeksi, buffer bukan
+      // lagi superset histori kanonik — memakainya apa adanya akan wiping
+      // histori lewat jalur shrink.) Bila artefak tak ada (fallback / kernel
+      // sudah mengompak), buffer dipakai apa adanya — jalur kompaksi P2.7 yang
+      // sudah bersaproven (migrated_compacted=1).
+      const buffer = session.state.history
+      const tail = stripContextOnly(buffer, contextOnlyArtifact)
+      const durableHistory: readonly unknown[] =
+        contextOnlyArtifact !== undefined &&
+        contextCanonicalBaseline !== undefined &&
+        tail.length !== buffer.length
+          ? [...contextCanonicalBaseline, ...tail]
+          : buffer
+      try {
+        await saveSession(sessionId, cwd, undefined, durableHistory, usageData, {
+          expectedEpoch,
+          ...(currentRunId ? { runId: currentRunId } : {}),
+        })
+      } catch (e) {
+        // P2.7: histori menyusut/berubah (kompaksi kernel di RAM) — saveSession
+        // append-only MENOLAK rewrite implisit. Rute eksplisit: terminal-mark
+        // run live dulu (shrink melarang RUNNING), lalu shrinkThreadHistory
+        // (provenance + invalidasi proyeksi, satu txn). Sempit: hanya error ini.
+        if (e instanceof RefusedHistoryRewriteError) {
+          markPreviousRunTerminal()
+          const thread = ensureDefaultThread(sessionId, cwd, { expectedEpoch })
+          shrinkThreadHistory(sessionId, thread.thread_id, durableHistory, cwd, {
+            expectedEpoch,
+          })
+        } else {
+          throw e
+        }
+      }
       // Riwayat durable → mutasi turn ini boleh di-finalize (sweep record).
       // Gagal finalize tak menggagalkan persist (warn di dalam).
       await finalizeJournal(sessionId, cwd).catch((e) => {
         process.stderr.write(`[warn] journal finalize failed: ${(e as Error).message}\n`)
       })
-    } catch {}
+    } catch (e) {
+      if (e instanceof StaleWriterError) {
+        markWriterStale(
+          `history persist refused (expected epoch ${e.expectedEpoch}, actual ${e.actualEpoch})`,
+        )
+        return
+      }
+      // Perilaku lama dipertahankan untuk error non-pagar: persist best-effort.
+    }
   }
 
   // [PHASE 6AB] The operator projection. Created here, unconditionally and cheaply
@@ -1604,12 +1892,12 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // of "gated" while opening a SQLite handle and constructing a host, a kernel
   // and a supervisor on every single run.
   //
-  // [DESIGN DECISION] The journal path comes from the RESUMED identity
-  // (`resumeId ?? sessionId`, the same one the presentation layer already uses),
-  // not from `sessionId`. A resume that minted a fresh path would silently start
-  // from an empty history while looking exactly like a successful resume. If the
-  // resumed session has no runtime journal at all, the journal is created fresh
-  // AT THAT PATH — never at a new path derived from the new session id.
+  // [DESIGN DECISION] The journal path comes from the canonical SessionId
+  // (P2.1: satu sid untuk semua komponen). Tak ada lagi path ganda
+  // resume-vs-acak; resume yang menempa path baru tidak mungkin terjadi
+  // karena identitas diputus di resolver sebelum wiring apa pun.
+  // Bila sesi resume tak punya runtime journal, jurnal dibuat fresh
+  // AT THAT PATH — tak pernah di path turunan id baru.
   //
   // [P1 M15] Placed BEFORE the Scheduler composition on purpose: the runner must
   // already exist when the scheduler's deps thunk asks for it, and fail-closed
@@ -1618,9 +1906,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   const productionRuntime: ProductionRuntimeHandle = await createProductionRuntime(
     runtimeGateFor(runtimeMode),
     () => ({
-      sessionId: presentationSessionId,
+      sessionId: sessionId,
       workspaceCwd: runtimeCwd,
-      journalPath: runtimeJournalPath(runtimeCwd, presentationSessionId),
+      journalPath: runtimeJournalPath(runtimeCwd, sessionId),
     }),
   )
 
@@ -1686,6 +1974,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         sessionId,
         cwd: autonomousCwd,
         store,
+        // P2.2: token penulis milik boot ini — sesi + scheduler-nya SATU
+        // penulis (satu lease). Tanpa ini keduanya saling menolak.
+        authorityToken: writerToken,
         instruction: "Work autonomously on the assigned task. Report what you found.",
         model: modelRef.current,
         adapter: {
@@ -1746,9 +2037,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // the letter of "gated" while opening a SQLite handle and constructing a host,
   // a kernel and a supervisor on every single run.
   //
-  // [DESIGN DECISION] The journal path comes from the RESUMED identity
-  // (`resumeId ?? sessionId`, the same one the presentation layer already uses),
-  // not from `sessionId`. A resume that minted a fresh path would silently start
+  // [DESIGN DECISION] The journal path comes from the canonical SessionId
+  // (P2.1), not from volatile id. A resume that minted a fresh path would silently start
   // from an empty history while looking exactly like a successful resume; this is
   // the class of bug `--resume` exists to prevent. If the resumed session has no
   // runtime journal at all, the journal is created fresh AT THAT PATH — never at a
@@ -1822,6 +2112,39 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     killAllBackgroundJobs()
     await mcpCloseAll()
     await lspCloseAll()
+    // P2.2 — lepas pagar penulis TERAKHIR (setelah scheduler berhenti, agar
+    // token bersama tak dilepas sebelum stop-nya selesai; token-guarded jadi
+    // urutan tak kritis). Best-effort + diam (kontrak teardown OAP-008).
+    // P2.6 — tutup Run live dari outcome terakhir (shutdown bersih =
+    // INTERRUPTED/FAILED/COMPLETED eksplisit, BUKAN residu RUNNING untuk
+    // kuburan resume). Best-effort + warn (bukan throw teardown).
+    try {
+      if (currentRunId !== null && lastTurnOutcome !== null) {
+        const runId = currentRunId
+        const outcome = lastTurnOutcome
+        currentRunId = null
+        lastTurnOutcome = null
+        if (outcome === "completed") completeRun(runId, cwd, { expectedEpoch })
+        else if (outcome === "interrupted") interruptRun(runId, cwd, { expectedEpoch })
+        else failRun(runId, cwd, { expectedEpoch })
+      } else if (currentRunId !== null) {
+        const runId = currentRunId
+        currentRunId = null
+        lastTurnOutcome = null
+        interruptRun(runId, cwd, { expectedEpoch })
+      }
+      // P2.9 — parent terminal ⇒ anak tak boleh tetap RUNNING. Sweep yang sama
+      // dengan orphan (INTERRUPTED + UNKNOWN): kita tak boleh mengklaim anak
+      // selesai, dan tak boleh meninggalkan eksekusi durable tanpa pelacak.
+      terminalizeChildRuns(sessionId, cwd, { expectedEpoch })
+    } catch (e) {
+      process.stderr.write(`[warn] run terminal mark failed: ${(e as Error).message}\n`)
+    }
+    try {
+      if (writerRenewTimer !== undefined) clearInterval(writerRenewTimer)
+    } catch {}
+    writerRenewTimer = undefined
+    releaseSessionWriter(sessionId, writerToken, cwd)
     // SATU-SATUNYA pause() mid-process yang tersisa: teardown sesi. stdin
     // TTY kini mengalir seumur proses (tanpa pause per prompt) agar siklus
     // pause→resume tak membunuh 'data' di Bun Windows; tanpa pause di sini
@@ -1839,6 +2162,13 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     cfg,
     cwd,
     sessionId,
+    bootId,
+    // P2.2: pagar penulis — observability tanpa token (token tak pernah keluar).
+    get writerEpoch() {
+      return expectedEpoch
+    },
+    isWriterStale: () => writerStale,
+    writerStaleNote: () => writerStaleNote,
     modelRef,
     effectiveInitialModel,
     effectiveTimeoutMs,
@@ -1881,7 +2211,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       // di luar retensi = penanda). Best-effort — miss = tanpa konten.
       const durable = (id: string): string | undefined => {
         try {
-          const sess = loadSession(resumeId ?? sessionId, cwd)
+          const sess = loadSession(sessionId, cwd)
           if (!sess) return undefined
           for (const m of sess.messages as {
             role?: string

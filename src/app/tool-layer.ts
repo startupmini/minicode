@@ -3,6 +3,8 @@ import type { MinicodeConfig } from "../config.ts"
 import { configureServers as lspConfigure } from "../lsp/client.ts"
 import { connectAll as mcpConnectAll } from "../mcp/client.ts"
 import { isMcpToolName } from "../presentation/label.ts"
+import type { CanonicalScope } from "../session/verification.ts"
+import { withEvidence } from "../tools/evidence.ts"
 import { allTools, withMcpTools } from "../tools/index.ts"
 import { EXPLORE_TOOL_NAMES } from "../tools/task.ts"
 
@@ -12,11 +14,14 @@ export type ToolScope = "full" | "explore"
 
 const PLAN_EXTRA = new Set(["todo_write", "delegate_task", "submit_result"])
 
+export type ToolEvidenceMode = "events" | "canonical"
+
 export async function setupToolLayer(
   cfg: MinicodeConfig,
   scope: ToolScope = "full",
   permissionMode?: string,
-): Promise<{ sessionTools: Tool[] }> {
+  verification?: CanonicalScope,
+): Promise<{ sessionTools: Tool[]; evidenceMode: ToolEvidenceMode }> {
   let sessionTools: Tool[] = allTools
   // Harness-P2: scope explore = subset read-only (sama seperti sub-agen).
   // MCP runtime ikut terpotong (nama bertitik tak ada di daftar) — least privilege.
@@ -51,7 +56,12 @@ export async function setupToolLayer(
   try {
     if (cfg.lspServers?.length) lspConfigure(cfg.lspServers)
   } catch (e) {
-    process.stderr.write(`[lsp] init failed: ${errMsg(e)}\n`)
+    process.stderr.write(`[mcp] init failed: ${errMsg(e)}\n`)
   }
-  return { sessionTools }
+  if (verification) {
+    // P2.10 canonical coverage: one awaited intent/receipt pair per covered
+    // registry invocation. Special paths keep their explicit instrumentation.
+    sessionTools = sessionTools.map((tool) => withEvidence(tool, verification))
+  }
+  return { sessionTools, evidenceMode: verification ? "canonical" : "events" }
 }

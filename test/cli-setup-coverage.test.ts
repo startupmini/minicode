@@ -195,24 +195,24 @@ describe("cli/setup: permissionMode & timeout & budget", () => {
     else process.env.MINICODE_TIMEOUT_MS = prev
   })
 
-  test("resumeId not found -> warning tapi tetap jalan", async () => {
+  test("resumeId unknown -> SESSION_NOT_FOUND eksplisit (P2.1: bukan sesi baru diam-diam)", async () => {
     const cwd = makeWorkspace()
-    const s = await createCliSession({
-      cwd,
-      allowLocalConfig: true,
-      sessionId: "s9",
-      resumeId: "tidak-ada",
-      prompt: "hi",
-      enterRepl: false,
-      verbose: false,
-      allowAll: false,
-      ask: false,
-      plan: false,
-      allowlist: false,
-      verify: false,
-    })
-    expect(s.session).toBeDefined()
-    await s.close()
+    await expect(
+      createCliSession({
+        cwd,
+        allowLocalConfig: true,
+        sessionId: "s9",
+        resumeId: "tidak-ada",
+        prompt: "hi",
+        enterRepl: false,
+        verbose: false,
+        allowAll: false,
+        ask: false,
+        plan: false,
+        allowlist: false,
+        verify: false,
+      }),
+    ).rejects.toThrow('session "tidak-ada" not found')
   })
 
   test("persistCurrent & close tidak throw", async () => {

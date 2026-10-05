@@ -485,29 +485,33 @@ describe("6AB S13 - resume integration", () => {
   test("a resumed session composes a scheduler with a correct, distinct identity", async () => {
     await workspaceWithProvider([{ kind: "text", text: "ok" }])
     const live = await createCliSession(sessionOptions("ab-live", false))
+    // P2.1: resume butuh baris sesi durable — persist dulu (tanpa ini
+    // --resume tak dikenal = error eksplisit, bukan sesi baru diam-diam).
+    await live.persistCurrent({})
     await live.close()
     // Give the earlier session something durable to resume from.
     seedReadyTask("ab-live", "resumable work")
 
-    // `resumeId` forges history; `sessionId` stays the LIVE identity.
-    // setup.ts persists to BOTH (persistCurrent), so resume is a fork and the
-    // scheduler must follow the live session - which is what this asserts.
+    // P2.1: fork resume DIHAPUS. `--resume ab-live` melanjutkan sesi kanonik
+    // yang SAMA (bukan identitas live baru); flag --session yang berbeda
+    // dicatat sebagai alias. Scheduler mengikuti namespace kanonik.
     const resumed = await createCliSession({
       ...sessionOptions("ab-live-2", true),
       resumeId: "ab-live",
     })
     try {
-      expect(resumed.sessionId).toBe("ab-live-2")
+      expect(resumed.sessionId).toBe("ab-live")
       expect(resumed.productionScheduler.constructed).toBe(true)
       expect(resumed.productionScheduler.isActive()).toBe(true)
-      // Authority is on the LIVE id, not the resumed one.
+      // Authority is on the canonical id.
       expect(resumed.productionScheduler.getScheduler()?.hasAuthority()).toBe(true)
-      // The trigger route works on a resumed composition, over the LIVE namespace.
+      // The trigger route works on the resumed composition, over the
+      // canonical namespace — the ab-live task is now reachable.
       const out = await runCommand(commandCtxFor(resumed), "/scheduler run")
-      expect(out).toContain("no task was ready")
-      expect(provider!.requestCount()).toBe(0)
-      // The resumed session's own tasks are untouched by the live scheduler.
-      expect(readTasks("ab-live")[0]!.status).toBe("PENDING")
+      expect(out).toContain("scheduling cycle completed")
+      expect(provider!.requestCount()).toBeGreaterThan(0)
+      // The canonical session's task was executed by its own scheduler.
+      expect(readTasks("ab-live")[0]!.status).toBe("IN_PROGRESS")
     } finally {
       await resumed.close()
     }

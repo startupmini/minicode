@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite"
 import { existsSync, mkdirSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { homeDir } from "../../src/lib/db-path.ts"
+import { resolveSessionDisplayTarget } from "../../src/session/identity.ts"
 import { deleteJournalFile, findOrphanJournals } from "../../src/session/journal.ts"
 import {
   getSessionTtlDays,
@@ -64,7 +65,9 @@ export async function handleSessions(
       console.error("usage: minicode sessions export <id> [--jsonl]")
       process.exit(2)
     }
-    const sess = loadSession(id, getArg("--cwd"))
+    // P2.1 read-compat: alias eksak resolve ke kanonik; selain itu input
+    // apa adanya (lenien untuk baca; tulis tetap jalur kanonik tunggal).
+    const sess = loadSession(resolveSessionDisplayTarget(id, getArg("--cwd")), getArg("--cwd"))
     if (!sess) {
       console.error(`session "${id}" not found - see: minicode sessions list`)
       process.exit(1)

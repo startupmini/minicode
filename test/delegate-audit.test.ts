@@ -206,7 +206,9 @@ test("delegate: budget/timeout/cwd/journal plumbing", async () => {
     expect(spec.cwd).toBe(dir) // cwd parent diwariskan
     expect(spec.permissionMode).toBe("auto") // SELALU auto, bukan parent
     expect(spec.journal?.parentSessionId).toBe("p-plumb")
-    expect(spec.journal?.sessionId).toMatch(/^sub_[0-9a-f]{8}$/)
+    // P2.9: id anak kini 128-bit (identitas Session KANONIK). Bentuk lama
+    // `sub_<8hex>` hanya 32-bit — terlalu lemah untuk durable authority.
+    expect(spec.journal?.sessionId).toMatch(/^sub_[0-9a-f]{32}$/)
     // Default tanpa maxSteps: explore=5.
     seen.length = 0
     await delegateTaskTool.execute({ prompt: "x" }, ctxFor(dir, "auto"))

@@ -23,6 +23,8 @@ Embedding: default `text-embedding-3-small` (`MINICODE_EMBED_MODEL`). Dim-mismat
 
 Sesi di `.minicode/sessions.db` (WAL, capped + busy-retry async). `--resume <id>` melanjutkan full history (termasuk `toolCallId`/`name`); workspace dibandingkan ke checkpoint terakhir dan divergensi dilaporkan (bukan replay buta). TTL 30 hari (`MINICODE_SESSION_TTL_DAYS=0` = selamanya). `minicode sessions purge` hapus manual. Branch via `branchSession` (fork history+turns).
 
+Satu penulis per sesi (P2.2): komposisi mengakuisisi lease otoritas (`tasks.db: session_authority`) saat start dan melepasnya saat close; proses kedua pada sesi yang sama ditolak (`REFUSED_LEASE_HELD`). Setiap mutasi sesi membawa `writer_epoch` yang di-CAS di dalam transaksi SQLite yang sama — penulis basi setelah takeover ditolak (`REFUSED_STALE_EPOCH`), tanpa tulis parsial. Tiga konsep tetap berbeda: **lease** = admission (boleh menulis), **writer_epoch** = pagar mutasi (tulisan ini masih sah), **incarnation** = generasi identitas lintas delete/recreate.
+
 ## Checkpoint & Undo
 
 Setiap turn otomatis checkpoint. Dua mode otomatis:

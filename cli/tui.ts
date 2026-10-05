@@ -316,6 +316,8 @@ export async function runTui(ctx: CliSession): Promise<void> {
     }
     const u = usage.get(modelRef.current)
     await persistCurrent(u)
+    // P2.2: histori yang tak durable = error transkrip eksplisit (bukan diam).
+    if (ctx.isWriterStale()) transcript.pushError(`[writer] ${ctx.writerStaleNote()}`)
     usage.reset()
     const sess = usage.getSession(modelRef.current)
     if (

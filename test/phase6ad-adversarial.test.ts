@@ -141,7 +141,7 @@ afterEach(async () => {
   }
 })
 
-// ── M1/M2: the gate ──────────────────────────────────────────────────────────
+// â”€â”€ M1/M2: the gate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe("6AD gate - the flag is the only way in", () => {
   test("M1: no flag means no Scheduler, no lease, and the trigger does nothing", async () => {
@@ -156,7 +156,14 @@ describe("6AD gate - the flag is the only way in", () => {
     // The route is EXERCISED, not merely absent.
     expect(await run(ctx, "/scheduler run")).toContain("scheduler is OFF")
     expect(ctx.schedulerObservability.status(ctx.productionScheduler).counts.evaluations).toBe(0)
-    expect(store().getSessionAuthority(s)).toBeNull()
+    // P2.2: scheduler-off composition holds a SESSION-writer lease
+    // (admission), not a scheduler lease. Discriminator: session tokens are
+    // `cli:`-prefixed, scheduler tokens are `own-â€¦`. The trigger assertions
+    // above prove no autonomous machinery exists; this proves the lease
+    // present is the session's own admission.
+    const auth = store().getSessionAuthority(s)
+    expect(auth).not.toBeNull()
+    expect(auth!.ownerToken.startsWith("cli:")).toBe(true)
     expect(store().listTasks(s)[0]!.status).toBe("PENDING")
     expect(provider!.requestCount()).toBe(0)
   }, 60_000)
@@ -187,7 +194,7 @@ describe("6AD gate - the flag is the only way in", () => {
   })
 })
 
-// ── M18/M13/M14: the trigger ─────────────────────────────────────────────────
+// â”€â”€ M18/M13/M14: the trigger â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe("6AD trigger - reachable, deduplicated, and refused after stop", () => {
   test("M18: /scheduler run executes exactly one real autonomous task", async () => {
@@ -234,7 +241,7 @@ describe("6AD trigger - reachable, deduplicated, and refused after stop", () => 
   }, 60_000)
 })
 
-// ── M3/M4: permission ────────────────────────────────────────────────────────
+// â”€â”€ M3/M4: permission â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe("6AD permission - autonomous is read-only, and nothing widens it", () => {
   test("M3/M4: every dangerous tool is absent and the workspace is untouched", async () => {
@@ -273,7 +280,7 @@ describe("6AD permission - autonomous is read-only, and nothing widens it", () =
   }, 60_000)
 })
 
-// ── M6: readiness ────────────────────────────────────────────────────────────
+// â”€â”€ M6: readiness â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe("6AD readiness - no production path bypasses TaskGraph -> readiness", () => {
   for (const [label, status] of [
@@ -310,7 +317,7 @@ describe("6AD readiness - no production path bypasses TaskGraph -> readiness", (
   }, 60_000)
 })
 
-// ── M7/M10/M11: the binding ──────────────────────────────────────────────────
+// â”€â”€ M7/M10/M11: the binding â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe("6AD binding - parent session, incarnation and generation are real", () => {
   test("M7: the autonomous work belongs to the PARENT's session, not a shared one", async () => {
@@ -362,7 +369,7 @@ describe("6AD binding - parent session, incarnation and generation are real", ()
   }, 60_000)
 })
 
-// ── M12/M15: completion authority and session deletion ───────────────────────
+// â”€â”€ M12/M15: completion authority and session deletion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe("6AD completion - the Scheduler is never the author of COMPLETED", () => {
   test("M12: a normal autonomous return does NOT complete the task", async () => {
@@ -406,7 +413,7 @@ describe("6AD completion - the Scheduler is never the author of COMPLETED", () =
   }, 60_000)
 })
 
-// ── M17: cancellation ────────────────────────────────────────────────────────
+// â”€â”€ M17: cancellation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe("6AD cancellation - stop() prevents further autonomous work", () => {
   test("M17: stopping mid-flight releases authority and starts no new claim", async () => {
@@ -439,7 +446,7 @@ describe("6AD cancellation - stop() prevents further autonomous work", () => {
   }, 60_000)
 })
 
-// ── M16: event routing ───────────────────────────────────────────────────────
+// â”€â”€ M16: event routing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe("6AD event routing - scheduler events are not conversation", () => {
   test("M16: the transcript sink is wired, and it is the system-kind push", async () => {
@@ -464,7 +471,7 @@ describe("6AD event routing - scheduler events are not conversation", () => {
   }, 60_000)
 })
 
-// ── M13: concurrent triggers, not sequential ones ───────────────────────────
+// â”€â”€ M13: concurrent triggers, not sequential ones â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe("6AD concurrent triggers", () => {
   test("M13: five CONCURRENT triggers still produce one execution", async () => {
@@ -492,7 +499,7 @@ describe("6AD concurrent triggers", () => {
   }, 60_000)
 })
 
-// ── M11: a SECOND generation, so a hardcoded 1 is detectable ────────────────
+// â”€â”€ M11: a SECOND generation, so a hardcoded 1 is detectable â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe("6AD ownership propagation under a second generation", () => {
   test("M11: the binding tracks the live generation, not a constant", async () => {
@@ -522,7 +529,7 @@ describe("6AD ownership propagation under a second generation", () => {
   }, 60_000)
 })
 
-// ── M10: incarnation mismatch must REJECT the write, not land it ────────────
+// â”€â”€ M10: incarnation mismatch must REJECT the write, not land it â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe("6AD incarnation propagation", () => {
   test("M10: a binding pinned to incarnation 1 cannot write into incarnation 2", async () => {
@@ -552,7 +559,7 @@ describe("6AD incarnation propagation", () => {
   }, 60_000)
 })
 
-// ── M15: the production deletion notification really stops the Scheduler ────
+// â”€â”€ M15: the production deletion notification really stops the Scheduler â”€â”€â”€â”€
 
 describe("6AD session invalidation through the production handle", () => {
   test("M15: notifySessionDeleted() stops the Scheduler and refuses triggers", async () => {
@@ -574,7 +581,7 @@ describe("6AD session invalidation through the production handle", () => {
   }, 60_000)
 })
 
-// ── M16: the sink must be the SYSTEM path, tightly ──────────────────────────
+// â”€â”€ M16: the sink must be the SYSTEM path, tightly â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe("6AD event routing is source-checked", () => {
   test("M16: the notice sink is pushInfo, and never a user-message path", async () => {

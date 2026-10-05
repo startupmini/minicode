@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { randomUUID } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { resolve as resolvePath } from "node:path"
 import { NoProviderError } from "../src/app/provider-layer.ts"
@@ -9,6 +8,7 @@ import { createRateLimiter } from "../src/policy/ratelimit.ts"
 import { resolveSandbox, sandboxRefusalReason } from "../src/policy/sandbox-policy.ts"
 import { budgetStatus } from "../src/policy/usage.ts"
 import { resolveRuntimeMode } from "../src/runtime/production-execution.ts"
+import { mintSessionId } from "../src/session/identity.ts"
 import { attachMutationJournal } from "../src/session/journal.ts"
 import { findSkill, renderSkill } from "../src/skills/loader.ts"
 // [PHASE 6X] The ONE production gate resolver, imported directly so the call site
@@ -157,6 +157,7 @@ setSubAgentSessionFactory(async (spec) => {
       sessionId: journal.sessionId,
       cwd: spec.cwd,
       childOf: journal.parentSessionId,
+      evidenceMode: "canonical",
       onCommitted: (info) => childPresentation.noteFileChanged(info),
     })
   }
@@ -289,13 +290,13 @@ if (runtimeModeResolution.warning) {
 }
 const runtimeMode = runtimeModeResolution.mode
 const resumeId = getArg("--resume")
-  ?.replace(/[^A-Za-z0-9._-]/g, "-")
-  .slice(0, 64)
+// P2.1: flag mentah diteruskan apa adanya; sanitasi + keputusan identitas
+// tunggal milik resolveSessionIdentity (SATU aturan sanitizer, tak ada drift
+// 64-vs-60 di call-site). bootId volatil hanya untuk korelasi diagnostik.
+const sessionFlag = getArg("--session")
+const bootId = mintSessionId()
 const modelOverride = getArg("--model")
 const providerOverride = getArg("--provider")
-const rawSessionId = getArg("--session") ?? randomUUID().slice(0, 8)
-const sessionId =
-  rawSessionId.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 64) || randomUUID().slice(0, 8)
 const maxStepsRaw = getArg("--max-steps")
 let maxSteps = maxStepsRaw ? Number(maxStepsRaw) : undefined
 if (maxStepsRaw && (!Number.isFinite(maxSteps) || (maxSteps as number) <= 0)) {
@@ -452,8 +453,9 @@ let ctx: Awaited<ReturnType<typeof createCliSession>>
 try {
   ctx = await createCliSession({
     cwd,
-    sessionId,
+    sessionId: sessionFlag ?? "",
     resumeId,
+    bootId,
     modelOverride,
     providerOverride,
     prompt,
@@ -533,6 +535,10 @@ if (enterRepl) {
     } else if (b != null && u.cost != null && u.cost > b * 0.8)
       process.stderr.write(c.yellow(`[budget] ${formatUsd(u.cost)} / ${formatUsd(b)} (80% used)\n`))
     await persistCurrent(u)
+    // P2.2: histori yang tak durable = kegagalan jujur (bukan exit 0 diam).
+    if (ctx.isWriterStale()) {
+      throw new Error(`[writer] stale writer, history NOT durable: ${ctx.writerStaleNote()}`)
+    }
     if (overBudget) {
       await close()
       process.exit(1)

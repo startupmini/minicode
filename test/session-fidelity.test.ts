@@ -9,7 +9,13 @@ import { afterEach, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { loadSession, saveSession } from "../src/session/persistence.ts"
+import {
+  DEFAULT_THREAD_ID,
+  loadSession,
+  RefusedHistoryRewriteError,
+  saveSession,
+  shrinkThreadHistory,
+} from "../src/session/persistence.ts"
 
 const dirs: string[] = []
 
@@ -87,7 +93,13 @@ test("perubahan HANYA pada reasoning/isError terdeteksi (prefix compare)", async
   ]
   await saveSession("s3", dir, undefined, base, usage)
   const next = [base[0]!, { role: "assistant", content: "", reasoning: "versi-B" }]
-  await saveSession("s3", dir, undefined, next, usage)
+  // P2.7: perubahan hanya pada reasoning/is_error = rewrite sama-panjang →
+  // saveSession (append-only) MENOLAK eksplisit; jalur shrink eksplisit yang
+  // menulisnya. Invariant F-05 tetap diuji (prefix compare tak melewatkan).
+  await expect(saveSession("s3", dir, undefined, next, usage)).rejects.toThrow(
+    RefusedHistoryRewriteError,
+  )
+  shrinkThreadHistory("s3", DEFAULT_THREAD_ID, next, dir, { expectedEpoch: 0 })
   const loaded = loadSession("s3", dir)
   expect((loaded?.messages[1] ?? {}) as { reasoning?: string }).toMatchObject({
     reasoning: "versi-B",
@@ -97,7 +109,13 @@ test("perubahan HANYA pada reasoning/isError terdeteksi (prefix compare)", async
     base[0]!,
     { role: "assistant", content: "", reasoning: "versi-B", isError: true },
   ]
-  await saveSession("s3", dir, undefined, flipped, usage)
+  // P2.7: rewrite sama-panjang (isError berubah) adalah kasus shrink/rewrite,
+  // yang kini DIWUJIBKAN lewat jalur eksplisit — saveSession append-only tak
+  // lagi menuliskannya diam-diam. Invariant F-05 (prefix comparelator) utuh.
+  await expect(saveSession("s3", dir, undefined, flipped, usage)).rejects.toThrow(
+    RefusedHistoryRewriteError,
+  )
+  shrinkThreadHistory("s3", DEFAULT_THREAD_ID, flipped, dir, { expectedEpoch: 0 })
   const loaded2 = loadSession("s3", dir)
   expect((loaded2?.messages[1] ?? {}) as { isError?: boolean }).toMatchObject({ isError: true })
 })

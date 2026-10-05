@@ -2,14 +2,12 @@ import { randomUUID } from "node:crypto"
 import { createInterface } from "node:readline"
 import type { ExecutorDeps, Tool, ToolContext } from "#minicore"
 import { scrubSecrets } from "../policy/scrub.ts"
+import { finalizeJournal, hashArgs, isMutationTool } from "../session/journal.ts"
 import {
-  appendMutationIntent,
-  appendMutationTerminal,
-  finalizeJournal,
-  hashArgs,
-  isMutationTool,
-  verifyPaths,
-} from "../session/journal.ts"
+  type EffectIntentResult,
+  persistEffectIntent,
+  persistEffectReceipt,
+} from "../session/verification.ts"
 import { allTools } from "../tools/index.ts"
 import { todoSession } from "../tools/todo.ts"
 import { capMcpText } from "./client.ts"
@@ -129,51 +127,72 @@ async function invokeTool(
   // terminal. Server mode tak punya turn/session kernel, jadi sesi jurnal
   // tetap "mcp-server".
   const mutating = isMutationTool(tool.name)
-  let intent: { id: string; seq: number } | null = null
+  let intent: EffectIntentResult | null = null
   if (mutating) {
-    intent = await appendMutationIntent({
-      session: journal.session,
+    intent = await persistEffectIntent({
+      sessionId: journal.session,
+      threadId: journal.session,
       tool: tool.name,
       cwd: root,
-      paths: verifyPaths(tool.name, validArgs, root),
-      argsHash: hashArgs(validArgs),
-      // Kunci idempotency sejak intent (audit #08): crash di tengah eksekusi
-      // (tanpa terminal) tetap terdeteksi sebagai unknown, bukan fresh.
-      ...(noteKey ? { note: noteKey } : {}),
+      args: validArgs,
+      idempotencyKey: noteKey,
+      idempotencyScope: "mcp",
+      specialPath: "mcp-server",
     })
-  }
-    const ctx: ToolContext & { sessionId?: string } = {
-      signal,
-      state: { history: [], turnCount: 0, stepCount: 0 },
-      emit: () => {},
-      // P0 audit #05: root eksekusi HARUS sama dengan root jail permission.
-      // Sebelumnya ctx tanpa cwd  tool jatuh ke process.cwd() sementara jail
-      // memakai opts.root - divergensi jail-vs-eksekusi bila --cwd dipakai.
-      cwd: root,
-      // PHASE 4A.4B: bind this request to the 4A.3 namespace explicitly. The
-      // ctx object is already built per request, so this is the existing
-      // composition mechanism doing the job - no new global, and the session
-      // cannot be swapped by another request mid-flight.
-      sessionId: contextId,
+    // Evidence fail-closed: without a durable canonical intent the server
+    // must not execute. This preserves the existing fail-open authority rule
+    // for journal I/O elsewhere while refusing unverifiable execution here.
+    if (!intent.durable) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `[error] evidence incomplete: durable EffectIntent unavailable for ${tool.name}`,
+          },
+        ],
+        isError: true,
+      }
     }
+  }
+  const ctx: ToolContext & { sessionId?: string } = {
+    signal,
+    state: { history: [], turnCount: 0, stepCount: 0 },
+    emit: () => {},
+    // P0 audit #05: root eksekusi HARUS sama dengan root jail permission.
+    // Sebelumnya ctx tanpa cwd  tool jatuh ke process.cwd() sementara jail
+    // memakai opts.root - divergensi jail-vs-eksekusi bila --cwd dipakai.
+    cwd: root,
+    // PHASE 4A.4B: bind this request to the 4A.3 namespace explicitly. The
+    // ctx object is already built per request, so this is the existing
+    // composition mechanism doing the job - no new global, and the session
+    // cannot be swapped by another request mid-flight.
+    sessionId: contextId,
+  }
   try {
     const out = await tool.execute(validArgs, ctx)
     const text =
       typeof out === "string" ? out : out instanceof Uint8Array ? "(binary)" : JSON.stringify(out)
     if (intent) {
-      await appendMutationTerminal(
-        journal.session,
-        root,
-        intent.id,
-        intent.seq,
-        tool.name,
-        "committed",
-        {
-          note: noteKey,
+      await persistEffectReceipt({
+        sessionId: journal.session,
+        threadId: journal.session,
+        tool: tool.name,
+        cwd: root,
+        invocation: intent.invocation,
+        intent: {
+          id: intent.record.id,
+          seq: intent.record.seq,
+          tool: intent.record.tool,
+          session: intent.record.session,
+          ...(intent.record.invocationId ? { invocationId: intent.record.invocationId } : {}),
+          ...(intent.record.argsHash ? { argsHash: intent.record.argsHash } : {}),
         },
-        undefined,
-        { dedup: true },
-      )
+        state: "committed",
+        result: out,
+        outcome: noteKey ? { note: noteKey } : undefined,
+        dedup: true,
+        specialPath: "mcp-server",
+      })
     }
     // capMcpText scrub + cap + tandai dalam satu langkah (tanpa double-scrub).
     return {
@@ -182,19 +201,27 @@ async function invokeTool(
     }
   } catch (e) {
     if (intent) {
-      await appendMutationTerminal(
-        journal.session,
-        root,
-        intent.id,
-        intent.seq,
-        tool.name,
-        "failed",
-        {
-          note: noteKey,
+      await persistEffectReceipt({
+        sessionId: journal.session,
+        threadId: journal.session,
+        tool: tool.name,
+        cwd: root,
+        invocation: intent.invocation,
+        intent: {
+          id: intent.record.id,
+          seq: intent.record.seq,
+          tool: intent.record.tool,
+          session: intent.record.session,
+          ...(intent.record.invocationId ? { invocationId: intent.record.invocationId } : {}),
+          ...(intent.record.argsHash ? { argsHash: intent.record.argsHash } : {}),
         },
-        undefined,
-        { dedup: true },
-      )
+        state: "failed",
+        error: e,
+        signalAborted: signal.aborted,
+        outcome: noteKey ? { note: noteKey } : undefined,
+        dedup: true,
+        specialPath: "mcp-server",
+      })
     }
     throw e
   }

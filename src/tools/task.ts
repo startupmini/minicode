@@ -1,14 +1,32 @@
-import { randomUUID } from "node:crypto"
+import { existsSync } from "node:fs"
+import { dirname } from "node:path"
 import type { ModelProvider, Tool } from "#minicore"
 import { createOpenAICompatProvider } from "#minicore/providers/openai-compat.ts"
 import { Pool } from "../agents/pool.ts"
 import { loadConfig } from "../config.ts"
 import { LIMITS } from "../constants.ts"
+import { resolveLocalDbPath } from "../lib/db-path.ts"
 import type { RateLimiter } from "../policy/ratelimit.ts"
 import { buildProviderListAsync } from "../providers/build.ts"
 import { createRouterProvider } from "../providers/router.ts"
 import type { ProductionExecutionRunner } from "../runtime/production-execution.ts"
-import { appendMutationIntent, appendMutationTerminal, hashArgs } from "../session/journal.ts"
+import { acquireSessionWriter, releaseSessionWriter } from "../session/authority.ts"
+import {
+  allocateChildSessionId,
+  completeRun,
+  createChildSession,
+  DEFAULT_THREAD_ID,
+  failRun,
+  interruptRun,
+  readWriterEpoch,
+  transitionRun,
+} from "../session/persistence.ts"
+import {
+  type EffectIntentResult,
+  persistEffectIntent,
+  persistEffectReceipt,
+} from "../session/verification.ts"
+import { withEvidence } from "./evidence.ts"
 import { todoSession } from "./todo.ts"
 
 const pool = new Pool(LIMITS.SUB_AGENT_POOL_SIZE)
@@ -105,6 +123,7 @@ export function clearSubAgentSessionFactory(): void {
   sessionFactory = undefined
   parentRouting = {}
   childExecutionRunner = undefined
+  parentRunIdFn = () => null
 }
 
 /**
@@ -120,6 +139,26 @@ export interface SubAgentParentRouting {
 }
 
 let parentRouting: SubAgentParentRouting = {}
+
+/**
+ * P2.9: sumber durable untuk parent Run id saat anak_REQUIRED. Vendor
+ * ToolContext tak membawa execution id, jadi composition root (satu-satunya
+ * pemilik Run hidup) menyuntikkannya — bukan dialing di sini.
+ */
+let parentRunIdFn: () => string | null = () => null
+
+export function setSubAgentParentRunId(fn: () => string | null): void {
+  parentRunIdFn = fn
+}
+
+/** Diperuhi/test: lineage parent Run untuk anak berikutnya. */
+export function subAgentParentRunId(): string | null {
+  try {
+    return parentRunIdFn()
+  } catch {
+    return null
+  }
+}
 
 export function setSubAgentParentRouting(c: SubAgentParentRouting): void {
   parentRouting = {
@@ -237,19 +276,126 @@ export const delegateTaskTool: Tool = {
         },
       }
     })
-    // Intent parent-side eksplisit (wiring generik sengaja melewati
-    // delegate_task — childSessionId hanya diketahui di sini). Kebenaran efek
-    // anak = jurnal anak, BUKAN finalText di bawah.
+    // Child tools are wrapped with canonical P2.10 evidence after the child
+    // identity and authoritative domain exist (see below).
     const parentCwd = (ctx as unknown as { cwd?: string })?.cwd ?? process.cwd()
     const parentId = todoSession.id || "main"
-    const childId = `sub_${randomUUID().slice(0, 8)}`
-    const intent = await appendMutationIntent({
-      session: parentId,
+    // P2.9: id anak = identitas Session KANONIK (128-bit). Id P1 lawas
+    // `sub_<8hex>` (32-bit) tidak cukup untuk durable authority; prefix `sub_`
+    // dipertahankan agar jurnal/presentasi/diagnostik tetap kompatibel.
+    const childId = allocateChildSessionId()
+    // P2.9 Model C: anak = Session + Thread + Run kanonik dengan lineage
+    // durable ke parent Session DAN parent Run. Dibuat SEBELUM factory
+    // (factory memasang presentation adapter yang menulis presentation_events)
+    // ⇒ tak ada lagi namespace anak tanpa baris `sessions` (cacat purge).
+    // P2.9: TUNGGU domain otoritatif SEBELUM operasi durable apa pun.
+    //
+    // `resolveDbPath` memilih global bila `<cwd>/.minicode` belum ada, sedangkan
+    // `acquireSessionWriter` → `new TaskStore` memakai `resolveLocalDbPath` yang
+    // SELALU membuat `<cwd>/.minicode`. Tanpa pin, urutannya jadi:
+    //   createChildSession → DB global   (karena .minicode belum ada)
+    //   acquireSessionWriter → mkdir lokal + lease di tasks.db lokal
+    //   transitionRun → resolveDbPath sekarang memilih LOKAL → "run not found"
+    // Satu siklus anak jatuh ke DUA DB. Pin-nya memakai pola NATIF yang sama
+    // dengan TaskStore (`resolveLocalDbPath`), sehingga domain sesi/thread/run/
+    // epoch/presentasi anak identik dengan domain yang sudah dipakai penulis
+    // parent (admission parent di cli/setup.ts juga membuat `.minicode` dulu —
+    // jadi pemilihan lokal di sini TIDAK memindahkan parent global yang sah;
+    // parent yang lewat setup memang sudah lokal).
+    let pinnedDb: string
+    try {
+      pinnedDb = resolveLocalDbPath("sessions.db", parentCwd)
+    } catch (e) {
+      return `[sub-agent error] REFUSED_CHILD_SESSION_PERSISTENCE: cannot resolve authoritative DB (${String(
+        (e as Error).message ?? e,
+      ).slice(0, 200)})`
+    }
+    // Pin gagal (cwd tak bisa ditulis) = domain tak bisa dipastikan. Menulis
+    // anak sekarang berarti jatuh ke DB global yang tak terkait (polusi) —
+    // tolak dulu, sebelum satu baris pun dibuat.
+    if (!existsSync(dirname(pinnedDb))) {
+      return `[sub-agent error] REFUSED_CHILD_SESSION_PERSISTENCE: cannot pin authoritative DB at ${pinnedDb}`
+    }
+    let childRunId: string | null = null
+    let childEpoch: string | undefined
+    let childEpochHeld = false
+    // P2.9 FORENSIC: TANPA degradasi. Anak WAJIB kanonik — Session + Thread +
+    // Run — di DB yang sudah dipin di atas. `createChildSession` MEMATERIALISASIKAN
+    // baris parent yang belum ada dengan pola txn yang sama persis dengan
+    // ensureDefaultThreadInTxn/saveSession (§4: materialisasi, bukan melewatkan
+    // kanonisasi). Dulu ada gerbang `parentDurable` yang diam-diam menjatuhkan
+    // anak ke jalur jurnal-hantu `sub_*` tanpa baris `sessions` — itu persis
+    // yang dilarang: purger memakan presentation_events-nya dan pemulihan parent
+    // tak bisa menemukannya. Bila materialisasi/kanonisasi apa pun gagal →
+    // fail-closed (REFUSED_CHILD_SESSION_PERSISTENCE): delegasi tak jalan sama
+    // sekali, tidak pernah berjalan sebagai phantom namespace.
+    try {
+      const child = createChildSession({
+        parentSessionId: parentId,
+        parentRunId: subAgentParentRunId(),
+        cwd: parentCwd,
+        childSessionId: childId,
+      })
+      childRunId = child.runId
+      // Writer admission KHUSUS anak (P2.2 di-re-use): anak tak pernah menulis
+      // di bawah epoch parent — takeover parent tak mengikat epoch anak.
+      // Admission ditolak = anak tak punya otoritas penulis sendiri → gagal,
+      // jangan jalankan anak tanpa pagar epoch (invarian §15.6).
+      const admission = acquireSessionWriter({
+        sessionId: childId,
+        cwd: parentCwd,
+        bootId: `child-${childId}`,
+      })
+      if (!admission.ok) throw new Error(`writer admission refused: ${admission.error.message}`)
+      childEpoch = admission.admission.token
+      childEpochHeld = true
+      // P2.9: Run anak CREATED → RUNNING (P2.6 state machine, epoch anak).
+      transitionRun(childRunId, "RUNNING", parentCwd, {
+        expectedEpoch: readWriterEpoch(childId, parentCwd),
+      })
+    } catch (e) {
+      // Residu kanonis (bila ada) dimatikan SEBELUM menolak: tidak boleh ada
+      // Run anak RUNNING yang tak terlacak setelah delegasi menolak. Keadaan
+      // CREATED→INTERRUPTED sah (RUN_EDGES) — jadi residu juga bersih.
+      if (childRunId !== null) {
+        try {
+          interruptRun(childRunId, parentCwd, { recoveryStatus: "UNKNOWN" })
+        } catch {}
+        if (childEpoch !== undefined && childEpochHeld) {
+          try {
+            releaseSessionWriter(childId, childEpoch, parentCwd)
+          } catch {}
+          childEpochHeld = false
+        }
+      }
+      return `[sub-agent error] REFUSED_CHILD_SESSION_PERSISTENCE: ${String(
+        (e as Error).message ?? e,
+      ).slice(0, 300)}`
+    }
+    // P2.10 canonical coverage for plain child tools. Delegate itself keeps
+    // its explicit parent-side intent; dotted tools are excluded by design.
+    const verifiedSubTools = subToolsGuarded.map((tool) =>
+      withEvidence(tool, {
+        sessionId: childId,
+        threadId: DEFAULT_THREAD_ID,
+        cwd: parentCwd,
+        childOf: parentId,
+      }),
+    )
+    const intent: EffectIntentResult = await persistEffectIntent({
+      sessionId: parentId,
+      threadId: DEFAULT_THREAD_ID,
       tool: "delegate_task",
       cwd: parentCwd,
       childSessionId: childId,
-      argsHash: hashArgs({ prompt: String(prompt), mode: m }),
+      args: { prompt: String(prompt), mode: m },
+      specialPath: "delegate-task",
     })
+    // Canonical intent is also the fail-closed evidence gate: without a
+    // durable delegation identity the child must not start.
+    if (!intent.durable) {
+      return `[sub-agent error] REFUSED_VERIFICATION_EVIDENCE: durable EffectIntent unavailable for ${childId}`
+    }
     let terminal: "committed" | "failed" = "committed"
     // committed = delegasi benar-benar jalan di sesi anak (efeknya di jurnal
     // anak). Factory/provider gagal = tak ada yang jalan = failed.
@@ -269,7 +415,7 @@ export const delegateTaskTool: Tool = {
 
         const session = await factory({
           provider,
-          tools: subToolsGuarded,
+          tools: verifiedSubTools,
           cwd: parentCwd,
           // Parent allowlist → anak allowlist (lihat komentar tipe di atas).
           permissionMode: parentMode === "allowlist" ? "allowlist" : "auto",
@@ -378,18 +524,53 @@ export const delegateTaskTool: Tool = {
       terminal = "failed"
       throw e
     } finally {
-      await appendMutationTerminal(
-        parentId,
-        parentCwd,
-        intent.id,
-        intent.seq,
-        "delegate_task",
-        terminal,
-        {
-          note: childId,
+      // P2.9: tutup Run anak secara durable SEBELUMmelepas epoch-nya —
+      // durable causality: efek terminal tercatat sebelum otoritas dicabut.
+      if (childRunId !== null) {
+        try {
+          const childEpochNow = readWriterEpoch(childId, parentCwd)
+          if (terminal === "committed" && childRan)
+            completeRun(childRunId, parentCwd, {
+              expectedEpoch: childEpochNow,
+            })
+          else if (terminal === "committed" && !childRan)
+            failRun(childRunId, parentCwd, {
+              expectedEpoch: childEpochNow,
+            })
+          else
+            interruptRun(childRunId, parentCwd, {
+              expectedEpoch: childEpochNow,
+              recoveryStatus: "UNKNOWN",
+            })
+        } catch {
+          // Terminalisasi gagal = residu RUNNING; sweep anak pada resume
+          // parent akan menombaknya (INTERRUPTED/UNKNOWN). Tidak pernah COMPLETED.
+        }
+      }
+      if (childEpochHeld && childEpoch) {
+        try {
+          releaseSessionWriter(childId, childEpoch, parentCwd)
+        } catch {}
+      }
+      await persistEffectReceipt({
+        sessionId: parentId,
+        threadId: DEFAULT_THREAD_ID,
+        tool: "delegate_task",
+        cwd: parentCwd,
+        invocation: intent.invocation,
+        intent: {
+          id: intent.record.id,
+          seq: intent.record.seq,
+          tool: intent.record.tool,
+          session: intent.record.session,
+          ...(intent.record.invocationId ? { invocationId: intent.record.invocationId } : {}),
+          ...(intent.record.argsHash ? { argsHash: intent.record.argsHash } : {}),
         },
-        childId,
-      )
+        state: terminal,
+        outcome: { note: childId },
+        childSessionId: childId,
+        specialPath: "delegate-task",
+      })
     }
   },
 }

@@ -30,13 +30,45 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   "cli/index.ts": { max: 26, owner: "human-cmd" },
   "cli/model-manager.ts": { max: 2, owner: "human-cmd" },
   "cli/provider-manager.ts": { max: 3, owner: "human-cmd" },
-  "cli/setup.ts": { max: 26, owner: "diagnostic" },
+  // [P2.1] 26 -> 27 for exactly ONE writer: the canonical identity line
+  // `[session sid=... boot=...]` emitted once per composition. Silent
+  // identity here would let a resumed session masquerade as a fresh one —
+  // the operator must see which durable session this process bound.
+  // Declared, not absorbed, per the rule above.
+  // [P2.2] 27 -> 31 for exactly FOUR writers: writer admission line,
+  // stale-writer diagnostic, lease-lost warning, and re-acquire note. Each
+  // names sid/boot/epoch (never tokens) so a refused second writer and a
+  // stale first writer are distinguishable in logs. Declared, not absorbed.
+  // [P2.4] 31 -> 32 for exactly ONE writer: default-thread resolution line
+  // (`[thread sid=… tid=th_default head=…]`) at resume. Declared, not absorbed.
+  // [P2.6] 32 -> 33 for exactly ONE writer: the warning when the live Run could
+  // not be marked terminal at teardown. A silently dropped terminal mark would
+  // leave a RUNNING residue that the next resume must tombstone as UNKNOWN —
+  // the operator has to see that the close was not clean. Declared, not absorbed.
+  // [P2.8] 33 -> 34 for exactly ONE writer: the resume context-assembly
+  // diagnostic (`[context sid=… source=… status=… covered=…]`). Silent context
+  // provenance would hide WHETHER the resume used a projection or fell back to
+  // canonical history — the exact fact an operator needs when a resumed session
+  // "forgets" something. Declared, not absorbed.
+  // [P2.9] 34 -> 35 for exactly ONE writer: the orphan Sub-Agent tombstone
+  // notice on resume (`[child] N orphaned sub-agent run(s) tombstoned`). A
+  // silently swallowed orphan would leave the operator believing the session
+  // resumed cleanly while a durable child run died unrecorded. Declared.
+  "cli/setup.ts": { max: 35, owner: "diagnostic" },
   "cli/tui.ts": { max: 9, owner: "screen" },
-  "cli/commands/acp.ts": { max: 3, owner: "machine" },
+  // [P2.2] 3 -> 4 for exactly ONE writer: the stale-writer durability
+  // diagnostic after a headless run persisted. The ACP success envelope is
+  // exactly-once per run, so a non-durable history cannot ride a second
+  // protocol message — stderr diagnostic is the honest channel. Declared,
+  // not absorbed, per the rule above.
+  "cli/commands/acp.ts": { max: 4, owner: "machine" },
   "cli/commands/auth.ts": { max: 27, owner: "human-cmd" },
   "cli/commands/config.ts": { max: 34, owner: "human-cmd" },
   "cli/commands/doctor.ts": { max: 4, owner: "human-cmd" },
-  "cli/commands/exec.ts": { max: 7, owner: "machine" },
+  // [P2.2] 7 -> 8 for exactly ONE writer: the stale-writer message on the
+  // non-JSON path when history could not be made durable (mirrors the JSON
+  // machineFailure branch). Exit 1 either way. Declared, not absorbed.
+  "cli/commands/exec.ts": { max: 8, owner: "machine" },
   "cli/commands/mcp.ts": { max: 2, owner: "human-cmd" },
   "cli/commands/memory.ts": { max: 11, owner: "human-cmd" },
   "cli/commands/pricing.ts": { max: 23, owner: "human-cmd" },

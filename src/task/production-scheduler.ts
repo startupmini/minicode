@@ -139,6 +139,10 @@ export interface ProductionSchedulerDeps {
   /** Reads the durable binding for a task at claim time. */
   readonly bindingFor: (taskId: string) => AutonomousExecutionBinding
   readonly model?: string
+  /** P2.2: token otoritas milik composition root (satu penulis per boot).
+   * Diteruskan ke Scheduler agar sesi + scheduler-nya memakai lease yang
+   * sama; absen = perilaku lama (Scheduler mint sendiri). */
+  readonly authorityToken?: string
   readonly onSchedulerEvent?: (e: SchedulerEvent) => void
   readonly onTriggerEvent?: (e: TriggerEvent) => void
 }
@@ -210,6 +214,8 @@ export async function createProductionScheduler(
     runTurn: buildAutonomousRunTurn(d.bindingFor, d.adapter),
     instruction: d.instruction,
     ...(d.model ? { model: d.model } : {}),
+    // P2.2: teruskan token komposisi (bila ada) — satu penulis per boot.
+    ...(d.authorityToken ? { authorityToken: d.authorityToken } : {}),
     ...(d.onSchedulerEvent ? { onEvent: d.onSchedulerEvent } : {}),
   })
 

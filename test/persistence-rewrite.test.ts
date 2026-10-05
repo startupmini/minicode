@@ -11,10 +11,12 @@ import { rebuildFromDurable } from "../src/presentation/reducer.ts"
 import {
   appendPresentationEvents,
   branchSession,
+  DEFAULT_THREAD_ID,
   deleteSession,
   loadPresentationEvents,
   loadSession,
   saveSession,
+  shrinkThreadHistory,
 } from "../src/session/persistence.ts"
 
 function localCwd(): string {
@@ -48,9 +50,16 @@ test("F-05: rewrite sama-panjang durable setelah reload", async () => {
     const id = "sess-rewrite-1"
     await saveSession(id, cwd, "sys", [msg("user", "satu"), msg("user", "dua")], { t: 1 })
     // Kompaksi: 2 pesan → 2 pesan BERBEDA (summary + tail).
-    await saveSession(id, cwd, "sys", [msg("user", "RINGKASAN-KOMP AKSI"), msg("user", "dua")], {
-      t: 2,
-    })
+    // P2.7: saveSession append-only — rewrite sama-panjang yang dulu ditulis
+    // diam-diam kini HARUS lewat jalur eksplisit shrinkThreadHistory
+    // (invariant F-05 tetap: isi baru harus durable setelah reload).
+    shrinkThreadHistory(
+      id,
+      DEFAULT_THREAD_ID,
+      [msg("user", "RINGKASAN-KOMP AKSI"), msg("user", "dua")],
+      cwd,
+      { expectedEpoch: 0 },
+    )
     const loaded = loadSession(id, cwd)
     expect(loaded).not.toBeNull()
     expect(loaded!.messages.map((m) => (m as { content: unknown }).content)).toEqual([

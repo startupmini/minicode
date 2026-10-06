@@ -64,6 +64,12 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   "cli/commands/acp.ts": { max: 4, owner: "machine" },
   "cli/commands/auth.ts": { max: 27, owner: "human-cmd" },
   "cli/commands/config.ts": { max: 34, owner: "human-cmd" },
+  // [P2.12] 0 -> 6 for the daemon command's own writers: help, unknown-subcommand
+  // diagnostic, dan emisi keluaran perintah. Sengaja menulis SEKALI per keluaran
+  // (kumpulkan ke array, flush di akhir) — pola yang sama dengan yang dipakai
+  // /scheduler, supaya satu baris perintah tidak jadi enam panggilan tulis.
+  // Declared, not absorbed, per the rule above.
+  "cli/commands/daemon.ts": { max: 6, owner: "human-cmd" },
   "cli/commands/doctor.ts": { max: 4, owner: "human-cmd" },
   // [P2.2] 7 -> 8 for exactly ONE writer: the stale-writer message on the
   // non-JSON path when history could not be made durable (mirrors the JSON

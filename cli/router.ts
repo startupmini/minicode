@@ -117,6 +117,14 @@ export async function dispatch(
     await handleAcp()
     return true
   }
+  if (cmd === "daemon") {
+    // P2.12 — host daemon lintas-platform (loopback + capability bercakupan).
+    // Terpisah dari exec/acp: daemon adalah proses panjang yang melayani
+    // konsumen, bukan pelaksana satu prompt.
+    const { handleDaemon } = await import("./commands/daemon.ts")
+    await handleDaemon(args, subGetArg, HELP)
+    return true
+  }
   if (cmd === "memory") {
     const { handleMemory } = await import("./commands/memory.ts")
     await handleMemory(args, subGetArg)

@@ -8,6 +8,7 @@ import type {
   SemanticSeverity,
   ToolIdentity,
   TurnSummary,
+  VerificationDisplay,
 } from "./events.ts"
 
 export type ToolStatus = "running" | "completed" | "failed" | "denied" | "cancelled" | "interrupted"
@@ -41,6 +42,8 @@ export interface ActivityEntry {
   expandRef?: ContentRef
   receipt?: Receipt
   incomplete?: boolean
+  /** Observasi verifikasi terakhir (last-wins); absen = UNKNOWN. */
+  verification?: VerificationDisplay
 }
 
 export interface TurnEntry {

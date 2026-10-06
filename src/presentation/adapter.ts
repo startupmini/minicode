@@ -30,6 +30,7 @@ import type {
   SemanticSeverity,
   ToolIdentity,
   TurnSummary,
+  VerificationDisplayVerdict,
 } from "./events.ts"
 import { type ContentStore, MAX_SECTION_CHARS } from "./store.ts"
 
@@ -108,6 +109,22 @@ export interface PresentationAdapter {
    * log masih berbunyi `completed`: dua bentuk kebenaran untuk satu state.
    */
   notePlanReconciled(info: { todos: readonly unknown[]; sessionId?: string; turnId?: number }): void
+  /**
+   * Terbitkan observasi verifikasi yang SUDAH durable di jurnal mutasi
+   * (intent/terminal/VerificationRecord). Pemanggil (composition root)
+   * membaca bukti dari jurnal; adaptor hanya memproyeksikan ke event
+   * observasi. Tidak pernah mengubah status/history/lifecycle.
+   */
+  noteVerificationObserved(info: {
+    toolCallId: string
+    invocationId: string
+    verdict: VerificationDisplayVerdict
+    method: string
+    observedAt: number
+    sessionId?: string
+    turnId?: number
+    parentLink?: ChildSessionLink
+  }): void
   setTurnSummaryProvider(provider: TurnSummaryProvider | undefined): void
   getDiagnostics(): AdapterDiagnostics
   dispose(): void
@@ -1038,6 +1055,24 @@ export function createPresentationAdapter(
     }
   }
 
+  const noteVerificationObserved: PresentationAdapter["noteVerificationObserved"] = (info) => {
+    try {
+      publish({
+        ...base(info.turnId ?? currentTurn),
+        ...(info.sessionId ? { sessionId: info.sessionId } : {}),
+        type: "verification.observed",
+        toolCallId: info.toolCallId,
+        invocationId: info.invocationId,
+        verdict: info.verdict,
+        method: info.method,
+        observedAt: info.observedAt,
+        ...(info.parentLink ? { parentLink: info.parentLink } : {}),
+      })
+    } catch {
+      diag.errors++
+    }
+  }
+
   const noteCheckpoint: PresentationAdapter["noteCheckpoint"] = (info) => {
     try {
       publish({
@@ -1133,6 +1168,7 @@ export function createPresentationAdapter(
     noteRunSettled,
     noteFileChanged,
     noteTestCompleted,
+    noteVerificationObserved,
     noteCheckpoint,
     notePlanReconciled(info) {
       const owner = info.sessionId ?? sessionId

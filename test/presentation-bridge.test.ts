@@ -176,6 +176,15 @@ const fixtures: Record<DomainEventType, DomainEvent> = {
     checkpointId: "ckpt-2",
     paths: ["a.ts"],
   },
+  "verification.observed": {
+    ...base(26),
+    type: "verification.observed",
+    toolCallId: "c1",
+    invocationId: "inv:s1:th:t0:s0",
+    verdict: "present",
+    method: "filesystem-read-back",
+    observedAt: 2000,
+  },
 }
 
 describe("canonical presentation bridge", () => {

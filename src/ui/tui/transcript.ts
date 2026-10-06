@@ -165,6 +165,7 @@ export class Transcript {
   private policy: PresentationPolicy | undefined
   private presentationUnsub: (() => void) | null = null
   private presentedTerminals = new Set<string>()
+  private presentedVerifications = new Set<string>()
   private summarizedTurns = new Set<number>()
   private unsubs: (() => void)[] = []
 
@@ -306,6 +307,7 @@ export class Transcript {
     this.evicted = 0
     this.hasEvictMarker = false
     this.presentedTerminals.clear()
+    this.presentedVerifications.clear()
     this.summarizedTurns.clear()
   }
 
@@ -684,6 +686,13 @@ export class Transcript {
   }
 
   private presentationLedger(event: UiPresentationEvent): void {
+    // Observasi verifikasi punya baris ledger sendiri (dedup per invocation):
+    // terminal tool sudah tampil duluan, dan transcript append-only tak bisa
+    // menimpa baris lama. Baris ini tak pernah mengklaim status tool.
+    if (event.type === "verification.observed") {
+      this.verificationLedger(event)
+      return
+    }
     if (event.toolCallId) {
       if (this.presentedTerminals.has(event.toolCallId)) return
       this.presentedTerminals.add(event.toolCallId)
@@ -708,11 +717,26 @@ export class Transcript {
     const status = desc?.status ?? activity?.status ?? event.status ?? "completed"
     const retry = (desc ? desc.retryOf : activity?.supersedes) ? ` ${t("ts.retry")}` : ""
     const child = children > 0 ? ` ${t("ts.childGroup", { n: children })}` : ""
+    // P2.11: penanda verifikasi/provenans dari deskripsi policy (ASCII aman).
+    // Absen = unknown/live — tidak dirender sebagai keberhasilan.
+    const verification = desc?.verification ?? activity?.verification
+    const verificationMark = !verification
+      ? ""
+      : verification.verdict === "present"
+        ? " [verified]"
+        : ` [unverified:${verification.verdict}]`
+    const provenance = desc?.provenance ?? activity?.provenance
+    const provenanceMark =
+      provenance === "reconstructed"
+        ? " [reconstructed]"
+        : provenance === "replay"
+          ? " [replay]"
+          : ""
     const message =
       status === "failed" && event.message
         ? `: ${truncateToWidth(sanitizeAnsi(String(event.message)), 200, "…").split("\n")[0] ?? ""}`
         : ""
-    const line = `  ${this.statusGlyph(status)} ${name}${targetText} ${this.statusWord(status)}${retry}${child}${message}`
+    const line = `  ${this.statusGlyph(status)} ${name}${targetText} ${this.statusWord(status)}${retry}${child}${verificationMark}${provenanceMark}${message}`
     this.append(this.statusPaint(status, line), {
       kind: "activity",
       ...(event.seq !== undefined ? { seq: event.seq } : {}),
@@ -721,6 +745,32 @@ export class Transcript {
       status,
       ...(activity?.expandRef ? { expandRef: activity.expandRef } : {}),
     })
+  }
+
+  private verificationLedger(event: UiPresentationEvent): void {
+    const verification = event.verification
+    if (!verification || !event.toolCallId) return
+    if (this.presentedVerifications.has(verification.invocationId)) return
+    this.presentedVerifications.add(verification.invocationId)
+    const activity = this.snapshotActivity(event.toolCallId)
+    if (activity?.parentToolCallId) return
+    const name = sanitizeAnsiLine(activity?.name ?? event.name ?? "tool")
+    const target = activity?.target ?? event.target
+    const targetText = target ? ` ${truncateToWidth(sanitizeAnsiLine(target), 120, "")}` : ""
+    const line =
+      verification.verdict === "present"
+        ? `  ${this.statusGlyph("completed")} ${name}${targetText} verified`
+        : `  ? ${name}${targetText} unverified (${verification.verdict})`
+    this.append(
+      verification.verdict === "present" ? this.statusPaint("completed", line) : c.muted(line),
+      {
+        kind: "activity",
+        ...(event.seq !== undefined ? { seq: event.seq } : {}),
+        ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+        toolCallId: event.toolCallId,
+        status: activity?.status ?? "completed",
+      },
+    )
   }
 
   private turnSummary(summary: UiPresentationEvent["summary"], event: UiPresentationEvent): void {

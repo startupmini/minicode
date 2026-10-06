@@ -45,6 +45,7 @@ Usage:
   minicode "prompt" [options]     # one-shot run
   minicode exec "prompt" [--json] # headless CI mode (JSON stream)
   minicode acp                  # JSON-RPC stdio server for IDEs (minimal subset)
+  minicode daemon <cmd>         # daemon host / status / stop / issue / sessions
   echo "prompt" | minicode        # via pipe
   minicode sync                   # refresh models from all providers
 Options:
@@ -147,7 +148,7 @@ setSubAgentSessionFactory(async (spec) => {
     let childWrite = Promise.resolve()
     childPresentation.onEvent((event) => {
       childWrite = childWrite
-        .then(() => appendPresentationEvents(journal.sessionId, spec.cwd, [event]))
+        .then(() => appendPresentationEvents(journal.sessionId, spec.cwd, [event]).then(() => {}))
         .catch(() => {})
     })
     session.events.on("turn:completed", () => {
@@ -191,6 +192,7 @@ if (args.includes("-h") || args.includes("--help")) {
           'minicode "prompt" [options]',
           'minicode exec "prompt" [--json]',
           "minicode acp",
+          "minicode daemon <start|status|stop|issue|sessions>",
           "minicode providers|models|sync|config|mcp|skills|sessions|stats|memory",
         ],
         options: [

@@ -343,6 +343,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
 
   const presentationEnabled = !!opts.getSnapshot
   const presentedTerminals = new Set<string>()
+  const presentedVerifications = new Set<string>()
   const presentationSnapshot = (): UiPresentationSnapshot | null => {
     if (!presentationEnabled || !opts.getSnapshot) return null
     try {
@@ -382,6 +383,16 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       parts.push(t("one.receipt", { paths: cleanPaths }))
     }
     if (desc ? desc.retryOf !== undefined : activity.supersedes) parts.push(t("ts.retry"))
+    // P2.11: penanda verifikasi/provenans dari deskripsi policy (ASCII aman).
+    // Absen = unknown/live — tidak dirender sebagai keberhasilan.
+    const verification = desc?.verification ?? activity.verification
+    if (verification) {
+      parts.push(
+        verification.verdict === "present" ? "verified" : `unverified:${verification.verdict}`,
+      )
+    }
+    const provenance = desc?.provenance ?? activity.provenance
+    if (provenance === "replay" || provenance === "reconstructed") parts.push(provenance)
     return parts.length > 0 ? ` ${c.muted(`[${parts.join(" · ")}]`)}` : ""
   }
   const paintTerminal = (status: UiPresentationActivity["status"], line: string): string => {
@@ -393,6 +404,26 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   const writePresentationTerminal = (event: UiPresentationEvent): void => {
     if (!presentationEnabled) return
     flushTableStream()
+    // Observasi verifikasi punya baris sendiri (dedup per invocation):
+    // terminal tool sudah tampil duluan dan baris linear append-only.
+    // Baris ini tak pernah mengklaim status tool.
+    if (event.type === "verification.observed") {
+      const verification = event.verification
+      if (!verification || !event.toolCallId) return
+      if (presentedVerifications.has(verification.invocationId)) return
+      presentedVerifications.add(verification.invocationId)
+      const activity = presentationActivity(event.toolCallId)
+      if (activity?.parentToolCallId) return
+      const name = sanitizeAnsiLine(activity?.name ?? event.name ?? "tool")
+      const target = activity?.target ?? event.target
+      const targetText = target ? ` ${truncateToWidth(sanitizeAnsiLine(target), 120, "")}` : ""
+      const line =
+        verification.verdict === "present"
+          ? `  ${glyphs.arrow} ${name}${targetText} verified`
+          : `  ? ${name}${targetText} unverified (${verification.verdict})`
+      wErr(`${verification.verdict === "present" ? c.success(line) : c.muted(line)}\n`)
+      return
+    }
     if (
       event.type !== "tool.failed" &&
       event.type !== "tool.denied" &&
@@ -438,6 +469,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       archiveTurn()
       pendingError = null
       presentedTerminals.clear()
+      presentedVerifications.clear()
 
       if (opts.verbose) wErr(c.muted(t("one.turnHead", { n: e.turn })))
     }),

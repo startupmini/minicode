@@ -345,6 +345,37 @@ export interface CheckpointCreatedEvent extends Base {
   paths?: string[]
 }
 
+/**
+ * Observasi verifikasi P2.11 — BUKAN bukti baru, melainkan proyeksi observasi
+ * atas intent/terminal/verdict yang sudah durable di jurnal mutasi.
+ *
+ * `verdict` hanya present|absent|inconclusive: ketiadaan event ini untuk suatu
+ * invokasi berarti UNKNOWN (diturunkan di proyeksi, bukan di sini). Event ini
+ * tidak pernah mengubah status/history/lifecycle activity — hanya menempelkan
+ * `verification` untuk display. `evidenceReference` TIDAK dibawa ke sini
+ * (tetap di jurnal); yang dibawa hanya identitas + verdict + metode.
+ */
+export type VerificationDisplayVerdict = "present" | "absent" | "inconclusive"
+
+/** Tampilan verifikasi per activity — observasi, bukan otoritas efek. */
+export interface VerificationDisplay {
+  invocationId: string
+  verdict: VerificationDisplayVerdict
+  method: string
+  observedAt: number
+}
+
+export interface VerificationObservedEvent extends Base {
+  type: "verification.observed"
+  toolCallId: string
+  invocationId: string
+  verdict: VerificationDisplayVerdict
+  method: string
+  observedAt: number
+  /** Forward anak: taut ke delegate_task pemanggil (absen = observasi sesi biasa). */
+  parentLink?: ChildSessionLink
+}
+
 export type DomainEvent =
   | UserMessageEvent
   | TurnStartedEvent
@@ -371,6 +402,7 @@ export type DomainEvent =
   | ResultProducedEvent
   | DiagnosticRaisedEvent
   | CheckpointCreatedEvent
+  | VerificationObservedEvent
 
 export type DomainEventType = DomainEvent["type"]
 
@@ -403,6 +435,7 @@ export const DURABILITY: Record<DomainEventType, { durable: boolean; replayable:
   "result.produced": { durable: true, replayable: true },
   "diagnostic.raised": { durable: true, replayable: true },
   "checkpoint.created": { durable: true, replayable: true },
+  "verification.observed": { durable: true, replayable: true },
 }
 
 /**

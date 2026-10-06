@@ -690,6 +690,10 @@ function countOccurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1
 }
 
+function matchesForbidden(code: string, forbidden: RegExp | string): boolean {
+  return typeof forbidden === "string" ? code.includes(forbidden) : forbidden.test(code)
+}
+
 test("[ARCHITECTURE-GUARD] P2.10: awaited intent precedes execute, receipt follows return", () => {
   const verification = codeOnly(readProd("src/session/verification.ts"))
   const toolLayer = codeOnly(readProd("src/app/tool-layer.ts"))
@@ -877,4 +881,286 @@ test("[ARCHITECTURE-GUARD] P2.10: idempotency bypasses remain explicit", () => {
   const attach = codeOnly(readProd("src/session/journal.ts"))
   expect(attach).toContain('evidenceMode?: "events" | "canonical"')
   expect(attach).toContain('opts.evidenceMode === "canonical"')
+})
+
+function presentationFiles(): string[] {
+  return [
+    "src/presentation/events.ts",
+    "src/presentation/model.ts",
+    "src/presentation/reducer.ts",
+    "src/presentation/adapter.ts",
+    "src/presentation/projection.ts",
+    "src/presentation/store.ts",
+    "src/presentation/label.ts",
+  ]
+}
+
+function uiFiles(): string[] {
+  const r = spawnSync("git", ["ls-files", "src/ui/**/*.ts", "src/ui/*.ts"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    timeout: 30_000,
+  })
+  if (r.status !== 0) return []
+  return r.stdout
+    .split("\n")
+    .map((s) => s.trim())
+    .filter((s) => s.endsWith(".ts"))
+}
+
+function machineProjectors(): string[] {
+  return ["cli/commands/acp.ts", "cli/commands/exec.ts"]
+}
+
+test("[ARCHITECTURE-GUARD] P2.11: presentation cannot write messages", () => {
+  // Lapisan presentasi hanya mengamati: tak ada INSERT/UPDATE/DELETE messages,
+  // tak ada saveSession/appendHistoryEvent/shrinkThreadHistory di file-file ini.
+  const files = [...presentationFiles(), ...uiFiles()]
+  for (const file of files) {
+    const code = codeOnly(readProd(file))
+    for (const forbidden of [
+      /INSERT\s+INTO\s+messages\b/i,
+      /UPDATE\s+messages\b/i,
+      /DELETE\s+FROM\s+messages\b/i,
+      /saveSession\s*\(/,
+      /appendHistoryEvent\s*\(/,
+      /shrinkThreadHistory\s*\(/,
+    ]) {
+      expect(forbidden.test(code), file).toBe(false)
+    }
+  }
+})
+
+test("[ARCHITECTURE-GUARD] P2.11: presentation cannot own run lifecycle", () => {
+  const files = [...presentationFiles(), ...uiFiles()]
+  for (const file of files) {
+    const code = codeOnly(readProd(file))
+    for (const forbidden of [
+      "createRun(",
+      "transitionRun(",
+      "completeRun(",
+      "failRun(",
+      "interruptRun(",
+      "tombstoneDeadRuns(",
+      "advanceRunCursor",
+      "RUN_EDGES",
+    ]) {
+      expect(code.includes(forbidden), `${file} ~~ ${forbidden}`).toBe(false)
+    }
+  }
+})
+
+test("[ARCHITECTURE-GUARD] P2.11: presentation cannot mutate VerificationRecord", () => {
+  // Display membaca verdict; penulisannya tetap milik jurnal/verifikasi.
+  const files = [...presentationFiles(), ...uiFiles(), ...machineProjectors()]
+  for (const file of files) {
+    const code = codeOnly(readProd(file))
+    for (const forbidden of [
+      "appendVerificationRecord(",
+      "recordExternalVerification(",
+      "recordVerifierOutcome(",
+      "verifyFilesystemEffect(",
+      "verifyGitCommit(",
+      "resolvePending(",
+    ]) {
+      expect(code.includes(forbidden), `${file} ~~ ${forbidden}`).toBe(false)
+    }
+  }
+})
+
+test("[ARCHITECTURE-GUARD] P2.11: presentation cannot become effect authority", () => {
+  // Tak ada klaim penyelesaian efek dari status tampil / receipt / verdict.
+  // Satu-satunya gerbang positif yang diizinkan adalah marker [verified]
+  // yang mensyaratkan verdict present eksplisit (dijaga test display).
+  for (const file of [...presentationFiles(), ...uiFiles(), ...machineProjectors()]) {
+    const code = codeOnly(readProd(file))
+    expect(code.includes("EffectVerification"), file).toBe(false)
+  }
+  const journal = codeOnly(readProd("src/session/journal.ts"))
+  expect(journal.includes("EffectVerification")).toBe(false)
+})
+
+test("[ARCHITECTURE-GUARD] P2.11: UI state cannot become canonical session state", () => {
+  // src/ui/ tak boleh mengimpor modul persistensi/evidence sesi — selain
+  // melanggar ui-boundary, itu satu-satunya jalan UI state menjadi durable.
+  for (const file of uiFiles()) {
+    const code = codeOnly(readProd(file))
+    for (const forbidden of [
+      "session/persistence",
+      "session/journal",
+      "session/verification",
+      "session/checkpoint",
+      "bun:sqlite",
+    ]) {
+      expect(code.includes(forbidden), `${file} ~~ ${forbidden}`).toBe(false)
+    }
+  }
+})
+
+test("[ARCHITECTURE-GUARD] P2.11: history_projections cannot become UI state", () => {
+  const files = [...presentationFiles(), ...uiFiles(), ...machineProjectors()]
+  for (const file of files) {
+    const code = codeOnly(readProd(file))
+    for (const forbidden of ["history_projections", "getProjection(", "buildProjection("]) {
+      expect(code.includes(forbidden), `${file} ~~ ${forbidden}`).toBe(false)
+    }
+  }
+})
+
+test("[ARCHITECTURE-GUARD] P2.11: ContextView cannot be persisted", () => {
+  const files = [...presentationFiles(), ...uiFiles(), ...machineProjectors()]
+  for (const file of files) {
+    const code = codeOnly(readProd(file))
+    expect(code.includes("ContextView"), file).toBe(false)
+  }
+})
+
+test("[ARCHITECTURE-GUARD] P2.11: verification.observed is minted only by the adapter", () => {
+  // Produsen display-verifikasi tunggal = noteVerificationObserved; tak ada
+  // fabrikasi event di consumer, projector, atau renderer.
+  const adapter = codeOnly(readProd("src/presentation/adapter.ts"))
+  expect(adapter).toContain("noteVerificationObserved")
+  expect(adapter).toContain('type: "verification.observed"')
+  for (const file of [
+    ...uiFiles(),
+    ...machineProjectors(),
+    "src/presentation/reducer.ts",
+    "src/presentation/projection.ts",
+    "src/presentation/model.ts",
+    "cli/setup.ts",
+  ]) {
+    const code = codeOnly(readProd(file))
+    expect(code.includes('type: "verification.observed"'), file).toBe(false)
+  }
+  // Wiring komposisi: setup membaca jurnal fire-and-forget lalu memanggil
+  // note adapter — tak pernah await di jalur turn, tak pernah melempar.
+  const setup = codeOnly(readProd("cli/setup.ts"))
+  expect(setup).toContain("noteVerificationObserved")
+  expect(setup).toContain("pendingVerificationObservation")
+  expect(setup).toContain("replayedUpToSeq")
+  expect(setup).toContain("verificationEmitted")
+})
+
+test("[ARCHITECTURE-GUARD] P2.11: child presentation cannot leak child context", () => {
+  // Narasi anak (finalText) tak boleh menjadi bukti efek / tampil sebagai
+  // verifikasi di permukaan display mana pun. Satu-satunya pemakaian sah
+  // adalah jalur turn:completed → model.completed (teks percakapan model,
+  // bukan bukti efek anak) — di sini dibatasi ke blok adapter itu.
+  for (const file of [
+    "src/presentation/projection.ts",
+    "src/presentation/reducer.ts",
+    "src/ui/tui/transcript.ts",
+    "src/ui/assistant/simple.ts",
+    "cli/commands/acp.ts",
+    "cli/commands/exec.ts",
+    "cli/setup.ts",
+  ]) {
+    expect(codeOnly(readProd(file)).includes("finalText"), file).toBe(false)
+  }
+  // Penautan anak eksplisit tetap ada (bukan tebakan): parentLink di jalur display.
+  const acp = codeOnly(readProd("cli/commands/acp.ts"))
+  expect(acp).toContain("parentToolCallId")
+  // Blok verifikasi adaptor + reducer tak menyentuh narasi anak.
+  const adapter = codeOnly(readProd("src/presentation/adapter.ts"))
+  const noteStart = adapter.indexOf("const noteVerificationObserved")
+  expect(noteStart).toBeGreaterThan(-1)
+  const noteEnd = adapter.indexOf("const noteCheckpoint", noteStart)
+  expect(noteEnd).toBeGreaterThan(noteStart)
+  expect(adapter.slice(noteStart, noteEnd).includes("finalText")).toBe(false)
+  const reducer = codeOnly(readProd("src/presentation/reducer.ts"))
+  const caseStart = reducer.indexOf('case "verification.observed"')
+  expect(caseStart).toBeGreaterThan(-1)
+  const caseEnd = reducer.indexOf("case \"approval.requested\"", caseStart)
+  expect(caseEnd).toBeGreaterThan(caseStart)
+  expect(reducer.slice(caseStart, caseEnd).includes("finalText")).toBe(false)
+})
+
+test("[ARCHITECTURE-GUARD] P2.11: UNKNOWN cannot render as success", () => {
+  // Marker sukses display mensyaratkan verdict present eksplisit; tak ada
+  // pemetaan verdict lain (atau absennya verdict) ke status sukses.
+  for (const file of ["src/ui/tui/transcript.ts", "src/ui/assistant/simple.ts"]) {
+    const code = codeOnly(readProd(file))
+    expect(code.includes('verdict === "present"'), file).toBe(true)
+  }
+  const projection = codeOnly(readProd("src/presentation/projection.ts"))
+  expect(projection).toContain('verdict === "present"')
+  expect(projection).toContain("unverified:")
+})
+
+test("[ARCHITECTURE-GUARD] P2.11: identity collision cannot be silently deduped", () => {
+  const persist = codeOnly(readProd("src/session/persistence.ts"))
+  expect(persist).toContain("canonicalizePresentationPayload")
+  expect(persist).toContain("stats.collisions++")
+  expect(persist).toContain("stats.duplicates++")
+  expect(persist).toContain("INSERT OR IGNORE INTO presentation_events")
+  expect(persist.includes("UPDATE presentation_events")).toBe(false)
+})
+
+test("[ARCHITECTURE-GUARD] P2.11: reconstructed terminal cannot appear observed", () => {
+  // Provenans ditulis eksplisit hanya untuk non-live; jalur live (bridge)
+  // tidak pernah menyetelnya. Ketiadaan = live-atau-tak-ditentukan.
+  const projection = codeOnly(readProd("src/presentation/projection.ts"))
+  expect(projection).toContain("projectProvenance")
+  expect(projection).toContain('"reconstructed"')
+  const setup = codeOnly(readProd("cli/setup.ts"))
+  const bridgeStart = setup.indexOf("export function toPresentationEvent")
+  expect(bridgeStart).toBeGreaterThan(-1)
+  const rest = setup.slice(bridgeStart)
+  const nextExport = rest.slice(30).search(/\nexport (function|const|async function|interface|type) /)
+  const bridge = nextExport === -1 ? rest : rest.slice(0, 30 + nextExport)
+  expect(bridge.includes("provenance")).toBe(false)
+  for (const file of ["src/ui/tui/transcript.ts", "src/ui/assistant/simple.ts"]) {
+    const code = codeOnly(readProd(file))
+    expect(code.includes("[reconstructed]") || code.includes('provenance === "reconstructed"'), file).toBe(true)
+    expect(code.includes("[replay]") || code.includes('provenance === "replay"'), file).toBe(true)
+  }
+})
+
+test("[ARCHITECTURE-GUARD] P2.11: no second canonical presentation persistence", () => {
+  // Satu-satunya writer durable observasi = appendPresentationEvents.
+  // Tak ada CREATE TABLE / INSERT / bun:sqlite di permukaan display/machine.
+  for (const file of [
+    ...presentationFiles(),
+    ...uiFiles(),
+    ...machineProjectors(),
+  ]) {
+    const code = codeOnly(readProd(file))
+    for (const forbidden of [
+      /CREATE\s+TABLE/i,
+      /INSERT\s+INTO/i,
+      "bun:sqlite",
+      /new\s+Database\s*\(/,
+    ]) {
+      expect(matchesForbidden(code, forbidden), `${file}`).toBe(false)
+    }
+  }
+  const persist = codeOnly(readProd("src/session/persistence.ts"))
+  expect(persist).toContain("appendPresentationEvents")
+})
+
+test("[ARCHITECTURE-GUARD] P2.11: vendor remains untouched", () => {
+  const status = spawnSync("git", ["status", "--short", "vendor/"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    timeout: 30_000,
+  })
+  expect(status.status).toBe(0)
+  expect(status.stdout.trim()).toBe("")
+})
+
+test("[ARCHITECTURE-GUARD] P2.11: no P2.12 work enters P2.11", () => {
+  // Desktop / long-running / reconnect-replay tidak diimplementasikan di sini.
+  for (const file of [
+    ...presentationFiles(),
+    "src/ui/contract.ts",
+    "src/ui/tui/transcript.ts",
+    "src/ui/assistant/simple.ts",
+    ...machineProjectors(),
+    "cli/setup.ts",
+  ]) {
+    const code = codeOnly(readProd(file))
+    for (const forbidden of ["Desktop", "desktop", "P2.12", "long-running", "websocket"]) {
+      expect(code.includes(forbidden), `${file} ~~ ${forbidden}`).toBe(false)
+    }
+  }
 })

@@ -136,6 +136,7 @@ function evidenceActivity(
         | "tool.failed"
         | "tool.denied"
         | "tool.cancelled"
+        | "verification.observed"
     }
   > & { parentLink?: ChildSessionLink },
   diag: ReducerDiagnostics,
@@ -452,6 +453,20 @@ export function reduce(
           a.summary = a.summary ?? `cancelled (${event.reason})`
         }
         refreshTurnSummary(state, event.sessionId, event.turnId)
+        return state
+      }
+      case "verification.observed": {
+        // Observasi saja: tempelkan verdict ke activity (last-wins agar
+        // verifikasi susulan memperbarui tampilan), tanpa mengubah status,
+        // summary, atau turn. Ketiadaan entry ini = UNKNOWN (diturunkan di
+        // proyeksi, bukan di sini).
+        const a = evidenceActivity(state, event, diag)
+        a.verification = {
+          invocationId: event.invocationId,
+          verdict: event.verdict,
+          method: event.method,
+          observedAt: event.observedAt,
+        }
         return state
       }
       case "approval.requested": {

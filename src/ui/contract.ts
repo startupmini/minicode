@@ -97,6 +97,24 @@ export interface UiPresentationError {
   hint?: string
 }
 
+/**
+ * Provenans tampilan P2.11 — struktural, tanpa impor presentation.
+ * Absen = live-atau-tak-ditentukan; ketiadaan tidak boleh dibaca sebagai
+ * keberhasilan. Hanya nilai non-live yang ditulis eksplisit.
+ */
+export type UiProvenance = "live" | "replay" | "reconstructed" | "unknown"
+
+/**
+ * Observasi verifikasi untuk display — tanpa evidenceReference (tetap di
+ * jurnal), tanpa otoritas efek. Absen = UNKNOWN (diturunkan di proyeksi).
+ */
+export interface UiVerificationDisplay {
+  invocationId: string
+  verdict: "present" | "absent" | "inconclusive"
+  method: string
+  observedAt: number
+}
+
 export interface UiPresentationReceipt {
   sessionId?: string
   turnId?: number
@@ -126,12 +144,15 @@ export interface UiPresentationActivity {
   parentToolCallId?: string
   supersedes?: string
   expandRef?: { toolCallId: string; idx: number }
+  verification?: UiVerificationDisplay
+  provenance?: UiProvenance
 }
 
 export interface UiPresentationTurn {
   turnId: number
   status: "running" | "completed" | "failed" | "cancelled" | "interrupted"
   summary?: UiTurnSummary
+  provenance?: UiProvenance
 }
 
 export interface UiPresentationMessage {
@@ -223,6 +244,8 @@ export interface ActivityPolicyDescription {
   error?: { cause?: string; message: string; hint?: string }
   tsStart: number
   tsEnd?: number
+  verification?: UiVerificationDisplay
+  provenance?: UiProvenance
 }
 
 /**
@@ -284,6 +307,7 @@ export interface UiPresentationEvent {
     | "result.produced"
     | "diagnostic.raised"
     | "checkpoint.created"
+    | "verification.observed"
   seq?: number
   turnId?: number
   stepId?: number
@@ -315,6 +339,9 @@ export interface UiPresentationEvent {
   journalSeq?: number
   checkpointId?: string
   test?: { passed: number; failed: number; summary: string }
+  invocationId?: string
+  verification?: UiVerificationDisplay
+  provenance?: UiProvenance
   compactionReason?: string
   planId?: string
   findingId?: string

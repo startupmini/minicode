@@ -1,11 +1,17 @@
 import { Database } from "bun:sqlite"
 import { createHash, randomUUID } from "node:crypto"
 import { LIMITS } from "../constants.ts"
-import { resolveDbPath } from "../lib/db-path.ts"
+import { resolveDbPath, resolveLocalDbPath } from "../lib/db-path.ts"
 import { scrubSecrets } from "../policy/scrub.ts"
 import { type DomainEvent, DURABILITY } from "../presentation/events.ts"
 
-const dbPath = (cwd?: string) => resolveDbPath("sessions.db", cwd)
+// `local=true` = SELALU `<cwd>/.minicode/sessions.db`, tanpa fallback ke
+// `~/.minicode` global. Fallback global itu benar untuk histori lintas-repo,
+// tetapi salah untuk state per-workspace (offset konsumen & persetujuan
+// daemon): proyek A yang "melanjutkan" dari progres proyek B adalah bocoran
+// scope yang tak pernah bisa dilihat pemakai.
+const dbPath = (cwd?: string, local = false) =>
+  local ? resolveLocalDbPath("sessions.db", cwd) : resolveDbPath("sessions.db", cwd)
 
 const initializedSessionPaths = new Set<string>()
 
@@ -42,8 +48,8 @@ export function withBusyRetrySync<T>(fn: () => T, attempts = 3): T | null {
   return null
 }
 
-function open(cwd?: string): Database {
-  const p = dbPath(cwd)
+function open(cwd?: string, local = false): Database {
+  const p = dbPath(cwd, local)
   const db = new Database(p)
   // busy_timeout DULU, sebelum statement apa pun yang butuh lock (audit #09
   // P1 §27: dua proses membuka DB bersamaan → PRAGMA journal_mode balapan →
@@ -274,7 +280,64 @@ function open(cwd?: string): Database {
     CREATE INDEX IF NOT EXISTS idx_projections_thread ON history_projections(session_id, thread_id);
   `)
   })
+  // P2.12 — dua tabel milik daemon, DDL di sini karena `open()` SATU-SATUNYA
+  // pemilik skema (setiap jalur buka DB melewati retry yang sama; DDL terpisah
+  // di modul lain = dua jalur setup yang bisa berbeda urutan lock-nya).
+  //
+  // consumer_offsets: offset terakhir yang DIACK konsumen. TERPISAH dari
+  // `runs.last_persisted_seq` (watermark penulis), `writer_epoch` (pagar
+  // mutasi), dan `presentation_events.event_seq` (kepala kanonik) — empat
+  // angka yang sering tertukar; kontrak melarang menggabungkannya karena
+  // offset konsumen = "sudah diproses", bukan "sudah ditulis"/"punya siapa".
+  //
+  // daemon_approvals: mesin persetujuan durable. `state` dkk. — UI hanya
+  // MENGUSULKAN keputusan; baris ini adalah otoritasnya.
+  withBusyRetrySync(() => {
+    db.exec(`
+    CREATE TABLE IF NOT EXISTS consumer_offsets (
+      consumer_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      last_acked_seq INTEGER NOT NULL DEFAULT -1,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(consumer_id, session_id),
+      CHECK(last_acked_seq >= -1)
+    );
+    CREATE INDEX IF NOT EXISTS idx_consumer_offsets_session ON consumer_offsets(session_id);
+    CREATE TABLE IF NOT EXISTS daemon_approvals (
+      approval_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      run_id TEXT NULL,
+      tool TEXT NOT NULL,
+      summary TEXT NOT NULL DEFAULT '',
+      state TEXT NOT NULL,
+      requested_at INTEGER NOT NULL,
+      expires_at INTEGER NULL,
+      decided_at INTEGER NULL,
+      decision TEXT NULL,
+      incarnation TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_daemon_approvals_session ON daemon_approvals(session_id, requested_at);
+    CREATE INDEX IF NOT EXISTS idx_daemon_approvals_state ON daemon_approvals(state);
+  `)
+  })
   return db
+}
+
+// P2.12 — gerbang terbuka untuk pemilik skema lain (toko konsumen/persetujuan
+// daemon) yang butuh handle lengkap: WAL + busy_timeout + DDL yang sama.
+// Sengaja diekspos sebagai fungsi, bukan `open` sendiri, agar setiap pemanggil
+// tetap melewati satu jalur setup yang sama.
+export function openSessionDb(cwd?: string): Database {
+  return open(cwd)
+}
+
+// P2.12 — sessions.db milik SATU workspace. Beda dari `openSessionDb` di atas:
+// tak pernah jatuh ke `~/.minicode` global. Dipakai toko daemon (offset
+// konsumen + persetujuan) karena keduanya menyatakan keadaan SATU workspace;
+// menjatuhkannya ke DB bersama membuat konsumen workspace lain "melanjutkan"
+// dari progres yang bukan miliknya — dan tak ada yang bisa membedakannya.
+export function openWorkspaceSessionDb(cwd?: string): Database {
+  return open(cwd, true)
 }
 
 // P2.2 — penolakan penulis basi. BEDA dari SQLITE_BUSY (masih boleh retry):
@@ -549,6 +612,16 @@ function isValidEventShape(value: Record<string, unknown>): boolean {
       return isStr("approvalId") && !!value.outcome
     case "test.completed":
       return isNum("passed") && isNum("failed")
+    case "verification.observed":
+      return (
+        isStr("toolCallId") &&
+        isStr("invocationId") &&
+        (value.verdict === "present" ||
+          value.verdict === "absent" ||
+          value.verdict === "inconclusive") &&
+        isStr("method") &&
+        isNum("observedAt")
+      )
     case "context.compacted":
       return isStr("reason")
     case "finding.detected":
@@ -615,32 +688,162 @@ export function loadPresentationEvents(id: string, cwd?: string): DomainEvent[] 
   return loadPresentationEventsWithStats(id, cwd).events
 }
 
+// P2.12 — baca rentang untuk replay konsumen. WAJIB ada: `loadPresentationEvents`
+// memuat SELURUH riwayat ke memori, dan konsumen yang attach dengan offset lama
+// akan menarik seluruh sesi (ratusan ribu baris) hanya untuk 200 event terakhir
+// yang belum diproses. Rentang + LIMIT membuat pemakaian memori daemon terikat
+// pada apa yang benar-benar diminta, bukan pada usia sesi.
+export interface PresentationEventRange {
+  events: DomainEvent[]
+  rejected: number
+  /** Kepala kanonik sesi saat baca (untuk memastikan replay tak meleset). */
+  head: number
+}
+
+export function loadPresentationEventsRange(
+  id: string,
+  fromSeq: number,
+  limit: number,
+  cwd?: string,
+): PresentationEventRange {
+  const db = open(cwd)
+  try {
+    const head = presentationHead(id, cwd, db)
+    const capped = Math.max(1, Math.min(Number.isInteger(limit) ? limit : 200, 1000))
+    // Clamp ke >= 0 (bukan 1): eventSeq kanonik dimulai dari 1 pada jalur
+    // produksi, tapi memotong pada 1 akan menjatuhkan baris 0 bila ada — dan
+    // replay yang kehilangan SATU event pertama sudah cukup untuk merusak
+    // urutan yang dijanjikan konsumen.
+    const start = Number.isInteger(fromSeq) && fromSeq > 0 ? fromSeq : 0
+    const rows = db
+      .prepare(
+        "SELECT payload FROM presentation_events WHERE session_id = ? AND event_seq >= ? ORDER BY event_seq LIMIT ?",
+      )
+      .all(id, start, capped) as { payload: string }[]
+    const events: DomainEvent[] = []
+    let rejected = 0
+    for (const row of rows) {
+      const event = decodePresentationEvent(row.payload)
+      if (event) events.push(event)
+      else rejected++
+    }
+    return { events, rejected, head }
+  } finally {
+    db.close()
+  }
+}
+
+/**
+ * Kepala `presentation_events` (seq tertinggi). `-1` bila belum ada event —
+ * -1 = "tak ada", bukan 0 (seq mulai dari 1; 0 akan disalahartikan sebagai
+ * "satu event sudah terkirim").
+ */
+export function presentationHead(id: string, cwd?: string, reuse?: Database): number {
+  const db = reuse ?? open(cwd)
+  const owned = reuse === undefined
+  try {
+    const row = db
+      .prepare("SELECT MAX(event_seq) AS head FROM presentation_events WHERE session_id = ?")
+      .get(id) as { head: number | null } | null
+    return row?.head ?? -1
+  } finally {
+    if (owned) db.close()
+  }
+}
+
+/**
+ * Kepala `messages` lintas thread (bukan per-thread): frontier konsumen harus
+ * mewakili seluruh sesi, dan memilih satu thread akan membuat sesi dengan fork
+ * terlihat "mandek" padahal terus menulis di thread lain.
+ * `-1` bila belum ada pesan (sama alasan dengan `presentationHead`).
+ */
+export function messageHead(id: string, cwd?: string): number {
+  const db = open(cwd)
+  try {
+    const row = db
+      .prepare("SELECT MAX(seq) AS head FROM messages WHERE session_id = ?")
+      .get(id) as { head: number | null } | null
+    return row?.head ?? -1
+  } finally {
+    db.close()
+  }
+}
+
+export interface PresentationPersistStats {
+  written: number
+  duplicates: number
+  collisions: number
+}
+
+/**
+ * Representasi kanonis satu payload untuk perbandingan identitas P2.11:
+ * stringify JSON dengan kunci terurut rekursif. Perbandingan string mentah
+ * tidak stabil (urutan kunci sisipan bisa berbeda untuk payload yang sama),
+ * jadi retransmisi identik harus dibandingkan dalam bentuk kanonis ini.
+ */
+export function canonicalizePresentationPayload(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null"
+  if (Array.isArray(value)) return `[${value.map(canonicalizePresentationPayload).join(",")}]`
+  const record = value as Record<string, unknown>
+  const keys = Object.keys(record).sort()
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalizePresentationPayload(record[key])}`).join(",")}}`
+}
+
+/** Bandingkan dua payload tersimpan/ter-encode secara kanonis (tahan urutan kunci). */
+function sameCanonicalPayload(a: string, b: string): boolean {
+  if (a === b) return true
+  try {
+    return (
+      canonicalizePresentationPayload(JSON.parse(a)) ===
+      canonicalizePresentationPayload(JSON.parse(b))
+    )
+  } catch {
+    return false
+  }
+}
+
 export async function appendPresentationEvents(
   id: string,
   cwd: string | undefined,
   events: readonly DomainEvent[],
   opts?: { expectedEpoch?: number },
-): Promise<void> {
+): Promise<PresentationPersistStats> {
+  const stats: PresentationPersistStats = { written: 0, duplicates: 0, collisions: 0 }
   const durable = events.filter((event) => DURABILITY[event.type]?.durable)
-  if (durable.length === 0) return
+  if (durable.length === 0) return stats
   const db = open(cwd)
   const txn = db.transaction(() => {
     // P2.2: pagar generasi di dalam txn yang sama dengan tulis (bukan
     // check-then-write terpisah). Absennya baris sesi + ekspektasi 0 =
     // sesi pra-save pertama: diizinkan (baris dibuat oleh saveSession).
     if (opts?.expectedEpoch !== undefined) assertWriterEpochInTxn(db, id, opts.expectedEpoch)
+    const existing = db.prepare(
+      "SELECT payload FROM presentation_events WHERE session_id = ? AND event_seq = ?",
+    )
     const insert = db.prepare(
       "INSERT OR IGNORE INTO presentation_events (session_id, event_seq, type, turn_id, ts, payload) VALUES (?, ?, ?, ?, ?, ?)",
     )
     for (const event of durable) {
-      insert.run(
-        id,
-        event.eventSeq,
-        event.type,
-        event.turnId,
-        event.ts,
-        encodePresentationEvent(event),
-      )
+      const payload = encodePresentationEvent(event)
+      // P2.11: bedakan duplikat vs tabrakan pada identitas yang sama.
+      // Duplikat (payload kanonis identik) = idempoten, lewati diam-diam.
+      // Tabrakan (payload berbeda) = pertahankan baris existing, tolak yang
+      // datang, hitung + diagnostik — jangan pernah menimpa, jangan simpulkan
+      // apa pun tentang runtime dari tabrakan ini.
+      const row = existing.get(id, event.eventSeq) as { payload: string } | undefined
+      if (row) {
+        if (sameCanonicalPayload(row.payload, payload)) {
+          stats.duplicates++
+        } else {
+          stats.collisions++
+          process.stderr.write(
+            `[warn] presentation identity collision (session ${id} seq ${event.eventSeq} type ${event.type}): kept existing row, rejected incoming\n`,
+          )
+        }
+        continue
+      }
+      insert.run(id, event.eventSeq, event.type, event.turnId, event.ts, payload)
+      stats.written++
     }
   })
   try {
@@ -648,6 +851,7 @@ export async function appendPresentationEvents(
   } finally {
     db.close()
   }
+  return stats
 }
 
 // SQLITE_BUSY / database-is-locked bisa muncul saat Pool(3) sub-agent menulis

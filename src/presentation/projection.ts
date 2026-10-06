@@ -25,6 +25,41 @@ import type {
 
 export type ProjectionMode = "normal" | "verbose" | "debug" | "machine"
 
+/**
+ * Provenans tampilan — BUKAN status runtime.
+ *
+ * - `live`: observasi lewat jalur adapter/bus aktif.
+ * - `replay`: observasi durable dimuat ulang dan di-reduce ulang.
+ * - `reconstructed`: status turunan inferensi saat rebuild (interrupted,
+ *   placeholder bukti yatim) — jangan pernah disajikan sebagai terminal
+ *   yang diobservasi runtime.
+ * - `unknown`: provenance tak dapat ditetapkan.
+ *
+ * Aturan render: field provenance HANYA diisi untuk non-live. Absen =
+ * live-atau-tak-ditentukan, dan ketiadaan itu tidak boleh dibaca sebagai
+ * keberhasilan. Ini menjaga bentuk output lama tetap identik.
+ */
+export type Provenance = "live" | "replay" | "reconstructed" | "unknown"
+
+/**
+ * Turunkan provenance satu baris dari penanda eksplisit + watershed replay.
+ *
+ * `replayedUpToSeq` = state.seq sesaat setelah rebuild (null bila tak ada
+ * rebuild dalam sesi ini). Baris di atas watershed adalah live. Baris pada
+ * atau di bawah watershed adalah replay, kecuali status/incomplete yang
+ * hanya lahir dari inferensi rebuild → reconstructed.
+ */
+export function projectProvenance(
+  entry: { status?: string; incomplete?: boolean },
+  eventSeq: number,
+  replayedUpToSeq: number | null,
+): Provenance | undefined {
+  if (replayedUpToSeq === null || replayedUpToSeq === undefined) return undefined
+  if (eventSeq > replayedUpToSeq) return undefined
+  if (entry.status === "interrupted" || entry.incomplete === true) return "reconstructed"
+  return "replay"
+}
+
 export interface ProjectionContext {
   mode: ProjectionMode
   /** Jam tepi (ms) untuk keputusan elapsed; wajib di-inject agar murni. */
@@ -51,6 +86,15 @@ export interface ActivityDescription {
   error?: { cause?: string; message: string; hint?: string }
   tsStart: number
   tsEnd?: number
+  /** Observasi verifikasi terakhir; absen = UNKNOWN (diturunkan, bukan success). */
+  verification?: {
+    invocationId: string
+    verdict: "present" | "absent" | "inconclusive"
+    method: string
+    observedAt: number
+  }
+  /** Provenans tampilan; absen = live-atau-tak-ditentukan. */
+  provenance?: Provenance
 }
 
 /**
@@ -72,6 +116,8 @@ export interface ActivityLike {
   error?: { cause?: string; message: string; hint?: string }
   tsStart: number
   tsEnd?: number
+  verification?: ActivityDescription["verification"]
+  provenance?: Provenance
 }
 
 export function describeActivity(
@@ -95,6 +141,10 @@ export function describeActivity(
     childCount: opts.childCount ?? 0,
     isChild: activity.parentToolCallId !== undefined,
     ...(activity.expandRef ? { expandRef: { ...activity.expandRef } } : {}),
+    ...(activity.verification ? { verification: { ...activity.verification } } : {}),
+    // Provenance hanya hidup di snapshot/view (ActivityLike), bukan di state
+    // reducer (ActivityEntry) — dibaca struktural agar state tetap murni.
+    ...(source.provenance ? { provenance: source.provenance } : {}),
     ...(activity.error
       ? {
           error: {
@@ -115,6 +165,8 @@ export interface TurnDescription {
   summary?: TurnSummary
   checkpointId?: string
   error?: string
+  /** Provenans tampilan; absen = live-atau-tak-ditentukan. */
+  provenance?: Provenance
 }
 
 /** Bentuk turn struktural — dipenuhi TurnEntry model maupun snapshot UI. */
@@ -124,6 +176,7 @@ export interface TurnLike {
   summary?: TurnSummary
   checkpointId?: string
   error?: string
+  provenance?: Provenance
 }
 
 export function describeTurn(turn: TurnLike): TurnDescription {
@@ -133,7 +186,34 @@ export function describeTurn(turn: TurnLike): TurnDescription {
     ...(turn.summary ? { summary: turn.summary } : {}),
     ...(turn.checkpointId ? { checkpointId: turn.checkpointId } : {}),
     ...(turn.error ? { error: turn.error } : {}),
+    ...(turn.provenance ? { provenance: turn.provenance } : {}),
   }
+}
+
+/**
+ * Marker display untuk status verifikasi — keputusan policy.
+ *
+ * Renderer (transcript/simple) me-mirror pemetaan ini secara inline karena
+ * batas lapisan melarang src/ui mengimpor src/presentation; mirror tersebut
+ * dijaga test display agar tak divergen. Hanya verdict present eksplisit yang
+ * menjadi penanda sukses; absen field = UNKNOWN dan tidak dirender apa pun.
+ */
+export function verificationMark(
+  verification: ActivityDescription["verification"],
+): string {
+  if (!verification) return ""
+  if (verification.verdict === "present") return " [verified]"
+  return ` [unverified:${verification.verdict}]`
+}
+
+/**
+ * Marker display untuk provenans tampilan. Hanya nilai non-live yang
+ * dirender; absen = live-atau-tak-ditentukan.
+ */
+export function provenanceMark(provenance: Provenance | undefined): string {
+  if (provenance === "reconstructed") return " [reconstructed]"
+  if (provenance === "replay") return " [replay]"
+  return ""
 }
 
 /** Ringkasan turn yang dibandingkan (hanya field yang dicocokkan). */
@@ -323,6 +403,89 @@ export function selectNodes(state: PresentationState, mode: ProjectionMode): Pro
   return out
 }
 
+// ── Observasi verifikasi (P2.11, murni, tanpa IO) ──
+
+/** Bentuk record jurnal struktural — dipenuhi JournalRecord tanpa impor sesi. */
+export interface VerificationJournalRecord {
+  kind?: string
+  state?: string
+  tool?: string
+  turn?: number | null
+  session?: string
+  invocationId?: string
+  argsHash?: string
+  verdict?: string
+  method?: string
+  observedAt?: number
+}
+
+export interface VerificationCallDescriptor {
+  toolCallId: string
+  tool: string
+  turn: number | null
+  argsHash: string
+  sessionId: string
+}
+
+export interface VerificationObservation {
+  toolCallId: string
+  invocationId: string
+  verdict: "present" | "absent" | "inconclusive"
+  method: string
+  observedAt: number
+}
+
+function isVerificationVerdict(value: unknown): value is VerificationObservation["verdict"] {
+  return value === "present" || value === "absent" || value === "inconclusive"
+}
+
+/**
+ * Selesaikan satu tool call yang selesai menjadi observasi verifikasi — atau
+ * null bila tak ada bukti eksplisit / atribusi ambigu.
+ *
+ * Aturan jujur: kandidat intent harus TEPAT SATU untuk (sesi, tool, turn,
+ * argsHash) dan HARUS punya baris verifikasi eksplisit. Nol, ganda, atau
+ * tanpa baris verifikasi → null (proyeksi menurunkan UNKNOWN, bukan success).
+ * Tidak pernah membaca teks model/tool, status Run, atau event presentasi.
+ */
+export function pendingVerificationObservation(
+  call: VerificationCallDescriptor,
+  records: readonly VerificationJournalRecord[],
+  emitted: ReadonlySet<string>,
+  opts: { now?: number } = {},
+): VerificationObservation | null {
+  const candidates = records.filter(
+    (r) =>
+      (!r.kind || r.kind === "mutation") &&
+      r.session === call.sessionId &&
+      r.tool === call.tool &&
+      (r.turn ?? null) === (call.turn ?? null) &&
+      r.argsHash === call.argsHash &&
+      typeof r.invocationId === "string" &&
+      r.invocationId !== "" &&
+      !emitted.has(r.invocationId),
+  )
+  if (candidates.length !== 1) return null
+  const invocationId = candidates[0]!.invocationId!
+  const verifications = records.filter(
+    (r) => r.kind === "verification" && r.invocationId === invocationId,
+  )
+  if (verifications.length === 0) return null
+  const latest = verifications[verifications.length - 1]!
+  if (!isVerificationVerdict(latest.verdict)) return null
+  const observedAt =
+    typeof latest.observedAt === "number" && Number.isFinite(latest.observedAt)
+      ? latest.observedAt
+      : opts.now ?? 0
+  return {
+    toolCallId: call.toolCallId,
+    invocationId,
+    verdict: latest.verdict,
+    method: typeof latest.method === "string" && latest.method ? latest.method : "unknown",
+    observedAt,
+  }
+}
+
 /** Digest deterministik untuk harness divergensi (FNV-1a 32-bit, hex). */
 export function projectionDigest(nodes: ProjectionNode[]): string {
   let hash = 0x811c9dc5
@@ -397,6 +560,36 @@ export interface MachineEventInput {
   action?: unknown
   steps?: unknown
   evidence?: unknown
+  /** Provenans tampilan; hanya nilai valid yang diteruskan ke envelope. */
+  provenance?: unknown
+  /** Observasi verifikasi (tanpa evidenceReference — tetap di jurnal). */
+  verification?: unknown
+}
+
+const VALID_PROVENANCE: readonly string[] = ["live", "replay", "reconstructed", "unknown"]
+
+function asProvenance(value: unknown): Provenance | undefined {
+  return typeof value === "string" &&
+    (VALID_PROVENANCE as readonly string[]).includes(value)
+    ? (value as Provenance)
+    : undefined
+}
+
+export interface MachineEnvelope {
+  schema: typeof MACHINE_SCHEMA
+  eventId: string
+  type: string
+  timestamp: string
+  sessionId: string
+  turnId?: number
+  correlationId?: string
+  source: "derived"
+  severity: MachineSeverity
+  status: MachineStatus
+  visibility: ["machine"]
+  /** Provenans tampilan; absen = live-atau-tak-ditentukan. */
+  provenance?: Provenance
+  payload: Record<string, unknown>
 }
 
 export interface MachineEnvelope {
@@ -575,6 +768,10 @@ export function machinePayload(event: MachineEventInput): Record<string, unknown
   if (Array.isArray(event.evidence))
     payload.evidence = event.evidence.filter((e) => typeof e === "string").slice(0, 20)
   if (event.parentToolCallId !== undefined) payload.parentToolCallId = event.parentToolCallId
+  const verification = asRecord(event.verification)
+  if (verification) payload.verification = verification
+  const provenance = asProvenance(event.provenance)
+  if (provenance) payload.provenance = provenance
   const message = cappedPayloadText(event.message)
   if (message) payload.message = message.text
   const error = cappedPayloadText(event.error)
@@ -594,6 +791,7 @@ export function toMachineEnvelope(
   if (!event || typeof event.type !== "string" || event.type.length === 0) return null
   const turnId = asNumber(event.turnId)
   const seq = asNumber(event.seq)
+  const provenance = asProvenance(event.provenance)
   const envelope: MachineEnvelope = {
     schema: MACHINE_SCHEMA,
     eventId: machineEventId(ctx.sessionId, turnId, seq),
@@ -605,6 +803,7 @@ export function toMachineEnvelope(
     severity: machineSeverity(event),
     status: machineStatus(event),
     visibility: ["machine"],
+    ...(provenance ? { provenance } : {}),
     payload: machinePayload(event),
   }
   const correlation = correlationId(event)

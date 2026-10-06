@@ -177,6 +177,8 @@ function projectAcpLifecycle(
       ...(event.target ? { target: event.target } : {}),
       status: "running",
       ...(event.tsStart !== undefined ? { tsStart: event.tsStart } : {}),
+      ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
+      ...(event.provenance ? { provenance: event.provenance } : {}),
     }
   if (
     event.type === "tool.completed" ||
@@ -184,6 +186,9 @@ function projectAcpLifecycle(
     event.type === "tool.denied" ||
     event.type === "tool.cancelled"
   ) {
+    // P2.11: pertahankan tautan anak bila ada di event ATAU snapshot —
+    // sebelumnya hilang untuk tool.* (hanya finding yang membawa).
+    const parentLink = event.parentToolCallId ?? activity?.parentToolCallId
     return {
       ...base,
       ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
@@ -202,6 +207,8 @@ function projectAcpLifecycle(
       ...(event.type === "tool.failed" && activity?.error ? { error: activity.error } : {}),
       ...(activity?.denyReason ? { denyReason: activity.denyReason } : {}),
       ...(activity?.receipt ? { receipt: activity.receipt } : {}),
+      ...(parentLink ? { parentToolCallId: parentLink } : {}),
+      ...(event.provenance ? { provenance: event.provenance } : {}),
     }
   }
   if (event.type === "file.changed")
@@ -217,6 +224,24 @@ function projectAcpLifecycle(
       ...base,
       ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
       ...(event.test ? { test: event.test } : {}),
+    }
+  if (event.type === "verification.observed")
+    return {
+      ...base,
+      ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+      ...(event.invocationId ? { invocationId: event.invocationId } : {}),
+      ...(event.verification
+        ? {
+            verification: {
+              invocationId: event.verification.invocationId,
+              verdict: event.verification.verdict,
+              method: event.verification.method,
+              observedAt: event.verification.observedAt,
+            },
+          }
+        : {}),
+      ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
+      ...(event.provenance ? { provenance: event.provenance } : {}),
     }
   if (event.type === "diagnostic.raised")
     return {

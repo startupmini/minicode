@@ -226,6 +226,12 @@ export const EXECUTION_PATHS: Readonly<Record<string, RegisteredPath>> = {
     entry: "discoverFilterDrivers (spawnSync git config)",
     note: "Hardening git: probing konfigurasi.",
   },
+  "src/session/verification.ts": {
+    cls: "external-integration",
+    entry: "observeGitCommit (spawnSync git cat-file -e)",
+    proof: "spawnSync",
+    note: "P2.10: observasi read-only keberadaan commit untuk bukti verifikasi. Tanpa mutasi, tanpa network; via GIT_SAFE_BASE + trusted executable.",
+  },
   "src/lib/net.ts": {
     cls: "external-integration",
     entry: "fetchWithTimeout/fetchWithRetry (fetch)",

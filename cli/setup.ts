@@ -38,6 +38,8 @@ import {
   describeActivity,
   elapsedVisible,
   matchTurnBySummary,
+  pendingVerificationObservation,
+  projectProvenance,
 } from "../src/presentation/projection.ts"
 import {
   createReducerDiagnostics,
@@ -90,6 +92,8 @@ import { formatSessionIdentityLine, resolveSessionIdentity } from "../src/sessio
 import {
   attachMutationJournal,
   finalizeJournal,
+  hashArgs,
+  loadJournal,
   planRecoveryForSession,
 } from "../src/session/journal.ts"
 import {
@@ -496,6 +500,21 @@ export function toPresentationEvent(event: DomainEvent): UiPresentationEvent | n
         turnId: event.turnId,
         toolCallId: event.toolCallId,
         test: { passed: event.passed, failed: event.failed, summary: event.summary },
+      }
+    case "verification.observed":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        toolCallId: event.toolCallId,
+        invocationId: event.invocationId,
+        verification: {
+          invocationId: event.invocationId,
+          verdict: event.verdict,
+          method: event.method,
+          observedAt: event.observedAt,
+        },
+        ...(event.parentLink ? { parentToolCallId: event.parentLink.parentToolCallId } : {}),
       }
     case "context.compacted":
       return {
@@ -959,6 +978,19 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   } catch (e) {
     process.stderr.write(`[warn] presentation replay failed: ${(e as Error).message}\n`)
   }
+  // P2.11 — replay watershed: state.seq sesaat setelah rebuild. Baris snapshot
+  // pada/di bawah ini = replay/reconstructed; di atasnya = live (provenance
+  // absen). null = tak pernah rebuild (semua baris live).
+  const replayedUpToSeq: number | null = rebuiltPresentation
+    ? rebuiltPresentation.state.seq
+    : null
+  const provenanceOf = (
+    entry: { status?: string; incomplete?: boolean },
+    seq: number,
+  ): { provenance?: "live" | "replay" | "reconstructed" | "unknown" } => {
+    const provenance = projectProvenance(entry, seq, replayedUpToSeq)
+    return provenance ? { provenance } : {}
+  }
 
   // P0-3 — pointer undo/redo basi (crash apply→save): adopsi dari marker
   // jurnal bila valid. Berjalan untuk SEMUA sesi (bukan hanya --resume),
@@ -1001,7 +1033,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     const batch = pendingPresentationEvents.splice(0)
     if (batch.length === 0) return
     presentationWriteTail = presentationWriteTail
-      .then(() => appendPresentationEvents(sessionId, cwd, batch, { expectedEpoch }))
+      .then(() =>
+        appendPresentationEvents(sessionId, cwd, batch, { expectedEpoch }).then(() => {}),
+      )
       .catch((error) => {
         if (error instanceof StaleWriterError) {
           markWriterStale(`presentation flush refused (expected epoch ${error.expectedEpoch})`)
@@ -1086,11 +1120,23 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       ...(a.expandRef
         ? { expandRef: { toolCallId: a.expandRef.toolCallId, idx: a.expandRef.idx } }
         : {}),
+      ...(a.verification
+        ? {
+            verification: {
+              invocationId: a.verification.invocationId,
+              verdict: a.verification.verdict,
+              method: a.verification.method,
+              observedAt: a.verification.observedAt,
+            },
+          }
+        : {}),
+      ...provenanceOf(a, a.seq),
     }))
     const turns: UiPresentationTurn[] = [...shadowState.turns.values()].map((turn) => ({
       turnId: turn.turnId,
       status: turn.status,
       ...(turn.summary ? { summary: turn.summary as UiTurnSummary } : {}),
+      ...provenanceOf(turn, turn.seq),
     }))
     const conversation: UiPresentationMessage[] = shadowState.conversation.map((entry) => ({
       id: entry.id,
@@ -1462,6 +1508,86 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         // F1.2: sama seperti baris tool — kumulatif sesi saat step selesai.
         totalTokens: usage.getSession().totalTokens,
       }).catch(() => {})
+    } catch {}
+  })
+  // ── P2.11 observasi verifikasi (observation-only) ──
+  // Bukti kanonik hidup di jurnal mutasi; presentasi hanya mengamatinya.
+  // Setiap tool selesai (dan setiap turn selesai untuk verifikasi susulan),
+  // baca jurnal fire-and-forget lalu terbitkan verification.observed HANYA
+  // bila ada baris verifikasi eksplisit untuk invokasi yang tepat-satu.
+  // Ketiadaan event = UNKNOWN (diturunkan di proyeksi). Tak pernah melempar
+  // ke turn; tak pernah menyimpulkan efek dari teks/status.
+  const verificationEmitted = new Set<string>()
+  const completedToolCalls: Array<{
+    id: string
+    tool: string
+    argsHash: string
+    turn: number | null
+    scopeSession: string
+  }> = []
+  const emitVerificationForCall = (
+    call: { id: string; tool: string; argsHash: string; turn: number | null },
+    scopeSession: string,
+  ): void => {
+    void (async () => {
+      try {
+        const { records } = await loadJournal(scopeSession, cwd)
+        const observation = pendingVerificationObservation(
+          {
+            toolCallId: call.id,
+            tool: call.tool,
+            turn: call.turn,
+            argsHash: call.argsHash,
+            sessionId: scopeSession,
+          },
+          records,
+          verificationEmitted,
+        )
+        if (!observation) return
+        verificationEmitted.add(observation.invocationId)
+        try {
+          presentation?.noteVerificationObserved({
+            toolCallId: observation.toolCallId,
+            invocationId: observation.invocationId,
+            verdict: observation.verdict,
+            method: observation.method,
+            observedAt: observation.observedAt,
+            ...(scopeSession !== sessionId ? { sessionId: scopeSession } : {}),
+          })
+        } catch {}
+      } catch {}
+    })()
+  }
+  session.events.on("execution:completed", (e) => {
+    try {
+      const call = e.execution?.call as
+        | { id?: unknown; name?: unknown; args?: unknown }
+        | undefined
+      if (!call || typeof call.id !== "string" || typeof call.name !== "string") return
+      const childId = (e as { forwardedChild?: unknown }).forwardedChild
+      const scopeSession = typeof childId === "string" && childId ? childId : sessionId
+      const turn =
+        typeof session.state?.turnCount === "number" ? session.state.turnCount : null
+      const descriptor = {
+        id: call.id,
+        tool: call.name,
+        argsHash: hashArgs(call.args ?? {}),
+        turn,
+        scopeSession,
+      }
+      completedToolCalls.push(descriptor)
+      if (completedToolCalls.length > 500) {
+        completedToolCalls.splice(0, completedToolCalls.length - 500)
+      }
+      emitVerificationForCall(descriptor, scopeSession)
+    } catch {}
+  })
+  session.events.on("turn:completed", () => {
+    // Sapu verifikasi susulan dalam turn yang sama (late verification):
+    // baca ulang jurnal untuk call yang selesai tanpa verdict waktu itu.
+    try {
+      const pending = completedToolCalls.splice(0)
+      for (const call of pending) emitVerificationForCall(call, call.scopeSession)
     } catch {}
   })
   // ── Auto-verify & self-heal ──

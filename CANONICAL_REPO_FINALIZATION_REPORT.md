@@ -3,14 +3,15 @@
 ## 1. Canonical Repository Identity
 
 - Path: `D:\git\minicode` (sole working clone; `rev-parse --show-toplevel` confirmed)
-- Branch: `main`; HEAD = tip of `main` containing this report
-  (finalization chain: `5efdf15` P3.1 guard [tagged] → `dd2e136` first
-  report commit → correction commit recording this chain; exact tip:
-  `git log -1 --format=%H`)
+- Branch: `main`; HEAD = tip of `main` containing this report.
+  Finalization chain: `5efdf15` P3.1 guard [tagged baseline] → `dd2e136` first
+  report commit → `fabcb78` correction commit → `d461368` final verified-state
+  commit (exact tip: `git log -1 --format=%H`).
 - Remote: `https://github.com/startupmini/minicode.git` (fetch+push);
   `HEAD == origin/main == GitHub main` (triple-verified incl. `ls-remote`)
 - Checkpoint tag: `p3.1-canonical-2026-10-08` (annotated `2b01913`), pushed,
-  `^{commit} == HEAD`
+  resolves to `5efdf15` (the P3.1 commit — the protected baseline, distinct
+  from later documentation-only commits)
 
 ## 2. Pre-Commit State
 
@@ -65,14 +66,16 @@ Pushed (`[new tag]`), confirmed via remote `ls-remote refs/tags/`.
 
 | Path | .git | Identity | Verdict |
 |---|---|---|---|
-| `D:\git\minicode` | yes | `startupmini/minicode`, main @ `5efdf15` | CANONICAL / KEPT |
+| `D:\git\minicode` | yes | `startupmini/minicode`, main @ `fabcb78` | CANONICAL / KEPT |
 | `D:\recover\minicode-20260928\reconstruction` | yes | minicode, branch `p3.2-context-identity` @ `4d51ca7` | LEGACY / DELETED |
 | `D:\recover\minicode-20260928\repo-from-remote` | yes | minicode, main @ `e284298` | LEGACY / DELETED |
-| `D:\git\minicode-old` | NO | runtime remnants only | NOT A CLONE / PRESERVED |
+| `D:\git\minicode-old` | NO | runtime remnants only (now also absent) | NOT A CLONE / NOT PRESENT |
 | `D:\git\startupmini` | yes | `startupmini/startupmini` (website) | NOT MINICODE / PRESERVED |
-| `D:\code\minicode` | NO | `.freebuff` + `minicore` vendor dirs | NOT A CLONE / PRESERVED |
+| `D:\git\minicore` | yes | `startupmini/minicore` (different repo) | NOT MINICODE / PRESERVED |
+| `D:\code\minicode` | NO | `.freebuff` + vendor `minicore` dirs | NOT A CLONE / PRESERVED |
+| `D:\code\minicode\minicore` | yes | `ngodingsendiri/minicore` (other owner) | NOT MINICODE / PRESERVED |
 | `D:\git\minirouter` + 15 other `D:\git/*` | yes/none | other projects or local-only | NOT MINICODE / PRESERVED |
-| `D:\recover\...\parseout` + forensic artifacts | NO | recovery-operation residue | PRESERVED |
+| `D:\$RECYCLE.BIN\...\$R99IMRD`, `$RLYY8JY` | yes | minicode, main @ `fabcb78` | DELETED (in Recycle Bin) |
 
 No clone identified by name alone; every verdict backed by `.git`/remote identity.
 
@@ -96,9 +99,11 @@ all preserved, none matched MiniCode-clone identity.
 
 ## 12. Legacy Dependency Verification
 
-- Source/config/scripts: 48 legacy-path hits, ALL historical `.md` (44 report
-  headers + 4 migration-record references); ZERO in code/config/scripts/`cli`
-  (verified via content search + `repo-from-remote` filename search in code globs).
+- Source/config/scripts: legacy-path hits occur ONLY in historical `.md` files
+  (42 files, provenance/report headers); ZERO in code/config/scripts (`*.ts`,
+  `*.js`, `*.json`, `*.jsonc`, `*.ps1`, `*.sh`, `*.yml`, `*.toml`), and ZERO in
+  `cli/`, `src/`, `scripts/`, `test/` (verified via `git grep` file-type and
+  path-scoped searches).
   Classification: HISTORICAL DOCUMENTATION / BENIGN TEXT; 0 OPERATIONAL DEPENDENCY.
 - `.git/config` canonical: zero legacy references; fetch/push/status operate via
   GitHub (proven by the push/fetch/ls-remote in §§6–8).
@@ -109,24 +114,47 @@ all preserved, none matched MiniCode-clone identity.
 
 ## 13. OpenCode / Agent Workspace Cutover Verification
 
-Status: OWNER ACTION PENDING (documented deviation from the ideal gate order).
-Evidence: legacy-keyed workspace blobs updated by today's sessions; canonical blob
-untouched since 06/10; no GUI control available to this agent and blob re-keying is
-forbidden. Safety case for proceeding: (a) all work products committed+pushed
-(nothing live-and-uncommitted in legacy); (b) legacy sessions observed paused, not
-running; (c) message drafts live in AppData (outside deleted dirs); (d) owner was
-instructed across three reports to open `D:\git\minicode` fresh (preferred path, no
-re-keying); (e) a missing directory produces stale UI entries, not data loss.
-Owner step: open `D:\git\minicode` in OpenCode Desktop and start new sessions there;
-legacy session entries, if shown missing, can be closed/discarded.
+Status: CUTOVER COMPLETE on the canonical side; one stale UI entry remains.
+
+Verified (OpenCode Desktop data dir
+`C:\Users\xmlze\AppData\Roaming\ai.opencode.desktop`):
+
+- Canonical workspace blob exists and tracks `main` (`opencode.workspace.D--git-minic.*`,
+  branch `main`).
+- `opencode.global.dat` `"lastProject":{"local":"D:\\git\\minicode"}` → the
+  canonical project is the **last-used project**; the owner has already switched
+  from legacy to canonical.
+- No process (bun/node/opencode) has the legacy path in its command line; the
+  running node processes belong to unrelated projects (`startupmini`, `Administrasi`).
+- The legacy directory `D:\recover\minicode-20260928\reconstruction` no longer
+  exists (deletion succeeded).
+
+Stale entry (harmless, not re-keyed per spec): `opencode.global.dat`
+`"server"."projects"."local"` still lists the deleted legacy worktree, and the
+last window state (`opencode.window.*.dat`) references a legacy-keyed session tab
+`ses_eea0b598...` (title "P3.2 Context Identity + Frontier implementation") plus an
+`RDpccmVjb3Zl` (`D:\recove`) workspace blob. Blob re-keying is forbidden, so these
+were left untouched. Because the directory is gone they render as "missing
+directory" (a UI artifact, not data loss); all legacy work was already
+committed+pushed before deletion (code/docs on GitHub main + branch; stash
+`6bcd15f` remains in canonical objects).
+
+Owner step: open `D:\git\minicode` in OpenCode Desktop and start new sessions
+there; close/discard any legacy session tab that shows as missing.
 
 ## 14. Post-Purge Canonical Verification
 
 Root `D:/git/minicode`; branch `main` tracking `origin/main`; status clean;
-origin GitHub; `HEAD == origin/main == dd2e136`; log chain intact
-(`dd2e136`, `5efdf15`, `ff67b47`, `dae5c7e`, `4748b19`, `e284298`).
-Sanity suite post-purge:
-guard + arch-map 16/16 green. No P3.3 started.
+origin GitHub; `HEAD == origin/main`; log chain intact
+(`d461368`, `fabcb78`, `dd2e136`, `5efdf15`, `ff67b47`, `dae5c7e`, `4748b19`, `e284298`).
+Sanity suite post-purge (re-run this session):
+
+- `test/p3-reconciliation-guard.test.ts` → 14 pass / 0 fail (guard + `grewBeyondBuffer` fix)
+- `test/architecture-map.test.ts` → 2 pass / 0 fail
+- `test/context-identity.test.ts` + `persistence-rewrite|ttl|vector` → 56 pass / 0 fail
+- `test/harness-p3.test.ts` → 6 pass / 0 fail
+
+No P3.3 started.
 
 ## 15. P3.1 Final Status
 
@@ -156,7 +184,7 @@ Branch:
 main
 
 HEAD:
-tip of main containing this report (chain: 5efdf15 tagged -> dd2e136 -> this correction)
+tip of main containing this report (chain: 5efdf15 tagged baseline -> dd2e136 -> fabcb78 -> d461368)
 
 origin/main:
 same as HEAD (fast-forward, in sync)

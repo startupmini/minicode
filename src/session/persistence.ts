@@ -1016,10 +1016,37 @@ export async function saveSession(
       // live, mencatat provenance, menginvalidasi proyeksi, satu txn).
       // Menghapus cabang DELETE+rewrite implisit menutup jalur destruktif
       // tanpa provenance (guard P2.7 menegakkannya tetap hilang).
+      // P3.1-retarget: bedakan "kanonik tumbuh melampaui buffer" dari
+      // lipatan/divergensi buffer sendiri — pembedanya dibawa dalam error
+      // (grewBeyondBuffer) agar composition root menolak shrink otomatis pada
+      // kasus pertama. Perbandingan field IDENTIK dengan loop prefix di atas
+      // (F-05); bila loop itu berubah, sinkronkan keduanya.
+      let grewBeyondBuffer = false
+      if (stored.length > messages.length) {
+        grewBeyondBuffer = true
+        for (let i = 0; i < messages.length; i++) {
+          const want = norm(messages[i] as StoredMsg)
+          const got = stored[i]!
+          if (
+            got.seq !== i ||
+            got.role !== want[0] ||
+            got.content !== want[1] ||
+            got.toolCalls !== want[2] ||
+            (got.toolCallId ?? null) !== want[3] ||
+            (got.name ?? null) !== want[4] ||
+            (got.reasoning ?? null) !== want[5] ||
+            (got.is_error ?? 0) !== want[6]
+          ) {
+            grewBeyondBuffer = false
+            break
+          }
+        }
+      }
       throw new RefusedHistoryRewriteError(
         id,
         tid,
         `stored=${stored.length} incoming=${messages.length} prefixSame=${prefixSame}`,
+        grewBeyondBuffer,
       )
     }
     // P2.4: head cache = MAX(seq) histori thread ini (-1 bila kosong).
@@ -2717,11 +2744,19 @@ export class ProjectionValidationError extends Error {
 // jalur eksplisit shrinkThreadHistory (provenance + invalidasi + pagar run).
 export class RefusedHistoryRewriteError extends Error {
   readonly code = "REFUSED_HISTORY_REWRITE"
-  constructor(sessionId: string, threadId: string, detail: string) {
+  /**
+   * True bila kanonik TUMBUH melampaui buffer (buffer = prefix sejati stored):
+   * penulis lain menambah baris setelah buffer dibaca. Composition root WAJIB
+   * menolak shrink otomatis pada kasus ini (baris penulis lain tak boleh
+   * dihancurkan) — lihat I2. Dihitung di titik throw agar tak perlu query lagi.
+   */
+  readonly grewBeyondBuffer: boolean
+  constructor(sessionId: string, threadId: string, detail: string, grewBeyondBuffer = false) {
     super(
       `[persist] REFUSED_HISTORY_REWRITE ${sessionId}/${threadId}: ${detail} — use shrinkThreadHistory`,
     )
     this.name = "RefusedHistoryRewriteError"
+    this.grewBeyondBuffer = grewBeyondBuffer
   }
 }
 

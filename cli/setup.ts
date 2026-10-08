@@ -1978,6 +1978,16 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         // run live dulu (shrink melarang RUNNING), lalu shrinkThreadHistory
         // (provenance + invalidasi proyeksi, satu txn). Sempit: hanya error ini.
         if (e instanceof RefusedHistoryRewriteError) {
+          // P3.1-retarget (I2): shrink otomatis DILARANG bila kanonik tumbuh
+          // melampaui buffer — itu baris penulis lain, bukan lipatan buffer
+          // sendiri. Tolak dengan jujur (flag + note, tanpa tulis, tanpa
+          // retry) daripada menghancurkan baris yang tak kita kenal.
+          if (e.grewBeyondBuffer) {
+            markWriterStale(
+              `canonical grew beyond buffer (another writer appended): refusing automatic shrink to protect their rows`,
+            )
+            return
+          }
           markPreviousRunTerminal()
           const thread = ensureDefaultThread(sessionId, cwd, { expectedEpoch })
           shrinkThreadHistory(sessionId, thread.thread_id, durableHistory, cwd, {

@@ -5,7 +5,7 @@
 - Path: `D:\git\minicode` (sole working clone; `rev-parse --show-toplevel` confirmed)
 - Branch: `main`; HEAD = tip of `main` containing this report.
   Finalization chain: `5efdf15` P3.1 guard [tagged baseline] → `dd2e136` first
-  report   commit → `fabcb78` correction commit → final verified-state commit (this
+  report commit → `fabcb78` correction commit → final verified-state commit (this
   report's own commit; exact tip: `git log -1 --format=%H`).
 - Remote: `https://github.com/startupmini/minicode.git` (fetch+push);
   `HEAD == origin/main == GitHub main` (triple-verified incl. `ls-remote`)

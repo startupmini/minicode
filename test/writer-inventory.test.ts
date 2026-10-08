@@ -54,7 +54,13 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // notice on resume (`[child] N orphaned sub-agent run(s) tombstoned`). A
   // silently swallowed orphan would leave the operator believing the session
   // resumed cleanly while a durable child run died unrecorded. Declared.
-  "cli/setup.ts": { max: 35, owner: "diagnostic" },
+  // [P3.3] 35 -> 36 for exactly ONE writer: the canonical context-selector
+  // provenance line (`[select sid=… basis=… freshness=… head=…]`). Silent
+  // selection provenance would hide WHICH basis (full-history / summary-plus-tail
+  // / budget-tail / fallback-unknown) and freshness produced the runtime context
+  // — the exact fact an operator needs when a resumed/selected context differs
+  // from expectations. Declared, not absorbed, per the rule above.
+  "cli/setup.ts": { max: 36, owner: "diagnostic" },
   "cli/tui.ts": { max: 9, owner: "screen" },
   // [P2.2] 3 -> 4 for exactly ONE writer: the stale-writer durability
   // diagnostic after a headless run persisted. The ACP success envelope is

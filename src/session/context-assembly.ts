@@ -73,8 +73,14 @@ export function syntheticSummaryMessage(summary: string, coveredSeq: number): Me
  * tool-nya menghasilkan tool result yatim pada konteks — pasangan rusak yang
  * kernel/provider tak boleh terima. Border tak aman → fallback penuh
  * (deterministik; bukan heuristik).
+ *
+ * Diekspor untuk dipakai bersama P3.3 selector (satu sumber kebenaran batas;
+ * P3.3 memilih segmen kanonik, ia wajib memakai batas yang SAMA).
  */
-function boundaryIsSafe(rows: { seq: number; message: unknown }[], boundarySeq: number): boolean {
+export function boundaryIsSafe(
+  rows: { seq: number; message: unknown }[],
+  boundarySeq: number,
+): boolean {
   if (boundarySeq <= 0) return true
   const lastCovered = rows.find((r) => r.seq === boundarySeq - 1)
   const firstTail = rows.find((r) => r.seq === boundarySeq)

@@ -88,6 +88,8 @@ import {
   type ContextOnlyArtifact,
   stripContextOnly,
 } from "../src/session/context-assembly.ts"
+import { countDurableCompactions } from "../src/session/context-identity.ts"
+import { selectContext } from "../src/session/context-selector.ts"
 import { formatSessionIdentityLine, resolveSessionIdentity } from "../src/session/identity.ts"
 import {
   attachMutationJournal,
@@ -108,6 +110,7 @@ import {
   listPersistedTurns,
   loadPresentationEvents,
   loadSession,
+  loadThreadHistoryWithSeq,
   RefusedHistoryRewriteError,
   saveSession,
   shrinkThreadHistory,
@@ -901,10 +904,42 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         // P2.8 — perakitan konteks (baca-saja, turunan, RAM): pakai ringkasan
         // proyeksi HANYA bila CURRENT; state lain/absen → fallback histori
         // kanonik utuh (identik replay sebelum P2.8). Tak pernah menulis apa pun.
+        // `view` tetap dipakai untuk diagnostik + kompatibilitas P2.8.
         const view = assembleContext(sessionId, defaultThread.thread_id, cwd)
-        initialMessages = view.messages as readonly Message[]
-        if (view.contextOnly) {
-          contextOnlyArtifact = view.contextOnly
+
+        // P3.3 — selector kanonik menjadi produsen view (derived, murni). Ia
+        // MEMBACA data yang sama (rows/revisi/proyeksi) dan menghasilkan
+        // ContextSelection provenance-bound. P2.8 dipakai sebagai sumber
+        // keputusan proyeksi + fallback identik; selector MEMPERLUAS dengan
+        // budget-tail + laporan selectionBasis/freshness. Tak ada tulis kanonik.
+        // Budget pesan = contextWindowTokens dikurangi overhead system+tools;
+        // tanpa konfigurasi → tanpa batas (reproduksi P2.8 persis).
+        const durableEvents = loadPresentationEvents(sessionId, cwd)
+        const revision = countDurableCompactions(
+          durableEvents as readonly { type: string }[],
+        )
+        const rowsForSelector = loadThreadHistoryWithSeq(sessionId, defaultThread.thread_id, cwd)
+        // Ringkasan proyeksi HANYA bila P2.8 memakainya (CURRENT + ringkasan
+        // non-kosong + batas aman) — keputusan proyeksi tetap milik P2.8.
+        const projectionSummary =
+          view.source === "projection" && view.summary
+            ? { baseSeq: view.coveredSeq, summaryText: view.summary }
+            : undefined
+        const messageBudget =
+          contextWindowTokens && contextWindowTokens > 0
+            ? contextWindowTokens
+            : Number.MAX_SAFE_INTEGER
+        const selection = selectContext({
+          sessionId,
+          threadId: defaultThread.thread_id,
+          rows: rowsForSelector.map((r) => ({ seq: r.seq, message: r.message })),
+          revision,
+          ...(projectionSummary ? { projection: projectionSummary } : {}),
+          policy: { budgetTokens: messageBudget },
+        })
+        initialMessages = selection.messages as readonly Message[]
+        if (selection.contextOnly) {
+          contextOnlyArtifact = selection.contextOnly
           contextCanonicalBaseline = prev.messages
         }
         resumeTurnCount = prev.turnCount
@@ -919,6 +954,12 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         console.error(
           c.dim(
             `[context sid=${sessionId} source=${view.source} status=${view.status} covered=${view.coveredSeq}]\n`,
+          ),
+        )
+        // P3.3 — jejak provenance seleksi (baca-saja; tak mengubah perilaku).
+        console.error(
+          c.dim(
+            `[select sid=${sessionId} basis=${selection.selectionBasis} freshness=${selection.freshness} head=${selection.frontier?.headSeq ?? "-"}]\n`,
           ),
         )
         // P3 — validasi resume: bukan replay buta. Bila workspace berubah

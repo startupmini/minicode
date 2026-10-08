@@ -60,7 +60,13 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // / budget-tail / fallback-unknown) and freshness produced the runtime context
   // — the exact fact an operator needs when a resumed/selected context differs
   // from expectations. Declared, not absorbed, per the rule above.
-  "cli/setup.ts": { max: 36, owner: "diagnostic" },
+  // [P3.4] 36 -> 38 for exactly TWO writers: (a) the durable context-projection
+  // producer notice (`[projection sid=… base=… status=produced]`) and (b) the
+  // best-effort producer failure warning. The projection cache is DERIVED and
+  // may legitimately be absent/stale; without these lines the operator could not
+  // tell whether a `summary-plus-tail` resume was backed by a real projection or
+  // silently fell back. Declared, not absorbed, per the rule above.
+  "cli/setup.ts": { max: 38, owner: "diagnostic" },
   "cli/tui.ts": { max: 9, owner: "screen" },
   // [P2.2] 3 -> 4 for exactly ONE writer: the stale-writer durability
   // diagnostic after a headless run persisted. The ACP success envelope is

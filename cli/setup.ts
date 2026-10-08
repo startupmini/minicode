@@ -90,6 +90,10 @@ import {
 } from "../src/session/context-assembly.ts"
 import { countDurableCompactions, deriveFrontierFromDurable } from "../src/session/context-identity.ts"
 import { rowsToCanonicalRefs, selectContext } from "../src/session/context-selector.ts"
+import {
+  produceSummaryProjection,
+  readConsumableSummaryProjection,
+} from "../src/session/context-projection.ts"
 import { formatSessionIdentityLine, resolveSessionIdentity } from "../src/session/identity.ts"
 import {
   attachMutationJournal,
@@ -919,12 +923,16 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           durableEvents as readonly { type: string }[],
         )
         const rowsForSelector = loadThreadHistoryWithSeq(sessionId, defaultThread.thread_id, cwd)
-        // Ringkasan proyeksi HANYA bila P2.8 memakainya (CURRENT + ringkasan
-        // non-kosong + batas aman) — keputusan proyeksi tetap milik P2.8.
+        // P3.4: proyeksi kanonik durable adalah sumber UTAMA untuk selector
+        // (cakupan-valid: CURRENT atau STALE berjangkar utuh, P3.0 §8 D6),
+        // sehingga `summary-plus-tail` menjadi perilaku produksi nyata. P2.8
+        // `assembleContext` (CURRENT-only) tetap jadi fallback kompatibel.
+        const durableProjection = readConsumableSummaryProjection(sessionId, cwd, defaultThread.thread_id)
         const projectionSummary =
-          view.source === "projection" && view.summary
+          durableProjection ??
+          (view.source === "projection" && view.summary
             ? { baseSeq: view.coveredSeq, summaryText: view.summary }
-            : undefined
+            : undefined)
         const messageBudget =
           contextWindowTokens && contextWindowTokens > 0
             ? contextWindowTokens
@@ -2049,6 +2057,24 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         } else {
           throw e
         }
+      }
+      // P3.4 — PRODUSEN proyeksi kanonik durable (best-effort, derived, epoch-
+      // fenced). Menulis HANYA `history_projections` dari state kanonik yang
+      // baru dipersist; TIDAK menyentuh `messages`/head/run. Kegagalan di sini
+      // tidak pernah menggagalkan persist (proyeksi boleh tetap absen/basi).
+      // Ringkasan memakai teks fold yang SUDAH ADA (kernel) via produsen.
+      try {
+        const produced = produceSummaryProjection(sessionId, cwd, {
+          expectedEpoch,
+          policy: { keepRecentTurns: keepRecentTurns && keepRecentTurns > 0 ? keepRecentTurns : 2 },
+        })
+        if (produced.produced) {
+          process.stderr.write(
+            `${c.dim(`[projection sid=${sessionId} base=${produced.baseSeq ?? "-"} status=produced]\n`)}`,
+          )
+        }
+      } catch (e) {
+        process.stderr.write(`[warn] projection produce failed: ${(e as Error).message}\n`)
       }
       // Riwayat durable → mutasi turn ini boleh di-finalize (sweep record).
       // Gagal finalize tak menggagalkan persist (warn di dalam).

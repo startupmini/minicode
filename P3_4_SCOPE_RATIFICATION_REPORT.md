@@ -136,11 +136,13 @@ No `src/`, `cli/`, or `test/` changes.
 
 ## 12. Commit SHA
 
-`<recorded after commit — see §13>`
+`8eb0aa8bcfc475f790a59f549d13bc0105066a25`
+(`docs: ratify P3.4 projection roadmap scope`), parent `5b8d98d`.
 
 ## 13. Push verification
 
-`HEAD == origin/main` and working tree CLEAN (recorded after push).
+Pushed `5b8d98d..8eb0aa8` (fast-forward, no force).
+`HEAD == origin/main == 8eb0aa8bcfc475f790a59f549d13bc0105066a25`; working tree CLEAN.
 
 ## 14. Final P3 roadmap state
 

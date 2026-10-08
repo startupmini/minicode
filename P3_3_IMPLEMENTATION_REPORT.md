@@ -249,8 +249,7 @@ Existing suites re-run green: `context-assembly` (P2.8, 33), `context-identity`
 
 ## 15. Mutation / non-vacuity
 
-Five controlled mutations of `context-selector.ts` (temporarily, then reverted to
-the pristine SHA-256 `65E055BB…`):
+Five controlled mutations of `context-selector.ts` (temporarily, then reverted):
 
 | Probe | Mutation | Expected | Actual |
 | --- | --- | --- | --- |
@@ -260,9 +259,27 @@ the pristine SHA-256 `65E055BB…`):
 | P4 | misreport `budget-tail` as `full-history` (basis off) | basis test fails | **1 fail** |
 | P5 | `selectionFreshness(null) → "fresh"` (UNKNOWN promoted) | UNKNOWN test fails | **1 fail** |
 
-All probes reverted; file hash restored to pristine; suite back to 33/33. This
-proves the tests are load-bearing (not vacuous) and current (no historical P3.1
-evidence used).
+**Hash correction (N4).** The original report cited the post-mutation pristine hash
+`65E055BB…`. That hash was captured **before** a subsequent `biome` formatting pass;
+formatting changed the bytes without changing semantics. To avoid ambiguity, the
+only hash this report now treats as authoritative is the **current** tracked source
+hash (see §21), which the audit confirmed as the live pristine value. The mutation
+results above were reproduced on the **same logic** (formatting-invariant) and are
+therefore still valid in substance. A separate hardening pass (§"Hardening" below)
+re-ran the probes and added N2/N3 mutations.
+
+### Hardening probes (post-N1/N2/N3)
+
+| Probe | Mutation | Actual |
+| --- | --- | --- |
+| H1 | hardcode `sessionId` in `coverageOf` | **8 fail** |
+| H2 | `selectionFreshness(null) → "fresh"` | **2 fail** (P3.3-10, P3.3-38) |
+| H3 | force empty `budget-tail` `fits=true` (N2 off) | **1 fail** (P3.3-34) |
+| H4 | drop `stale` from the fallback branch (N3 off) | **2 fail** (P3.3-36, P3.3-38) |
+| H5 | remove `canonicalFrontier` from the resume seam (N1 off) | **1 fail** (N5-3) |
+
+All probes reverted; each file restored to its exact pre-probe SHA-256.
+
 
 ---
 
@@ -307,42 +324,45 @@ selector reproduces P2.8 exactly.
 
 | Target | Result | Classification |
 | --- | --- | --- |
-| P3.3 selector | **33/33 pass** | — |
+| P3.3 selector | **38/38 pass** | (33 original + 5 hardening N1/N2/N3) |
+| P3.3 resume integration (N5) | **3/3 pass** | new |
 | P2.8 context-assembly | **33/33 pass** | — |
 | P3.2 context-identity | pass | — |
 | P3.1 reconciliation guard | **14/14 pass** | — |
 | P2.7 persistence (rewrite/ttl/vector) | pass | — |
-| architecture-map | pass | — |
-| writer-inventory | pass (after declared writer) | — |
+| architecture-map | **2/2 pass** | (map updated for the new module) |
+| writer-inventory | pass | (P3.3 diagnostic writer declared) |
 | harness-p3, session-*, context-audit | pass | — |
 | typecheck (`tsc --noEmit`) | **28 errors, 0 new** | all pre-existing `test/phase3*`/`phase4*` |
-| **full suite** | **4381 pass / 23 skip / 9 fail** (297 files / 4413 tests) | see below |
+| **full suite** | **4390 pass / 23 skip / 8 fail** (298 files / 4421 tests) | see below |
 
-Full-suite failures (9) classification:
+Full-suite failures (8) classification:
 
 | Failure | Class |
 | --- | --- |
-| `writer-inventory` OAP-008 | **INTRODUCED → FIXED** (declared the P3.3 writer; now green) |
-| P2.1 ×2, P2.2 ×2, audit-manifes-korup | **FLAKY** (stderr-stub contamination; green in isolation) |
-| P3-constructor (m15) | **PRE-EXISTING** (P1 allowlist debt) |
-| S13 scheduler-first | **PRE-EXISTING** (brittle source-text assertion) |
-| web-ssg nested-list | **PRE-EXISTING/ENV** |
-| delegate_task EPIPE | **FLAKY (env)** |
+| `audit-manifes-korup`, `P2.1 ×2`, `P2.2 ×2` | **FLAKY** (stderr-stub contamination; green in isolation — 34/34) |
+| `P3-constructor (m15)` | **PRE-EXISTING** (P1 allowlist debt) |
+| `S13 scheduler-first` | **PRE-EXISTING** (brittle source-text assertion) |
+| `web-ssg nested-list` | **PRE-EXISTING/ENV** |
 
-Baseline before P3.3 was 9 fail (same envelope); the only introduced failure
-(`writer-inventory`) was corrected by the guard's own "declare, don't absorb" rule.
-**Zero P3.3 regressions remain.**
+The checkpoint baseline was 9 fail; after hardening it is 8 fail (the flake set
+varies run-to-run). `writer-inventory` and `architecture-map` are green. **Zero P3.3
+regressions.**
+
 
 ---
 
 ## 19. Known limitations
+
+See also `P3_3_HARDENING_REPORT.md` for the N1–N5 resolution.
 
 1. **Full-coverage projection cap** (§17.1): `baseSeq` for `base_seq == head+1` is
    capped to `head`; view is faithful but the summary marker differs from P2.8 by
    one position. Bounded and documented.
 2. **`budget-tail` is eviction, not compaction**: it drops a prefix without a
    durable summary record; it is intentionally **not** a fold. A `budget-tail` view
-   published as-is is refused by P2.7 (correct).
+   published as-is is refused by P2.7 (correct). (Empty-result feasibility now
+   reports `fits=false` — N2 fixed.)
 3. **`revision` undercounting on headless paths**: `countDurableCompactions`
    counts durable `context.compacted` events only; a path without the presentation
    adapter under-counts (declared P3.5 seam; fail-closed, never guessed).
@@ -353,6 +373,7 @@ Baseline before P3.3 was 9 fail (same envelope); the only introduced failure
 
 ---
 
+
 ## 20. Final verdict
 
 The selector is derived-only, has no persistence authority, is deterministic,
@@ -360,6 +381,11 @@ P3.2-aware, provenance-bound, scoped by identity, freshness-aware (UNKNOWN never
 promoted), budget-bounded, and cannot bypass P3.1/P2.7. P2.8 behavior is preserved
 (subject to the one documented cap). Targeted tests are green; mutation evidence is
 current and load-bearing; the full suite has no unresolved introduced regression.
+
+> Hardening (N1–N5) is recorded in `P3_3_HARDENING_REPORT.md`: resume-seam
+> freshness is now computed (N1), empty `budget-tail` reports `fits=false` (N2),
+> stale rows are labelled `fallback-unknown` (N3), the report hash is corrected
+> (N4), and a resume integration test with an anti-regression guard is added (N5).
 
 ```text
 MINICODE P3.3 IMPLEMENTATION STATUS:

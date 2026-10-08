@@ -491,3 +491,111 @@ test("P3.3-33: selector TIDAK mengimpor persistence (bukti struktural derived-on
   const code = src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "")
   expect(code).not.toMatch(/Date\.now\s*\(|Math\.random\s*\(|randomUUID\s*\(/)
 })
+
+// ── N2 (hardening): empty budget-tail must not report fits=true ──────────────
+//
+// Batas-aman (tool-pair) dapat menggeser segmen budget sampai KOSONG. View kosong
+// tidak boleh mengklaim "muat" — kontrak feasibility gagal secara jujur.
+
+test("P3.3-34 (N2): budget-tail dengan batas-aman menyisakan view kosong → fits=false", () => {
+  // assistant(toolCalls)@1 + tool-result@2: memotong di antara keduanya harus
+  // dihindari, sehingga segmen budget bisa tergusur sampai kosong.
+  const toolHistory: Message[] = [
+    u("AA"),
+    { role: "assistant", content: "BB", toolCalls: [{ id: "c", name: "t", args: {} }] } as Message,
+    { role: "tool", toolCallId: "c", name: "t", content: "rr" } as Message,
+  ]
+  const input = base({ rows: rows(toolHistory), policy: { budgetTokens: 1 } })
+  const sel = selectContext(input)
+  expect(sel.selectionBasis).toBe("budget-tail")
+  expect(sel.messages).toEqual([])
+  // View kosong TIDAK boleh melaporkan fits=true.
+  expect(sel.budget.fits).toBe(false)
+  expect(sel.frontier!.baseSeq).toBeGreaterThanOrEqual(0)
+})
+
+test("P3.3-35 (N2): budget-tail normal tetap fits=true; exact boundary tetap full-history", () => {
+  const text = rows([u("A"), u("B"), u("C"), u("D"), u("E")])
+  const tail = selectContext(base({ rows: text, policy: { budgetTokens: 2 } }))
+  expect(tail.selectionBasis).toBe("budget-tail")
+  expect(tail.messages.length).toBe(2)
+  expect(tail.budget.fits).toBe(true)
+
+  const est = (t: string) => Math.ceil(t.length / 4)
+  const total = text.reduce((n, r) => n + estimateMessage(r.message as Message, est), 0)
+  const exact = selectContext(base({ rows: text, policy: { budgetTokens: total, estimator: est } }))
+  expect(exact.selectionBasis).toBe("full-history")
+  expect(exact.budget.fits).toBe(true)
+})
+
+// ── N3 (hardening): stale coverage is NOT labelled full-history ──────────────
+
+test("P3.3-36 (N3): baris basi (di belakang kanonis) → fallback-unknown, bukan full-history", () => {
+  // View hanya memuat 1 baris; kanonis punya 3 (view tertinggal) → STALE.
+  const staleRows = rows([u("A")])
+  const canonical = deriveFrontierFromDurable({
+    sessionId: "s1",
+    threadId: DEFAULT_THREAD_ID,
+    rows: [
+      { seq: 0, role: "user", content: "A" },
+      { seq: 1, role: "assistant", content: "B" },
+      { seq: 2, role: "user", content: "C" },
+    ],
+    revision: 0,
+  })!
+  const sel = selectContext(
+    base({ rows: staleRows, canonicalFrontier: canonical, policy: { budgetTokens: 1e9 } }),
+  )
+  expect(sel.freshness).toBe("stale")
+  // Coverage lengkap atas baris yang ADA, tetapi TIDAK boleh dipercaya sebagai
+  // full-history — basis jujur = fallback-unknown.
+  expect(sel.selectionBasis).toBe("fallback-unknown")
+  expect(sel.messages.length).toBe(1)
+})
+
+test("P3.3-37 (N3): coverage lengkap + EQUAL tetap full-history (kompleteness ≠ freshness)", () => {
+  const input = base()
+  const canonical = frontierOf(input)!
+  const sel = selectContext({
+    ...input,
+    canonicalFrontier: canonical,
+    policy: { budgetTokens: 1e9 },
+  })
+  expect(sel.freshness).toBe("fresh")
+  expect(sel.selectionBasis).toBe("full-history")
+})
+
+// ── N1 (hardening): canonicalFrontier drives freshness (not hard-coded) ──────
+
+test("P3.3-38 (N1): canonicalFrontier menentukan freshness (EQUAL/advance/DIVERGED/UNKNOWN)", () => {
+  const input = base()
+  // EQUAL → fresh
+  const equal = selectContext({ ...input, canonicalFrontier: frontierOf(input)! })
+  expect(equal.freshness).toBe("fresh")
+  // advance: kanonis lebih panjang → view tertinggal = STALE (bukan full-history)
+  const ahead = deriveFrontierFromDurable({
+    sessionId: "s1",
+    threadId: DEFAULT_THREAD_ID,
+    rows: rows([...HISTORY, a("F")]).map(refFromRow),
+    revision: 0,
+  })!
+  const stale = selectContext({ ...input, canonicalFrontier: ahead })
+  expect(stale.freshness).toBe("stale")
+  expect(stale.selectionBasis).toBe("fallback-unknown")
+  // DIVERGED
+  const diverged = deriveFrontierFromDurable({
+    sessionId: "s1",
+    threadId: DEFAULT_THREAD_ID,
+    rows: [
+      { seq: 0, role: "user", content: "A" },
+      { seq: 1, role: "assistant", content: "B" },
+      { seq: 2, role: "user", content: "X" },
+      { seq: 3, role: "assistant", content: "D" },
+      { seq: 4, role: "user", content: "E" },
+    ],
+    revision: 0,
+  })!
+  expect(selectContext({ ...input, canonicalFrontier: diverged }).freshness).toBe("diverged")
+  // UNKNOWN (null)
+  expect(selectContext({ ...input, canonicalFrontier: null }).freshness).toBe("unknown")
+})

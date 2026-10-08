@@ -134,6 +134,15 @@ function toRef(row: SelectableRow): CanonicalEventRef {
 }
 
 /**
+ * Publik: adaptasi baris selector → ref kanonik P3.2. Diekspor agar pemanggil
+ * (composition root) bisa menurunkan frontier kanonis dari baris yang SAMA
+ * untuk diteruskan sebagai `canonicalFrontier` — SATU adapter, tanpa duplikasi.
+ */
+export function rowsToCanonicalRefs(rows: readonly SelectableRow[]): CanonicalEventRef[] {
+  return rows.map(toRef)
+}
+
+/**
  * Ringkasan proyeksi durable yang boleh dipakai selector. Pemanggil membacanya
  * (persistence.ts getProjection/getProjectionStatus) dan menyerahkannya HANYA
  * bila status CURRENT + boundary aman — selector TIDAK membaca DB sendiri.
@@ -373,8 +382,13 @@ export function selectContext(input: SelectContextInput): ContextSelection {
   const full = coverageOf(input, rows, 0)
   const fullFreshness = selectionFreshness(full.frontier, input.canonicalFrontier)
 
-  // ── Strategi 2: fallback-unknown (DIVERGED/UNKNOWN) ────────────────────────
-  if (fullFreshness === "unknown" || fullFreshness === "diverged") {
+  // ── Strategi 2: fallback-unknown (STALE/DIVERGED/UNKNOWN) ──────────────────
+  // N3: baris BASI (view di belakang kanonis) TIDAK boleh dilabeli
+  // "full-history" — label itu menyiratkan representasi kanonik yang trusted,
+  // padahal view ini tak memutakhirkan diri ke head kanonis. Pakai
+  // `fallback-unknown` (state yang sudah ada; bukan basis kelima yang baru).
+  // Coverage completeness (semua baris tersedia diikutkan) ≠ freshness/trust.
+  if (fullFreshness === "unknown" || fullFreshness === "diverged" || fullFreshness === "stale") {
     return Object.freeze({
       sessionId: input.sessionId,
       threadId: input.threadId,
@@ -385,7 +399,7 @@ export function selectContext(input: SelectContextInput): ContextSelection {
       selectionBasis: "fallback-unknown" as SelectionBasis,
       freshness: fullFreshness,
       budget: report(full.messages),
-      detail: `canonical freshness vs supplied frontier = ${fullFreshness}; full canonical view with explicit label`,
+      detail: `canonical freshness vs supplied frontier = ${fullFreshness}; full rows present but labeled untrusted (not full-history)`,
     })
   }
 
@@ -448,6 +462,29 @@ export function selectContext(input: SelectContextInput): ContextSelection {
   const baseForFrontier = safeBase > headSeq ? headSeq : safeBase
   const frontier = coverageOf(input, rows, baseForFrontier).frontier
   const fresh = selectionFreshness(frontier, input.canonicalFrontier)
+  // N2: bila batas-aman menggeser segmen sampai KOSONG (segmen budget tak dapat
+  // diwakili tanpa memisahkan pasangan tool), view kosong TIDAK boleh melaporkan
+  // fits=true — konten yang diminta tidak dapat direpresentasikan. `fits=false`
+  // (eviction jujur, sejalan dengan cabang insufficient-budget di atas).
+  if (tailMsgs.length === 0) {
+    return Object.freeze({
+      sessionId: input.sessionId,
+      threadId: input.threadId,
+      frontier,
+      messages: [] as Message[],
+      source: "messages" as ContextSource,
+      coveredSeq: 0,
+      selectionBasis: "budget-tail" as SelectionBasis,
+      freshness: fresh,
+      budget: {
+        limitTokens: limit,
+        estimatedTokens: 0,
+        reservedForSystemAndTools: reserved,
+        fits: false,
+      },
+      detail: `budget-tail empty: safe boundary shift left no representable segment (${limit} tokens); eviction, NOT a fold`,
+    })
+  }
   return Object.freeze({
     sessionId: input.sessionId,
     threadId: input.threadId,

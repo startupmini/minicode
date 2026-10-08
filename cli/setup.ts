@@ -88,8 +88,8 @@ import {
   type ContextOnlyArtifact,
   stripContextOnly,
 } from "../src/session/context-assembly.ts"
-import { countDurableCompactions } from "../src/session/context-identity.ts"
-import { selectContext } from "../src/session/context-selector.ts"
+import { countDurableCompactions, deriveFrontierFromDurable } from "../src/session/context-identity.ts"
+import { rowsToCanonicalRefs, selectContext } from "../src/session/context-selector.ts"
 import { formatSessionIdentityLine, resolveSessionIdentity } from "../src/session/identity.ts"
 import {
   attachMutationJournal,
@@ -929,13 +929,25 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           contextWindowTokens && contextWindowTokens > 0
             ? contextWindowTokens
             : Number.MAX_SAFE_INTEGER
+        // N1: turunkan frontier kanonis dari baris yang BARU DIBACA (sumber
+        // kebenaran saat ini) dan teruskan ke selector — freshness dihitung
+        // via assessContextFreshness (BUKAN hard-code "fresh"). Selector tetap
+        // deskriptif; putusan publikasi tetap milik saveSession.
+        const selectorRows = rowsForSelector.map((r) => ({ seq: r.seq, message: r.message }))
+        const canonicalFrontier = deriveFrontierFromDurable({
+          sessionId,
+          threadId: defaultThread.thread_id,
+          rows: rowsToCanonicalRefs(selectorRows),
+          revision,
+        })
         const selection = selectContext({
           sessionId,
           threadId: defaultThread.thread_id,
-          rows: rowsForSelector.map((r) => ({ seq: r.seq, message: r.message })),
+          rows: selectorRows,
           revision,
           ...(projectionSummary ? { projection: projectionSummary } : {}),
           policy: { budgetTokens: messageBudget },
+          canonicalFrontier,
         })
         initialMessages = selection.messages as readonly Message[]
         if (selection.contextOnly) {

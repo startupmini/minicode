@@ -5,8 +5,8 @@
 - Path: `D:\git\minicode` (sole working clone; `rev-parse --show-toplevel` confirmed)
 - Branch: `main`; HEAD = tip of `main` containing this report.
   Finalization chain: `5efdf15` P3.1 guard [tagged baseline] → `dd2e136` first
-  report commit → `fabcb78` correction commit → `d461368` final verified-state
-  commit (exact tip: `git log -1 --format=%H`).
+  report   commit → `fabcb78` correction commit → final verified-state commit (this
+  report's own commit; exact tip: `git log -1 --format=%H`).
 - Remote: `https://github.com/startupmini/minicode.git` (fetch+push);
   `HEAD == origin/main == GitHub main` (triple-verified incl. `ls-remote`)
 - Checkpoint tag: `p3.1-canonical-2026-10-08` (annotated `2b01913`), pushed,
@@ -146,7 +146,7 @@ there; close/discard any legacy session tab that shows as missing.
 
 Root `D:/git/minicode`; branch `main` tracking `origin/main`; status clean;
 origin GitHub; `HEAD == origin/main`; log chain intact
-(`d461368`, `fabcb78`, `dd2e136`, `5efdf15`, `ff67b47`, `dae5c7e`, `4748b19`, `e284298`).
+(`HEAD`=this report's commit, `fabcb78`, `dd2e136`, `5efdf15`, `ff67b47`, `dae5c7e`, `4748b19`, `e284298`).
 Sanity suite post-purge (re-run this session):
 
 - `test/p3-reconciliation-guard.test.ts` → 14 pass / 0 fail (guard + `grewBeyondBuffer` fix)

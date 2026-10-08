@@ -184,7 +184,7 @@ Branch:
 main
 
 HEAD:
-tip of main containing this report (chain: 5efdf15 tagged baseline -> dd2e136 -> fabcb78 -> d461368)
+tip of main containing this report (5efdf15 tagged baseline -> dd2e136 -> fabcb78 -> this report's commit)
 
 origin/main:
 same as HEAD (fast-forward, in sync)

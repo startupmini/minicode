@@ -301,8 +301,12 @@ regression.**
    that never persists produces no projection (correct: no context to summarize).
 3. **`revision` undercount on headless paths** (no presentation adapter) remains a P3.5
    seam; the producer does not depend on `revision`.
-4. **Consumability uses STALE-with-intact-anchor**; a stricter CURRENT-only consumer would
-   not use it — documented, not a defect.
+4. **Consumability is rule-8-scoped (N1 hardened):** `readConsumableSummaryProjection` accepts
+   STALE **only** when the anchor is intact and the head advanced (rule-8, coverage-valid per
+   P3.0 §8 D6). A STALE with a broken/changed boundary anchor (rule-7) is **rejected**. On the
+   automatic path rule-7 remains unreachable because destructive boundary changes (shrink)
+   remove the projection transactionally; the rejection is a defensive guard against a
+   forged/corrupt projection.
 5. No semantic relevance ranking (out of scope).
 
 ---

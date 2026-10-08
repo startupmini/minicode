@@ -35,6 +35,7 @@ import {
   getProjection,
   getProjectionStatus,
   loadThreadHistoryWithSeq,
+  PROJECTION_STALE_HEAD_ADVANCED_DETAIL,
   type ProjectionRow,
   type ProjectionState,
   SUMMARY_PROJECTION_ID,
@@ -168,6 +169,11 @@ export function summaryProjectionStatus(
  * (jangkar utuh & cakupan kanonik; STALE-dengan-jangkar-utuh DITERIMA sebagai
  * coverage-valid per P3.0 §8 D6). CORRUPT/UNKNOWN/absen → null (fallback kanonik).
  *
+ * Pembedaan STALE (N1): STALE-rule-8 (head maju, JANGKAR UTUH) = consumable;
+ * STALE-rule-7 (jangkar patah / batas berubah) = TIDAK consumable — ringkasan
+ * tak lagi mewakili prefix kanonik. Detail status (bukan cek jangkar ulang)
+ * dipakai, agar tidak menduplikasi validasi di lapisan lain.
+ *
  * Mengembalikan { summaryText, baseSeq } untuk diteruskan ke `selectContext`
  * sebagai `projection`. Baca-saja; tak menulis apa pun.
  */
@@ -178,10 +184,16 @@ export function readConsumableSummaryProjection(
 ): { summaryText: string; baseSeq: number } | null {
   const tid = threadId ?? DEFAULT_THREAD_ID
   const status = getProjectionStatus(sessionId, tid, SUMMARY_PROJECTION_ID, cwd)
-  // CURRENT = cakupan penuh; STALE = head maju tetapi JANGKAR masih utuh
-  // (coverage-valid). Keduanya boleh dikonsumsi selector. CORRUPT/INCOMPLETE/
-  // UNKNOWN/absen → tak dapat dipakai.
-  if (status.state !== "CURRENT" && status.state !== "STALE") return null
+  // CURRENT = cakupan penuh, consumable. STALE = HANYA sub-kasus rule-8
+  // (detail "head advanced beyond coverage") yang consumable; STALE-rule-7
+  // (detail lain, jangkar patah) → null. CORRUPT/INCOMPLETE/UNKNOWN/absen → null.
+  if (status.state === "CURRENT") {
+    // lanjut ke pembacaan baris di bawah
+  } else if (status.state === "STALE" && status.detail === PROJECTION_STALE_HEAD_ADVANCED_DETAIL) {
+    // rule-8: coverage-valid, consumable sebagai sumber ringkasan turunan
+  } else {
+    return null
+  }
   const row = getProjection(sessionId, tid, SUMMARY_PROJECTION_ID, cwd)
   if (!row) return null
   if (row.base_seq <= 0 || typeof row.summary_text !== "string" || row.summary_text.length === 0) {

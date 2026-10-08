@@ -361,3 +361,46 @@ test("P3.4-18: PRODUKSI — kanonik → produsen → history_projections → sel
   // 3) Kanonik utuh.
   expect(loadThreadHistoryWithSeq("s", DEFAULT_THREAD_ID, cwd).length).toBe(rows.length)
 })
+
+// ── N1 (hardening): rule-7 anchor-broken STALE must NOT be consumable ─────────
+
+test("P3.4-19 (N1): STALE rule-7 (jangkar patah) → TIDAK consumable", async () => {
+  const cwd = ws()
+  await seed(cwd, "s", 6)
+  const produced = produceSummaryProjection("s", cwd, {
+    expectedEpoch: 0,
+    policy: { keepRecentTurns: 2 },
+  })
+  expect(produced.produced).toBe(true)
+  const base = produced.baseSeq!
+  // Normal: rule-8 (head maju, jangkar utuh) → consumable.
+  expect(readConsumableSummaryProjection("s", cwd)).not.toBeNull()
+  // Rusak jangkar: ubah event_id baris batas (seq = base-1) — mensimulasikan
+  // proyeksi dengan cakupan yang tak lagi mewakili prefix kanonik (rule-7).
+  const db = new Database(join(cwd, ".minicode", "sessions.db"))
+  try {
+    db.prepare(
+      "UPDATE messages SET event_id = ? WHERE session_id = ? AND thread_id = ? AND seq = ?",
+    ).run("forged_anchor", "s", DEFAULT_THREAD_ID, base - 1)
+  } finally {
+    db.close()
+  }
+  const st = summaryProjectionStatus("s", cwd)
+  expect(st.state).toBe("STALE")
+  expect(st.detail).toBe("boundary event changed or gone")
+  // Inti N1: ringkasan yang jangkarnya patah TIDAK boleh dikonsumsi selector.
+  expect(readConsumableSummaryProjection("s", cwd)).toBeNull()
+})
+
+test("P3.4-20 (N1): STALE rule-8 (head maju, jangkar utuh) tetap consumable", async () => {
+  const cwd = ws()
+  await seed(cwd, "s", 6)
+  produceSummaryProjection("s", cwd, { expectedEpoch: 0, policy: { keepRecentTurns: 2 } })
+  const st = summaryProjectionStatus("s", cwd)
+  expect(st.state).toBe("STALE")
+  expect(st.detail).toBe("head advanced beyond coverage")
+  // JANGAN meregresi konsumsi parsial yang sah (P3.0 §8 D6).
+  const proj = readConsumableSummaryProjection("s", cwd)
+  expect(proj).not.toBeNull()
+  expect(proj!.baseSeq).toBeGreaterThan(0)
+})

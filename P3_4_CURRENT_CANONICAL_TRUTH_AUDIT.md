@@ -546,10 +546,10 @@ Blocking findings:
 NONE
 
 Non-blocking findings:
-N1. readConsumableSummaryProjection accepts ANY STALE state (rule-7 anchor-broken included), while the report claims "STALE-with-intact-anchor". Rule-7 STALE is unreachable on the automatic path (shrink deletes all thread projections in the same txn; saveSession is append-only; legacy backfill touches only NULL event_ids) — verified empirically and by code inspection — so this is a defensive robustness gap and a report-wording drift, not a live safety violation.
+N1. [RESOLVED by hardening — see P3_4_N1_HARDENING_REPORT.md] The original audit found that readConsumableSummaryProjection accepted ANY STALE state (rule-7 anchor-broken included) while the report claimed "STALE-with-intact-anchor". The hardening now rejects STALE unless the status detail is rule-8 ("head advanced beyond coverage"): rule-7 (anchor-broken) is rejected, rule-8 (anchor-intact partial) remains consumable, and the production summary-plus-tail path is unaffected (re-verified live). Rule-7 remains unreachable on the automatic path (shrink deletes all thread projections in the same txn; saveSession is append-only; legacy backfill touches only NULL event_ids) — the rejection is a defensive guard against a forged/corrupt projection.
 
 Recommended next action:
-Harden readConsumableSummaryProjection to reject the rule-7 (anchor-broken) STALE sub-case and align the report's limitation-4 wording with actual behavior, as a small follow-up before P3.5.
+N1 is resolved; proceed toward P3.5 when the owner authorizes it. (No P3.5 work has been started.)
 
 P3.5:
 NOT STARTED

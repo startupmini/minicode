@@ -2784,6 +2784,12 @@ export interface ProjectionRow {
 
 export type ProjectionState = "CURRENT" | "STALE" | "INCOMPLETE" | "CORRUPT" | "UNKNOWN"
 
+// P3.4 N1: detail STABLE untuk sub-kasus rule-8 (head maju, jangkar utuh) pada
+// getProjectionStatus. Diekspor agar pembaca (readConsumableSummaryProjection)
+// dapat membedakan STALE-rule-8 (coverage-valid, consumable) dari STALE-rule-7
+// (jangkar patah, TIDAK consumable) TANPA menduplikasi cek jangkar.
+export const PROJECTION_STALE_HEAD_ADVANCED_DETAIL = "head advanced beyond coverage"
+
 export interface ProjectionStatus {
   state: ProjectionState
   detail: string

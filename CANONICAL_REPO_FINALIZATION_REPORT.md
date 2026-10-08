@@ -3,8 +3,10 @@
 ## 1. Canonical Repository Identity
 
 - Path: `D:\git\minicode` (sole working clone; `rev-parse --show-toplevel` confirmed)
-- Branch: `main`; HEAD `5efdf15c35d32f71db38ea4478ecd5b820701d6d`
-  (`p3.1: finalize canonical reconciliation guard`)
+- Branch: `main`; HEAD = tip of `main` containing this report
+  (finalization chain: `5efdf15` P3.1 guard [tagged] → `dd2e136` first
+  report commit → correction commit recording this chain; exact tip:
+  `git log -1 --format=%H`)
 - Remote: `https://github.com/startupmini/minicode.git` (fetch+push);
   `HEAD == origin/main == GitHub main` (triple-verified incl. `ls-remote`)
 - Checkpoint tag: `p3.1-canonical-2026-10-08` (annotated `2b01913`), pushed,
@@ -121,8 +123,9 @@ legacy session entries, if shown missing, can be closed/discarded.
 ## 14. Post-Purge Canonical Verification
 
 Root `D:/git/minicode`; branch `main` tracking `origin/main`; status clean;
-origin GitHub; `HEAD == origin/main == 5efdf15`; log chain intact
-(`5efdf15`, `ff67b47`, `dae5c7e`, `4748b19`, `e284298`). Sanity suite post-purge:
+origin GitHub; `HEAD == origin/main == dd2e136`; log chain intact
+(`dd2e136`, `5efdf15`, `ff67b47`, `dae5c7e`, `4748b19`, `e284298`).
+Sanity suite post-purge:
 guard + arch-map 16/16 green. No P3.3 started.
 
 ## 15. P3.1 Final Status
@@ -153,10 +156,10 @@ Branch:
 main
 
 HEAD:
-5efdf15c35d32f71db38ea4478ecd5b820701d6d
+tip of main containing this report (chain: 5efdf15 tagged -> dd2e136 -> this correction)
 
 origin/main:
-5efdf15c35d32f71db38ea4478ecd5b820701d6d
+same as HEAD (fast-forward, in sync)
 
 Working tree:
 CLEAN

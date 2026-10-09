@@ -303,4 +303,8 @@ P3.6 — (reserved; undefined by current authority)
 P3.7 — A+C Fold Producer / advanced fold ✅ VALID (see P3_7_IMPLEMENTATION_REPORT.md)
 ```
 
+**Phase 3 closure:** `PHASE 3 CLOSED WITH DOCUMENTED LIMITATIONS` — see
+`P3_PHASE_CLOSURE_REPORT.md`. All defined milestones verified; P3.6/P3.8 remain
+undefined; full-history production activation remains a separate future decision.
+
 No implementation is authorized by this roadmap document.

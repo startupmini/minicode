@@ -23,7 +23,8 @@ the full suite shows zero P3.7 regressions.
 ## 2. Exact baseline commit and final commit
 
 - Baseline: `21224ec3e5e280c2955ed880a88a7f4f5b7683e5` (== `origin/main`, clean tree).
-- Implementation commit: recorded in §18 after push.
+- Implementation commit: `7e4b6d9c13e6639952735c27d4d5f6d7c4b00e72`
+  (`p3.7: add deterministic full-coverage fold renderer`, == `origin/main`).
 
 ## 3. Source files changed and why
 

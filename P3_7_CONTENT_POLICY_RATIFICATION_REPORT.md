@@ -123,11 +123,13 @@ No `src/`, `cli/`, `tools/`, `test/`, `vendor/` changes.
 
 ## 14. Commit SHA
 
-<set after commit>
+`acf16e4c301845125c448f5fd40302a53ab86ff2`
+(`docs: ratify P3.7 full-coverage fold content policy`), parent `5420437`.
 
 ## 15. Push verification
 
-<set after push: HEAD == origin/main, working tree CLEAN>
+Pushed `5420437..acf16e4` (fast-forward, no force).
+`HEAD == origin/main == acf16e4c301845125c448f5fd40302a53ab86ff2`; working tree CLEAN.
 
 ## 16. Final P3.7 readiness
 
@@ -184,10 +186,10 @@ P3_7_ARCHITECTURE_AND_CONTRACT_AUDIT.md
 P3_7_CONTENT_POLICY_RATIFICATION_REPORT.md
 
 Commit:
-<set after commit>
+acf16e4c301845125c448f5fd40302a53ab86ff2
 
 origin/main:
-<set after push>
+acf16e4c301845125c448f5fd40302a53ab86ff2
 
 Working tree:
 CLEAN

@@ -276,11 +276,10 @@ Known limitations:
 5. No semantic relevance ranking (out of scope).
 
 Final commit:
-b08ee60b6b035702980d8447d225a277cb68d40f (implementation)
-6fbcc14b14b4c3a1303d0af7ed6671afd050d785 (tip: SHA-backfill docs commit)
+b08ee60b6b035702980d8447d225a277cb68d40f (implementation; report finalized at tip 08c730a)
 
 origin/main:
-6fbcc14b14b4c3a1303d0af7ed6671afd050d785
+08c730a9d3dcc4da58321a73620cfb173a56c5ac (at report finalization)
 
 Working tree:
 CLEAN

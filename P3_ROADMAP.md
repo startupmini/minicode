@@ -155,6 +155,91 @@ Semantics**. That usage is **superseded** for this program: the recent P3.3 audi
 producer**. Branch/Fork remains an unfiled future concern (its contract hooks are reserved
 in `P3_0` §5/§7 as `(parent_thread_id, fork_event_seq)`).
 
+### P3.7 — Owner-Ratified Full-Coverage Fold Content Policy
+
+(Ratified; see `P3_7_CONTENT_POLICY_RATIFICATION_REPORT.md`. No implementation is
+authorized by this section — it defines the content contract only.)
+
+1. **Fold model.** The P3.7 fold is DETERMINISTIC, RULE-BASED, LLM-FREE, NETWORK-FREE,
+   SOURCE-TRACEABLE, and DERIVED-ONLY. Same canonical history + same fold policy =
+   equivalent fold content. It must not rely on LLM-generated summaries, remote inference
+   APIs, embeddings or vector search, randomized selection, wall-clock time as a
+   content-selection input, or unsupported semantic inference. The projection's `built_at`
+   metadata may continue to reflect actual build time; that does not permit build time to
+   influence fold content.
+
+2. **Full coverage is not lossless preservation.** Full coverage means every source
+   sequence in the claimed range has been processed and accounted for under the fold
+   policy. It does not mean every character, sentence, or message is retained verbatim.
+   The fold is a lossy derived representation; it must never claim to be a verbatim copy,
+   and must never claim full coverage for a range it did not process. Coverage metadata
+   and fold content must agree.
+
+3. **Required semantic preservation.** The fold must preserve the meaningful state needed
+   to continue work: user goals/requirements/constraints; explicit decisions, approvals,
+   rejections, commitments; current task state and unresolved work; tool actions with
+   meaningful results and externally observable effects; errors, refusals, recovery
+   outcomes, failure conditions; established facts, constraints, relationships; superseding
+   facts/decisions; outstanding questions and uncertainty; identity/provenance for
+   traceability. Where exact values carry operational significance (file paths,
+   identifiers, commands, hashes, numbers/thresholds, error messages, structured tool
+   results, retrieval references), preserve them accurately rather than paraphrasing.
+
+4. **Permitted condensation/omission.** Condense or omit only without violating the
+   preservation contract: greetings/filler; repeated statements with no new information;
+   duplicate tool output; redundant restatement of unchanged facts; verbose intermediate
+   output whose relevant result is retained; superseded intermediate state (provided the
+   valid current state and meaningful supersession are preserved). Never omit significant
+   content merely for length; never treat errors, decisions, rejections, or side effects
+   as redundant without a defensible rule; never infer missing facts. When a message mixes
+   low-value prose with operational content, preserve the operational content.
+
+5. **Unsupported content / failure.** If the deterministic rules cannot safely represent
+   a relevant event or establish coverage: do not claim a valid full-history fold. Use
+   the existing safe fallback (full canonical history + explicit status). Do not introduce
+   a new projection status or `SelectionBasis` value without a separately justified
+   contract change. A missing fold must never be disguised as successful full coverage.
+
+6. **A+C invariant.** A = context-only transformation; C = separately stored derived
+   summary; B (canonical-history rewrite) = NON-CONFORMING. Canonical history remains the
+   sole authority; the fold is reconstructable from the intact prefix.
+
+7. **Determinism.** Same history + same policy = equivalent content across time,
+   entrypoint, retry, redelivery, and rebuild (timestamps may differ; semantics must not).
+
+8. **Existing projection schema contract.** Reuse `session_id`, `thread_id`, `base_seq`
+   (`== head+1` for full coverage), `included_ranges` (`[[0, base_seq]]`), non-null
+   `anchor_event_id` (boundary identity), `summary_text` (scrubbed via the existing
+   `scrubSecrets` path), `built_at`. No new fields. Full coverage keeps the existing
+   CURRENT / PARTIAL / rule-7 / rule-8 / DIVERGED / UNKNOWN distinctions (rule-7 stays
+   rejected; rule-8 stays consumable-as-partial).
+
+9. **Single producer authority.** P3.7 provides the pure fold renderer; P3.4 retains the
+   single approved persistence path (`buildProjectionInTxn`); P3.5 retains the runtime
+   metadata/bridge primitives; P3.3 stays a read-only selector; P3.1/P2.7 stays the
+   publication boundary.
+
+10. **Durable marker reuse.** Fold markers reuse the approved P3.5/P2.11 event primitives
+    (`appendPresentationEvents`: idempotent, epoch-fenced, collision-surfaced). No second
+    marker system.
+
+11. **P3.4/P3.5 boundaries.** P3.4 owns schema + lifecycle + persistence; P3.5 owns
+    runtime metadata + bridges; P3.7 owns fold content generation only. Semantic relevance
+    ranking and model-based selection stay later work, not P3.7.
+
+12. **P3.7 implementation gate.** A future implementation must prove: full source range
+    processed; preservation/omission rules followed; identity/anchors correct; incomplete
+    output cannot claim full coverage; deterministic output; projection still derived;
+    canonical history untouched; production-path tests; mutation/non-vacuity evidence;
+    recovery/rebuild tested.
+
+**Numbering note.** The historical forensic roadmap used **P3.7 = Branch/Fork Read
+Semantics**. That usage is **superseded** for this program: the recent P3.3 audits
+(`P3_3_CANONICAL_SELECTOR_ARCHITECTURE_AUDIT`, `P3_3_CURRENT_CANONICAL_TRUTH_AUDIT`,
+`P3_PROGRAM_CURRENT_CANONICAL_TRUTH_AUDIT`) consistently treat **P3.7 as the A+C fold
+producer**. Branch/Fork remains an unfiled future concern (its contract hooks are reserved
+in `P3_0` §5/§7 as `(parent_thread_id, fork_event_seq)`).
+
 ---
 
 ## 4. P3.6 — not defined in the current canonical roadmap

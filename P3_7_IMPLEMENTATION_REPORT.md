@@ -117,6 +117,16 @@ Explicit `summaryText` + `baseSeq` caller override still takes precedence untouc
   untouched.
 - P3.3 consumes CURRENT full-history as `summary-plus-tail` via its existing strategy —
   no selector change (verified: `basis summary-plus-tail`, synthetic summary first).
+- Coverage-metadata note: the persisted projection's `base_seq` (coverage contract
+  `[0, base_seq)`, full coverage `== head+1`) is distinct from the selector's reported
+  `coveredSeq`. `coveredSeq` is the boundary the selector actually used after its
+  existing safe-base/head cap (`safeBaseSeq` in `src/session/context-selector.ts`
+  caps to `head` and walks to a tool-pair-safe boundary). On the verified
+  CURRENT-projection path this yields `coveredSeq == head` while the persisted row
+  keeps `base_seq == head+1`; the head row is then carried verbatim in the tail
+  alongside its folded line in the summary. This is expected P3.3 behavior, not
+  projection metadata drift — and it applies to this consumption shape only, not to
+  all projection states.
 
 ## 10. Existing writer and authority boundaries preserved
 

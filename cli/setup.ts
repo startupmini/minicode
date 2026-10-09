@@ -84,6 +84,11 @@ import {
   validateResumeWorkspace,
 } from "../src/session/checkpoint.ts"
 import {
+  attachHeadlessCompactionBridge,
+  runtimeMetadataFromSelection,
+  type RuntimeContextMetadata,
+} from "../src/session/context-adapter.ts"
+import {
   assembleContext,
   type ContextOnlyArtifact,
   stripContextOnly,
@@ -269,6 +274,13 @@ export interface CliSession {
   detachSimple: () => void
   persistCurrent: (usageData: unknown) => Promise<void>
   runPromptWithVerify: (prompt: string, signal?: AbortSignal) => Promise<void>
+  /**
+   * P3.5 — metadata runtime hasil seleksi konteks (host-side, RAM, lifecycle-
+   * scoped). Bukan store/otoritas; hanya membawa identity/frontier/revision/
+   * basis/freshness melewati batas seed runtime. Undefined bila sesi bukan resume
+   * (tidak ada ContextSelection).
+   */
+  runtimeContextMetadata?: RuntimeContextMetadata
   /** Kontrol mode permission saat runtime (Shift+Tab / /mode di REPL). */
   permissions?: PermissionControl
   close: () => Promise<void>
@@ -881,6 +893,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // tak ada lagi "not found → sesi baru diam-diam".
   let initialMessages: readonly Message[] | undefined
   let resumeTurnCount: number | undefined
+  // P3.5 — carrier metadata runtime hasil seleksi (host-side, RAM, lifecycle-
+  // scoped). Diisi HANYA di jalur resume yang membangun ContextSelection; sesi
+  // baru tetap undefined (tak ada klaim kesegaran tanpa seleksi).
+  let runtimeContextMetadata: RuntimeContextMetadata | undefined
   let recoveryAppendix = ""
   // P2.8 forensics: artefak context-only yang ditanam di buffer konteks pada
   // resume ini (bila proyeksi CURRENT). Dipakai persistCurrent untuk membuang
@@ -958,6 +974,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           canonicalFrontier,
         })
         initialMessages = selection.messages as readonly Message[]
+        // P3.5 (N1) — angkut metadata seleksi melewati batas seed runtime.
+        // Hanya `messages` yang masuk kernel (initialMessages); identity/frontier/
+        // revision/basis/freshness/provenance hidup di carrier host-side ini —
+        // bukan pesan model, bukan otoritas, bukan store.
+        runtimeContextMetadata = runtimeMetadataFromSelection(selection, revision)
         if (selection.contextOnly) {
           contextOnlyArtifact = selection.contextOnly
           contextCanonicalBaseline = prev.messages
@@ -2208,8 +2229,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           // over the REAL provider chain — the same `router` the user session
           // uses — so autonomous work does not run a different model or a weaker
           // tool stack than the interactive session.
-          sessionFactory: async (spec: AutonomousSessionSpec) =>
-            createMinicodeSession({
+          sessionFactory: async (spec: AutonomousSessionSpec) => {
+            const child = await createMinicodeSession({
               provider: spec.provider as never,
               tools: spec.tools as never,
               cwd: spec.cwd,
@@ -2222,7 +2243,22 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
               // `web_fetch`, both of which 6S ruled out for an unattended run.
               permissionHandler: spec.permissionHandler as never,
               permissionMode: "readonly",
-            }),
+            })
+            // P3.5 (N2) — jembatan kompaksi otonom. Sesi anak ini TANPA
+            // presentation adapter (berbeda dari anak delegate_task yang dipasangi
+            // adapter + flush di cli/index.ts); tanpa jembatan ini, event
+            // `context:compacted` kernel tetap in-memory sehingga marker durable
+            // tak pernah ditulis dan revision undercount. Jembatan best-effort
+            // via primitif durable yang SUDAH ADA (idempoten, tanpa pagar epoch
+            // — sama seperti flush anak yang tak memegang epoch). Langganan
+            // terikat umur sesi anak itu sendiri (tak ada store kedua).
+            attachHeadlessCompactionBridge({
+              sessionId: spec.sessionId,
+              cwd: spec.cwd,
+              events: child.events,
+            })
+            return child
+          },
         },
         // [PHASE 6U] The binding is read from DURABLE state at dispatch time. The
         // claim was accepted microseconds ago, so the store's current generation IS
@@ -2398,6 +2434,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     detachSimple: () => detachUI(),
     persistCurrent,
     runPromptWithVerify,
+    // P3.5 — carrier metadata runtime (satu sesi, tanpa registry).
+    runtimeContextMetadata,
     permissions,
     close,
     // [PHASE 6AB] The two objects the operator control surface needs. Exposed on

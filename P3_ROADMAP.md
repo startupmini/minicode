@@ -120,6 +120,29 @@ this boundary unclean, document the constraint rather than implementing it.
 after P3.3; this roadmap places P3.4 (projection producer) before it, because the selector
 consumes a projection that nothing currently produces.
 
+**Ratified implementation contract** (owner-ratified, see
+`P3_5_RUNTIME_CONTEXT_ADAPTER_ARCHITECTURE_AUDIT.md`):
+
+- **Adapter shape:** a thin **host-side** runtime metadata carrier + lifecycle bridge. It
+  transports `ContextSelection`-derived metadata (`ContextIdentity`, `ContextFrontier`,
+  `revision`, `selectionBasis`, `freshness`, `coverage`) into the runtime handle and
+  constructs `ModelContextProvenance` from the selection.
+- **No new store/schema/vendor/kernel change.** The adapter reuses existing primitives
+  (`ContextSelection`, `deriveFrontierFromDurable`, `rowsToCanonicalRefs`,
+  `readConsumableSummaryProjection`, `ModelContextProvenance`).
+- **Headless `context.compacted` bridge:** on paths without the presentation adapter
+  (autonomous children via `createMinicodeSession`), the adapter bridges the kernel
+  `context:compacted` bus event into the durable `context.compacted` presentation event by
+  **reusing `appendPresentationEvents`** (idempotent, epoch-fenced). No second marker
+  system.
+- **Authority:** `ContextStore` stays a runtime buffer; canonical history stays the sole
+  authority; the adapter writes **only** the presentation-event bridge channel, never
+  canonical history; P3.1/P2.7 remains the publication boundary.
+- **Revision:** propagated, never fabricated; the adapter does not manufacture a higher
+  revision.
+- **Non-goals remain:** P3.7 A+C fold producer, semantic ranking, attach history gate,
+  conflict diagnostics.
+
 ### P3.7 — A+C Fold Producer / advanced fold
 
 **Responsibilities.** Advanced A+C fold-generation semantics (produce the summary/fold
@@ -189,8 +212,8 @@ The projection is a **derived durable view**, **not** a replacement for history.
 P3.1 — Reconciliation Guard              ✅
 P3.2 — Context Identity / Frontier       ✅
 P3.3 — Canonical Context Selector        ✅
-P3.4 — Durable Context Projection        ← NEXT (not started)
-P3.5 — Runtime Context Adapter           (not started)
+P3.4 — Durable Context Projection        ✅ VALID
+P3.5 — Runtime Context Adapter           ← CURRENT (ratified; implementation pending)
 P3.6 — (reserved; undefined by current authority)
 P3.7 — A+C Fold Producer / advanced fold (not started)
 ```

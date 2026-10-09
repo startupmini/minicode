@@ -29,6 +29,7 @@
 
 import { ContextStore, mechanicalCompaction } from "#minicore"
 import type { Message } from "#minicore/core/types.ts"
+import { renderFullHistoryFold } from "./full-history-fold.ts"
 import {
   buildProjection,
   DEFAULT_THREAD_ID,
@@ -46,8 +47,16 @@ export interface ProjectionProducePolicy {
   /**
    * Berapa turn terakhir dipertahankan verbatim sebagai ekor; prefix di atasnya
    * diringkas (render fold kernel yang SUDAH ADA). Harus >= 1 agar ada prefix.
+   * Diabaikan bila `fold: "full-history"` (cakupan selalu penuh).
    */
   readonly keepRecentTurns: number
+  /**
+   * P3.7 — strategi fold. `"mechanical"` (default) = perilaku P3.4 yang sudah
+   * ada (prefix parsial via kernel). `"full-history"` = renderer P3.7
+   * (cakupan penuh [0, N), CURRENT-capable). Default eksplisit menjaga perilaku
+   * lama bila field absen.
+   */
+  readonly fold?: "mechanical" | "full-history"
 }
 
 /** Hasil produksi — laporan, bukan otoritas. */
@@ -92,6 +101,23 @@ export function deriveSummaryFromCanonical(
 }
 
 /**
+ * Bungkus P3.7 `renderFullHistoryFold` untuk seam produsen: ubah baris thread
+ * menjadi input renderer, dan ubah `FoldError` (cakupan tak-terbukti) menjadi
+ * no-op jujur (null) — pemanggil tak boleh menebak cakupan.
+ */
+function foldFullHistory(
+  rows: readonly { seq: number; message: unknown }[],
+): { summaryText: string; baseSeq: number } | null {
+  try {
+    const folded = renderFullHistoryFold(rows)
+    if (folded.baseSeq !== rows.length) return null
+    return { summaryText: folded.summaryText, baseSeq: folded.baseSeq }
+  } catch {
+    return null
+  }
+}
+
+/**
  * PRODUSEN PRODUKSI. Membangun/menyegarkan proyeksi ringkasan durable dari state
  * kanonik. Berpagar epoch (reuse `buildProjection`). TIDAK menyentuh `messages`.
  *
@@ -124,18 +150,34 @@ export function produceSummaryProjection(
   let summaryText = opts.summaryText
   let baseSeq = opts.baseSeq
   if (typeof summaryText !== "string" || summaryText.length === 0) {
-    const derived = deriveSummaryFromCanonical(
-      rows.map((r) => r.message as Message),
-      opts.policy,
-    )
-    if (!derived) {
-      return {
-        produced: false,
-        detail: `no foldable prefix (rows=${rows.length}, keepRecentTurns=${opts.policy.keepRecentTurns})`,
+    if (opts.policy.fold === "full-history") {
+      // P3.7 — fold cakupan-penuh deterministik atas SELURUH baris kanonik.
+      // baseSeq SELALU == rows.length ([0, N) penuh, CURRENT-capable). Gagal
+      // derivasi (baris kosong/tak-kontinyu/bentuk tak-didukung) → no-op jujur,
+      // BUKAN klaim parsial sebagai penuh.
+      const folded: { summaryText: string; baseSeq: number } | null = foldFullHistory(rows)
+      if (!folded) {
+        return {
+          produced: false,
+          detail: `full-history fold refused (rows=${rows.length}) — see fold detail`,
+        }
       }
+      summaryText = folded.summaryText
+      baseSeq = folded.baseSeq
+    } else {
+      const derived = deriveSummaryFromCanonical(
+        rows.map((r) => r.message as Message),
+        opts.policy,
+      )
+      if (!derived) {
+        return {
+          produced: false,
+          detail: `no foldable prefix (rows=${rows.length}, keepRecentTurns=${opts.policy.keepRecentTurns})`,
+        }
+      }
+      summaryText = derived.summaryText
+      baseSeq = derived.baseSeq
     }
-    summaryText = derived.summaryText
-    baseSeq = derived.baseSeq
   }
   if (baseSeq === undefined || baseSeq <= 0) {
     return { produced: false, detail: "no explicit/derivable baseSeq — refusing empty projection" }
@@ -151,7 +193,10 @@ export function produceSummaryProjection(
     produced: true,
     row,
     baseSeq: row.base_seq,
-    detail: `projection covers [0,${row.base_seq}) of ${rows.length} rows (partial: prefix summary + canonical tail)`,
+    detail:
+      row.base_seq >= rows.length
+        ? `projection covers [0,${row.base_seq}) of ${rows.length} rows (full: full-history fold, CURRENT-capable)`
+        : `projection covers [0,${row.base_seq}) of ${rows.length} rows (partial: prefix summary + canonical tail)`,
   }
 }
 

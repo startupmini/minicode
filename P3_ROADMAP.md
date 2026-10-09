@@ -298,9 +298,9 @@ P3.1 — Reconciliation Guard              ✅
 P3.2 — Context Identity / Frontier       ✅
 P3.3 — Canonical Context Selector        ✅
 P3.4 — Durable Context Projection        ✅ VALID
-P3.5 — Runtime Context Adapter           ← CURRENT (ratified; implementation pending)
+P3.5 — Runtime Context Adapter           ✅ VALID
 P3.6 — (reserved; undefined by current authority)
-P3.7 — A+C Fold Producer / advanced fold (not started)
+P3.7 — A+C Fold Producer / advanced fold ✅ VALID (see P3_7_IMPLEMENTATION_REPORT.md)
 ```
 
 No implementation is authorized by this roadmap document.

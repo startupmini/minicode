@@ -12,11 +12,31 @@ const WRITE_TOOLS = new Set(["write_file", "edit", "apply_patch", "move_file", "
 // `bash` bisa menulis apa pun, jadi tidak boleh paralel dengan write lain;
 // tapi memasukkannya ke WRITE_TOOLS membuat dua bash read-only
 // (`bun test` + `git log`) ikut terserialisasi tanpa alasan karena
-// getFilePath() selalu null untuk bash. Dipisah supaya cap-nya sendiri.
+// getLockPath() selalu null untuk bash. Dipisah supaya klasifikasinya jelas —
+// F-01 (P5 §C1) memperlakukannya sebagai "write tanpa kunci" (lihat di bawah).
 const EXCLUSIVE_TOOLS = new Set(["bash", "write_memory", "forget_memory", "todo_write"])
 
 function isWrite(call: ToolCall): boolean {
   return WRITE_TOOLS.has(call.name) || EXCLUSIVE_TOOLS.has(call.name)
+}
+
+// Kunci file-lock: hanya WRITE_TOOLS dengan args.path string valid.
+// EXCLUSIVE_TOOLS (tanpa path) dan move_file (memakai from/to) sengaja tidak
+// punya kunci — inilah yang membuat writeConcurrency > 1 tidak aman untuk
+// mereka (F-01). Klasifikasi batch memakai fungsi ini; jangan diganti dengan
+// cek `isWrite` saja.
+function getLockPath(call: ToolCall, cwd: string | undefined): string | null {
+  if (!WRITE_TOOLS.has(call.name)) return null
+  const p = (call.args as Record<string, unknown>)?.path
+  if (typeof p !== "string" || !p) return null
+  // normalisasi: resolve abs + lowerCase di Windows agar ./a.ts vs a.ts tidak miss lock
+  try {
+    const base = cwd ?? process.cwd()
+    const abs = resolve(base, p)
+    return process.platform === "win32" ? abs.toLowerCase() : abs
+  } catch {
+    return process.platform === "win32" ? p.toLowerCase() : p
+  }
 }
 
 // Antrean abort-aware: saat signal abort, entry dibuang dari antrean dan
@@ -72,14 +92,51 @@ export function parallelExecutor(
       if (calls.length === 0) return []
       const results: (ToolResult | undefined)[] = new Array(calls.length)
 
-      // mixed write+read step → sequential in original order so a read after a
-      // write on the same file sees the new content (parallel would race it)
+      // write+baca campur → sekuensial urut input: read setelah write pada file
+      // sama harus melihat konten baru (paralel akan balapan). Perilaku P4 yang
+      // dibekukan.
       const anyWrite = calls.some(isWrite)
       const anyRead = calls.some((c) => !isWrite(c))
       if (anyWrite && anyRead) {
         for (let i = 0; i < calls.length; i++) {
           if (deps.signal.aborted) throw abortError(deps.signal)
           results[i] = await runCall(calls[i]!, deps)
+        }
+        return results as ToolResult[]
+      }
+
+      // F-01 (P5 §C1): slot tulis (writeConcurrency > 1) hanya didemonstrasikan
+      // aman untuk write tool ber-kunci args.path. Batch yang mengandung write
+      // tanpa kunci — EXCLUSIVE_TOOLS (bash dsb.), move_file (from/to), atau
+      // WRITE_TOOL tanpa path valid — dijalankan sekuensial penuh. Ini menutup
+      // overlap dua bash, bash vs write path, dan dua move_file yang dulu lolos
+      // pada wc > 1 tanpa bukti keselamatan; batch murni write ber-path tetap
+      // memakai semaphore + file-lock di bawah. Race terhadap signal
+      // mempertahankan penolakan prompt saat abort (setara antrean writeWaiter):
+      // tool in-flight boleh mengabaikan signal, tetapi execute() reject begitu
+      // abort datang, tanpa menunggu tool selesai.
+      const anyUnkeyedWrite = calls.some((c) => isWrite(c) && getLockPath(c, deps.cwd) === null)
+      if (anyWrite && anyUnkeyedWrite) {
+        const signal = deps.signal
+        let onAbort: (() => void) | undefined
+        const aborted = new Promise<never>((_, reject) => {
+          onAbort = () => reject(abortError(signal))
+          if (signal.aborted) onAbort()
+          else signal.addEventListener("abort", onAbort, { once: true })
+        })
+        try {
+          await Promise.race([
+            (async () => {
+              for (let i = 0; i < calls.length; i++) {
+                if (signal.aborted) throw abortError(signal)
+                results[i] = await runCall(calls[i]!, deps)
+              }
+            })(),
+            aborted,
+          ])
+        } finally {
+          // lepas listener agar signal jangka panjang tidak menumpuk listener
+          if (onAbort) signal.removeEventListener("abort", onAbort)
         }
         return results as ToolResult[]
       }
@@ -91,20 +148,6 @@ export function parallelExecutor(
       const fileWaiters = new Map<string, Waiter[]>()
       const writeWaiters: Waiter[] = []
       const signal = deps.signal
-
-      function getFilePath(call: ToolCall): string | null {
-        if (!WRITE_TOOLS.has(call.name)) return null
-        const p = (call.args as Record<string, unknown>)?.path
-        if (typeof p !== "string" || !p) return null
-        // normalisasi: resolve abs + lowerCase di Windows agar ./a.ts vs a.ts tidak miss lock
-        try {
-          const base = deps.cwd ?? process.cwd()
-          const abs = resolve(base, p)
-          return process.platform === "win32" ? abs.toLowerCase() : abs
-        } catch {
-          return process.platform === "win32" ? p.toLowerCase() : p
-        }
-      }
 
       function acquireWrite(): Promise<void> {
         if (signal.aborted) return Promise.reject(abortError(signal))
@@ -169,7 +212,7 @@ export function parallelExecutor(
             if (idx >= calls.length) break
             const call = calls[idx]!
             const needWrite = isWrite(call)
-            const filePath = needWrite ? getFilePath(call) : null
+            const filePath = needWrite ? getLockPath(call, deps.cwd) : null
             let held = false
             try {
               if (needWrite) {

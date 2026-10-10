@@ -310,7 +310,7 @@ test("08 executor preserves write→read order on same file", async () => {
   expect(order[2]).toBe("read")
 })
 
-test("08 executor caps write concurrency", async () => {
+test("08 executor serializes exclusive tools (bash) even at writeConcurrency > 1", async () => {
   let active = 0,
     maxActive = 0
   const tools = [
@@ -340,7 +340,10 @@ test("08 executor caps write concurrency", async () => {
   }
   const calls = Array(5).fill({ id: "1", name: "bash", args: {} })
   await exec.execute(calls, deps)
-  expect(maxActive).toBe(2)
+  // F-01 (P5 §C1): bash tidak punya kunci file-lock → walau writeConcurrency = 2,
+  // batch bash harus sekuensial (dulu: cap = 2, dua bash overlap tanpa kontrak).
+  // Cap semaphore untuk write ber-path dipinned di concurrency-same-process :263.
+  expect(maxActive).toBe(1)
 })
 
 test("08 executor abort after acquireWrite releases semaphore (no leak)", async () => {

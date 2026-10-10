@@ -1,5 +1,5 @@
 # PHASE 5 — TOOL EXECUTION
-**Status: SCOPE RATIFIED — IMPLEMENTATION PLANNING NOT STARTED**
+**Status: SCOPE RATIFIED — BATCH 1 (C1) IMPLEMENTED, REMAINING BATCHES PENDING**
 
 ## Purpose
 
@@ -86,6 +86,27 @@ safe. The minimal enforcement (clamp to 1, or refuse with a clear error) is an
 implementation-batch choice; no new locking subsystem is introduced, because
 the audit found no concrete production need for > 1 — only mechanism-level
 tests exercise it.
+
+**Implemented enforcement (Batch 1).** Production admission-time classification
+in `parallelExecutor` (`src/policy/executor.ts`): a batch whose
+write-classified calls are not all path-keyed (`getLockPath` — `WRITE_TOOLS`
+with a valid string `args.path`) runs fully sequential, including the
+prompt-abort race previously provided only by the write-slot waiters (an
+in-flight tool may ignore the signal; `execute()` still rejects immediately).
+Batches whose writes are all path-keyed keep the write-slot semaphore +
+per-file lock, so the supported `writeConcurrency > 1` configuration
+(distinct paths overlap, same path serializes) is preserved — the boundary is
+enforced *per batch* rather than by clamping the configuration, which would
+have disabled the demonstrated-safe path concurrency. Consequences:
+`EXCLUSIVE_TOOLS`, `move_file` (`from`/`to`), and `WRITE_TOOL` calls without a
+valid path never overlap each other or path writes at any `writeConcurrency`;
+a batch mixing one unkeyed write with path writes serializes the path writes
+too (coarse but contract-compliant — C1 defines support only for all-path-
+keyed batches). Demonstrated by `test/f01-write-concurrency.test.ts` (six
+deterministic gate-based cases, each failing against the pre-Batch-1
+executor); `test/extreme.test.ts` "08" was adapted from capping a `bash` batch
+at `writeConcurrency` to asserting serialization, because a bash batch is now
+serialized by contract.
 
 **Invariant (owner-decided, binding on all future work):**
 *No configuration may enable write concurrency that lacks an explicit,

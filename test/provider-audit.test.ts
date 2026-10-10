@@ -5,7 +5,7 @@ import { expect, test } from "bun:test"
 import { ProviderError } from "#minicore/core/errors.ts"
 import { createSession } from "#minicore/core/index.ts"
 import type { ModelProvider, ProviderEvent, StreamRequest } from "#minicore/core/provider.ts"
-import { allowAll, FakeProvider, finish, text, tool, toolCall } from "#minicore/test/fakes.ts"
+import { allowAll, FakeProvider, fastRetryRecovery, finish, text, tool, toolCall } from "#minicore/test/fakes.ts"
 import { createRouterProvider } from "../src/providers/router.ts"
 import { friendlyError, friendlyFromCategory } from "../src/ui/render/errors.ts"
 
@@ -197,6 +197,99 @@ test("audit: duplicate call ID dalam satu respons: tiap call dapat hasil", async
   const results = s.state.history.filter((m) => m.role === "tool")
   expect(results).toHaveLength(2)
   expect(seen.sort()).toEqual(["1", "2"])
+})
+
+// ── 3b. Stream malformed (P4-M05): taksonomi error + retry berbatas ──
+//
+// Dua pelanggaran protokol yang ditolak kernel di jalur produksi
+// (loop.ts: stream tanpa finish → "stream ended without a finish reason";
+// event non-extension setelah finish → "event after finish"). Keduanya
+// retryable network error: percobaan gagal mulai dari slate bersih (tanpa
+// bocor teks/tool parsial), tool dari respons cacat tak pernah dieksekusi,
+// dan kegagalan berulang berhenti eksplisit (bukan loop abadi). Backoff
+// dihindari via fastRetryRecovery (delayMs 1) — deterministik, tanpa sleep.
+
+test("audit: P4-M05-A stream tanpa finish pulih — retry berbatas, tanpa bocor, tanpa eksekusi dini", async () => {
+  let toolRuns = 0
+  const t = tool("tulis", async () => {
+    toolRuns++
+    return "ok"
+  })
+  const p = new FakeProvider([
+    // Percobaan 1-2: stream terputus tanpa finish (teks + tool_call parsial).
+    { events: [text("paruh-"), toolCall("tulis", {}, "c-1")] },
+    { events: [text("paruh-"), toolCall("tulis", {}, "c-1")] },
+    // Percobaan 3: sehat.
+    { events: [text("selesai"), finish("stop")] },
+  ])
+  const s = createSession({
+    provider: p,
+    permissions: allowAll,
+    tools: [t],
+    recovery: fastRetryRecovery,
+  })
+  const r = await s.run("go")
+  expect(r.finalText).toBe("selesai")
+  // Tepat 3 percobaan: 2 gagal-retry + 1 sukses (bukan loop abadi).
+  expect(p.requests.length).toBe(3)
+  // Tool dari respons cacat TAK PERNAH dieksekusi (dispatch hanya pasca-finish).
+  expect(toolRuns).toBe(0)
+  // Slate bersih: histori hanya berisi turn sehat — tanpa "paruh-", tanpa
+  // assistant/tool ganda dari percobaan gagal.
+  const assistants = s.state.history.filter((m) => m.role === "assistant")
+  expect(assistants).toHaveLength(1)
+  expect((assistants[0] as { content: string }).content).toBe("selesai")
+  expect(s.state.history.filter((m) => m.role === "tool")).toHaveLength(0)
+  expect(JSON.stringify(s.state.history)).not.toContain("paruh-")
+})
+
+test("audit: P4-M05-A2 malformed berulang berhenti eksplisit dengan cause network", async () => {
+  const p = new FakeProvider([
+    { events: [text("rusak-1")] },
+    { events: [text("rusak-2")] },
+    { events: [text("rusak-3")] },
+  ])
+  const s = createSession({ provider: p, permissions: allowAll, recovery: fastRetryRecovery })
+  // fastRetryRecovery: attempt 1-2 retry, attempt 3 throw — tepat 3 request.
+  const err = await s.run("hi").catch((e: unknown) => e)
+  expect(p.requests.length).toBe(3)
+  // Terminasi eksplisit: AgentError provider dengan cause ProviderError asli.
+  expect(err).toMatchObject({ kind: "provider" })
+  expect((err as Error).message).toContain("stream ended without a finish reason")
+  expect((err as { cause?: { category?: string } }).cause?.category).toBe("network")
+})
+
+test("audit: P4-M05-B event setelah finish ditolak — retry, tanpa dispatch palsu", async () => {
+  let toolRuns = 0
+  const t = tool("tulis", async () => {
+    toolRuns++
+    return "ok"
+  })
+  const p = new FakeProvider([
+    // Percobaan 1: teks siluman setelah finish stop.
+    { events: [text("ok"), finish("stop"), text("SILUMAN")] },
+    // Percobaan 2: tool_call siluman setelah finish stop.
+    { events: [text("ok"), finish("stop"), toolCall("tulis", {}, "c-x")] },
+    // Percobaan 3: sehat.
+    { events: [text("pulih"), finish("stop")] },
+  ])
+  const s = createSession({
+    provider: p,
+    permissions: allowAll,
+    tools: [t],
+    recovery: fastRetryRecovery,
+  })
+  const r = await s.run("go")
+  expect(r.finalText).toBe("pulih")
+  expect(p.requests.length).toBe(3)
+  // Tool siluman TAK PERNAH didispatch (penolakan terjadi saat streaming,
+  // sebelum dispatch).
+  expect(toolRuns).toBe(0)
+  // Respons cacat tak diterima diam-diam: tak ada jejak "SILUMAN" di histori.
+  expect(JSON.stringify(s.state.history)).not.toContain("SILUMAN")
+  const assistants = s.state.history.filter((m) => m.role === "assistant")
+  expect(assistants).toHaveLength(1)
+  expect((assistants[0] as { content: string }).content).toBe("pulih")
 })
 
 // ── 4. Klasifikasi error ──

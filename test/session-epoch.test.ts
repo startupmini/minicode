@@ -5,6 +5,7 @@
 // simultan, basi, dan idempoten. Tanpa flaky timing.
 
 import { expect, test } from "bun:test"
+import { Database } from "bun:sqlite"
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -29,6 +30,8 @@ import {
   takeoverSessionEpoch,
 } from "../src/session/persistence.ts"
 import { TaskStore } from "../src/task/store.ts"
+import { SESSION_LEASE_MS } from "../src/task/session-authority.ts"
+import { startFakeProvider } from "./helpers/fake-provider.ts"
 
 function ws(): string {
   const dir = mkdtempSync(join(tmpdir(), "mc-p22-"))
@@ -313,4 +316,79 @@ test("P2.2: alias memakai pagar yang sama (tanpa namespace epoch sendiri)", asyn
   if (!adm.ok) throw new Error("admission alias gagal")
   expect(adm.admission.epoch).toBe(readWriterEpoch("kanon", cwd))
   expect(releaseSessionWriter("kanon", adm.admission.token, cwd)).toBe(true)
+})
+
+/** Tulis ulang config provider palsu ke baseUrl server tiruan yang hidup. */
+function pointConfigAt(cwd: string, baseUrl: string): void {
+  writeFileSync(
+    join(cwd, ".minicode", "config.json"),
+    JSON.stringify({
+      providers: [{ id: "fake", baseUrl, apiKey: "sk-test", models: ["m"] }],
+    }),
+    "utf8",
+  )
+}
+
+/** Jumlah baris Run durable untuk satu sesi (bukti ada/tidaknya Run baru). */
+function countRuns(cwd: string, sid: string): number {
+  const db = new Database(join(cwd, ".minicode", "sessions.db"), { readonly: true })
+  try {
+    const row = db.prepare("SELECT COUNT(*) AS n FROM runs WHERE session_id = ?").get(sid) as {
+      n: number
+    }
+    return row.n
+  } finally {
+    db.close()
+  }
+}
+
+// P4-E04 — pagar pra-turn menolak penulis basi SEBELUM provider dibelanjakan.
+// Jalur produksi penuh: runPromptWithVerify (bukan ensureWriterFresh saja).
+// Kontrak: nol request provider, tanpa Run baru, histori kernel utuh, dan
+// penolakan dilaporkan jujur lewat flag basi (bukan sukses diam-diam). Sengaja
+// TIDAK menuntut notice turn-level baru — itu keputusan owner terpisah.
+test("P4-E04: turn basi ditolak pra-provider — nol spend, tanpa run baru", async () => {
+  const cwd = ws()
+  const sid = "e04-basi"
+  await saveSession(
+    sid,
+    cwd,
+    undefined,
+    [
+      { role: "user", content: "A" },
+      { role: "assistant", content: "B" },
+    ],
+    { t: 1 },
+  )
+  const provider = startFakeProvider([{ kind: "text", text: "TAK-BOLEH-MUNCUL" }])
+  pointConfigAt(cwd, provider.baseUrl)
+  const cli = await createCliSession(baseOpts(cwd, { resumeId: sid }))
+  const historyBefore = cli.session.state.history.length
+  const runsBefore = countRuns(cwd, sid)
+  try {
+    expect(cli.writerEpoch).toBe(0)
+    // Penulis asing take-over setelah lease kedaluwarsa → epoch pindah 0→1.
+    const other = acquireSessionWriter({
+      sessionId: sid,
+      cwd,
+      bootId: "penulis-asing",
+      now: Date.now() + SESSION_LEASE_MS + 1_000,
+    })
+    expect(other.ok).toBe(true)
+    // Act: turn yang wajib ditolak pagar pra-turn (tak melempar — aman loop TUI).
+    await cli.runPromptWithVerify("turn basi — harus ditolak sebelum provider")
+    // Penolakan jujur: flag basi + alasan pra-turn, bukan sukses diam-diam.
+    expect(cli.isWriterStale()).toBe(true)
+    expect(cli.writerStaleNote()).toContain("pre-turn epoch mismatch")
+    expect(cli.writerEpoch).toBe(0)
+    // Provider NOL spend: tak satu pun request /chat/completions masuk.
+    expect(provider.requestCount()).toBe(0)
+    // Tanpa Run baru untuk turn yang ditolak.
+    expect(countRuns(cwd, sid)).toBe(runsBefore)
+    // Histori kernel utuh (turn tak pernah mencapai loop).
+    expect(cli.session.state.history.length).toBe(historyBefore)
+  } finally {
+    provider.close()
+    await cli.close()
+  }
 })

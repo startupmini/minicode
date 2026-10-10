@@ -5,6 +5,8 @@ import { expect, test } from "bun:test"
 import { ProviderError } from "#minicore/core/errors.ts"
 import { createSession } from "#minicore/core/index.ts"
 import type { ModelProvider, ProviderEvent, StreamRequest } from "#minicore/core/provider.ts"
+import type { ToolExecutor } from "#minicore/core/executor.ts"
+import type { ToolResult } from "#minicore/core/types.ts"
 import { allowAll, FakeProvider, fastRetryRecovery, finish, text, tool, toolCall } from "#minicore/test/fakes.ts"
 import { createRouterProvider } from "../src/providers/router.ts"
 import { friendlyError, friendlyFromCategory } from "../src/ui/render/errors.ts"
@@ -356,6 +358,184 @@ test("audit: P4-M10-A2 finish abort → AgentError provider eksplisit, tanpa ret
   expect(err).toMatchObject({ kind: "provider" })
   expect((err as Error).message).toContain("provider aborted the stream")
   expect(p.requests.length).toBe(1)
+})
+
+test("audit: P4-M10-A2 finish abort → AgentError provider eksplisit, tanpa retry", async () => {
+  const p = new FakeProvider([{ events: [text("setengah-"), finish("abort")] }])
+  const s = createSession({ provider: p, permissions: allowAll, recovery: fastRetryRecovery })
+  const err = await s.run("hi").catch((e: unknown) => e)
+  expect(err).toMatchObject({ kind: "provider" })
+  expect((err as Error).message).toContain("provider aborted the stream")
+  expect(p.requests.length).toBe(1)
+})
+
+// ── 3e. Executor result integrity (P4-T01/T05/T07/T06-tail) ──
+//
+// Batas yang diuji: eksekutor (atau tools di bawahnya) abnormal — argumen
+// melanggar skema, hasil hilang/salah-nama, execute melempar, output
+// raksasa. Kontrak kernel: semuanya menjadi tool result terklasifikasi
+// (bukan crash turn, bukan atribusi silang, bukan output tak terbatas).
+// Eksekutor abnormal di sini adalah INPUT buatan untuk decider produksi
+// (pairToolResults, runCall, serializeContent) — bukan mock perilakunya.
+
+// T01 — argumen melanggar skema → "invalid arguments:", tool tak dieksekusi.
+test("audit: P4-T01 argumen invalid → error result, tool tak jalan, turn lanjut", async () => {
+  let toolRuns = 0
+  const t = tool(
+    "tulis",
+    async () => {
+      toolRuns++
+      return "tak-boleh-dieksekusi"
+    },
+    {
+      type: "object",
+      properties: { path: { type: "string" } },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  )
+  const p = new FakeProvider([
+    {
+      events: [
+        // required hilang + tipe bukan objek (tepi "" adapter openai-compat).
+        toolCall("tulis", {}, "c-1"),
+        toolCall("tulis", "bukan-objek", "c-2"),
+        finish("tool_calls"),
+      ],
+    },
+    { events: [text("lanjut"), finish("stop")] },
+  ])
+  const s = createSession({ provider: p, permissions: allowAll, tools: [t] })
+  const r = await s.run("go")
+  expect(r.finalText).toBe("lanjut")
+  expect(p.requests.length).toBe(2)
+  // Tool TAK PERNAH dieksekusi dengan argumen invalid.
+  expect(toolRuns).toBe(0)
+  const results = s.state.history.filter((m) => m.role === "tool")
+  expect(results).toHaveLength(2)
+  for (const res of results) {
+    expect((res as { isError?: boolean }).isError).toBe(true)
+    expect(String((res as { content?: unknown }).content)).toContain("invalid arguments:")
+  }
+  expect(String((results[0] as { content?: unknown }).content)).toContain("missing required property")
+  expect(String((results[1] as { content?: unknown }).content)).toContain("expected an object")
+})
+
+// T05-A — hasil hilang sebagian: pairing tepat + error untuk yang hilang.
+test("audit: P4-T05-A hasil hilang → pairing tepat, yang hilang jadi error", async () => {
+  const partial: ToolExecutor = {
+    async execute(calls): Promise<readonly ToolResult[]> {
+      // Abnormal: hanya call TERAKHIR yang dikembalikan hasilnya.
+      const last = calls[calls.length - 1]!
+      return [{ role: "tool", toolCallId: last.id, name: last.name, content: "hasil-c2" }]
+    },
+  }
+  const p = new FakeProvider([
+    {
+      events: [toolCall("echo", { x: "1" }, "c-1"), toolCall("echo", { x: "2" }, "c-2"), finish("tool_calls")],
+    },
+    { events: [text("tutup"), finish("stop")] },
+  ])
+  const s = createSession({ provider: p, permissions: allowAll, executor: partial })
+  const r = await s.run("go")
+  expect(r.finalText).toBe("tutup")
+  expect(p.requests.length).toBe(2)
+  const results = s.state.history.filter((m) => m.role === "tool") as {
+    toolCallId?: string
+    isError?: boolean
+    content?: unknown
+  }[]
+  expect(results).toHaveLength(2)
+  // c-1: error "no result"; c-2: hasil ASLI terpairing tepat (bukan silang).
+  expect(results[0]!.toolCallId).toBe("c-1")
+  expect(results[0]!.isError).toBe(true)
+  expect(String(results[0]!.content)).toContain("no result for tool call")
+  expect(results[1]!.toolCallId).toBe("c-2")
+  expect(results[1]!.isError).not.toBe(true)
+  expect(results[1]!.content).toBe("hasil-c2")
+})
+
+// T05-B — hasil salah nama → mismatch error, bukan sukses menyesatkan.
+test("audit: P4-T05-B hasil salah nama → mismatch error eksplisit", async () => {
+  const mismatched: ToolExecutor = {
+    async execute(calls): Promise<readonly ToolResult[]> {
+      const call = calls[0]!
+      return [{ role: "tool", toolCallId: call.id, name: "nama-salah", content: "x" }]
+    },
+  }
+  const p = new FakeProvider([
+    { events: [toolCall("echo", { x: "1" }, "c-1"), finish("tool_calls")] },
+    { events: [text("tutup"), finish("stop")] },
+  ])
+  const s = createSession({ provider: p, permissions: allowAll, executor: mismatched })
+  const r = await s.run("go")
+  expect(r.finalText).toBe("tutup")
+  expect(p.requests.length).toBe(2)
+  const results = s.state.history.filter((m) => m.role === "tool") as {
+    toolCallId?: string
+    isError?: boolean
+    content?: unknown
+  }[]
+  expect(results).toHaveLength(1)
+  expect(results[0]!.toolCallId).toBe("c-1")
+  expect(results[0]!.isError).toBe(true)
+  expect(String(results[0]!.content)).toContain("nama-salah")
+  expect(String(results[0]!.content)).toContain("echo")
+})
+
+// T07 — execute melempar → tiap call dapat "executor error:"-nya sendiri.
+test("audit: P4-T07 executor melempar → per-call error result, turn tak crash", async () => {
+  const throwing: ToolExecutor = {
+    async execute(): Promise<readonly ToolResult[]> {
+      throw new Error("executor down")
+    },
+  }
+  const p = new FakeProvider([
+    {
+      events: [toolCall("echo", { x: "1" }, "c-1"), toolCall("echo", { x: "2" }, "c-2"), finish("tool_calls")],
+    },
+    { events: [text("tutup"), finish("stop")] },
+  ])
+  const s = createSession({ provider: p, permissions: allowAll, executor: throwing })
+  const r = await s.run("go")
+  // Turn SELESAI sebagai hasil error (bukan crash/reject).
+  expect(r.finalText).toBe("tutup")
+  const results = s.state.history.filter((m) => m.role === "tool") as {
+    toolCallId?: string
+    isError?: boolean
+    content?: unknown
+  }[]
+  expect(results).toHaveLength(2)
+  // Tiap call teratribusi TEPAT (c-1↔c-1, c-2↔c-2), bukan satu error batch.
+  expect(results.map((x) => x.toolCallId)).toEqual(["c-1", "c-2"])
+  for (const res of results) {
+    expect(res.isError).toBe(true)
+    expect(String(res.content)).toContain("executor error: executor down")
+  }
+  expect(p.requests.length).toBe(2)
+})
+
+// T06-tail — output raksasa dipagari marker + head/tail utuh.
+test("audit: P4-T06-tail hasil raksasa → truncation marker, head/tail utuh", async () => {
+  const big = `KEPALA-${"H".repeat(20_000)}-EKOR`
+  const t = tool("besar", async () => big)
+  const p = new FakeProvider([
+    { events: [toolCall("besar", {}, "c-1"), finish("tool_calls")] },
+    { events: [text("tutup"), finish("stop")] },
+  ])
+  const s = createSession({ provider: p, permissions: allowAll, tools: [t] })
+  const r = await s.run("go")
+  expect(r.finalText).toBe("tutup")
+  expect(p.requests.length).toBe(2)
+  const results = s.state.history.filter((m) => m.role === "tool") as { content?: unknown }[]
+  expect(results).toHaveLength(1)
+  const content = String(results[0]!.content)
+  // Marker kontrak ada, output TERBATAS (jauh di bawah input 20k+).
+  expect(content).toContain("…[truncated]…")
+  expect(content.length).toBeLessThan(big.length)
+  // Head dan tail dipertahankan (bukan potong buta).
+  expect(content.startsWith("KEPALA-")).toBe(true)
+  expect(content.endsWith("-EKOR")).toBe(true)
 })
 
 // ── 4. Klasifikasi error ──

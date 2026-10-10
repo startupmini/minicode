@@ -4,9 +4,14 @@
 // di kode lama (Prinsip 3): flag `compacted` tunggal di loop.ts mengaburkan
 // dua semantics berbeda.
 import { describe, expect, test } from "bun:test"
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import * as tk from "#minicore"
 import { AgentError, ProviderError } from "#minicore"
-import { FakeProvider, finish, text, toolCall } from "#minicore/test/fakes.ts"
+import { collectEvents, FakeProvider, finish, text, toolCall } from "#minicore/test/fakes.ts"
+import { createMinicodeSession } from "../src/app/session.ts"
+import { createLlmCompaction } from "../src/policy/compaction.ts"
 
 const { createSession, defaultTokenEstimator } = tk
 const allowAll = { check: async () => "allow" as const, describeDenial: () => undefined }
@@ -68,6 +73,99 @@ describe("compaction contract: budget ≠ recovery (F-10, seam Phase 6)", () => 
     // Pertama: force_compact (flag recovery diset). Kedua: flag recovery
     // sudah set → budget_exceeded.
     await expect(s.run("halo")).rejects.toMatchObject({ kind: "budget_exceeded" })
+  }, 15000)
+})
+
+describe("production compaction path (P4-M09)", () => {
+  // M09-A — finish "length" lewat recovery PRODUKSI (cappedRecovery, bukan
+  // mock onLength): kompaksi tepat sekali + retry + turn selesai. Sesi
+  // produksi penuh (createMinicodeSession: permission, executor, estimator
+  // nyata); kompaktor = default kernel (mekanikal sinkron, tanpa compactAsync)
+  // agar yang dibuktikan murni jalur recovery, bukan fallback.
+  test("P4-M09-A: length → satu recovery-compaction + retry → turn selesai", async () => {
+    const p = new FakeProvider([
+      { events: [finish("length")] },
+      { events: [text("pulih"), finish("stop")] },
+    ])
+    const s = await createMinicodeSession({
+      provider: p,
+      cwd: mkdtempSync(join(tmpdir(), "mc-m09a-")),
+      contextWindowTokens: 30_000, // besar → pressure low → tanpa budget compaction
+      keepRecentTurns: 1,
+    })
+    const { events, unsubscribe } = collectEvents(s.events)
+    try {
+      const res = await s.run("halo", {})
+      expect(res.finalText).toBe("pulih")
+      // Tepat 2 request: length-attempt + retry (bukan loop).
+      expect(p.requests.length).toBe(2)
+      // Kompaksi benar-benar jalan lewat seam loop (bukan klaim): tepat satu
+      // event context:compacted dengan reason recovery.
+      const compacted = events.filter((e) => e.type === "context:compacted")
+      expect(compacted).toHaveLength(1)
+      expect((compacted[0] as { reason?: string }).reason).toBe("recovery")
+    } finally {
+      unsubscribe()
+    }
+  }, 15000)
+
+  // M09-B — compactAsync produksi GAGAL → fallback mekanikal sinkron → turn
+  // lanjut. Strategi = createLlmCompaction produksi TANPA provider LLM:
+  // compactAsync-nya melempar deterministik ("no provider for LLM
+  // compaction", tanpa network) saat histori butuh pemadatan; loop wajib
+  // jatuh ke compact() sinkron (kontrak compactStore), bukan crash/retry
+  // buta. Spy tipis menghitung pemanggilan async — perilaku throw + fallback
+  // 100% produksi, bukan mock.
+  test("P4-M09-B: compactAsync gagal → fallback sync → turn selesai, konteks susut", async () => {
+    const p = new FakeProvider([
+      { events: [text("jawaban-satu"), finish("stop")] },
+      { events: [finish("length")] },
+      { events: [text("jawaban-dua"), finish("stop")] },
+    ])
+    const llm = createLlmCompaction({})
+    let asyncAttempts = 0
+    const s = await createMinicodeSession({
+      provider: p,
+      cwd: mkdtempSync(join(tmpdir(), "mc-m09b-")),
+      contextWindowTokens: 30_000, // besar → hanya jalur recovery yang menembak
+      keepRecentTurns: 1,
+      compaction: {
+        ...llm,
+        compactAsync: async (store, cOpts, signal) => {
+          asyncAttempts++
+          return llm.compactAsync!(store, cOpts, signal)
+        },
+      },
+    })
+    const { events, unsubscribe } = collectEvents(s.events)
+    try {
+      await s.run("topik-satu", {})
+      const res = await s.run("topik-dua", {})
+      // Turn lanjut SESUDAH fallback: jawaban sehat tiba.
+      expect(res.finalText).toBe("jawaban-dua")
+      // Tepat 3 request: turn1 + length-attempt + retry (bukan loop abadi).
+      expect(p.requests.length).toBe(3)
+      // Jalur async benar-benar dicoba tepat sekali (bukan dilewati).
+      expect(asyncAttempts).toBe(1)
+      const compacted = events.filter((e) => e.type === "context:compacted")
+      expect(compacted).toHaveLength(1)
+      expect((compacted[0] as { reason?: string }).reason).toBe("recovery")
+      // Request retry memakai konteks HASIL kompaksi (susut), bukan prakompaksi.
+      const bodies = p.requests.map((r) => r as { messages?: unknown[] })
+      expect(bodies[2]!.messages!.length).toBeLessThan(bodies[1]!.messages!.length)
+      // Fallback mekanikal melipat prefix jadi SATU ringkasan berbatas
+      // ("Previous context:"), bukan menghapus atau menduplikasi: 4 pesan
+      // tanpa kompaksi → 3 pesan (ringkasan + ekor turn berjalan).
+      const history = s.state.history as { role?: string; content?: unknown }[]
+      expect(history).toHaveLength(3)
+      expect(history[0]!.role).toBe("user")
+      expect(String(history[0]!.content)).toMatch(/^Previous context:/)
+      const dump = JSON.stringify(history)
+      expect(dump).toContain("topik-dua")
+      expect(dump).toContain("jawaban-dua")
+    } finally {
+      unsubscribe()
+    }
   }, 15000)
 })
 

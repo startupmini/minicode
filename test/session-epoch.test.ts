@@ -479,3 +479,67 @@ test("P03-A: one-shot — persist ditolak jujur, kanonik utuh, tanpa retry buta"
     await cli.close()
   }
 })
+
+// P4-M12 — composed budget kind: abort mid-turn membawa kind
+// "budget_exceeded" (bukan "aborted" generik) di live turn.
+//
+// Komposisi yang dibuktikan (jalur host produksi penuh, bukan helper
+// terisolasi): watchBudgetLimit (usage.ts:133-167) melihat cost live >
+// budget → onOver → ctl.abort(budgetExceededError()) (setup.ts:1800-1817)
+// → kernel abortError mempertahankan signal.reason (errors.ts:29-31) →
+// toProviderError short-circuit saat aborted, tanpa retry (loop.ts:303,
+// :311-331) → runPromptWithVerify melempar ulang (inner tak menelan).
+// Berbeda dari budget kind lain: budgetStatus "over"/"unknown-strict"
+// adalah gate pra-turn (string union), terminal kernel BUDGET_EXCEEDED
+// adalah klasifikasi pasca-turn — kind "budget_exceeded" di sini adalah
+// identitas abort yang mengalir watcher→kernel→pemanggil.
+test("P4-M12: mid-turn budget abort terklasifikasi budget_exceeded di live turn", async () => {
+  const cwd = ws()
+  const sid = "p04m12"
+  await saveSession(
+    sid,
+    cwd,
+    undefined,
+    [
+      { role: "user", content: "A" },
+      { role: "assistant", content: "B" },
+    ],
+    { t: 1 },
+  )
+  // gpt-4o-mini di tabel harga: 2M input + 1M output = $0,90; budget $0,45
+  // → status "over" tepat di tengah turn (pola cli-session.test.ts:344).
+  const provider = startFakeProvider([
+    {
+      kind: "text",
+      text: "mahal",
+      usage: { inputTokens: 2_000_000, outputTokens: 1_000_000 },
+    },
+  ])
+  writeFileSync(
+    join(cwd, ".minicode", "config.json"),
+    JSON.stringify({
+      providers: [
+        { id: "fake", baseUrl: provider.baseUrl, apiKey: "sk-test", models: ["gpt-4o-mini"] },
+      ],
+    }),
+    "utf8",
+  )
+  const cli = await createCliSession(
+    baseOpts(cwd, { resumeId: sid, modelOverride: "gpt-4o-mini", budget: 0.45 }),
+  )
+  try {
+    const err = await cli.runPromptWithVerify("belanja besar").catch((e: unknown) => e)
+    // Kind komposisi: budget_exceeded — bukan abort generik/timeout, dan
+    // bukan sukses diam-diam (turn MELEMPAR, bukan resolve).
+    expect((err as { kind?: string }).kind).toBe("budget_exceeded")
+    expect((err as Error).message).toContain("budget exceeded")
+    // Jalur "over" berbiaya (bukan unknown-strict): cost sesi tercatat.
+    expect(cli.usage.getSession("gpt-4o-mini").cost).toBeGreaterThan(0.45)
+    // Tepat satu provider request: abort menghentikan turn tanpa retry
+    // dan tanpa iterasi/tool tambahan.
+    expect(provider.requestCount()).toBe(1)
+  } finally {
+    provider.close()
+    await cli.close()
+  }
+})

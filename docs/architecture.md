@@ -82,10 +82,15 @@ Tiga aturan yang menjaga domain ini:
    bisa berbeda arah — dan plan event terbit di `execution:completed`, bukan
    dari argumen sebelum tool jalan.
 
-Batas saat ini (NOT IMPLEMENTED, lihat `docs/TASK_ARCHITECTURE_AUDIT.md`):
-tanpa dependency/graph, tanpa scheduler, tanpa surface user (`/tasks`),
-`/undo` hanya revert file (todo tetap `completed`), dan tidak ada TTL/GC untuk
-file todo di luar SQLite.
+Batas subsystem **todo** (lihat `docs/TASK_ARCHITECTURE_AUDIT.md` untuk
+audit historisnya): file todo tetap datar — tanpa field dependency di
+`TodoItem`, tanpa surface user (`/tasks`), `/undo` hanya revert file (todo
+tetap `completed`), dan tanpa TTL/GC untuk file todo di luar SQLite.
+Dependency/graph dan scheduler **sudah ada**, tetapi pada subsystem terpisah:
+TaskGraph + Scheduler di `src/task/` beroperasi di atas TaskStore
+(`.minicode/tasks.db`), bukan di atas file todo; `todo_write` hanya boleh
+menyentuhnya lewat `taskId` kanonik (`src/tools/todo.ts`), dan control
+surface-nya `/scheduler` (off by default).
 
 ## Bukti verifikasi (P2.10)
 

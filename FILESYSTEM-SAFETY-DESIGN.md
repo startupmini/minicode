@@ -1,6 +1,10 @@
 # FILESYSTEM SAFETY DESIGN
 
-Status: **DESIGN ONLY — nothing in this document is implemented.**
+Status: **GUARD IMPLEMENTED, ADOPTION PARTIAL** (reconciled at HEAD `7eede05`).
+`assertDeletableTarget` is live in `src/lib/safe-open.ts` (§3) and gates the one
+production recursive delete (`src/session/persistence.ts`, checkpoint purge —
+adoption stage 2). The stage-1 unit-test suite is still missing (zero test
+references; recorded as Phase 5 required work), and stages 3–6 remain planned.
 Scope: guards for destructive filesystem APIs in the reconstruction worktree.
 Motivation: the 2026-09-28 incident deleted **34/34 direct children of the project root** while **preserving the root** — a *content-clearing* signature.
 
@@ -78,7 +82,7 @@ All 251 recursive sites resolve to one of:
 
 ## 3. Proposed guard: `assertDeletableTarget`
 
-Sibling to `assertSafeWriteTarget`, in `src/lib/safe-open.ts`. Fail-closed. **Design only.**
+Sibling to `assertSafeWriteTarget`, in `src/lib/safe-open.ts`. Fail-closed. **Implemented** (unit tests still missing — Phase 5 required work).
 
 ```ts
 export interface DeleteScope {
@@ -129,16 +133,16 @@ export async function clearDirectoryContents(dir: string, scope: DeleteScope): P
 
 ---
 
-## 4. Adoption plan (staged, not implemented)
+## 4. Adoption plan (staged; current state reconciled at HEAD `7eede05`)
 
-| Stage | Action |
-|---|---|
-| 1 | Add `assertDeletableTarget` + unit tests covering: repo root, `""`, `"."`, `".."`, drive root, home, `tmpdir()` root, symlink escape, depth-0 target |
-| 2 | Convert the **production** recursive delete (`persistence.ts` checkpoint purge) — 1 site |
-| 3 | Convert `test/extreme.test.ts` to a created-path registry; delete the `readdir(".")` loop |
-| 4 | Ban bare-name relative recursive deletes: lint rule rejecting `rm(<bare identifier>, { recursive: true })` where the argument is not `mkdtemp`-derived |
-| 5 | Convert the remaining 248 sites mechanically; the guard is expected to be a no-op for them, which is itself the proof |
-| 6 | CI guard test: assert **no** test file issues a recursive delete against a `process.cwd()`-derived path |
+| Stage | Action | State |
+|---|---|---|
+| 1 | Add `assertDeletableTarget` + unit tests covering: repo root, `""`, `"."`, `".."`, drive root, home, `tmpdir()` root, symlink escape, depth-0 target | **Guard added; unit tests still missing** |
+| 2 | Convert the **production** recursive delete (`persistence.ts` checkpoint purge) — 1 site | **Done** (`persistence.ts:3365-3374`, fail-closed skip on guard error) |
+| 3 | Convert `test/extreme.test.ts` to a created-path registry; delete the `readdir(".")` loop | Planned |
+| 4 | Ban bare-name relative recursive deletes: lint rule rejecting `rm(<bare identifier>, { recursive: true })` where the argument is not `mkdtemp`-derived | Planned |
+| 5 | Convert the remaining 248 sites mechanically; the guard is expected to be a no-op for them, which is itself the proof | Planned |
+| 6 | CI guard test: assert **no** test file issues a recursive delete against a `process.cwd()`-derived path | Planned |
 
 ## 5. Prohibited patterns (lint/CI)
 

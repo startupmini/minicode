@@ -23,6 +23,7 @@ import { type CheckpointResult, openExecutionJournal } from "../src/runtime/exec
 import { createProductionRuntime, RUNTIME_GATE_ENABLED } from "../src/runtime/production-runtime.ts"
 import type { RedispatchPlan } from "../src/runtime/recovery.ts"
 import type { RuntimeHostHooks } from "../src/runtime/runtime-host.ts"
+import { normalizeSourceEol } from "./helpers/source-eol.ts"
 
 const PHASE_ORDER: readonly RuntimeShutdownPhase[] = [
   "admission-latch",
@@ -474,7 +475,14 @@ test("S12 host failure: hook onShutdown/onClose gagal = terstruktur, bukti utuh"
 
 // ── S13: scheduler stop sebelum latch dispatch (urutan di composition root) ──
 test("S13 scheduler-first: scheduler.stop() dipanggil sebelum productionRuntime.stop()", async () => {
-  const source = readFileSync(join(import.meta.dir, "..", "cli", "setup.ts"), "utf8")
+  // Normalisasi EOL (helper test/helpers/source-eol.ts): blob yang di-commit
+  // LF-only, tapi checkout Windows (core.autocrlf=true) berisi CRLF sehingga
+  // literal "\n    detachUI()\n" tak pernah cocok pada source mentah. Yang
+  // diuji adalah URUTAN SEMANTIK, bukan representasi checkout — tanpa ini,
+  // mesin Windows mengukur environment, bukan kode.
+  const source = normalizeSourceEol(
+    readFileSync(join(import.meta.dir, "..", "cli", "setup.ts"), "utf8"),
+  )
   const schedulerStop = source.indexOf('await productionScheduler.stop("shutdown")')
   const runtimeStop = source.indexOf("await productionRuntime.stop()")
   expect(schedulerStop).toBeGreaterThan(0)

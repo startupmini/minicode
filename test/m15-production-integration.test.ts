@@ -144,6 +144,21 @@ test("P2: hanya composition.ts yang membuat backend runtime", () => {
 })
 
 // ── P3: tak ada authority kedua (kernel/host/runtime) di luar runtime ───────
+// Pengecualian SEMPIT yang sudah diaudit (Batch 3): `src/runtime/dispatch.ts`
+// boleh membangun SATU `createRecoveryEngine()` HANYA dalam bentuk tunggal
+// `const planValidator = createRecoveryEngine()` dan HANYA memanggil predicate
+// murni `isPlanCurrent` padanya. Predicate itu (recovery.ts:422-442) hanya
+// membandingkan field plan-vs-konteks — tanpa tulis, tanpa I/O, tanpa cache,
+// tanpa Date — jadi bukan jalur kepemilikan/state kedua. Bentuk lain apa pun
+// (konstruksi kedua, nama berbeda, argumen, method stateful) tetap DITOLAK.
+function isVerifiedPlanValidatorUse(src: string): boolean {
+  if (!src.includes("const planValidator = createRecoveryEngine()")) return false
+  const constructions = src.match(/\bcreateRecoveryEngine\s*\(/g) ?? []
+  if (constructions.length !== 1) return false
+  const calls = [...src.matchAll(/\bplanValidator\.([A-Za-z_$][\w$]*)\s*\(/g)]
+  if (calls.length === 0) return false
+  return calls.every((m) => m[1] === "isPlanCurrent")
+}
 test("P3: konstruktor authority runtime hanya di src/runtime", () => {
   const owners: Record<string, string[]> = {
     createExecutionKernel: ["src/runtime/execution-kernel.ts", "src/runtime/composition.ts"],
@@ -163,11 +178,49 @@ test("P3: konstruktor authority runtime hanya di src/runtime", () => {
     for (const rel of tracked) {
       if (allowed.includes(rel)) continue
       const src = readFileSync(join(repoRoot, rel), "utf8")
+      if (
+        symbol === "createRecoveryEngine" &&
+        rel === "src/runtime/dispatch.ts" &&
+        isVerifiedPlanValidatorUse(src)
+      )
+        continue
       if (new RegExp(`\\b${symbol}\\s*\\(`).test(src) && !src.includes(`type ${symbol}`))
         offenders.push(`${rel}: ${symbol}`)
     }
   }
   expect(offenders).toEqual([])
+})
+
+// ── P3-negatif: pengecualian planValidator menolak bentuk yang belum diaudit ─
+// Guard di atas tidak boleh menjadi blanket-allow untuk dispatch.ts: sumber
+// sintetis yang melanggar (method stateful, konstruksi ganda/nama lain)
+// WAJIB ditolak matcher yang sama. Ini membuktikan guard tetap bergigi.
+test("P3-negatif: matcher planValidator menolak penggunaan tak-terverifikasi", () => {
+  const good = [
+    "import { createRecoveryEngine } from './recovery.ts'",
+    "const planValidator = createRecoveryEngine()",
+    "if (planValidator.isPlanCurrent(plan, current)) {",
+  ].join("\n")
+  expect(isVerifiedPlanValidatorUse(good)).toBe(true)
+  // Method stateful pada instance yang sama → tolak.
+  expect(
+    isVerifiedPlanValidatorUse(`${good}\nplanValidator.recover("e", {}, {}, 0);`),
+  ).toBe(false)
+  // Konstruksi kedua (nama lain) → tolak.
+  expect(isVerifiedPlanValidatorUse(`${good}\nconst e2 = createRecoveryEngine();`)).toBe(false)
+  // Konstruksi dengan argumen (bentuk tak dikenal) → tolak.
+  expect(
+    isVerifiedPlanValidatorUse(
+      good.replace(
+        "const planValidator = createRecoveryEngine()",
+        "const planValidator = createRecoveryEngine(opts)",
+      ),
+    ),
+  ).toBe(false)
+  // Konstruksi tanpa pemanggilan (dead instance) → tolak.
+  expect(
+    isVerifiedPlanValidatorUse("const planValidator = createRecoveryEngine()\n"),
+  ).toBe(false)
 })
 
 // ── P4/P5: setiap pekerjaan runtime-owned DIDAFTARKAN untuk drain ────────────

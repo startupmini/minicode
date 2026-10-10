@@ -348,6 +348,18 @@ function messageContents(cwd: string, sid: string): unknown[] {
   }
 }
 
+/** Baris Run durable (urutan kreasi) untuk satu sesi: id + status + ended_at. */
+function runRows(cwd: string, sid: string): { run_id: string; status: string; ended_at: number | null }[] {
+  const db = new Database(join(cwd, ".minicode", "sessions.db"), { readonly: true })
+  try {
+    return db
+      .prepare("SELECT run_id, status, ended_at FROM runs WHERE session_id = ? ORDER BY rowid")
+      .all(sid) as { run_id: string; status: string; ended_at: number | null }[]
+  } finally {
+    db.close()
+  }
+}
+
 /** Jumlah baris Run durable untuk satu sesi (bukti ada/tidaknya Run baru). */
 function countRuns(cwd: string, sid: string): number {
   const db = new Database(join(cwd, ".minicode", "sessions.db"), { readonly: true })
@@ -538,6 +550,79 @@ test("P4-M12: mid-turn budget abort terklasifikasi budget_exceeded di live turn"
     // Tepat satu provider request: abort menghentikan turn tanpa retry
     // dan tanpa iterasi/tool tambahan.
     expect(provider.requestCount()).toBe(1)
+  } finally {
+    provider.close()
+    await cli.close()
+  }
+})
+
+// P4-E09 — successful host execution menghasilkan durable run COMPLETED.
+//
+// Desain run host (setup.ts:760-778): satu invokasi = satu Run; penandaan
+// terminal DITUNDA — markPreviousRunTerminal di awal turn berikut (:1747)
+// atau di close() (:2372-2386) — lalu completeRun. Tanpa test ini, regresi
+// pada cabang completed (salah klasifikasi outcome, penandaan terlewat)
+// akan diam: turn resolve "sukses" sementara baris Run tertinggal RUNNING
+// dan dikubur INTERRUPTED saat resume (sukses dilaporkan sebagai interupsi).
+// Cermin jalur-gagal sudah dibuktikan run-foundation.test.ts:407 (FAILED
+// saat close); DB-level completeRun (:174/:190) tak menyentuh host.
+// Dua turn + close di sini membuktikan KEDUA jalur host (next-turn dan
+// close) lewat runPromptWithVerify/close produksi, diamati dari tabel
+// runs durable (readonly) — bukan return value semata.
+test("P4-E09: turn sukses menutup run COMPLETED di kedua jalur host", async () => {
+  const cwd = ws()
+  const sid = "p04e09"
+  await saveSession(
+    sid,
+    cwd,
+    undefined,
+    [
+      { role: "user", content: "A" },
+      { role: "assistant", content: "B" },
+    ],
+    { t: 1 },
+  )
+  const provider = startFakeProvider([
+    { kind: "text", text: "C" },
+    { kind: "text", text: "E" },
+  ])
+  pointConfigAt(cwd, provider.baseUrl)
+  const cli = await createCliSession(baseOpts(cwd, { resumeId: sid }))
+  const persist = () => cli.persistCurrent(cli.usage.getSession(cli.modelRef.current))
+  try {
+    // Nol baris Run sebelum turn pertama: seed hanya menulis messages,
+    // sehingga baris Run di bawah murni buatan host (anti-false-positive).
+    expect(runRows(cwd, sid)).toHaveLength(0)
+    // Turn 1 sukses: tepat satu Run, masih RUNNING (penandaan ditunda
+    // by design — menandai eager di sini justru regresi yang wajib gagal).
+    await cli.runPromptWithVerify("D")
+    await persist()
+    expect(provider.requestCount()).toBe(1)
+    let runs = runRows(cwd, sid)
+    expect(runs).toHaveLength(1)
+    expect(runs[0]!.status).toBe("RUNNING")
+    expect(runs[0]!.ended_at).toBeNull()
+    // Turn 2 sukses: R1 ditutup COMPLETED oleh markPreviousRunTerminal
+    // (cabang completed :775), R2 dibuka RUNNING.
+    await cli.runPromptWithVerify("F")
+    await persist()
+    expect(provider.requestCount()).toBe(2)
+    runs = runRows(cwd, sid)
+    expect(runs).toHaveLength(2)
+    expect(runs[0]!.status).toBe("COMPLETED")
+    expect(typeof runs[0]!.ended_at).toBe("number")
+    expect(runs[1]!.status).toBe("RUNNING")
+    expect(runs[1]!.ended_at).toBeNull()
+    expect(runs[0]!.run_id).not.toBe(runs[1]!.run_id)
+    // Kanonik memuat kedua turn yang sukses.
+    expect(messageContents(cwd, sid)).toEqual(["A", "B", "D", "C", "F", "E"])
+    // Close: R2 ditutup COMPLETED (jalur close :2378); R1 tak tersentuh.
+    await cli.close()
+    runs = runRows(cwd, sid)
+    expect(runs).toHaveLength(2)
+    expect(runs.map((r) => r.status)).toEqual(["COMPLETED", "COMPLETED"])
+    expect(runs.every((r) => typeof r.ended_at === "number")).toBe(true)
+    expect(provider.requestCount()).toBe(2)
   } finally {
     provider.close()
     await cli.close()

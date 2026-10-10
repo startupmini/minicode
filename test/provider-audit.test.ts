@@ -538,6 +538,25 @@ test("audit: P4-T06-tail hasil raksasa → truncation marker, head/tail utuh", a
   expect(content.endsWith("-EKOR")).toBe(true)
 })
 
+// ── 3f. Empty turn (P4-M04): konten nol + stop = selesai ──
+//
+// Berbeda dari extreme.test.ts:732 (turn tool-only): di sini provider tidak
+// mengirim TEKS maupun tool_call sama sekali. Kontrak loop.ts:199-203:
+// turn berakhir normal dengan finalText undefined — tanpa error, tanpa
+// retry, tanpa dispatch hantu.
+test("audit: P4-M04 respons kosong → turn selesai tanpa retry, finalText undefined", async () => {
+  const p = new FakeProvider([{ events: [finish("stop")] }])
+  const s = createSession({ provider: p, permissions: allowAll })
+  const r = await s.run("hi")
+  expect(r.finalText).toBeUndefined()
+  // Tepat 1 request: tak ada retry atas respons kosong.
+  expect(p.requests.length).toBe(1)
+  // Satu pesan assistant kosong tercatat (bukan toolletedak/diduplikasi).
+  const assistants = s.state.history.filter((m) => m.role === "assistant")
+  expect(assistants).toHaveLength(1)
+  expect((assistants[0] as { content: string }).content).toBe("")
+})
+
 // ── 4. Klasifikasi error ──
 
 test("audit: auth gagal seketika tanpa retry", async () => {

@@ -8,7 +8,11 @@
 
 import { describe, expect, test } from "bun:test"
 import { createEventBus } from "#minicore/core/events.ts"
-import { createUsageCollector, watchBudgetLimit } from "../src/policy/usage.ts"
+import {
+  budgetGateAllowsStart,
+  createUsageCollector,
+  watchBudgetLimit,
+} from "../src/policy/usage.ts"
 
 const emitUsage = (
   bus: ReturnType<typeof createEventBus>,
@@ -231,5 +235,25 @@ describe("watchBudgetLimit: pemutus mid-turn", () => {
     })
     expect(fired).toBe(0)
     stop()
+  })
+})
+
+describe("budgetGateAllowsStart: kontrak investigasi yang disengaja tak di-wire", () => {
+  // Batch 9 Decision A (B08): fungsi ini BUKAN general start gate — gate
+  // produksi adalah budgetStatus (pra-turn, 5 call site) + watchBudgetLimit
+  // (mid-turn). Fungsi ini mendokumentasikan kontrak investigasi Phase 5
+  // (E-3b/E-3c, F-06): unknown-cost + ada pemakaian = tolak; tokens==0 =
+  // selalu boleh (tanpa lockout prompt pertama). Sengaja tak di-wire:
+  // ia menolak SESI APAPUN yang sudah ada pemakaiannya (cost tak
+  // dipertimbangkan — selalu undefined di dalamnya), sehingga wiring
+  // akan merusak sesi multi-turn normal. Dipertahankan + di-pin agar
+  // semantik terdokumentasi tak bergeser diam-diam; jangan wire tanpa
+  // keputusan owner terpisah.
+  test("semantik terdokumentasi: null/zero boleh, usage menolak", () => {
+    expect(budgetGateAllowsStart(undefined, false, 999)).toBe(true)
+    expect(budgetGateAllowsStart(1, false, 0)).toBe(true)
+    expect(budgetGateAllowsStart(1, true, 0)).toBe(true)
+    expect(budgetGateAllowsStart(1, false, 5)).toBe(false)
+    expect(budgetGateAllowsStart(1, true, 5)).toBe(false)
   })
 })

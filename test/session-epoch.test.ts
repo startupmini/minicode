@@ -628,3 +628,60 @@ test("P4-E09: turn sukses menutup run COMPLETED di kedua jalur host", async () =
     await cli.close()
   }
 })
+
+// P05-tail — non-guard persist failure saat ini DITELAN (best-effort).
+//
+// PERILAKU SAAT INI, BUKAN KLAIM KEBENARAN — menunggu kebijakan §13.2.
+// Taksonomi persistCurrent: StaleWriterError → flag basi jujur;
+// RefusedHistoryRewriteError → shrink eksplisit / tolak-jujur;
+// error LAIN (I/O disk, BUSY habis-retry, constraint, korupsi) → telan
+// diam-diam di catch terluar (setup.ts:2105-2113, "persist best-effort").
+// Test ini menyuntik kegagalan non-guard deterministik (trigger SQL yang
+// menggagalkan INSERT messages seketika — tanpa timing/lock) dan mem-pin
+// perilaku saat ini: resolve tanpa throw, TANPA flag basi, turn hilang dari
+// durable history. Rasional retensi: sesi TUI long-running tetap hidup
+// melewati gangguan transien; guard tetap berisik; jurnal (file) menyimpan
+// bukti untuk recovery. Bila kebijakan diputuskan sebaliknya (flag/throw),
+// test ini WAJIB diperbarui — jangan ubah perilaku diam-diam.
+test("P05-tail: non-guard persist failure saat ini ditelan tanpa flag", async () => {
+  const cwd = ws()
+  const sid = "p05tail"
+  await saveSession(
+    sid,
+    cwd,
+    undefined,
+    [
+      { role: "user", content: "A" },
+      { role: "assistant", content: "B" },
+    ],
+    { t: 1 },
+  )
+  const provider = startFakeProvider([{ kind: "text", text: "C" }])
+  pointConfigAt(cwd, provider.baseUrl)
+  const cli = await createCliSession(baseOpts(cwd, { resumeId: sid }))
+  const db = new Database(join(cwd, ".minicode", "sessions.db"))
+  try {
+    // Turn berjalan normal (satu spend).
+    await cli.runPromptWithVerify("D")
+    expect(provider.requestCount()).toBe(1)
+    // Suntik kegagalan non-guard: INSERT messages selalu ABORT seketika.
+    db.exec(
+      "CREATE TRIGGER p05_probe_fault BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'P05 probe fault'); END",
+    )
+    // Persist nyata → saveSession melempar non-guard → catch terluar menelan.
+    const u = cli.usage.getSession(cli.modelRef.current)
+    await cli.persistCurrent(u)
+    // Saat ini: tak melempar DAN tak menandai basi (bedakan dari guard path
+    // yang jujur via isWriterStale). Kanonik utuh tapi turn hilang.
+    expect(cli.isWriterStale()).toBe(false)
+    expect(messageContents(cwd, sid)).toEqual(["A", "B"])
+    expect(provider.requestCount()).toBe(1)
+  } finally {
+    try {
+      db.exec("DROP TRIGGER IF EXISTS p05_probe_fault")
+    } catch {}
+    db.close()
+    provider.close()
+    await cli.close()
+  }
+})

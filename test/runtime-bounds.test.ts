@@ -5,8 +5,10 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ProviderError } from "#minicore/core/errors.ts"
+import { DEFAULT_MAX_STEPS } from "#minicore/core/session.ts"
 import { FakeProvider, finish, text, toolCall } from "#minicore/test/fakes.ts"
 import { cappedRecovery, createMinicodeSession } from "../src/app/session.ts"
+import { LIMITS } from "../src/constants.ts"
 
 test("F-12: retryAfter Infinity/NaN/negatif → backoff, besar → cap", () => {
   const inf = cappedRecovery.onError(new ProviderError("rate_limit", "x", Infinity), 1)
@@ -59,6 +61,15 @@ test("F-09: maxSteps 0/negatif/Infinity → default aman, turn jalan", async () 
   expect(await runWithBounds({ maxSteps: 0 })).toContain("selesai")
   expect(await runWithBounds({ maxSteps: -3 })).toContain("selesai")
   expect(await runWithBounds({ maxSteps: Infinity })).toContain("selesai")
+})
+
+// Batch 9 (B02): nilai default pagu iterasi di-pin — 50 kernel == 50 host.
+// Bukan tautologi: perubahan diam-diam pada angka ini melipatgandakan
+// anggaran runaway loop; sanitasi F-09 di atas hanya membuktikan fallback,
+// bukan nilainya.
+test("F-09b: DEFAULT_MAX_STEPS = 50 di kernel dan mirror host", () => {
+  expect(DEFAULT_MAX_STEPS).toBe(50)
+  expect(LIMITS.DEFAULT_MAX_STEPS).toBe(50)
 })
 
 test("F-09: timeoutMs NaN/negatif → default aman, turn jalan", async () => {

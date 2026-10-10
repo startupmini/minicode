@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtemp, rm } from "node:fs/promises"
+import { Database } from "bun:sqlite"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -12,6 +13,11 @@ import {
   parseRunParams,
   runAcpSession,
 } from "../cli/commands/acp.ts"
+import { type CliSessionOptions, createCliSession } from "../cli/setup.ts"
+import { acquireSessionWriter } from "../src/session/authority.ts"
+import { SESSION_LEASE_MS } from "../src/task/session-authority.ts"
+import { resetTaskStoreHandles } from "../src/task/store.ts"
+import { startFakeProvider } from "./helpers/fake-provider.ts"
 
 // Fase 5: server JSON-RPC stdio minimal untuk IDE (subset, bukan ACP penuh).
 
@@ -324,6 +330,118 @@ describe("acp: runAcpSession (sesi injeksi, tanpa provider)", () => {
     expect((byId(22).result as { cancelled: boolean }).cancelled).toBe(true)
     expect((byId(21).error as { message: string }).message).toBe("run cancelled")
   })
+})
+
+describe("acp: P03-C stale persistence refusal (sesi produksi)", () => {
+  // P03-C — ACP: turn sukses + persist ditolak guard typed → tepat satu
+  // envelope ok (sudah terkirim sebelum persist, exactly-once per run) +
+  // laporan stderr `[writer] … NOT durable`, tanpa envelope kedua yang
+  // menutupi kegagalan durable. Kanonik utuh (nol baris).
+  //
+  // Jalur produksi penuh: runAcpSession nyata + CliSession nyata + provider
+  // HTTP tiruan. Factory yang di-inject memanggil createCliSession produksi
+  // (sessionId fresh mint-an ACP dipertahankan — kebijakan P2.1 utuh) lalu
+  // membungkus persistCurrent: tepat sebelum persist produksi, penulis
+  // pesaing NYATA take-over → StaleWriterError typed lewat saveSession
+  // produksi. Hanya TIMING kedatangan pesaing yang di-stage (tak bisa
+  // deterministik dari luar: sesi ACP fresh per run dan sekuens
+  // turn→envelope→persist internal); refusal-nya 100% jalur produksi.
+  test("turn sukses + persist ditolak → satu envelope ok, stderr [writer], kanonik utuh", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "minicode-p03c-"))
+    await mkdir(join(cwd, ".minicode"), { recursive: true })
+    const provider = startFakeProvider([{ kind: "text", text: "jawaban-acp" }])
+    await writeFile(
+      join(cwd, ".minicode", "config.json"),
+      JSON.stringify({
+        providers: [{ id: "fake", baseUrl: provider.baseUrl, apiKey: "sk-test", models: ["m"] }],
+      }),
+      "utf8",
+    )
+    let stagedSid = ""
+    const factory = (async (opts: CliSessionOptions) => {
+      const real = await createCliSession({ ...opts, cwd, allowLocalConfig: true })
+      stagedSid = real.sessionId
+      const realPersist = real.persistCurrent.bind(real)
+      return {
+        ...real,
+        persistCurrent: async (u: never) => {
+          acquireSessionWriter({
+            sessionId: real.sessionId,
+            cwd,
+            bootId: "penulis-asing",
+            now: Date.now() + SESSION_LEASE_MS + 1_000,
+          })
+          await realPersist(u)
+        },
+      }
+    }) as never
+    const out: string[] = []
+    const errLines: string[] = []
+    const prevErr = process.stderr.write
+    process.stderr.write = ((chunk: unknown) => {
+      errLines.push(String(chunk))
+      return true
+    }) as typeof process.stderr.write
+    try {
+      await runAcpSession(
+        31,
+        { prompt: "kerjakan", cwd },
+        {
+          write: (l) => {
+            out.push(l)
+          },
+          onDone: () => {},
+          startFlight: () => {},
+          shouldExit: () => false,
+          exit: () => {},
+          createSession: factory,
+        },
+      )
+    } finally {
+      process.stderr.write = prevErr
+      provider.close()
+    }
+    const notes = out.map((l) => JSON.parse(l)) as Record<string, unknown>[]
+    // Tepat SATU envelope hasil ber-id: ok (turn selesai; terkirim sebelum
+    // persist). Tanpa envelope kedua — sukses maupun error — yang menutupi
+    // kegagalan durable.
+    const results = notes.filter((n) => n.id === 31)
+    expect(results).toHaveLength(1)
+    expect(results[0]!.result).toMatchObject({ ok: true })
+    expect(notes.some((n) => n.error !== undefined)).toBe(false)
+    // Refusal dilaporkan via kanal stderr yang ada (kontrak acp.ts:467-471).
+    const errText = errLines.join("")
+    expect(errText).toContain("stale writer")
+    expect(errText).toContain("NOT durable")
+    // Kanonik utuh: pagar epoch menolak SEBELUM tulis — nol baris pesan
+    // untuk sesi ini. Attempted turn (spend 1) ≠ durable publication.
+    expect(provider.requestCount()).toBe(1)
+    const db = new Database(join(cwd, ".minicode", "sessions.db"), { readonly: true })
+    try {
+      const row = db
+        .prepare("SELECT COUNT(*) AS n FROM messages WHERE session_id = ?")
+        .get(stagedSid) as { n: number }
+      expect(row.n).toBe(0)
+    } finally {
+      db.close()
+    }
+    // Bersihkan workspace (handle sqlite Windows butuh retry + GC).
+    try {
+      resetTaskStoreHandles()
+    } catch {}
+    for (let i = 0; i < 10; i++) {
+      try {
+        await rm(cwd, { recursive: true, force: true })
+        break
+      } catch {
+        try {
+          resetTaskStoreHandles()
+        } catch {}
+        Bun.gc(true)
+        await Bun.sleep(50)
+      }
+    }
+  }, 60_000)
 })
 
 const HERMETIC_ENV = {

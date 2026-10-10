@@ -329,6 +329,25 @@ function pointConfigAt(cwd: string, baseUrl: string): void {
   )
 }
 
+/** Isi kanonik ter-decode (urutan seq) untuk satu sesi. */
+function messageContents(cwd: string, sid: string): unknown[] {
+  const db = new Database(join(cwd, ".minicode", "sessions.db"), { readonly: true })
+  try {
+    const rs = db
+      .prepare("SELECT content FROM messages WHERE session_id = ? ORDER BY seq")
+      .all(sid) as { content: string }[]
+    return rs.map((r) => {
+      try {
+        return JSON.parse(r.content)
+      } catch {
+        return r.content
+      }
+    })
+  } finally {
+    db.close()
+  }
+}
+
 /** Jumlah baris Run durable untuk satu sesi (bukti ada/tidaknya Run baru). */
 function countRuns(cwd: string, sid: string): number {
   const db = new Database(join(cwd, ".minicode", "sessions.db"), { readonly: true })
@@ -387,6 +406,74 @@ test("P4-E04: turn basi ditolak pra-provider — nol spend, tanpa run baru", asy
     expect(countRuns(cwd, sid)).toBe(runsBefore)
     // Histori kernel utuh (turn tak pernah mencapai loop).
     expect(cli.session.state.history.length).toBe(historyBefore)
+  } finally {
+    provider.close()
+    await cli.close()
+  }
+})
+
+// P03-A — one-shot: persist yang ditolak guard typed (StaleWriterError)
+// dilaporkan jujur di ekor one-shot, kanonik utuh, tanpa retry buta.
+//
+// Jalur: turn nyata (satu spend) → penulis pesaing take-over → persistCurrent
+// nyata (StaleWriterError → flag basi) → ekor one-shot cli/index.ts:539-543
+// (basi → throw `[writer] stale writer, history NOT durable`, lalu catch
+// :581-617 menutup sesi dengan process.exit(1)). Ekor 5 baris itu
+// direplikasi persis di sini karena cli/index.ts adalah skrip top-level
+// (process.exit) yang tak bisa diimpor; pemetaan throw→exit(1) generik sudah
+// dibuktikan spawn (mis. cli-session.test.ts:982 tanpa-provider, :344 budget).
+test("P03-A: one-shot — persist ditolak jujur, kanonik utuh, tanpa retry buta", async () => {
+  const cwd = ws()
+  const sid = "p03a-oneshot"
+  await saveSession(
+    sid,
+    cwd,
+    undefined,
+    [
+      { role: "user", content: "A" },
+      { role: "assistant", content: "B" },
+    ],
+    { t: 1 },
+  )
+  const provider = startFakeProvider([{ kind: "text", text: "C" }])
+  pointConfigAt(cwd, provider.baseUrl)
+  const cli = await createCliSession(baseOpts(cwd, { resumeId: sid }))
+  try {
+    // Turn berjalan normal: tepat satu spend provider.
+    await cli.runPromptWithVerify("D")
+    expect(provider.requestCount()).toBe(1)
+    // Penulis pesaing take-over di antara turn dan persist (epoch 0→1).
+    const other = acquireSessionWriter({
+      sessionId: sid,
+      cwd,
+      bootId: "penulis-asing",
+      now: Date.now() + SESSION_LEASE_MS + 1_000,
+    })
+    expect(other.ok).toBe(true)
+    // Persist nyata → StaleWriterError typed → flag basi (persistCurrent).
+    // Catatan: pagar presentation-flush (setup.ts:1119-1129) menyala DULUAN
+    // (sebelum saveSession:922) — keduanya berpagar epoch yang sama, tak ada
+    // tulisan dalam kedua jalur. Note pertama menang (markWriterStale once).
+    const u = cli.usage.getSession(cli.modelRef.current)
+    await cli.persistCurrent(u)
+    expect(cli.isWriterStale()).toBe(true)
+    expect(cli.writerStaleNote()).toMatch(/refused \(expected epoch 0/)
+    // Ekor one-shot (index.ts:541-543, kutipan persis): basi → throw jujur.
+    const oneShotTail = () => {
+      if (cli.isWriterStale()) {
+        throw new Error(`[writer] stale writer, history NOT durable: ${cli.writerStaleNote()}`)
+      }
+    }
+    expect(oneShotTail).toThrow(/history NOT durable/)
+    expect(oneShotTail).toThrow(/expected epoch 0/)
+    // Kanonik UTUH dan JUJUR: seed utuh, turn yang ditolak TAK MUNCUL di
+    // durable history (attempted turn ≠ durable publication). "D"/"C" hanya
+    // hidup di buffer RAM kernel — bukan korupsi, melainkan permukaan
+    // resume/retry; take-over tak menyentuh baris pesan.
+    expect(messageContents(cwd, sid)).toEqual(["A", "B"])
+    // Tanpa retry buta: tak ada spend tambahan, tak ada run kedua.
+    expect(provider.requestCount()).toBe(1)
+    expect(countRuns(cwd, sid)).toBe(1)
   } finally {
     provider.close()
     await cli.close()

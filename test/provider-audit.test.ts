@@ -292,6 +292,72 @@ test("audit: P4-M05-B event setelah finish ditolak — retry, tanpa dispatch pal
   expect((assistants[0] as { content: string }).content).toBe("pulih")
 })
 
+// ── 3c. Partial-stream containment (P4-M08): error di tengah stream ──
+//
+// Berbeda dari M05 (stream malformed): di sini stream VALID sebagian (teks +
+// tool_call terakumulasi) lalu provider MELEMPAR error retryable. Kontrak
+// loop.ts:98-103: tiap attempt mulai dari slate bersih — parsial attempt
+// gagal tak boleh bocor ke redispatch (teks maupun tool call), dan tool dari
+// attempt gagal tak boleh dieksekusi (dispatch hanya pasca-finish utuh).
+test("audit: P4-M08 error di tengah stream tak membocorkan parsial ke retry", async () => {
+  let toolRuns = 0
+  const t = tool("hitung", async () => {
+    toolRuns++
+    return "selesai"
+  })
+  const p = new FakeProvider([
+    {
+      events: [text("paruh-"), toolCall("hitung", {}, "c-1")],
+      error: new ProviderError("server", "putus"),
+    },
+    { events: [text("beres"), finish("stop")] },
+  ])
+  const s = createSession({
+    provider: p,
+    permissions: allowAll,
+    tools: [t],
+    recovery: fastRetryRecovery,
+  })
+  const r = await s.run("go")
+  expect(r.finalText).toBe("beres")
+  // Tepat 2 request: gagal-retry + sukses (bukan loop, bukan redispatch ganda).
+  expect(p.requests.length).toBe(2)
+  // Tool attempt gagal TAK PERNAH dieksekusi.
+  expect(toolRuns).toBe(0)
+  // Slate bersih: histori hanya turn sehat — tanpa teks/tool parsial attempt 1.
+  const assistants = s.state.history.filter((m) => m.role === "assistant")
+  expect(assistants).toHaveLength(1)
+  expect((assistants[0] as { content: string }).content).toBe("beres")
+  expect(s.state.history.filter((m) => m.role === "tool")).toHaveLength(0)
+  expect(JSON.stringify(s.state.history)).not.toContain("paruh-")
+})
+
+// ── 3d. Finish reason terminal (P4-M10-A): error / abort ──
+//
+// finish("error") / finish("abort") BUKAN klasifikasi abort-signal: keduanya
+// adalah keputusan provider yang diterjemahkan loop menjadi AgentError
+// "provider" eksplisit (loop.ts:150-156 → throw :176) — tanpa retry, tanpa
+// redispatch, tanpa penyelesaian diam-diam. Berbeda dari sinyal abort
+// (kind "aborted") yang mempertahankan reason pemanggil.
+test("audit: P4-M10-A1 finish error → AgentError provider eksplisit, tanpa retry", async () => {
+  const p = new FakeProvider([{ events: [text("setengah-"), finish("error")] }])
+  const s = createSession({ provider: p, permissions: allowAll, recovery: fastRetryRecovery })
+  const err = await s.run("hi").catch((e: unknown) => e)
+  expect(err).toMatchObject({ kind: "provider" })
+  expect((err as Error).message).toContain("provider finished with error reason")
+  // Throw langsung di loop — recovery tak pernah ditanya (tepat 1 request).
+  expect(p.requests.length).toBe(1)
+})
+
+test("audit: P4-M10-A2 finish abort → AgentError provider eksplisit, tanpa retry", async () => {
+  const p = new FakeProvider([{ events: [text("setengah-"), finish("abort")] }])
+  const s = createSession({ provider: p, permissions: allowAll, recovery: fastRetryRecovery })
+  const err = await s.run("hi").catch((e: unknown) => e)
+  expect(err).toMatchObject({ kind: "provider" })
+  expect((err as Error).message).toContain("provider aborted the stream")
+  expect(p.requests.length).toBe(1)
+})
+
 // ── 4. Klasifikasi error ──
 
 test("audit: auth gagal seketika tanpa retry", async () => {

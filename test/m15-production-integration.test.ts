@@ -15,6 +15,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { AgentError } from "#minicore/core/errors.ts"
+import { FakeProvider, finish, text, tool, toolCall } from "#minicore/test/fakes.ts"
+import { createMinicodeSession } from "../src/app/session.ts"
 import { createRuntimeComposition, type RuntimeComposition } from "../src/runtime/composition.ts"
 import { isExecutionId } from "../src/runtime/execution-id.ts"
 import { openExecutionJournal } from "../src/runtime/execution-journal.ts"
@@ -569,6 +571,61 @@ test("klasifikasi: AgentError.kind dipetakan ke terminal yang tepat", () => {
   expect(maxSteps.cancelReason).toBeNull()
   expect(classifyTurnFailure(new Error("plain")).terminal).toBe("FAILED")
   expect(classifyTurnFailure(new Error("plain")).cancelReason).toBeNull()
+})
+
+// ── P4-M10-B: maxSteps turn produksi → terminal RESOURCE_EXCEEDED ──
+//
+// Komposisi yang selama ini belum dibuktikan: classifier di atas (unit)
+// + batas kernel (DP di extreme.test.ts:96) + runner produksi. Turn nyata
+// (sesi produksi createMinicodeSession: executor, permission, recovery
+// nyata; maxSteps: 1; tool yang selalu diminta lagi) dijalankan LEWAT
+// owned runner; runner wajib mengklasifikasi + meng-commit terminal
+// RESOURCE_EXCEEDED di kernel (bukan FAILED generik, bukan sukses diam),
+// meneruskan error asli, dan menghormati batas (tepat 1 sampling + 1
+// eksekusi tool — tanpa iterasi/redispatch tambahan).
+test("P4-M10-B: maxSteps production turn → RESOURCE_EXCEEDED terminal", async () => {
+  const dir = tmpDir()
+  const { runner: r, runtime } = runner("owned", dir)
+  const seen: { from: unknown; to: unknown }[] = []
+  const unsub = runtime!.kernel.onTransition((ev) => {
+    seen.push({ from: (ev as { from?: unknown }).from, to: (ev as { to?: unknown }).to })
+  })
+  let toolRuns = 0
+  const t = tool("putar", async () => {
+    toolRuns++
+    return "berputar"
+  })
+  const p = new FakeProvider([
+    { events: [toolCall("putar", {}, "c-1"), finish("tool_calls")] },
+    { events: [text("tak-tercapai"), finish("stop")] },
+  ])
+  const s = await createMinicodeSession({
+    provider: p,
+    tools: [t],
+    permissionMode: "allow-all",
+    maxSteps: 1,
+    cwd: dir,
+  })
+  try {
+    // Step 0: sampling + dispatch; step 1: maxSteps melempar — error asli
+    // (kind max_steps_exceeded) diteruskan apa adanya ke pemanggil.
+    const err = await r.run(REQUEST, () => s.run("go")).catch((e: unknown) => e)
+    expect((err as { kind?: string }).kind).toBe("max_steps_exceeded")
+    // Runner menghitung tepat satu terminal RESOURCE_EXCEEDED.
+    expect(r.metrics().terminals.RESOURCE_EXCEEDED).toBe(1)
+    // Kernel benar-benar meng-commit transisi RUNNING→RESOURCE_EXCEEDED
+    // (hook onTransition hanya dipanggil pada commit — bukan klaim counter
+    // semata).
+    expect(
+      seen.some((e) => e.from === "RUNNING" && e.to === "RESOURCE_EXCEEDED"),
+    ).toBe(true)
+    // Batas dihormati: 1 sampling + 1 eksekusi tool, tanpa iterasi lanjutan.
+    expect(p.requests.length).toBe(1)
+    expect(toolRuns).toBe(1)
+  } finally {
+    unsub()
+    await cleanupAll()
+  }
 })
 
 // ── Gate CLI: deterministik, fail-closed ──────────────────────────────────

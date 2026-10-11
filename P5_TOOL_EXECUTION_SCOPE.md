@@ -1,5 +1,5 @@
 # PHASE 5 — TOOL EXECUTION
-**Status: SCOPE RATIFIED — BATCH 1 (C1) AND BATCH 2 (C2) IMPLEMENTED, REMAINING BATCHES PENDING**
+**Status: SCOPE RATIFIED — BATCH 1 (C1), BATCH 2 (C2), AND BATCH 3 (C3) IMPLEMENTED, REMAINING BATCH PENDING**
 
 ## Purpose
 
@@ -233,6 +233,36 @@ protocol choice.
 *Kernel and MCP-server dispatch must uphold one shared semantic contract;
 protocol differences are permitted only when they cannot bypass authorization
 or safety checks, and must be documented where they live.*
+
+**Implemented enforcement (Batch 3).** Both paths already satisfied shared
+contract 1–4 at the production decision boundaries (audit-verified, now
+re-pinned by tests); no ordering or engine change was justified. Evidence:
+kernel `runCall` (vendor executor) does registry → permission → validate →
+execute with error-result conversion for every failure mode; MCP `invokeTool`
+does validate → permission (fresh handler, jail + bash-guard inside `check()`
+in every mode including allow-all) → durable-EffectIntent fail-closed →
+execute, and the `tools/call` handler converts every rethrow into an
+`isError` reply (no raw rejection escapes the dispatch layer). The one
+documentation defect was the false parity claim in `src/mcp/server.ts`
+("sama seperti jalur REPL") — corrected to state the real C3 contract: both
+gates precede execute; MCP validates first by protocol choice (reject
+malformed remote input before constructing a permission context), kernel
+validates after permission because it needs raw args for the approval prompt
+and `describeDenial`. Ordering difference retained as intentional (table
+above). New pins in `test/f04-dispatch-contract.test.ts` (ten cases over the
+real boundaries — vendor `runCall` + real permission handlers on the kernel
+side, spawned `mcp serve` processes on the MCP side): jail denial has no side
+effect on either path; invalid arguments never execute on either path;
+allow-all keeps the bash-guard active on either path (kernel asserts the
+`bash-guard:` reason via `describeDenial`; MCP asserts the generic scrubbed
+`[denied]` reply — the intentional message-shape difference — plus an
+untouched canary directory); tool throws surface as `isError` on both paths
+(kernel result contract; MCP handler conversion of the `invokeTool`
+rethrow); a deliberately broken journal (intent path blocked) makes the MCP
+server refuse a mutating call fail-closed before execute with
+`evidence incomplete`; a successful mutating call leaves intent +
+terminal records on disk. Kernel-side intent-before-execute remains pinned by
+`p2-verification.test.ts` (cases 4–5).
 
 ### C4 — Tool success is not durable publication (P05-tail constraint)
 

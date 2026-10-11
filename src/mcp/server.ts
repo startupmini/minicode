@@ -81,8 +81,13 @@ async function invokeTool(
 ): Promise<{ content: { type: string; text: string }[]; isError: boolean }> {
   const root = journal.root
   // validateArgs KERNEL (bukan validasi ad-hoc): argumen invalid ditolak
-  // SEBELUM permission/execute — sama seperti jalur REPL. Tanpa ini argumen
-  // mentah mencapai execute (temuan audit #05: crash/perilaku indefinisi).
+  // SEBELUM permission/execute — kontrak C3: KEDUA gerbang (otorisasi +
+  // validasi) wajib mendahului execute. Urutan berbeda dari kernel REPL
+  // (permission dulu, lalu validate) DISENGAJA dan setara aman: kernel butuh
+  // argumen mentah untuk prompt approval + describeDenial; server menolak
+  // input remote rusak sebelum membangun konteks permission apa pun.
+  // Tanpa validasi ini argumen mentah mencapai execute (temuan audit #05:
+  // crash/perilaku indefinisi).
   const { validateArgs } = await import("#minicore")
   const parsed = validateArgs(tool.parameters, args ?? {})
   if (!parsed.ok) {

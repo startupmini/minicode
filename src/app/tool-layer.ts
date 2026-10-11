@@ -4,6 +4,7 @@ import { configureServers as lspConfigure } from "../lsp/client.ts"
 import { connectAll as mcpConnectAll } from "../mcp/client.ts"
 import { isMcpToolName } from "../presentation/label.ts"
 import type { CanonicalScope } from "../session/verification.ts"
+import { createBashJobTools } from "../tools/bash.ts"
 import { withEvidence } from "../tools/evidence.ts"
 import { allTools, withMcpTools } from "../tools/index.ts"
 import { EXPLORE_TOOL_NAMES } from "../tools/task.ts"
@@ -21,6 +22,7 @@ export async function setupToolLayer(
   scope: ToolScope = "full",
   permissionMode?: string,
   verification?: CanonicalScope,
+  jobOwnerSid?: string,
 ): Promise<{ sessionTools: Tool[]; evidenceMode: ToolEvidenceMode }> {
   let sessionTools: Tool[] = allTools
   // Harness-P2: scope explore = subset read-only (sama seperti sub-agen).
@@ -36,6 +38,19 @@ export async function setupToolLayer(
     sessionTools = sessionTools.filter(
       (t) => EXPLORE_TOOL_NAMES.includes(t.name) || PLAN_EXTRA.has(t.name),
     )
+  }
+  // F-03 (P5 §C2): background bash job diikat ke sid kanonik sesi ini.
+  // Rebind instance SEBELUM withEvidence agar pembungkus evidence membungkus
+  // instance yang sudah terikat sid (bukan sebaliknya). Hanya jika nama ada di
+  // daftar — filter explore/plan di atas tetap berlaku (least privilege).
+  if (jobOwnerSid) {
+    const owned = createBashJobTools(jobOwnerSid)
+    const rebind = new Map<string, Tool>([
+      ["bash", owned.bash],
+      ["bash_output", owned.bashOutput],
+      ["bash_kill", owned.bashKill],
+    ])
+    sessionTools = sessionTools.map((t) => rebind.get(t.name) ?? t)
   }
   try {
     if (cfg.mcpServers?.length) {

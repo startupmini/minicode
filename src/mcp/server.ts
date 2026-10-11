@@ -8,6 +8,7 @@ import {
   persistEffectIntent,
   persistEffectReceipt,
 } from "../session/verification.ts"
+import { createBashJobTools } from "../tools/bash.ts"
 import { allTools } from "../tools/index.ts"
 import { todoSession } from "../tools/todo.ts"
 import { capMcpText } from "./client.ts"
@@ -312,6 +313,20 @@ export async function serveMcp(opts: McpServeOptions = {}): Promise<void> {
   // todo write path no longer depends on it surviving an await.
   const mcpContextId = newMcpContextId()
   const { prevId: prevTodo, prevCwd: prevTodoCwd } = applyMcpContext(mcpContextId, root)
+  // F-03 (P5 §C2): background bash job diikat ke contextId instance ini —
+  // mekanisme sama dengan todo namespace (applyMcpContext). Cross-context
+  // (server lain / sesi penerima ctx.sessionId berbeda) tak bisa inspect/cancel
+  // hanya dengan tahu job id.
+  {
+    const ownedBash = createBashJobTools(mcpContextId)
+    for (const t of [ownedBash.bash, ownedBash.bashOutput, ownedBash.bashKill]) {
+      const i = tools.findIndex((x) => x.name === t.name)
+      if (i !== -1) {
+        tools[i] = t
+        byName.set(t.name, t)
+      }
+    }
+  }
 
   // Idempotency request (audit #05 P0, diperkuat #08 P0): retry client
   // (atau crash-restart) tak boleh mengeksekusi ulang mutasi non-idempoten

@@ -1330,11 +1330,19 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       })
     : undefined
   const { sessionTools, evidenceMode } = await startupPhase("tool-layer", () =>
-    setupToolLayer(cfg, toolScope ?? "full", permissionMode, {
+    setupToolLayer(
+      cfg,
+      toolScope ?? "full",
+      permissionMode,
+      {
+        sessionId,
+        threadId: DEFAULT_THREAD_ID,
+        cwd: cwd ?? process.cwd(),
+      },
+      // F-03 (P5 §C2): background bash job diikat ke sid kanonik sesi ini —
+      // instance yang diikat sid tidak pernah dipasok lewat argumen tool.
       sessionId,
-      threadId: DEFAULT_THREAD_ID,
-      cwd: cwd ?? process.cwd(),
-    }),
+    ),
   )
 
   // todo_write/todo_read menyimpan state per sesi di .minicode/todos/<id>.json,

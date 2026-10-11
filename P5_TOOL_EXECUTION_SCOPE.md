@@ -1,5 +1,5 @@
 # PHASE 5 — TOOL EXECUTION
-**Status: SCOPE RATIFIED — BATCH 1 (C1) IMPLEMENTED, REMAINING BATCHES PENDING**
+**Status: SCOPE RATIFIED — BATCH 1 (C1) AND BATCH 2 (C2) IMPLEMENTED, REMAINING BATCHES PENDING**
 
 ## Purpose
 
@@ -149,6 +149,38 @@ enumeration leak so it stays true if multi-session-per-process ever lands.
 
 **Non-goal.** The registry is *not* redesigned — no per-session `Map` split is
 mandated; an owner tag + ownership check is the required behavior.
+
+**Implemented enforcement (Batch 2).** Ownership is bound at the composition
+root by closure — never from tool arguments or a second global. `BackgroundJob`
+carries `ownerSid: string | null` (`src/tools/bash.ts`), recorded by
+`startBackground` from the factory instance that executes the call.
+`createBashJobTools(ownerSid)` returns the three name-stable tools; the
+module-level default exports are `factory(null)` instances kept for
+library/test compatibility (caller `null` reaches job `null` — exactly the
+pre-Batch-2 behavior). Every lookup goes through `ownedJob(id, callerSid)`
+(strict equality, so a sid-bound instance never reaches unbound jobs and vice
+versa). `bash_output`'s not-found error enumerates only the caller's own live
+ids (`liveOwnedIds`), and the error for a foreign job is byte-identical to the
+unknown-id error (non-disclosing); `bash_kill` has no enumeration at all and
+rejects foreign jobs with the same `job "…" not found`. Wiring:
+`setupToolLayer` takes an explicit optional `jobOwnerSid` and rebinds by name
+after scope filters but before `withEvidence`; `cli/setup.ts` passes the
+canonical `sessionId` (`resolveSessionIdentity`, P2.1) — the single
+production funnel for CLI/REPL/exec/daemon/ACP sessions; the MCP server
+rebinds with its per-instance `mcpContextId` (same namespace mechanism as
+`applyMcpContext`). Sub-agent stripping/wrapping (`src/tools/task.ts`) is
+unchanged; `killAllBackgroundJobs()` remains process-level host hygiene;
+`listBackgroundJobs()` remains a process-wide host diagnostic, not a tool
+surface. Demonstrated by `test/f03-job-ownership.test.ts` (nine cases:
+same-session access, cross-session inspection/cancel denial with
+identical-to-unknown messages, no foreign-id enumeration, cross-owner
+`killAllBackgroundJobs`, default-export compatibility, fail-closed empty
+owner, tool-layer wiring, and two concurrent `createCliSession` instances in
+one process); the whole file fails to load against pre-Batch-2 tools
+(`createBashJobTools` absent), so every case discriminates. Known limitation
+kept in scope: the background-job cap (`LIMITS.BASH_BACKGROUND_MAX_JOBS`)
+remains process-global — one session can exhaust slots for others (reveals
+count, never ids/owners/output); redesigning the registry stays a non-goal.
 
 ### C3 — Dispatch semantics, kernel vs MCP-server (F-04)
 

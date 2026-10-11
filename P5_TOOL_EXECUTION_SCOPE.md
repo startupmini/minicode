@@ -1,5 +1,5 @@
 # PHASE 5 — TOOL EXECUTION
-**Status: SCOPE RATIFIED — BATCH 1 (C1), BATCH 2 (C2), AND BATCH 3 (C3) IMPLEMENTED, REMAINING BATCH PENDING**
+**Status: SCOPE RATIFIED — BATCHES 1-4 (C1, C2, C3, F-05) IMPLEMENTED**
 
 ## Purpose
 
@@ -298,6 +298,19 @@ Phase 5 will:
    called from `src/session/persistence.ts:3365-3374`): repo root, `""`,
    `"."`, `".."`, drive root, home, `tmpdir()` root, symlink escape, depth-0
    target — fail-closed order of the eleven checks.
+
+   **Closed (Batch 4).** `test/f05-deletable-target.test.ts` (15 tests)
+   exercises the live helper directly against isolated temp fixtures: all
+   eleven documented checks in fail-closed order, the accepted targets
+   (child file/dir recursive and non-recursive, missing-but-in-root,
+   whitespace trim, internal symlink), and the real semantic boundaries
+   (relative paths resolve against `process.cwd()`, not the scope root).
+   Checks 9 and 11 are shadowed by earlier checks (5/6/8/10) — the suite
+   locks their guarantees (refusal), not the shadowed messages. No production
+   change. On Windows+Bun, `realpath()` strips the trailing separator of
+   drive roots, so check 3 (`isRootLike`) never fires there; drive roots are
+   still refused fail-closed by the cwd/outside-root checks (see accepted
+   limitations).
 5. **Honor C4 in every test written in this phase.**
 6. Record an implementation report with validation evidence, limitations, and
    the final Git baseline, mirroring the Phase 3/4 convention.
@@ -325,6 +338,13 @@ Phase 5 will:
   (`docs/security-model.md:80`).
 - 28 pre-existing `tsc` errors in legacy `test/phase3*`/`test/phase4*` files;
   repo-wide CRLF vs `.gitattributes eol=lf`.
+- Windows+Bun: `realpath()` strips the trailing separator of drive roots
+  (`"D:\\"` → `"D:"`), so `assertDeletableTarget` check 3 (`isRootLike`) never
+  fires and `resolve("D:")`/`resolve("C:")` can produce cwd-relative or
+  garbage canonical paths. Drive roots remain refused fail-closed by the
+  cwd/outside-root checks; only the dedicated check's message is lost.
+  Pinned by `test/f05-deletable-target.test.ts` ("check 3"); not fixed
+  (diagnostic-order defect, no deletion-safety hole).
 
 ### Explicit non-goals
 

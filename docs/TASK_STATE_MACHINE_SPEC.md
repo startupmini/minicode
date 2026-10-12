@@ -2,6 +2,14 @@
 
 Mode DESIGN. Companion dari `CANONICAL_TASK_MODEL_DESIGN.md`.
 
+> **Status penegakan (R3).** Dokumen ini tetap DESIGN — tabel di bawah adalah
+> rancangan, bukan semuanya kontrak runtime. Pembagian yang dipaksa kode
+> (STORE-PERMISSIVE, diratifikasi R3): store menegakkan validitas
+> struktural/identitas/otoritas/atomicitas; penulis terotorisasi menegakkan
+> aturan alur kerja; konsumen menurunkan kesiapan dari status apa adanya.
+> Lihat §Status penegakan di akhir dokumen sebelum mengutip tabel sebagai
+> aturan yang berlaku.
+
 ## Skema Task (v1)
 
 Diturunkan dari `TodoItem` yang ada, ditambah hanya field yang punya konsumen
@@ -255,8 +263,65 @@ menunjuk verdict yang menyiksanya, sehingga jejak tetap ada.
    ditolak" benar-benar ditolak dengan pesan yang bisa ditindaklanjuti.
 2. `pending -> completed` ditolak walau model mengirim `status: "completed"`
    untuk task yang belum pernah `in_progress`.
-3. `cancelled` tidak bisaWalker dihidupkan tanpa reopen.
+3. `cancelled` tidak bisa dihidupkan tanpa reopen.
 4. `failed -> retrying -> in_progress` mempertahankan `task_id`.
 5. Verifikasi basi tidak bisa di-backfill menjadi `completed`.
 6. Rekonsiliasi `verdict: failed` mengubah `completed` menjadi non-completed,
-   dan **tidak**_break yang mutation-tested (seperti 6 mutasi di `979efa4`).
+   dan **tidak** break yang mutation-tested (seperti 6 mutasi di `979efa4`).
+
+## Status penegakan (R3 — kontrak store-permisif, diratifikasi)
+
+Keputusan R3: `STORE-PERMISSIVE CONTRACT JUSTIFIED`. Daftar "harus dibuktikan"
+di atas adalah target desain yang belum semuanya berlaku; yang berlaku saat
+ini adalah pembagian di bawah. Jangan mengutip tabel transisi sebagai aturan
+runtime tanpa memeriksa kolom status di seksi ini.
+
+### Yang DIPAKSA kode produksi
+
+| Aturan | Lokasi implementasi | Test pengunci |
+|---|---|---|
+| `blocked` wajib beralasan | `src/task/store.ts:774-777` (`validate`), `src/tools/todo.ts:201-208` (normalizeTodos) | `taskstore.test.ts` "validation: BLOCKED needs a reason", `task-invariants.test.ts` PF-04 |
+| `IN_PROGRESS` hanya via `claimTask` (mode SCHEDULER) | `src/task/store.ts:882-887` (`TASK_AUTHORITY_VIOLATION`) | `phase6b-prerequisites.test.ts:241,549`, `task-contract-boundary.test.ts` kontrak 7 |
+| Klaim atomik hanya dari `PENDING` (+ revisi + kapasitas) | `src/task/store.ts:1065-1087` | suite 6B/6C, `task-contract-boundary.test.ts` kontrak 6 |
+| Reconcile hanya in-flight milik-sendiri (`IN_PROGRESS`/`VERIFYING` → `PENDING`) | `src/task/store.ts:1166-1210` (`REFUSED_NO_OWNERSHIP`, predikat milik) | suite 6P/6F, `task-contract-boundary.test.ts` kontrak 6 |
+| Bentuk identitas/dependensi (id kanonis, tanpa duplikat, dep ada, bukan diri sendiri, ≤32) | `src/task/store.ts:778-803`, `src/task/identity.ts:160,199` | `taskstore.test.ts` L, phase3a/4a2/4a4 |
+| Bukti merah menolak `completed` (→ `blocked` + alasan) | `src/tools/todo.ts:159-169,209-213` | `task-invariants.test.ts` INV-003 |
+| Satu payload = satu transaksi atomik; id tak dikenal/duplikat = tolak seluruhnya | `src/task/sync.ts:115-207` | phase4a2/4a4/4b2 |
+| Terminalitas di primitif scheduler (tak bisa di-claim/di-reconcile dari terminal) | `src/task/store.ts:694,704`, predikat claim/reconcile | suite 6B/6P |
+
+### Yang DIUSULKAN tapi TIDAK dipaksa (permisif, disengaja)
+
+| Baris tabel | Status runtime aktual |
+|---|---|
+| `pending → completed` harus ditolak | **Diizinkan** bila bukti tak merah (penyelesaian hijau/tanpa-bukti memang boleh — `task-invariants.test.ts:98-102`). Pagar false-completion adalah gerbang bukti di penulis, bukan store. |
+| `failed → completed`, `blocked → completed` harus ditolak | **Diizinkan** bila bukti tak merah; `normalizeTodos`/`patchTask` tak memeriksa status asal. |
+| `cancelled → mana pun` harus ditolak | **Diizinkan** di tingkat store (reopen didukung); "terminal" adalah perlakuan primitif turunan, bukan larangan tulis. |
+| `verifying → in_progress` harus ditolak | Tak ada produsen dan tak ada pagar; `patchTask` menerimanya. |
+| `completed → completed` no-op tanpa event | Ditulis (revision +1); patch tak pernah menerbitkan event apa pun. |
+| Seluruh lifecycle `failed → retrying → in_progress` | `RETRYING`/`VERIFYING`/`FAILED` tanpa produsen (kosakata model hanya 5 status: `identity.ts:43-56`). Requeue setara ada via reconcile→`PENDING`→claim. |
+
+### Semantik COMPLETED yang berlaku (eksplisit)
+
+TaskStore **tidak** menjamin task boleh `completed` hanya setelah prasyarat
+terpenuhi, dan **tidak** memverifikasi kebenaran penyelesaian:
+
+- Lapisan yang menerima status: `patchTask`/`synchronizeCanonicalTasks`
+  menulis status yang dideklarasikan penulis tanpa memeriksa status
+  dependensi (`src/task/sync.ts:161-175`).
+- Konsumen: readiness menganggap `COMPLETED` memenuhi dependensi
+  (`src/task/readiness.ts:82-92`); scheduler mengeksekusi dependen atas
+  dasar itu. `task-contract-boundary.test.ts` kontrak 5 mengunci kedua sisi.
+- Penerimaan store bukan bukti operasi bisnis selesai. Jaminan completion
+  (bukti merah→`blocked`, verifier eksternal) milik gerbang bukti di alur
+  kerja yang membutuhkan (`normalizeTodos`, `reconcileCompletionEvidence`,
+  otoritas scheduler) — bukan store.
+
+### Batas kontrak untuk perancang Phase 9
+
+Jangan berasumsi TaskStore menyediakan otomatis: matriks transisi global;
+bukti prasyarat terpenuhi sebelum completion; lifecycle verifikasi untuk
+status tanpa produsen terkonfirmasi (`verifying`/`failed`/`retrying`);
+kebenaran bisnis hanya karena pembaruan status terpersist. Ini batas
+kontrak, bukan cacat. Perubahan perilaku di area ini butuh
+persetujuan manusia (seperti §FAILED vs BLOCKED di atas) dan test pengunci
+baru, bukan reinterpretasi tabel desain.

@@ -14,6 +14,7 @@
 
 import { spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
+import { evaluateGate, gateExitCode } from "./coverage-decision.ts"
 
 function getArg(name: string, fallback: number): number {
   const i = process.argv.indexOf(name)
@@ -115,13 +116,10 @@ const CRITICAL_FILES: [string, number, number][] = [
   ["src/presentation/store.ts", 90, 90],
 ]
 
-/** Baris laporan coverage untuk satu berkas (pemisah path platform apa pun). */
-function criticalRow(output: string, path: string): { funcs: number; lines: number } | null {
-  const esc = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\//g, "[\\\\/]")
-  const re = new RegExp(`^\\s*${esc}\\s*\\|\\s*([\\d.]+)\\s*\\|\\s*([\\d.]+)\\s*\\|`, "m")
-  const m = re.exec(output)
-  return m ? { funcs: Number(m[1]), lines: Number(m[2]) } : null
-}
+// Uraian baris per-berkas tinggal di ./coverage-decision.ts (fileCoverage),
+// dipakai bersama test gate-nya. Status test dan liputan dievaluasi
+// independen: kegagalan test TERCATAT tetapi tak lagi menghentikan evaluasi
+// liputan — keduanya dilaporkan dan keduanya menggagalkan gate.
 
 // Opsi `--report <file>`: evaluasi ulang laporan yang SUDAH ada tanpa
 // menjalankan suite (4 menit). Dipakai saat CI merah untuk tahu modul mana yang
@@ -130,6 +128,7 @@ const reportIdx = process.argv.indexOf("--report")
 const savedReport = reportIdx !== -1 ? process.argv[reportIdx + 1] : undefined
 
 let output: string
+let runFailure: string | null = null
 if (savedReport) {
   output = readFileSync(savedReport, "utf8")
 } else {
@@ -145,62 +144,44 @@ if (savedReport) {
   output = `${res.stdout ?? ""}\n${res.stderr ?? ""}`
   if (res.status !== 0 && !/\d+ pass/.test(output)) {
     process.stderr.write(output.slice(-4000))
-    console.error("[coverage-gate] test run failed")
-    process.exit(1)
+    runFailure = "[coverage-gate] test run failed"
   }
 }
 
-const failCount = Number(/^\s*(\d+) fail\s*$/m.exec(output)?.[1] ?? "0")
-if (failCount > 0) {
-  console.error(`[coverage-gate] ${failCount} test failing — gate tidak dievaluasi`)
+const ev = evaluateGate(
+  output,
+  { minFuncs: MIN_FUNCS, minLines: MIN_LINES },
+  CRITICAL_FILES,
+  runFailure,
+)
+if (ev.runFailure) console.error(ev.runFailure)
+if (ev.failCount > 0) {
+  console.error(`[coverage-gate] ${ev.failCount} test failing`)
   // Cetak nama test yang gagal — tanpa ini, reporter dots menelan nama dan
   // kegagalan spesifik-coverage jadi mustahil didiagnosis dari log CI.
-  for (const line of output.match(/^\(fail\).*$/gm) ?? []) {
-    console.error(`  ${line.slice(0, 160)}`)
+  for (const name of ev.failNames) {
+    console.error(`  ${name}`)
   }
-  process.exit(1)
 }
 
 // "All files                     |   71.95 |   76.76 |"
-const row = /^\s*All files\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|/m.exec(output)
-if (!row) {
-  console.error("[coverage-gate] baris 'All files' tidak ditemukan di output coverage")
-  process.exit(1)
+if (ev.parseError) {
+  console.error(ev.parseError)
+} else if (ev.aggregate) {
+  console.log(
+    `[coverage-gate] funcs ${ev.aggregate.funcs.toFixed(2)}% (min ${MIN_FUNCS}) · lines ${ev.aggregate.lines.toFixed(2)}% (min ${MIN_LINES})`,
+  )
 }
-const funcs = Number(row[1])
-const lines = Number(row[2])
-
-const okFuncs = funcs >= MIN_FUNCS
-const okLines = lines >= MIN_LINES
-console.log(
-  `[coverage-gate] funcs ${funcs.toFixed(2)}% (min ${MIN_FUNCS}) · lines ${lines.toFixed(2)}% (min ${MIN_LINES})`,
-)
 
 // Lantai per-berkas modul kritis — dijalankan SEBELUM keputusan agregat agar
 // modul yang jatuh sendiri selalu terlihat, walau total masih di atas ambang.
-let criticalFail = 0
-for (const [path, minF, minL] of CRITICAL_FILES) {
-  const f = criticalRow(output, path)
-  if (!f) {
-    console.error(`[coverage-gate] FAIL ${path}: tidak ada di laporan coverage (dipindah/rename?)`)
-    criticalFail++
-    continue
-  }
-  if (f.funcs < minF) {
-    console.error(`[coverage-gate] FAIL ${path}: funcs ${f.funcs.toFixed(2)}% < ${minF}%`)
-    criticalFail++
-  }
-  if (f.lines < minL) {
-    console.error(`[coverage-gate] FAIL ${path}: lines ${f.lines.toFixed(2)}% < ${minL}%`)
-    criticalFail++
-  }
+for (const msg of ev.criticalFailures) {
+  console.error(msg)
 }
 console.log(
-  `[coverage-gate] lantai per-berkas: ${CRITICAL_FILES.length - criticalFail}/${CRITICAL_FILES.length} modul kritis hijau`,
+  `[coverage-gate] lantai per-berkas: ${CRITICAL_FILES.length - ev.criticalFailures.length}/${CRITICAL_FILES.length} modul kritis hijau`,
 )
-if (criticalFail > 0) process.exit(1)
-
-if (okFuncs && okLines) process.exit(0)
-if (!okFuncs) console.error(`[coverage-gate] FAIL funcs ${funcs.toFixed(2)}% < ${MIN_FUNCS}%`)
-if (!okLines) console.error(`[coverage-gate] FAIL lines ${lines.toFixed(2)}% < ${MIN_LINES}%`)
-process.exit(1)
+for (const msg of ev.aggregateFailures) {
+  console.error(msg)
+}
+process.exit(gateExitCode(ev))

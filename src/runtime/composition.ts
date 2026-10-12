@@ -580,20 +580,35 @@ export function createRuntimeComposition(opts: RuntimeCompositionOptions): Runti
     // Eksekusi non-terminal TAK diubah state-nya di sini: shutdown tak pernah
     // mengarang COMPLETED/CANCELLED. Yang draining adalah kerja in-flight-nya.
     const tracked = await drainTrackedWork(drainTimeoutMs)
+
+    // R1 (P9.0): pembersihan record backend milik komposisi INI — satu-kali di
+    // shutdown, BUKAN sweeper (tanpa timer, tanpa siklus, tak menyentuh instance
+    // backend lain). Drain kerja terlacak sudah selesai, jadi tak ada konsumen
+    // sah yang masih menunggu hasil; record sisa (pemanggilnya tak pernah
+    // dispose) dibebaskan sekarang: kill best-effort anti-yatim untuk proses
+    // yang masih hidup + waiter in-flight diselesaikan jujur "disposed".
+    // Kepemilikan dispose per-handle TETAP di pemanggil yang memulai eksekusi —
+    // ini jaring pengaman batas-umur-proses di batas komposisi saja.
+    const backendDisposed = backend.disposeAll()
+
     if (tracked.errors.length > 0) {
-      phase("execution-drain", "failed", `${tracked.errors.length} tracked work rejected`)
+      phase(
+        "execution-drain",
+        "failed",
+        `${tracked.errors.length} tracked work rejected · backendDisposed=${backendDisposed.disposed}`,
+      )
       for (const error of tracked.errors) errors.push({ phase: "execution-drain", error })
     } else if (tracked.pending > 0) {
       phase(
         "execution-drain",
         "uncertain",
-        `${tracked.pending}/${tracked.registered} tracked work unfinished at ${drainTimeoutMs}ms`,
+        `${tracked.pending}/${tracked.registered} tracked work unfinished at ${drainTimeoutMs}ms · backendDisposed=${backendDisposed.disposed}`,
       )
     } else {
       phase(
         "execution-drain",
         "succeeded",
-        `tracked=${tracked.registered} outstanding=${outstandingBefore.length}`,
+        `tracked=${tracked.registered} outstanding=${outstandingBefore.length} · backendDisposed=${backendDisposed.disposed}`,
       )
     }
     const outstandingAfter = outstanding()

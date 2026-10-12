@@ -271,6 +271,11 @@ export function createSupervisor(deps: {
       const cancelRes = backend.cancel(handle, reason)
       const afterCancel = await backend.wait(handle, waitMs)
       if (afterCancel.status === "completed" || afterCancel.status === "proven-dead") {
+        // R1 (P9.0): kondisi terminal TERBUKTI (close terobservasi) → tak ada
+        // konsumen sah yang masih butuh record; eskalasi adalah pemilik jalur
+        // ini, jadi bebaskan. Ini dispose satu-kali pasca-terminal milik
+        // pemanggil — bukan sweeper, bukan eviksi berbasis waktu.
+        backend.dispose(handle)
         return {
           cancelResult: cancelRes.status,
           waitAfterCancel: afterCancel.status,
@@ -282,6 +287,14 @@ export function createSupervisor(deps: {
       const termRes = backend.terminate(handle, reason)
       void termRes
       const afterTerminate = await backend.wait(handle, waitMs)
+      // R1 (P9.0): dispose HANYA bila terminal/proven-dead terbukti. Bila masih
+      // timeout (proses bandel melewati terminate), record TETAP milik pemanggil:
+      // membuangnya di sini = mengarang kematian yang belum terobservasi. Pemanggil
+      // memutuskan langkah berikutnya (re-wait, eskalasi ulang, atau
+      // abandon-dispose eksplisit) — tak pernah auto-retry/re-execute.
+      if (afterTerminate.status === "completed" || afterTerminate.status === "proven-dead") {
+        backend.dispose(handle)
+      }
       return {
         cancelResult: cancelRes.status,
         waitAfterCancel: afterCancel.status,

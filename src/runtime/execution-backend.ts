@@ -220,6 +220,14 @@ export interface ExecutionBackend {
   terminate(handle: BackendHandle, reason: string): BackendTerminateResult
   wait(handle: BackendHandle, timeoutMs?: number): Promise<BackendWaitResult>
   dispose(handle: BackendHandle): BackendDisposeResult
+  /**
+   * R1 (P9.0): bebaskan SEMUA record milik instance backend INI, sekali panggil.
+   * Pemilik sahnya adalah composition saat shutdown — BUKAN sweeper: tanpa timer,
+   * tanpa siklus, tak pernah menyentuh instance backend lain. Dispose per-handle
+   * tetap milik pemanggil yang memulai eksekusi; ini jaring pengaman batas-umur-
+   * proses untuk record yang pemanggilnya tak pernah membuang.
+   */
+  disposeAll(): { disposed: number }
 }
 
 /** Bound default wait (ms). Konservatif; configurable per-call. */
@@ -460,6 +468,19 @@ export function createHostBackend(): ExecutionBackend {
       settleHostRecord(rec, { status: "unknown", detail: "disposed" })
       return { disposed: true as const, cleanupKillAttempted: cleanup }
     },
+
+    disposeAll(): { disposed: number } {
+      // R1: snapshot kunci dulu (dispose menghapus dari map), lalu pakai ulang
+      // dispose per-handle — semantik per-record IDENTIK (kill best-effort
+      // untuk yang hidup + waiter diselesaikan jujur "disposed"), tanpa
+      // duplikasi logika kill/settle.
+      let disposed = 0
+      for (const id of [...records.keys()]) {
+        this.dispose({ id, kind: "host" })
+        disposed++
+      }
+      return { disposed }
+    },
   }
 }
 
@@ -536,6 +557,16 @@ function createRunToCompletionShim(
       const existed = handle.kind === kind && records.delete(handle.id)
       void existed
       return { disposed: true as const, cleanupKillAttempted: false }
+    },
+    disposeAll(): { disposed: number } {
+      // R1: shim run-to-completion tak punya proses preemptif untuk dibunuh —
+      // cukup bebaskan record. Snapshot kunci dulu (delete saat iterasi).
+      let disposed = 0
+      for (const id of [...records.keys()]) {
+        records.delete(id)
+        disposed++
+      }
+      return { disposed }
     },
   }
 }

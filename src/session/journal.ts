@@ -66,6 +66,42 @@ export interface JournalOutcome {
   loss?: "none" | "response" | "persistence" | "unknown"
   uncertainty?: "none" | "ambiguous-effect" | "unverified-external" | "evidence-incomplete"
   observedAt?: number
+  /**
+   * Bounded child-execution observation (P9.2.1, delegate-task only).
+   * Dilaporkan apa yang teramati dari turn anak — BUKAN otoritas baru:
+   * tak mengubah makna `committed`/`failed`, tak mempublikasikan histori,
+   * tak menggantikan verifikasi/bukti lain. Opsional agar record lama tetap
+   * terbaca; pembaca tak boleh menjadikannya bukti efek.
+   */
+  childResult?: ChildResultEnvelope
+}
+
+/**
+ * Status observasi anak (P9.2.1): apa yang terlihat dari sisi pemanggil,
+ * bukan rekonstruksi kausal lengkap. `returned` = runner kembali normal
+ * (isi ringkasan boleh berupa teks error anak — itu observasi, bukan vonis);
+ * `failed_to_start` = runner tak pernah jalan (factory/provider/pool).
+ */
+export type ChildStatus =
+  | "returned"
+  | "timeout"
+  | "aborted"
+  | "max_steps_exceeded"
+  | "error"
+  | "failed_to_start"
+
+/**
+ * Amplop hasil anak yang bounded + disanitasi (P9.2.1). `resultSummary`
+ * adalah salinan sanitasi dari string yang sudah dilihat parent (batas
+ * panjang sama), BUKAN transkrip anak. Absent (`null`) = data memang tak
+ * tersedia di jalur itu — jangan difabrikasi.
+ */
+export interface ChildResultEnvelope {
+  readonly childStatus: ChildStatus
+  readonly resultSummary: string
+  readonly runId: string | null
+  readonly steps: number | null
+  readonly truncated: boolean
 }
 
 export interface JournalRecord {

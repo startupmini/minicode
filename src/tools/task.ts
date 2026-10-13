@@ -22,6 +22,10 @@ import {
   transitionRun,
 } from "../session/persistence.ts"
 import {
+  buildChildResultEnvelope,
+  type ChildStatus,
+  childStatusOutcomeFlags,
+  classifyChildStatus,
   type EffectIntentResult,
   persistEffectIntent,
   persistEffectReceipt,
@@ -410,17 +414,31 @@ export const delegateTaskTool: Tool = {
     // committed = delegasi benar-benar jalan di sesi anak (efeknya di jurnal
     // anak). Factory/provider gagal = tak ada yang jalan = failed.
     let childRan = false
+    // P9.2.1: observasi untuk amplop durable di receipt (tak mengubah string
+    // parent atau state receipt). Default konservatif = runner tak pernah
+    // jalan; tiap cabang yang mencapai runner menimpanya dengan bukti yang
+    // ada. Dua dimensi sengaja terpisah: `terminal` = protokol efek lama,
+    // `childStatus` = apa yang teramati dari turn anak.
+    let childStatus: ChildStatus = "failed_to_start"
+    let observedSummary: string | null = null
+    let observedSteps: number | null = null
     try {
       const out = await pool.run(async () => {
         ctx.signal.throwIfAborted()
         // Cek factory dulu: fail-closed deterministik tanpa menyentuh config/env.
         const factory = sessionFactory
-        if (!factory) return "[sub-agent error] session factory not configured"
+        if (!factory) {
+          // P9.2.1: runner tak pernah jalan (`failed_to_start` default);
+          // ringkasan = string yang dilihat parent (tetap byte-identik).
+          observedSummary = "[sub-agent error] session factory not configured"
+          return observedSummary
+        }
         let provider: Awaited<ReturnType<typeof getProvider>>
         try {
           provider = await getProvider()
         } catch (e) {
-          return `[sub-agent error] provider: ${(e as Error).message}`
+          observedSummary = `[sub-agent error] provider: ${(e as Error).message}`
+          return observedSummary
         }
 
         const session = await factory({
@@ -516,10 +534,20 @@ export const delegateTaskTool: Tool = {
                 )
               ).result as Awaited<ReturnType<typeof runChild>>)
             : await runChild()
-          return `sub-agent (${m}) done: ${res.finalText?.slice(0, 2000) ?? "(no output)"} [steps ${res.usage.steps}]`
+          // P9.2.1: runner kembali normal = observasi `returned`; string
+          // parent di bawah ini byte-identik dengan sebelum amplop ada.
+          childStatus = "returned"
+          observedSteps = res.usage?.steps ?? null
+          observedSummary = `sub-agent (${m}) done: ${res.finalText?.slice(0, 2000) ?? "(no output)"} [steps ${res.usage.steps}]`
+          return observedSummary
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e)
-          return `[sub-agent ${m} error] ${msg.slice(0, 500)}`
+          // P9.2.1: turn anak lempar = klasifikasikan dari `kind`
+          // terstruktur (tak pernah dari wording pesan); string parent tetap
+          // byte-identik, receipt `state` tetap `committed` seperti dulu.
+          childStatus = classifyChildStatus(e)
+          observedSummary = `[sub-agent ${m} error] ${msg.slice(0, 500)}`
+          return observedSummary
         } finally {
           offUsage()
           offExec()
@@ -532,6 +560,15 @@ export const delegateTaskTool: Tool = {
       // Abort/pool-reject: delegasi tak selesai → failed (ambigu, verifikasi).
       // Efek anak yang telat tetap tercatat di jurnal ANAK, bukan di sini.
       terminal = "failed"
+      // P9.2.1: penolakan sebelum runner jalan = `failed_to_start` (default
+      // di atas sudah benar); bila anak sempat jalan lalu jalurnya sendiri
+      // yang lempar di luar turn (praktis tak terjadi — turn ditangkap di
+      // dalam), pilih `error` konservatif: jalan tapi hasilnya tak pasti.
+      // Ringkasan memakai batas error 500 yang lama; tak ada string parent
+      // di jalur ini (lempar ulang), jadi amplop mencatat alasan penolakan.
+      const msg = e instanceof Error ? e.message : String(e)
+      if (observedSummary === null) observedSummary = msg.slice(0, 500)
+      if (childRan) childStatus = "error"
       throw e
     } finally {
       // P2.9: tutup Run anak secara durable SEBELUMmelepas epoch-nya —
@@ -562,6 +599,18 @@ export const delegateTaskTool: Tool = {
           releaseSessionWriter(childId, childEpoch, parentCwd)
         } catch {}
       }
+      // P9.2.1: amplop observasi durable di receipt yang sudah ada — BUKAN
+      // otoritas baru. `state`/`terminal` tak tersentuh (makna committed/
+      // failed persis seperti dulu); status anak, ringkasan, run, dan langkah
+      // tercatat sebagai observasi untuk pemulihan/diagnosis. Flag
+      // outcome-level memakai kosakata yang sudah ada (konsisten dengan
+      // summarizeObservedReturn), bukan status baru.
+      const envelope = buildChildResultEnvelope({
+        childStatus,
+        summary: observedSummary ?? "",
+        runId: childRunId,
+        steps: observedSteps,
+      })
       await persistEffectReceipt({
         sessionId: parentId,
         threadId: DEFAULT_THREAD_ID,
@@ -577,7 +626,12 @@ export const delegateTaskTool: Tool = {
           ...(intent.record.argsHash ? { argsHash: intent.record.argsHash } : {}),
         },
         state: terminal,
-        outcome: { note: childId },
+        outcome: {
+          note: childId,
+          childResult: envelope,
+          ...(envelope.truncated ? { truncated: true as const } : {}),
+          ...childStatusOutcomeFlags(childStatus),
+        },
         childSessionId: childId,
         specialPath: "delegate-task",
       })

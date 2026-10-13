@@ -90,29 +90,105 @@ async function delegate(
 const read = (p: string) => Bun.file(p).text()
 
 /** Sumber tanpa komentar blok dan komentar baris (termasuk ekor baris).
- * String DIPERTAHANKAN — spesifier impor adalah string, jadi pelucutan
- * string akan menghapus justru yang dicari. Risiko sisa: string yang memuat
- * teks pola-impor (`from "x"`) akan terbaca sebagai impor — kegagalan LOUD
- * (test merah menunjuk barisnya), bukan lolos diam-diam; dapat diterima
- * untuk guard negatif. */
+ * String DIPERTAHANKAN utuh — spesifier impor adalah string, jadi pelucutan
+ * string akan menghapus justru yang dicari; `//` di dalam string (mis. URL)
+ * juga dipertahankan. Pemindai leksikal minimal (bukan parser AST):
+ * string kutip-satu/dua dengan escape, template literal dengan interpolasi
+ * `${}` seimbang, komentar blok dan baris. Risiko sisa, keduanya LOUD
+ * (test merah menunjuk barisnya), bukan lolos diam-diam: string pola-impor
+ * (`from "x"` di dalam literal) terbaca sebagai impor, dan regex literal
+ * yang memuat `//` terpotong di situ. Berkas yang dipindai guard ini tak
+ * memakai pola kedua (terverifikasi); pola pertama disengaja ketat. */
 function withoutComments(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .split("\n")
-    .map((line) => line.replace(/\/\/.*$/, ""))
-    .join("\n")
+  const n = src.length
+  let i = 0
+  let out = ""
+  // Menyalin ekspresi sampai akhir input, atau sampai `}` penutup seimbang
+  // bila stopOnBrace (untuk `${}`) — kurung kurawal di dalam string/komentar
+  // tak dihitung karena cabangnya dikonsumsi lebih dulu.
+  const copyExpr = (stopOnBrace: boolean): void => {
+    let depth = 0
+    while (i < n) {
+      const c = src[i]!
+      if (c === "{") {
+        depth++
+        out += c
+        i++
+        continue
+      }
+      if (c === "}") {
+        if (stopOnBrace && depth === 0) break
+        depth = Math.max(0, depth - 1)
+        out += c
+        i++
+        continue
+      }
+      if (c === "/" && src[i + 1] === "/") {
+        while (i < n && src[i] !== "\n") i++
+        continue
+      }
+      if (c === "/" && src[i + 1] === "*") {
+        i += 2
+        while (i < n && !(src[i] === "*" && src[i + 1] === "/")) i++
+        i += 2
+        continue
+      }
+      if (c === "'" || c === '"' || c === "`") {
+        out += c
+        i++
+        out += copyString(c)
+        continue
+      }
+      out += c
+      i++
+    }
+  }
+  // Menyalin isi string mulai SETELAH quote pembuka; berhenti tepat SETELAH
+  // quote penutup (atau akhir input bila tak-terminasi, tanpa throw).
+  const copyString = (q: string): string => {
+    let s = ""
+    while (i < n) {
+      const c = src[i]!
+      if (c === "\\") {
+        s += c + (src[i + 1] ?? "")
+        i += 2
+        continue
+      }
+      s += c
+      i++
+      if (c === q) break
+      if (q === "`" && c === "$" && src[i] === "{") {
+        s += "{"
+        const saved = out
+        out = ""
+        i++
+        copyExpr(true)
+        s += out
+        out = saved
+        if (src[i] === "}") {
+          s += "}"
+          i++
+        }
+      }
+    }
+    return s
+  }
+  copyExpr(false)
+  return out
 }
 
 /** Sumber tanpa string DAN komentar — untuk guard NEGATIF atas pemanggilan
- * dan identifier kode (`saveSession(`, `detached`, …). Guard POSITIF
- * (menuntut keberadaan token) tetap memakai sumber mentah — pelucutan hanya
- * untuk guard negatif, supaya pola string yang sah (mis.
+ * dan identifier kode (`saveSession(`, `detached`, …). Dibangun di atas
+ * withoutComments (pemindai di atas) lalu literal string diblankan, supaya
+ * komentar-dalam-string dan string-dalam-komentar tertangani dengan benar.
+ * Guard POSITIF (menuntut keberadaan token) tetap memakai sumber mentah —
+ * pelucutan hanya untuk guard negatif, supaya pola string yang sah (mis.
  * `'permissionMode: "readonly"'`) tetap terpin apa adanya.
  *
- * Keterbatasan jujur: regex literal satu-baris yang memuat `//` akan
- * terpotong di situ (pelucutan hanya menghapus teks → risiko false-NEGATIF
- * pada baris itu saja, tak pernah false-positif). Berkas yang dipindai guard
- * ini tak memakai pola itu; bila muncul, guard mengatakannya lewat F1/F2. */
+ * Keterbatasan jujur (diwarisi, didokumentasikan — bukan disembunyikan):
+ * regex literal yang memuat `//` terpotong di situ; pelucutan hanya menghapus
+ * teks → risiko false-NEGATIF pada baris itu saja, tak pernah false-positif.
+ * Berkas yang dipindai guard ini tak memakai pola itu (terverifikasi). */
 function stripCode(src: string): string {
   return withoutComments(src).replace(
     /'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g,
@@ -145,9 +221,47 @@ function importSpecifiers(src: string): string[] {
 
 /** True bila spesifier menunjuk ke modul target (akhir path cocok — bentuk
  * relatif `../runtime/child-execution.ts`, `./child-execution.ts`, maupun
- * absolut paket menunjuk berkas yang sama). */
+ * absolut paket menunjuk berkas yang sama; bentuk TANPA ekstensi
+ * `../runtime/child-execution` yang didukung resolver juga cocok — sufiks
+ * `.ts` dinormalkan dulu. Klaim BUKAN analisis transitif: hanya impor
+ * langsung yang terdeteksi (sesuai batas direct-import yang dipin). */
 function importsTarget(specs: readonly string[], target: string): boolean {
-  return specs.some((s) => s === target || s.endsWith(`/${target}`))
+  const norm = (s: string) => s.replace(/\.ts$/, "")
+  const t = norm(target)
+  return specs.some((s) => {
+    const v = norm(s)
+    return v === t || v.endsWith(`/${t}`)
+  })
+}
+
+/** Spesifier impor M7 yang terlarang (dipakai E1, diuji F3): otoritas
+ * kernel/backend/dispatch, kedua jalur produksi, persistensi sesi, dan
+ * spawn proses. `child_process` mencakup `node:child_process` beserta
+ * subpath-nya — WAJIB lewat spesifier (bukan stripCode) karena pelucutan
+ * string menghapus justru modul yang dicari (F-01). */
+function m7ForbiddenImports(specs: readonly string[]): string[] {
+  const forbidden = [
+    "execution-kernel",
+    "execution-backend",
+    "dispatch.ts",
+    "tools/task",
+    "task/autonomous",
+    "task/scheduler",
+    "task/store",
+    "session/persistence",
+    "session/journal",
+    "child_process",
+  ]
+  return forbidden.filter((f) => specs.some((s) => s.includes(f)))
+}
+
+/** True bila sumber mengandung literal status COMPLETED sebagai kode
+ * (dipakai D2, diuji F3): komentar dikecualikan, string DIPERTAHANKAN —
+ * literal yang dicari memang hidup di dalam string (F-02). Ketat disengaja:
+ * string log yang memuatnya pun menggagalkan (fail-loud), karena token
+ * status tak boleh muncul sebagai nilai di modul scheduler. */
+function hasCompletedLiteral(src: string): boolean {
+  return /"COMPLETED"/.test(withoutComments(src))
 }
 
 /** Berkas produksi yang memanggil `ExecutionBackend.start` sebagai kode.
@@ -412,8 +526,10 @@ test("D2 scheduler tetap dispatch-only: tak menulis COMPLETED / verifikasi", asy
   const src = await read("src/task/scheduler.ts")
   // Tak ada penulisan status COMPLETED maupun klaim verifikasi — sebagai kode
   // (komentar "never writes COMPLETED" di bawah justru DOKUMENTASI larangan
-  // ini, jadi guard negatif memakai sumber yang dilucuti).
-  expect(/"COMPLETED"/.test(stripCode(src))).toBe(false)
+  // ini). Literal yang dicari hidup di dalam string, jadi guard memakai
+  // sumber tanpa-komentar-dengan-string (F-02): stripCode menghapus justru
+  // yang dicari.
+  expect(hasCompletedLiteral(src)).toBe(false)
   expect(src.includes("recordAttemptReturned")).toBe(true)
   // Kanvas otorisasi completion tetap di TaskStore (reconcile), bukan scheduler.
   expect(src.includes("never writes COMPLETED")).toBe(true)
@@ -436,27 +552,16 @@ test("E1 M7 tetap murni: tak bergantung ke kernel/backend/dispatch/tools/task", 
   // `src/tools/task.ts` + `delegate_task` sebagai konteks sejarah — itu
   // dokumentasi, bukan dependensi. Batas M7 yang mengikat = impor modul.
   const src = await read("src/runtime/child-execution.ts")
-  const specs = importSpecifiers(src)
-  for (const forbidden of [
-    "execution-kernel",
-    "execution-backend",
-    "dispatch.ts",
-    "tools/task",
-    "task/autonomous",
-    "task/scheduler",
-    "task/store",
-    "session/persistence",
-    "session/journal",
-  ]) {
-    expect(
-      specs.some((s) => s.includes(forbidden)),
-      `import ${forbidden}`,
-    ).toBe(false)
-  }
-  // Pemanggilan/spawn sebagai kode (bukan penyebutan di komentar/string).
+  // F-01: modul terlarang dinilai lewat spesifier impor (string
+  // dipertahankan), bukan lewat kode terlucuti — pelucutan string menghapus
+  // justru `from "node:child_process"` yang harus terdeteksi.
+  expect(m7ForbiddenImports(importSpecifiers(src))).toEqual([])
+  // Pemanggilan/spawn sebagai kode (bukan penyebutan di komentar/string);
+  // batas kata presisi (`respawn(` bukan spawn, `saveSessionX` bukan yang
+  // dicari).
   const code = stripCode(src)
-  for (const forbidden of ["saveSession", "child_process", "Bun.spawn", "spawn("]) {
-    expect(code.includes(forbidden), forbidden).toBe(false)
+  for (const forbidden of [/\bsaveSession\b/, /\bBun\.spawn\b/, /\bspawn\s*\(/]) {
+    expect(forbidden.test(code), String(forbidden)).toBe(false)
   }
 })
 
@@ -511,6 +616,13 @@ test("F1 pemindai impor menangkap semua bentuk, mengabaikan non-kode", () => {
     ['const m = require("../runtime/child-execution.ts")', true, true],
     ['export { admitChild } from "../runtime/child-execution.ts"', true, true],
     ['export * from "./child-execution.ts"', false, true],
+    // F-03: bentuk tanpa ekstensi yang didukung resolver — terdeteksi sama.
+    ['import { admitChild } from "../runtime/child-execution"', true, true],
+    ['import "../runtime/child-execution"', true, true],
+    ['const m = await import("../runtime/child-execution")', true, true],
+    ['const m = require("../runtime/child-execution")', true, true],
+    ['export { admitChild } from "../runtime/child-execution"', true, true],
+    ['export * from "./child-execution"', false, true],
   ]
   for (const [src, long, short] of shapes) {
     const specs = importSpecifiers(src)
@@ -548,4 +660,31 @@ test("F2 pemindai menemukan pemakaian kode asli di tengah komentar", () => {
   expect(/\bsaveSession\s*\(/.test(stripped)).toBe(true)
   // `detached` hanya hidup di dalam string catatan → terlucuti.
   expect(/\bdetached\b/.test(stripped)).toBe(false)
+})
+
+test("F3 guard koreksi F-01/F-02 mendeteksi konstruksi terlarang, mengabaikan komentar", () => {
+  // F-01: impor child_process asli (semua bentuk) terdeteksi sebagai kode;
+  // penyebutan di komentar tidak.
+  for (const src of [
+    'import { spawn } from "node:child_process"',
+    'import "node:child_process"',
+    'const p = await import("node:child_process")',
+    'const p = require("node:child_process")',
+    'export { spawn } from "node:child_process"',
+  ]) {
+    expect(m7ForbiddenImports(importSpecifiers(src)), src).toEqual(["child_process"])
+  }
+  expect(
+    m7ForbiddenImports(importSpecifiers('// dulu: import { spawn } from "node:child_process"')),
+  ).toEqual([])
+  expect(m7ForbiddenImports(importSpecifiers('/* import "node:child_process" */'))).toEqual([])
+  expect(m7ForbiddenImports(importSpecifiers('import { x } from "./capability.ts"'))).toEqual([])
+  // F-02: literal COMPLETED eksekutabel terdeteksi; komentar tidak — termasuk
+  // string berisi `//` sebelum literalnya (pemindai naif per-baris memotong
+  // baris di `//` dalam string dan kehilangan literal; pemindai ini tidak).
+  expect(hasCompletedLiteral('store.write({ status: "COMPLETED" })')).toBe(true)
+  expect(hasCompletedLiteral('log("a//b"); s = "COMPLETED"')).toBe(true)
+  expect(hasCompletedLiteral('// scheduler tak boleh menulis "COMPLETED"')).toBe(false)
+  expect(hasCompletedLiteral('/* status "COMPLETED" dilarang */')).toBe(false)
+  expect(hasCompletedLiteral('const url = "https://contoh.test/a//b" // usang')).toBe(false)
 })

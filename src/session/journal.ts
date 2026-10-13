@@ -1502,11 +1502,44 @@ export interface RecoveryInput {
  * anak tetap ada walau riwayat bersih"). Kembalikan childSessionId + seq + ts.
  * Murni baca; tak pernah melempar (gagal baca = [] + warn stderr).
  */
+export interface CommittedDelegate {
+  readonly childSessionId: string
+  readonly seq: number
+  readonly ts: number
+  /**
+   * Observasi amplop anak (P9.2.2.1, display-only): disalin dari terminal
+   * record yang sama — BUKAN bacaan jurnal anak baru. Absen = record
+   * legacy/rusak → pemanggil wajib fallback baris legacy.
+   */
+  readonly childStatus?: ChildStatus
+  readonly resultSummary?: string
+  readonly truncated?: boolean
+}
+
+/** Status amplop yang boleh tampil (di luar ini = rusak → absen). */
+const DISPLAYABLE_CHILD_STATUS: ReadonlySet<string> = new Set([
+  "returned",
+  "timeout",
+  "aborted",
+  "max_steps_exceeded",
+  "error",
+  "failed_to_start",
+])
+
+/**
+ * Predikat bersama untuk status tampil (dipakai pembaca committedDelegatesSince
+ * DAN formatter cli/recovery-warning.ts — satu sumber kebenaran agar status
+ * asing tak pernah menjadi teks status menyesatkan di lapisan mana pun).
+ */
+export function isDisplayableChildStatus(value: unknown): value is ChildStatus {
+  return typeof value === "string" && DISPLAYABLE_CHILD_STATUS.has(value)
+}
+
 export async function committedDelegatesSince(
   sessionId: string,
   cwd: string | undefined,
   sinceTs: number,
-): Promise<{ childSessionId: string; seq: number; ts: number }[]> {
+): Promise<CommittedDelegate[]> {
   try {
     const { records } = await loadJournal(sessionId, cwd)
     // Tautan dari terminal, fallback ke intent se-id (jurnal lama).
@@ -1516,13 +1549,28 @@ export async function committedDelegatesSince(
         intentChild.set(r.id, r.childSessionId)
       }
     }
-    const out: { childSessionId: string; seq: number; ts: number }[] = []
+    const out: CommittedDelegate[] = []
     for (const r of records) {
       if (r.tool !== "delegate_task" || r.state !== "committed") continue
       const cid = r.childSessionId ?? intentChild.get(r.id)
       if (!cid) continue
       if (typeof r.ts !== "number" || r.ts < sinceTs) continue
-      out.push({ childSessionId: cid, seq: r.seq, ts: r.ts })
+      // Amplop usang/rusak = absen (fallback baris legacy di pemanggil, tak
+      // pernah gagal): childStatus harus dikenal (status asing tak boleh
+      // jadi teks status menyesatkan) dan ringkasan harus string.
+      const env = r.outcome?.childResult
+      const envelope =
+        env !== null &&
+        typeof env === "object" &&
+        isDisplayableChildStatus(env.childStatus) &&
+        typeof env.resultSummary === "string"
+          ? {
+              childStatus: env.childStatus as ChildStatus,
+              resultSummary: env.resultSummary,
+              ...(env.truncated === true ? { truncated: true as const } : {}),
+            }
+          : {}
+      out.push({ childSessionId: cid, seq: r.seq, ts: r.ts, ...envelope })
     }
     return out.sort((a, b) => a.seq - b.seq)
   } catch (e) {

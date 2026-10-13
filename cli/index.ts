@@ -588,13 +588,14 @@ if (enterRepl) {
     // user yang menjalankan ulang manual butuh peringatan yang sama.
     try {
       const { committedDelegatesSince } = await import("../src/session/journal.ts")
+      const { formatDelegateRecoveryLine } = await import("./recovery-warning.ts")
       const done = await committedDelegatesSince(sid, wcwd, t0)
+      // P9.2.2.1: tiap baris diperkaya observasi amplop anak (status +
+      // preview ringkasan, sudah disanitasi display di formatter); record
+      // legacy/rusak jatuh ke baris legacy byte-identik. Display-only di
+      // dalam catch yang selalu exit — tanpa retry, tanpa tulis baru.
       for (const d of done) {
-        process.stderr.write(
-          c.yellow(
-            `[recovery] turn failed after sub-agent ${d.childSessionId} completed — its effects stand; verify before re-delegating\n`,
-          ),
-        )
+        process.stderr.write(c.yellow(`${formatDelegateRecoveryLine(d)}\n`))
       }
     } catch {}
     const uErr = usage.getSession(modelRef.current)

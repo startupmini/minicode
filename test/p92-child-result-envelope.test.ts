@@ -24,7 +24,16 @@ import {
   loadJournal,
   sweepJournal,
 } from "../src/session/journal.ts"
-import { DEFAULT_THREAD_ID, listSessionRuns, loadSession } from "../src/session/persistence.ts"
+import {
+  completeRun,
+  createChildSession,
+  DEFAULT_THREAD_ID,
+  getRun,
+  listSessionRuns,
+  loadSession,
+  tombstoneOrphanChildRuns,
+  transitionRun,
+} from "../src/session/persistence.ts"
 import {
   buildChildResultEnvelope,
   CHILD_RESULT_SUMMARY_MAX,
@@ -181,7 +190,9 @@ test("A1 round-trip: receipt terminal memuat amplop dengan identitas benar", asy
     expect(env.steps).toBe(2)
     const runs = listSessionRuns(childId, dir)
     expect(runs).toHaveLength(1)
+    // P9.3.1: normal return tetap COMPLETED/NONE (bukan INTERRUPTED).
     expect(runs[0]!.status).toBe("COMPLETED")
+    expect(runs[0]!.recovery_status).toBe("NONE")
     expect(env.runId).toBe(runs[0]!.run_id)
   } finally {
     restore()
@@ -191,7 +202,7 @@ test("A1 round-trip: receipt terminal memuat amplop dengan identitas benar", asy
 // ── B. Matriks klasifikasi status ──────────────────────────────────────────
 // Tiap kasus: childStatus jujur + state receipt + Run-terminalisasi + string
 // parent persis seperti sebelum amplop (tak ada perilaku berubah).
-test("B1 timeout terstruktur → timeout, receipt committed, Run COMPLETED", async () => {
+test("B1 timeout terstruktur → timeout, receipt committed, Run INTERRUPTED", async () => {
   const restore = providerEnv()
   const dir = tmpRoot()
   try {
@@ -215,13 +226,20 @@ test("B1 timeout terstruktur → timeout, receipt committed, Run COMPLETED", asy
     expect(term.outcome?.timeout).toBe(true)
     const childId = r.spec!.journal!.sessionId
     expect(env.runId).toBe(listSessionRuns(childId, dir)[0]!.run_id)
-    expect(listSessionRuns(childId, dir)[0]!.status).toBe("COMPLETED")
+    // P9.3.1: turn dipotong = Run INTERRUPTED/UNKNOWN (bukan COMPLETED),
+    // sementara receipt tetap committed — dua dimensi terpisah.
+    const runs = listSessionRuns(childId, dir)
+    expect(runs).toHaveLength(1)
+    expect(runs[0]!.status).toBe("INTERRUPTED")
+    expect(runs[0]!.recovery_status).toBe("UNKNOWN")
+    // Test gagal bila cabang completeRun lama dipakai untuk timeout.
+    expect(runs[0]!.status).not.toBe("COMPLETED")
   } finally {
     restore()
   }
 })
 
-test("B2 abort terstruktur → aborted, receipt committed, Run COMPLETED", async () => {
+test("B2 abort terstruktur → aborted, receipt committed, Run INTERRUPTED", async () => {
   const restore = providerEnv()
   const dir = tmpRoot()
   try {
@@ -242,7 +260,11 @@ test("B2 abort terstruktur → aborted, receipt committed, Run COMPLETED", async
     expect(term.outcome?.aborted).toBe(true)
     expect(term.outcome?.timeout).toBeUndefined()
     const childId = r.spec!.journal!.sessionId
-    expect(listSessionRuns(childId, dir)[0]!.status).toBe("COMPLETED")
+    const runs = listSessionRuns(childId, dir)
+    expect(runs).toHaveLength(1)
+    expect(runs[0]!.status).toBe("INTERRUPTED")
+    expect(runs[0]!.recovery_status).toBe("UNKNOWN")
+    expect(env.runId).toBe(runs[0]!.run_id)
   } finally {
     restore()
   }
@@ -268,7 +290,12 @@ test("B3 max-step terstruktur → max_steps_exceeded, tanpa flag timeout/abort",
     expect(term.outcome?.timeout).toBeUndefined()
     expect(term.outcome?.aborted).toBeUndefined()
     const childId = r.spec!.journal!.sessionId
-    expect(listSessionRuns(childId, dir)[0]!.status).toBe("COMPLETED")
+    // P9.3.1: max_steps = turn berakhir oleh aturannya sendiri → tetap
+    // COMPLETED (bukan INTERRUPTED); batas ini revisitable terpisah.
+    const runs = listSessionRuns(childId, dir)
+    expect(runs).toHaveLength(1)
+    expect(runs[0]!.status).toBe("COMPLETED")
+    expect(runs[0]!.recovery_status).toBe("NONE")
   } finally {
     restore()
   }
@@ -613,6 +640,33 @@ test("D2 hasil tak-pasti tak dijalankan ulang: tepat satu percobaan", async () =
     for (const rr of ours) expect(["pending", "committed", "failed"]).toContain(rr.state!)
   } finally {
     restore()
+  }
+})
+
+test("D3 sweep melaporkan hanya baris yang benar-benar ditransisikan", async () => {
+  // P9.3.1 (D3): deterministik tanpa race timing — susun fixture langsung
+  // lewat API produksi (create + RUNNING + pra-terminal), bukan sleep.
+  const dir = tmpRoot()
+  const parent = "p92-d3"
+  try {
+    // 1. Yatim eligible (RUNNING) → ditombstone DAN dilaporkan.
+    const orphan = createChildSession({ parentSessionId: parent, cwd: dir })
+    transitionRun(orphan.runId, "RUNNING", dir)
+    // 2. Sudah terminal duluan (pemenang race lawan sweep) → tak dilaporkan.
+    const settled = createChildSession({ parentSessionId: parent, cwd: dir })
+    transitionRun(settled.runId, "RUNNING", dir)
+    completeRun(settled.runId, dir)
+    const reported = tombstoneOrphanChildRuns(parent, dir)
+    expect(reported).toEqual([orphan.runId])
+    expect(getRun(orphan.runId, dir)?.status).toBe("INTERRUPTED")
+    expect(getRun(orphan.runId, dir)?.recovery_status).toBe("UNKNOWN")
+    expect(getRun(settled.runId, dir)?.status).toBe("COMPLETED")
+    // 3. Sweep ulang fixture yang sama → tak ada yang baru dilaporkan.
+    expect(tombstoneOrphanChildRuns(parent, dir)).toEqual([])
+    // 4. Perilaku recovery tak berubah: eligible tetap INTERRUPTED/UNKNOWN.
+    expect(getRun(orphan.runId, dir)?.status).toBe("INTERRUPTED")
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {})
   }
 })
 

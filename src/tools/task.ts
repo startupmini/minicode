@@ -576,7 +576,26 @@ export const delegateTaskTool: Tool = {
       if (childRunId !== null) {
         try {
           const childEpochNow = readWriterEpoch(childId, parentCwd)
-          if (terminal === "committed" && childRan)
+          // P9.3.1: turn yang dipotong dari luar (timeout/abort terstruktur)
+          // BUKAN turn yang selesai — Run-nya INTERRUPTED/UNKNOWN, bukan
+          // COMPLETED. Receipt tetap `committed` (protokol efek tak tersentuh;
+          // delegasi memang jalan), string parent tak berubah, amplop sudah
+          // mencatat statusnya. Hanya dua status eksogen ini yang dipindah;
+          // `error`/`max_steps_exceeded` = turn berakhir oleh aturannya
+          // sendiri → tetap COMPLETED seperti dulu. Predikat via helper
+          // (bukan perbandingan inline) karena penugasan di closure pool-body
+          // tak terbaca CFA di situs finally.
+          const cutShort = childStatusOutcomeFlags(childStatus)
+          if (
+            terminal === "committed" &&
+            childRan &&
+            (cutShort.timeout === true || cutShort.aborted === true)
+          )
+            interruptRun(childRunId, parentCwd, {
+              expectedEpoch: childEpochNow,
+              recoveryStatus: "UNKNOWN",
+            })
+          else if (terminal === "committed" && childRan)
             completeRun(childRunId, parentCwd, {
               expectedEpoch: childEpochNow,
             })

@@ -1953,10 +1953,16 @@ export function tombstoneOrphanChildRuns(
         .all(parentSessionId) as { run_id: string }[]
       const out: string[] = []
       for (const row of rows) {
-        db.prepare(
-          "UPDATE runs SET status = 'INTERRUPTED', recovery_status = 'UNKNOWN' WHERE run_id = ? AND status IN ('RUNNING', 'CREATED')",
-        ).run(row.run_id)
-        out.push(row.run_id)
+        // P9.3.1 (D3): laporkan hanya baris yang transisi ini benar-benar
+        // pindahkan. Pemenang race (sudah terminal oleh completeRun/failRun)
+        // cocok 0 baris di WHERE status IN (...) — keamanannya tetap
+        // first-terminal-wins, tapi tak dihitung sebagai tombstone-an kita.
+        const moved = db
+          .prepare(
+            "UPDATE runs SET status = 'INTERRUPTED', recovery_status = 'UNKNOWN' WHERE run_id = ? AND status IN ('RUNNING', 'CREATED')",
+          )
+          .run(row.run_id).changes
+        if (moved > 0) out.push(row.run_id)
       }
       return out
     })()

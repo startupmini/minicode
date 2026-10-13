@@ -49,7 +49,11 @@ export function boundRecoveryPreview(
   summary: string,
   persistedTruncated: boolean,
 ): RecoveryPreview {
-  const safe = stripSgr(sanitizeAnsiLine(summary))
+  // U+2028/U+2029 dinetralkan jadi spasi di sini (jalur display, BUKAN
+  // sanitizer global — preseden cleanCell di src/ui/render/table.ts:16):
+  // keduanya batas baris logis yang dipertahankan sanitizeAnsiLine, dan
+  // baris peringatan ini berkontrak satu baris fisik maupun logis.
+  const safe = stripSgr(sanitizeAnsiLine(summary)).replace(/[\u2028\u2029]/g, " ")
   let text = safe
   let cut = 0
   if (text.length > RECOVERY_PREVIEW_MAX) {
@@ -92,8 +96,11 @@ export function formatDelegateRecoveryLine(entry: DelegateRecoveryEntry): string
     `completed — its effects stand; verify before re-delegating`
   // Keduanya wajib ada DAN status harus dikenal (predikat bersama dengan
   // pembaca — status asing tak boleh jadi teks status menyesatkan di lapisan
-  // mana pun). Data yang diragukan → fallback legacy, bukan tebakan setengah.
-  if (!isDisplayableChildStatus(entry.childStatus) || entry.resultSummary === undefined)
+  // mana pun). Ringkasan WAJIB string: null/angka/objek dari jurnal
+  // tulisan-tangan = rusak → fallback legacy. String kosong tetap valid
+  // (observasi kosong yang jujur, bukan data hilang). Data yang diragukan →
+  // fallback legacy, bukan tebakan setengah.
+  if (!isDisplayableChildStatus(entry.childStatus) || typeof entry.resultSummary !== "string")
     return legacy
   const preview = boundRecoveryPreview(entry.resultSummary, entry.truncated === true)
   // `receipt: committed` akurat di sini karena pembaca (committedDelegatesSince)

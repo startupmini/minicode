@@ -221,6 +221,32 @@ test("B1 record legacy tanpa amplop = baris legacy byte-identik", async () => {
   }
 })
 
+test("B1b receipt failed tetap dikecualikan (filter committed-only)", async () => {
+  const dir = tmpRoot()
+  const parent = "p922-b1b"
+  try {
+    const mkTerminal = async (child: string, state: "committed" | "failed") => {
+      const intent = await appendMutationIntent({
+        session: parent,
+        tool: "delegate_task",
+        cwd: dir,
+        childSessionId: child,
+      })
+      await appendMutationTerminal(parent, dir, intent.id, intent.seq, "delegate_task", state, {
+        note: child,
+      })
+    }
+    // Regresi langsung atas filter reader: hanya committed yang tampil.
+    await mkTerminal("sub_done", "committed")
+    await mkTerminal("sub_fail", "failed")
+    const lines = await warningLines(parent, dir, 0)
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toBe(legacyLine("sub_done"))
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
+})
+
 test("B2 amplop rusak/status asing/ringkasan hilang = fallback legacy, tak lempar", async () => {
   const dir = tmpRoot()
   const parent = "p922-b2"
@@ -269,9 +295,39 @@ test("B2 amplop rusak/status asing/ringkasan hilang = fallback legacy, tak lempa
     expect(formatDelegateRecoveryLine({ childSessionId: "s", childStatus: "returned" })).toBe(
       legacyLine("s"),
     )
+    // F2: ringkasan non-string (jurnal tulisan-tangan) = rusak → legacy
+    // byte-identik, tak pernah lempar. String kosong tetap valid (D1).
+    for (const bad of [42, null, {}]) {
+      expect(
+        formatDelegateRecoveryLine({
+          childSessionId: "s",
+          childStatus: "returned",
+          resultSummary: bad as never,
+        }),
+        `summary=${JSON.stringify(bad)}`,
+      ).toBe(legacyLine("s"))
+    }
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {})
   }
+})
+
+test("C0 U+2028/U+2029 dinetralkan jadi spasi dalam satu baris", () => {
+  // Konstanta eksplisit (tanpa literal tak-terlihat di source): separator
+  // garis/paragraf Unicode yang wajib jadi spasi di baris peringatan.
+  const LS = String.fromCharCode(0x2028)
+  const PS = String.fromCharCode(0x2029)
+  const line = formatDelegateRecoveryLine({
+    childSessionId: "sub_u",
+    childStatus: "returned",
+    resultSummary: `A${LS}B${PS}C`,
+  })
+  // Final formatter output: separator lenyap, teks sekitar terbaca,
+  // tetap satu baris fisik.
+  expect(line).toContain("prior child output: A B C — effects stand")
+  expect(line.includes(LS)).toBe(false)
+  expect(line.includes(PS)).toBe(false)
+  expect(line.split("\n")).toHaveLength(1)
 })
 
 // ── C. Keamanan output ─────────────────────────────────────────────────────

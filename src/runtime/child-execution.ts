@@ -1,19 +1,26 @@
-// M7 — Parent/child execution contract: SATU canonical spec untuk delegate +
-// autonomous, BUKAN dua validasi berbeda.
+// M7 — Parent/child execution contract: kontrak admission/derivasi murni
+// untuk KELUARGA DELEGATE + helper perencanaan-cancel bersama (bukan dua
+// validasi berbeda untuk SATU pemakai, dan bukan satu spec untuk SEMUA jalur).
 //
-// Kenapa berkas ini ada (P1 ADR-003): delegate_task (src/tools/task.ts) dan
-// autonomous execution (src/task/autonomous-*) masing-masing menemukan ulang
-// warisan cwd/model/sinyal, cap langkah, dan isolasi — tanpa kontrak bersama
-// untuk identitas, capability, deadline, budget, dan detached. Modul ini
-// menyatukan VALIDASI + DERIVASI pra-eksekusi; eksekusi aktual tetap milik
-// jalur existing (factory sesi anak + antrean konkurensi + session.run),
+// Kenapa berkas ini ada (P1 ADR-003, diamendemen ADR-25): delegate_task
+// (src/tools/task.ts) dan autonomous execution (src/task/autonomous-*)
+// masing-masing menemukan ulang warisan cwd/model/sinyal, cap langkah, dan
+// isolasi — tanpa kontrak bersama untuk identitas, capability, deadline,
+// budget, dan detached. Modul ini menyatukan VALIDASI + DERIVASI pra-eksekusi
+// untuk keluarga delegate; eksekusi otonom TIDAK mengonsumsinya (kontraknya
+// mode-less/read-only/default-8 tanpa parent grant tak representable di sini
+// tanpa mengarang artefak otorisasi — lihat ADR-25). Eksekusi aktual tetap
+// milik jalur existing (factory sesi anak + antrean konkurensi + session.run),
 // lifecycle authority milik Kernel (M8), klaim milik TaskStore/Scheduler,
-// recovery milik M12.
+// recovery milik M12. Satu-satunya pemakai produksi di luar keluarga delegate
+// adalah supervisor (planParentCancellation = perencanaan murni, BUKAN
+// admission).
 //
 // BUKAN: DAG (tree saja — tepat satu parent), nested umum, Execution FSM,
 // supervisor/retry, recovery, scheduler bridge, persistence redesign, kill
 // fisik (M5), capability enforcement (M6 + jail/guard), production wiring
-// (delegate_task/autonomous TAK DIUBAH di sini — adopsi = M14).
+// (delegate_task TAK DIUBAH di sini — adopsi = M14; autonomous tak pernah
+// mengadopsi admitChild/modeStepCap — ADR-25).
 // Aturan yang dikunci (jangan dilonggarkan tanpa ADR baru):
 // - E_child baru via M1 allocator (tak pernah reuse parent/task/session id).
 // - childGrant ⊆ parentGrant via M6 attenuateGrant (TANPA algoritma kedua).

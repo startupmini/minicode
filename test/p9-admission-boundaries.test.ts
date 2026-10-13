@@ -1,4 +1,5 @@
-// P9.1 — Batas kontrak admission (ADR M7: MODE-SPECIFIC CONTRACTS, REUSE ONLY
+// P9.1 — Batas kontrak admission (ADR-25 di docs/design/adr/
+// ADR-25-m7-mode-specific-contracts.md: MODE-SPECIFIC CONTRACTS, REUSE ONLY
 // EQUIVALENT RULES). Test ini memakuk kontrak yang DIPUTUSKAN owner:
 // - Delegate & autonomous = DUA kontrak admission, sengaja berbeda.
 // - Aturan yang ekuivalen eksak: cap fallback delegate == cap mode M7
@@ -13,7 +14,7 @@
 // setSubAgentSessionFactory), bukan mock paralel. Guard lain memindai sumber
 // dengan pola yang sama seperti test M7/M16 repo ini.
 import { afterAll, expect, test } from "bun:test"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs"
 import { rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -88,25 +89,92 @@ async function delegate(
 
 const read = (p: string) => Bun.file(p).text()
 
-/** Kode tanpa komentar (// baris + /* blok) — agar penyebutan di komentar
- * dokumentasi tak dianggap pemakaian kode. Kenapa: task.ts menyebut
- * `saveSession` di komentar §4 dan child-execution.ts menyebut `tools/task`
- * di header ADR — bisher beide keine Code-Nutzung sind. */
-function codeOnly(src: string): string {
+/** Sumber tanpa komentar blok dan komentar baris (termasuk ekor baris).
+ * String DIPERTAHANKAN — spesifier impor adalah string, jadi pelucutan
+ * string akan menghapus justru yang dicari. Risiko sisa: string yang memuat
+ * teks pola-impor (`from "x"`) akan terbaca sebagai impor — kegagalan LOUD
+ * (test merah menunjuk barisnya), bukan lolos diam-diam; dapat diterima
+ * untuk guard negatif. */
+function withoutComments(src: string): string {
   return src
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .split("\n")
-    .filter((line) => !line.trimStart().startsWith("//"))
+    .map((line) => line.replace(/\/\/.*$/, ""))
     .join("\n")
 }
 
-/** Spesifier import statis + dynamic (tanpa komentar) — batas arsitektur
- * menilai dependensi modul, bukan penyebutan dokumentasi. */
+/** Sumber tanpa string DAN komentar — untuk guard NEGATIF atas pemanggilan
+ * dan identifier kode (`saveSession(`, `detached`, …). Guard POSITIF
+ * (menuntut keberadaan token) tetap memakai sumber mentah — pelucutan hanya
+ * untuk guard negatif, supaya pola string yang sah (mis.
+ * `'permissionMode: "readonly"'`) tetap terpin apa adanya.
+ *
+ * Keterbatasan jujur: regex literal satu-baris yang memuat `//` akan
+ * terpotong di situ (pelucutan hanya menghapus teks → risiko false-NEGATIF
+ * pada baris itu saja, tak pernah false-positif). Berkas yang dipindai guard
+ * ini tak memakai pola itu; bila muncul, guard mengatakannya lewat F1/F2. */
+function stripCode(src: string): string {
+  return withoutComments(src).replace(
+    /'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g,
+    '""',
+  )
+}
+
+/** Spesifier impor menurut idiom guard repo (lih. `specsOf` di
+ * test/p2-architecture-guards.test.ts:20-25): `from` / `import` / `require`
+ * + string — mencakup impor statis, impor side-effect, impor dinamis,
+ * `require()`, dan semua bentuk re-export `... from`. Repo tak punya dep
+ * parser TS, jadi regex sempit ini TEKNIK TERKECIL yang andal; ia mencakup
+ * semua bentuk modul yang dipakai repo. Diterapkan pada sumber tanpa
+ * komentar (string dipertahankan — lih. withoutComments) agar penyebutan
+ * dokumentasi tak dianggap dependensi.
+ *
+ * Aturan yang dipin: larangan adalah impor LANGSUNG dalam bentuk apa pun di
+ * atas. Tak ada barrel (`index.ts`) di `src/runtime/` maupun `src/task/`,
+ * dan tak ada `export ... from` yang mengekspor ulang M7 — jadi tak ada
+ * jalur tak-langsung yang perlu dilarang terpisah; bila barrel muncul,
+ * guard ini tetap menangkap impornya karena spesifiernya sama. */
 function importSpecifiers(src: string): string[] {
-  const code = codeOnly(src)
   const out: string[] = []
-  for (const m of code.matchAll(/from\s+["']([^"']+)["']/g)) out.push(m[1]!)
-  for (const m of code.matchAll(/import\s*\(\s*["']([^"']+)["']\s*\)/g)) out.push(m[1]!)
+  for (const m of withoutComments(src).matchAll(
+    /(?:\bfrom|\bimport|\brequire)\s*\(?["']([^"']+)["']/g,
+  ))
+    out.push(m[1]!)
+  return out
+}
+
+/** True bila spesifier menunjuk ke modul target (akhir path cocok — bentuk
+ * relatif `../runtime/child-execution.ts`, `./child-execution.ts`, maupun
+ * absolut paket menunjuk berkas yang sama). */
+function importsTarget(specs: readonly string[], target: string): boolean {
+  return specs.some((s) => s === target || s.endsWith(`/${target}`))
+}
+
+/** Berkas produksi yang memanggil `ExecutionBackend.start` sebagai kode.
+ * Sapuan repo-wide `src/**` + `cli/**` ala M16 G9 (jalan direktori, tanpa
+ * dependensi git; `vendor/` dikecualikan seperti guard arsitektur lain). */
+function productionBackendStarters(): string[] {
+  const out: string[] = []
+  const walk = (dir: string): void => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === "node_modules" || e.name === ".git" || e.name === "vendor") continue
+      const p = join(dir, e.name)
+      if (e.isDirectory()) {
+        walk(p)
+        continue
+      }
+      if (!e.name.endsWith(".ts")) continue
+      const code = stripCode(readFileSync(p, "utf8"))
+      // Bentuk kanonik pemanggilan backend = `backend.start(req)`; backstop
+      // literal inline = `.start({…cmd…})` karena `cmd` WAJIB di
+      // BackendExecRequest (admit menolak cmd kosong). `.start({...})` TANPA
+      // cmd (mis. DaemonHost.start) sah dan tak ditangkap — presisi ini
+      // disengaja (pelajaran: pola `.start({` mentah false-positif).
+      if (/\bbackend\.start\s*\(/.test(code) || /\.start\s*\(\s*\{[^}]*\bcmd\b/.test(code))
+        out.push(p)
+    }
+  }
+  for (const root of ["src", "cli"]) walk(root)
   return out
 }
 
@@ -150,9 +218,14 @@ test("A1 delegate: intent durabel + lease anak + lineage tetap ada di jalur prod
   ]) {
     expect(src.includes(required), required).toBe(true)
   }
-  // M7 bukan gerbang admission delegate: tak diimpor/dipanggil di task.ts.
-  expect(src.includes("child-execution")).toBe(false)
-  expect(src.includes("admitChild")).toBe(false)
+  // M7 bukan gerbang admission delegate: modul M7 tak diimpor dalam bentuk
+  // apa pun (statis/dinamis/side-effect — lih. importSpecifiers) dan
+  // `admitChild(` tak pernah dipanggil sebagai kode (penyebutan di komentar
+  // tak dihitung — lih. stripCode).
+  const specs = importSpecifiers(src)
+  expect(importsTarget(specs, "runtime/child-execution.ts"), "import child-execution").toBe(false)
+  expect(importsTarget(specs, "child-execution.ts"), "import child-execution").toBe(false)
+  expect(/\badmitChild\s*\(/.test(stripCode(src)), "call admitChild(").toBe(false)
 })
 
 test("A2 autonomous: claim atomik TaskStore tetap ada; M7 tidak dipakai", async () => {
@@ -166,8 +239,13 @@ test("A2 autonomous: claim atomik TaskStore tetap ada; M7 tidak dipakai", async 
     ["autonomous-context.ts", autonomous],
     ["autonomous-adapter.ts", adapter],
   ] as const) {
-    expect(src.includes("child-execution"), `${name} → child-execution`).toBe(false)
-    expect(src.includes("admitChild"), `${name} → admitChild`).toBe(false)
+    // Batas impor (semua bentuk — statis/dinamis/side-effect/re-export) +
+    // batas pemanggilan sebagai kode. Aturan: otonom tak mengonsumsi M7
+    // langsung maupun lewat barrel (tak ada barrel M7 di repo).
+    const specs = importSpecifiers(src)
+    expect(importsTarget(specs, "runtime/child-execution.ts"), `${name} → import M7`).toBe(false)
+    expect(importsTarget(specs, "child-execution.ts"), `${name} → import M7`).toBe(false)
+    expect(/\badmitChild\s*\(/.test(stripCode(src)), `${name} → call admitChild(`).toBe(false)
   }
 })
 
@@ -246,9 +324,11 @@ test("B6 autonomous: readonly tetap, default 8, ceiling 120_000, tanpa artefak M
   expect(src.includes('permissionMode: "readonly"')).toBe(true)
   expect(src.includes("maxSteps: this.config.maxSteps ?? 8")).toBe(true)
   expect(src.includes("timeoutMs: this.config.timeoutMs ?? 120_000")).toBe(true)
-  // Tak mengarang mode M7, grant, atau korelasi M1.
+  // Tak mengarang mode M7, grant, atau korelasi M1 — sebagai kode (komentar
+  // yang menyebut nama-nama ini untuk menjelaskan larangan tak dihitung).
+  const code = stripCode(src)
   for (const forbidden of ["admitChild", "parentGrant", "createGrant", "createChildCorrelation"]) {
-    expect(src.includes(forbidden), forbidden).toBe(false)
+    expect(new RegExp(`\\b${forbidden}\\b`).test(code), forbidden).toBe(false)
   }
 })
 
@@ -256,20 +336,25 @@ test("B6 autonomous: readonly tetap, default 8, ceiling 120_000, tanpa artefak M
 // Invarian: histori anak tak bisa jadi histori kanonik parent lewat penulis
 // alternatif; kepemilikan parent/anak terpisah; epoch/run guard tetap.
 test("C1 jalur anak TIDAK menulis histori kanonik parent (tanpa penulis alternatif)", async () => {
-  // Pindai kode tanpa komentar: task.ts menyebut `saveSession` di komentar
-  // arsitektur §4 (materialisasi vs melewatkan kanonisasi) — itu dokumentasi,
-  // bukan pemanggilan. Yang dilarang = import/pemanggilan aktual.
+  // Pindai kode yang dilucuti (string + komentar): task.ts menyebut
+  // `saveSession` di komentar arsitektur §4 (materialisasi vs melewatkan
+  // kanonisasi) — itu dokumentasi, bukan pemanggilan. Yang dilarang =
+  // pemanggilan aktual dan impor modul persistensi (kecuali task.ts yang sah
+  // mengelola Run anak, bukan histori parent).
   for (const p of [
     "src/tools/task.ts",
     "src/task/scheduler.ts",
     "src/task/autonomous-context.ts",
     "src/task/autonomous-adapter.ts",
   ]) {
-    const code = codeOnly(await read(p))
+    const raw = await read(p)
+    const code = stripCode(raw)
     expect(/\bsaveSession\s*\(/.test(code), `${p} → saveSession(`).toBe(false)
     expect(/\bshrinkThreadHistory\s*\(/.test(code), `${p} → shrinkThreadHistory(`).toBe(false)
+    // Pemindai impor menerima sumber MENTAH (ia melucuti komentar sendiri;
+    // spesifier adalah string sehingga tak boleh dilucuti dulu).
     expect(
-      importSpecifiers(code).some((s) => s.includes("session/persistence")),
+      importSpecifiers(raw).some((s) => s.includes("session/persistence")),
       `${p} → import session/persistence`,
     ).toBe(p === "src/tools/task.ts")
   }
@@ -287,8 +372,14 @@ test("C3 guard epoch/run tetap berlaku di jalur publikasi kanonik", async () => 
   const src = await read("src/session/persistence.ts")
   expect(src.includes("assertWriterEpochInTxn")).toBe(true)
   expect(src.includes("StaleWriterError")).toBe(true)
-  // Satu penulis kanonik: saveSession diekspor hanya di sini (guard writer-inventory
-  // juga memakuk ini; assertion di sini menjaga P9.1 tak menambah penulis baru).
+  // Satu penulis kanonik: saveSession didefinisikan hanya di sini. Otoritas
+  // tunggal itu dijaga repo-wide oleh guard arsitektur P2.3/P2.4 di
+  // test/p2-architecture-guards.test.ts ("kerangka tanpa aktivasi runtime":
+  // tak ada berkas produksi selain persistence.ts yang boleh INSERT ke
+  // threads/runs/history_projections) — BUKAN oleh test/writer-inventory
+  // (itu inventaris writer terminal OAP-008 untuk cli//src/ui, tak terkait
+  // publikasi histori). Assertion di sini menjaga P9.1 tak menambah penulis
+  // baru di titik yang dipinnya.
   expect(src.includes("export async function saveSession")).toBe(true)
 })
 
@@ -296,14 +387,17 @@ test("C3 guard epoch/run tetap berlaku di jalur publikasi kanonik", async () => 
 // Invarian: anak attached tak outlive parent; ceiling timeout tetap; cancel/
 // recovery tak berubah; hasil ≠ completion bisnis; scheduler dispatch-only.
 test("D1 P9.1 tak memperkenalkan detached (attached-only) di produksi", async () => {
+  // `detached` sebagai kode (properti/tipe/identifier) — penyebutan di
+  // komentar tak dihitung, supaya dokumentasi larangan tak menggagalkan
+  // guardnya sendiri.
   for (const p of [
     "src/tools/task.ts",
     "src/task/scheduler.ts",
     "src/task/autonomous-context.ts",
     "src/task/autonomous-adapter.ts",
   ]) {
-    const src = await read(p)
-    expect(src.includes("detached"), `${p} → detached`).toBe(false)
+    const code = stripCode(await read(p))
+    expect(/\bdetached\b/.test(code), `${p} → detached`).toBe(false)
   }
   // M7 default = attached (cancelScope parent) bila detached tak diberikan.
   const r = admitChild(validAdmissionFixture("explore"))
@@ -316,8 +410,10 @@ test("D1 P9.1 tak memperkenalkan detached (attached-only) di produksi", async ()
 
 test("D2 scheduler tetap dispatch-only: tak menulis COMPLETED / verifikasi", async () => {
   const src = await read("src/task/scheduler.ts")
-  // Tak ada penulisan status COMPLETED maupun klaim verifikasi.
-  expect(/"COMPLETED"/.test(src)).toBe(false)
+  // Tak ada penulisan status COMPLETED maupun klaim verifikasi — sebagai kode
+  // (komentar "never writes COMPLETED" di bawah justru DOKUMENTASI larangan
+  // ini, jadi guard negatif memakai sumber yang dilucuti).
+  expect(/"COMPLETED"/.test(stripCode(src))).toBe(false)
   expect(src.includes("recordAttemptReturned")).toBe(true)
   // Kanvas otorisasi completion tetap di TaskStore (reconcile), bukan scheduler.
   expect(src.includes("never writes COMPLETED")).toBe(true)
@@ -326,18 +422,19 @@ test("D2 scheduler tetap dispatch-only: tak menulis COMPLETED / verifikasi", asy
 test("D3 cancel/recovery tak berubah: planParentCancellation tetap milik supervisor", async () => {
   const sup = await read("src/runtime/supervisor.ts")
   expect(sup.includes("planParentCancellation")).toBe(true)
-  // P9.1 tak menambah otoritas pembatalan kedua di jalur anak.
+  // P9.1 tak menambah otoritas pembatalan kedua di jalur anak (sebagai kode).
   const task = await read("src/tools/task.ts")
-  expect(task.includes("planParentCancellation")).toBe(false)
+  expect(/\bplanParentCancellation\b/.test(stripCode(task))).toBe(false)
 })
 
 // ── E. Batas arsitektur ──────────────────────────────────────────────────────
 // Invarian: autonomous tak memakai M7; M7 bebas dari otoritas kernel/backend/
 // dispatch; tak ada grant/korelasi yang difabrikasi di jalur anak.
 test("E1 M7 tetap murni: tak bergantung ke kernel/backend/dispatch/tools/task", async () => {
-  // Pindai spesifier import, bukan substring mentah: header ADR child-execution.ts
-  // menyebut `src/tools/task.ts` + `delegate_task` sebagai konteks sejarah —
-  // itu dokumentasi, bukan dependensi. Batas M7 yang mengikat = impor modul.
+  // Pindai spesifier impor (semua bentuk — lih. importSpecifiers), bukan
+  // substring mentah: header ADR child-execution.ts menyebut
+  // `src/tools/task.ts` + `delegate_task` sebagai konteks sejarah — itu
+  // dokumentasi, bukan dependensi. Batas M7 yang mengikat = impor modul.
   const src = await read("src/runtime/child-execution.ts")
   const specs = importSpecifiers(src)
   for (const forbidden of [
@@ -356,7 +453,8 @@ test("E1 M7 tetap murni: tak bergantung ke kernel/backend/dispatch/tools/task", 
       `import ${forbidden}`,
     ).toBe(false)
   }
-  const code = codeOnly(src)
+  // Pemanggilan/spawn sebagai kode (bukan penyebutan di komentar/string).
+  const code = stripCode(src)
   for (const forbidden of ["saveSession", "child_process", "Bun.spawn", "spawn("]) {
     expect(code.includes(forbidden), forbidden).toBe(false)
   }
@@ -369,22 +467,85 @@ test("E2 tak ada fabrikasi grant/korelasi M6/M1 di jalur anak produksi", async (
     "src/task/autonomous-context.ts",
     "src/task/autonomous-adapter.ts",
   ]) {
-    const src = await read(p)
+    // Sebagai kode (komentar yang menjelaskan larangan tak dihitung).
+    const code = stripCode(await read(p))
     for (const forbidden of ["createGrant(", "createChildCorrelation(", "parentGrant:"]) {
-      expect(src.includes(forbidden), `${p} → ${forbidden}`).toBe(false)
+      expect(code.includes(forbidden), `${p} → ${forbidden}`).toBe(false)
     }
   }
 })
 
 test("E3 backend eksekusi tetap dormant: nol pemanggil start produksi (R1 gate)", async () => {
-  // Pemanggil backend fisik hanya bidang runtime-plane: supervisor (eskalasi)
-  // + composition (disposeAll). Tak ada `backend.start` / `.start({cmd`.
-  const sup = await read("src/runtime/supervisor.ts")
+  // Otoritas backend fisik tetap di runtime-plane: supervisor (eskalasi) +
+  // composition (disposeAll). Invarian yang mengikat = tak ada pemanggilan
+  // `ExecutionBackend.start` sebagai kode — dipin dua lapis: berkas pemilik
+  // backend, lalu sapuan repo-wide. Presisi disengaja: `.start(` lain
+  // (scheduler/server) sah dan tak boleh menggagalkan gate R1; yang dilarang
+  // hanya start backend (`backend.start(` / `start({cmd...`).
+  const sup = stripCode(await read("src/runtime/supervisor.ts"))
   expect(sup.includes("backend.cancel(")).toBe(true)
   expect(sup.includes("backend.wait(")).toBe(true)
   expect(sup.includes("backend.dispose(")).toBe(true)
-  expect(sup.includes(".start(")).toBe(false)
-  const comp = await read("src/runtime/composition.ts")
+  expect(/\bbackend\.start\s*\(/.test(sup)).toBe(false)
+  expect(/\.start\s*\(\s*\{[^}]*\bcmd\b/.test(sup)).toBe(false)
+  const comp = stripCode(await read("src/runtime/composition.ts"))
   expect(comp.includes("disposeAll()")).toBe(true)
-  expect(comp.includes("backend.start(")).toBe(false)
+  expect(/\bbackend\.start\s*\(/.test(comp)).toBe(false)
+  expect(/\.start\s*\(\s*\{[^}]*\bcmd\b/.test(comp)).toBe(false)
+  expect(productionBackendStarters()).toEqual([])
+})
+
+// ── F. Uji diri guard (adversarial) ──────────────────────────────────────────
+// Invarian meta: pemindai di atas mendeteksi SEMUA bentuk impor yang dipakai
+// repo dan mengabaikan komentar/string — bukan sebaliknya. Test sintetis ini
+// membuktikannya tanpa menyentuh produksi: bila helper melemah (mis. kembali
+// ke substring mentah), test ini merah duluan sebelum guard Artinya
+// kehilangan daya beda.
+test("F1 pemindai impor menangkap semua bentuk, mengabaikan non-kode", () => {
+  // [spesifier, cocok "…/runtime/child-execution.ts", cocok "…/child-execution.ts"]
+  const shapes: Array<[string, boolean, boolean]> = [
+    ['import { admitChild } from "../runtime/child-execution.ts"', true, true],
+    ['import type { X } from "../runtime/child-execution.ts"', true, true],
+    ['import "../runtime/child-execution.ts"', true, true],
+    ['const m = await import("../runtime/child-execution.ts")', true, true],
+    ['const m = require("../runtime/child-execution.ts")', true, true],
+    ['export { admitChild } from "../runtime/child-execution.ts"', true, true],
+    ['export * from "./child-execution.ts"', false, true],
+  ]
+  for (const [src, long, short] of shapes) {
+    const specs = importSpecifiers(src)
+    expect(specs.length, src).toBe(1)
+    expect(importsTarget(specs, "runtime/child-execution.ts"), src).toBe(long)
+    expect(importsTarget(specs, "child-execution.ts"), src).toBe(short)
+  }
+  const nonCode = [
+    '// import { admitChild } from "../runtime/child-execution.ts"',
+    '/* import { admitChild } from "../runtime/child-execution.ts" */',
+    'const doc = "lihat ../runtime/child-execution.ts untuk sejarah"',
+    "const url = 'https://contoh.test/modul/child-execution.ts'",
+    "const trailing = 1 // admitChild(",
+    "// saveSession(",
+    'const s = "saveSession("',
+    "/* shrinkThreadHistory( */",
+  ].join("\n")
+  expect(importSpecifiers(nonCode)).toEqual([])
+  const stripped = stripCode(nonCode)
+  expect(/\badmitChild\s*\(/.test(stripped)).toBe(false)
+  expect(/\bsaveSession\s*\(/.test(stripped)).toBe(false)
+  expect(/\bshrinkThreadHistory\s*\(/.test(stripped)).toBe(false)
+  expect(/\bdetached\b/.test(stripped)).toBe(false)
+})
+
+test("F2 pemindai menemukan pemakaian kode asli di tengah komentar", () => {
+  const src = [
+    "// modul ini TIDAK memakai child-execution (lihat ADR-25)",
+    'import { planParentCancellation } from "./child-execution.ts"',
+    "const note = `detached butuh owner` // sekadar catatan",
+    "saveSession(sess)",
+  ].join("\n")
+  expect(importsTarget(importSpecifiers(src), "child-execution.ts")).toBe(true)
+  const stripped = stripCode(src)
+  expect(/\bsaveSession\s*\(/.test(stripped)).toBe(true)
+  // `detached` hanya hidup di dalam string catatan → terlucuti.
+  expect(/\bdetached\b/.test(stripped)).toBe(false)
 })

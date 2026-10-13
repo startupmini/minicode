@@ -1,4 +1,5 @@
-// M7 — Parent/child execution contract: satu spec, tree, attenuasi, detached.
+// M7 — Parent/child execution contract keluarga delegate (ADR-25): derivasi
+// admission, tree, attenuasi, detached. Otonom tidak mengonsumsinya.
 // Hermetic murni: tanpa factory/Pool/session/persistence/scheduler/backend.
 
 import { expect, test } from "bun:test"

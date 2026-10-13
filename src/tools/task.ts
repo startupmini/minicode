@@ -231,7 +231,7 @@ export const delegateTaskTool: Tool = {
     const forcedExplore = parentMode === "plan" || parentMode === "readonly" || parentMode === "ask"
     const m = forcedExplore ? "explore" : ((mode as string) ?? "explore")
     const requested = Number(maxSteps)
-    // P9.1 (ADR M7 — mode-specific contracts): DUA kontrak admission yang
+    // P9.1 (ADR-25 — mode-specific contracts): DUA kontrak admission yang
     // sengaja terpisah. Cabang fallback di bawah (tanpa maxSteps eksplisit)
     // EKUIVALEN dengan M7 `modeStepCap` — keduanya membaca konstanta yang SAMA
     // (SUB_AGENT_BUDGET_EXPLORE/PLAN); karena 5/15 < DEFAULT_MAX_STEPS, min-nya

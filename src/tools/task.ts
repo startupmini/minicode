@@ -231,6 +231,16 @@ export const delegateTaskTool: Tool = {
     const forcedExplore = parentMode === "plan" || parentMode === "readonly" || parentMode === "ask"
     const m = forcedExplore ? "explore" : ((mode as string) ?? "explore")
     const requested = Number(maxSteps)
+    // P9.1 (ADR M7 — mode-specific contracts): DUA kontrak admission yang
+    // sengaja terpisah. Cabang fallback di bawah (tanpa maxSteps eksplisit)
+    // EKUIVALEN dengan M7 `modeStepCap` — keduanya membaca konstanta yang SAMA
+    // (SUB_AGENT_BUDGET_EXPLORE/PLAN); karena 5/15 < DEFAULT_MAX_STEPS, min-nya
+    // konstan-fold ke cap mode. Cabang eksplisit TIDAK diklamp ke cap mode
+    // (min(requested, 50)) — M7 justru `min(requested, modeCap)`, jadi lebih
+    // ketat; menyamakannya = perubahan perilaku observable (butuh ADR owner).
+    // Jalur autonomous TIDAK memakai M7: mode-less (readonly tetap) + default 8
+    // tak representable tanpa mengarang mode/grant. Kontrak dipin test
+    // `test/p9-admission-boundaries.test.ts`; jangan menyeragamkan tanpa ADR.
     const cap =
       Number.isFinite(requested) && requested > 0
         ? Math.min(Math.floor(requested), LIMITS.DEFAULT_MAX_STEPS)

@@ -4,7 +4,7 @@ import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
 import { sanitizeSessionPart } from "../lib/session-id.ts"
-import { mutationsSinceTurn } from "../session/journal.ts"
+import { isJournalHealthy, mutationsSinceTurn } from "../session/journal.ts"
 import { type CanonicalAssignmentTable, encodeCanonicalAssignments } from "../task/assignment.ts"
 import { isTaskId, TaskError } from "../task/model.ts"
 import { TaskStore } from "../task/store.ts"
@@ -112,6 +112,19 @@ export async function resolveFreshEvidence(
   const base = currentCompletionEvidence()
   if (base.verdict !== "passed") return base
   if (typeof base.turn !== "number") return { verdict: "unverified" }
+  // P10.1.2: jurnal degraded (kegagalan tulis intent — jalur produksi
+  // "intent append gagal" pada tool event-path seperti MCP dotted) berarti
+  // riwayat mutasi TAK LENGKAP: kesegaran tak bisa dipercaya → fail-closed
+  // `failed`, BUKAN passed palsu-fresh. `isJournalHealthy` melaporkan `true`
+  // untuk sesi baru/sehat (default `?? true` — semantics dipin test C2) dan
+  // `false` hanya bila path tulis jurnal SESI INI pernah gagal, jadi cek ini
+  // tak mengubah sesi sehat.
+  if (!isJournalHealthy(sessionId, cwd)) {
+    return {
+      verdict: "failed",
+      detail: "journal degraded — freshness unverifiable; re-verify, then re-claim",
+    }
+  }
   let newer: readonly unknown[]
   try {
     newer = await mutationsSinceTurn(sessionId, cwd, base.turn)

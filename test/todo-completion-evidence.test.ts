@@ -28,11 +28,11 @@
 // Ini deskripsi implementasi, bukan klaim sifat abstrak; jembatan turn
 // lintas-proses dibuktikan end-to-end oleh PF-07b di test/cli-session.test.ts.
 import { afterEach, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { appendMutationIntent, journalPath } from "../src/session/journal.ts"
+import { appendMutationIntent, isJournalHealthy, journalPath } from "../src/session/journal.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 import {
   applyCompletionPolicy,
@@ -341,6 +341,67 @@ test("I2 bukti sesi A tak mengotorisasi sesi B", async () => {
   expect(outB).not.toContain("refused")
   expect(storeStatus("p1011-i2a", dir)).not.toBe("COMPLETED")
   expect(storeStatus("p1011-i2b", dir)).toBe("COMPLETED")
+})
+
+// ── A4. Jurnal degraded → failed, bukan passed (P10.1.2) ───────────────────
+// Rantai kausal lengkap lewat seam degradasi produksi: tulis intent gagal
+// (berkas jurnal read-only) → `markDegraded("intent append gagal")` no-throw
+// (journal.ts) → mutasi event-path berjalan TANPA record →
+// `isJournalHealthy` false → resolver WAJIB fail-closed `failed`, bukan
+// passed palsu-fresh dari riwayat yang tak lengkap.
+test("A4 jurnal degraded → failed; klaim ditolak; TaskStore bukan COMPLETED", async () => {
+  const dir = tmpRoot()
+  const sid = "p1012-a"
+  await seedT1(sid, dir)
+  setCompletionEvidence(() => ({ verdict: "passed", detail: "bun test", turn: 5 }))
+  // Mutasi sehat dulu (writer state terbentuk, bukti turn 5 sah).
+  await addMutation(sid, dir, "write_file", 4)
+  expect(isJournalHealthy(sid, dir)).toBe(true)
+  // Seam degradasi deterministik: berkasi jurnal read-only → append intent
+  // berikutnya gagal → markDegraded tanpa throw (jalur produksi nyata).
+  chmodSync(journalPath(sid, dir), 0o444)
+  try {
+    // Mutasi "berhasil" bagi pemanggil tapi TAK tercatat (reproduksi jalur
+    // event-path MCP dotted pada P10.1.1 audit): pemanggil menerima record,
+    // jurnal tidak.
+    await addMutation(sid, dir, "edit", 6)
+    expect(isJournalHealthy(sid, dir)).toBe(false)
+    const resolved = await resolveFreshEvidence(sid, dir)
+    expect(resolved.verdict).toBe("failed")
+    expect(resolved.detail ?? "").toContain("journal degraded")
+    expect(resolved.detail ?? "").toContain("freshness")
+    // Gerbang menolak; TaskStore kanonik bukan COMPLETED.
+    const out = (await todoWriteTool.execute(
+      { todos: [{ taskId: "t1", content: "ship X", status: "completed" }] } as never,
+      ctxFor(sid, dir),
+    )) as string
+    expect(out).toContain("refused 1 completion claim")
+    expect(storeStatus(sid, dir)).toBe("BLOCKED")
+    expect(storeStatus(sid, dir)).not.toBe("COMPLETED")
+  } finally {
+    chmodSync(journalPath(sid, dir), 0o666)
+  }
+})
+
+// ── C2. Sesi baru tanpa marker degradasi → sehat (semantik etablir) ────────
+// `?? true` pada isJournalHealthy adalah healthy-by-default untuk sesi yang
+// belum pernah menulis jurnal — BUKAN "kesehatan tak diketahui". Dipin agar
+// regresi ke fail-closed-menyeluruh (yang mematikan sesi bersih) terdeteksi.
+test("C2 sesi baru: isJournalHealthy true → resolver tetap passed", async () => {
+  const dir = tmpRoot()
+  const sid = "p1012-c"
+  await seedT1(sid, dir)
+  // Tanpa berkas jurnal sama sekali, tanpa writer state.
+  expect(isJournalHealthy(sid, dir)).toBe(true)
+  setCompletionEvidence(() => ({ verdict: "passed", detail: "bun test", turn: 5 }))
+  const resolved = await resolveFreshEvidence(sid, dir)
+  expect(resolved.verdict).toBe("passed")
+  const out = (await todoWriteTool.execute(
+    { todos: [{ taskId: "t1", content: "ship X", status: "completed" }] } as never,
+    ctxFor(sid, dir),
+  )) as string
+  expect(out).not.toContain("refused")
+  expect(storeStatus(sid, dir)).toBe("COMPLETED")
 })
 
 // ── J. Unit pemetaan + non-otoritas ──────────────────────────────────────────

@@ -1694,10 +1694,20 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   //
   // Tanpa `--verify` (opt-in) tidak ada bukti sama sekali → `unverified`:
   // completion tetap diizinkan, tapi tidak diklaim terverifikasi.
-  let lastVerify: { ok: boolean; command: string; output: string } | null = null
+  let lastVerify: { ok: boolean; command: string; output: string; turn: number | null } | null =
+    null
   setCompletionEvidence(() => {
     if (!verifyActive || !lastVerify) return { verdict: "unverified" }
-    if (lastVerify.ok) return { verdict: "passed", detail: lastVerify.command }
+    if (lastVerify.ok)
+      return {
+        verdict: "passed",
+        detail: lastVerify.command,
+        // P10.1.1: ikat bukti ke turn yang diobservasinya — dibaca sinkron
+        // tepat setelah verify selesai (belum ada turn baru), sehingga cocok
+        // dengan cap `turn` intent jurnal (increment-di-awal di loop.ts).
+        // Absen = tak terikat → hilir perlakukan sebagai unverified.
+        ...(typeof lastVerify.turn === "number" ? { turn: lastVerify.turn } : {}),
+      }
     return {
       verdict: "failed",
       detail: `last verification failed (${lastVerify.command}): ${lastVerify.output.slice(0, 200)}`,
@@ -1705,7 +1715,18 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   })
   const runVerifyWithPresentation = async (signal?: AbortSignal) => {
     const result = await runVerify(verifyCommand, cwd ?? process.cwd(), undefined, signal)
-    lastVerify = { ok: result.ok, command: verifyCommand, output: result.output }
+    // Turn state kode ini diverifikasi: turnCount SETELAH turn terakhir
+    // selesai = nilai yang dibawa intent mutasi turn itu (turnOf baca live
+    // state yang sama). Diambil sinkron di sini — belum ada turn baru yang
+    // bisa menyela dan menggeser angka.
+    const verifiedTurn =
+      typeof session.state?.turnCount === "number" ? session.state.turnCount : null
+    lastVerify = {
+      ok: result.ok,
+      command: verifyCommand,
+      output: result.output,
+      turn: verifiedTurn,
+    }
     const evidence = parseVerifyTestEvidence(verifyCommand, result.output)
     if (evidence) {
       presentation?.noteTestCompleted({

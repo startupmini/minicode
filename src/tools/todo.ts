@@ -4,13 +4,11 @@ import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
 import { sanitizeSessionPart } from "../lib/session-id.ts"
+import { mutationsSinceTurn } from "../session/journal.ts"
+import { type CanonicalAssignmentTable, encodeCanonicalAssignments } from "../task/assignment.ts"
 import { isTaskId, TaskError } from "../task/model.ts"
-import { hasCanonicalIdentity, hasCanonicalTasks, synchronizeCanonicalTasks } from "../task/sync.ts"
 import { TaskStore } from "../task/store.ts"
-import {
-  encodeCanonicalAssignments,
-  type CanonicalAssignmentTable,
-} from "../task/assignment.ts"
+import { hasCanonicalIdentity, hasCanonicalTasks, synchronizeCanonicalTasks } from "../task/sync.ts"
 
 // Todo list per sesi — state eksplisit untuk task multi-langkah.
 // Tanpa ini agent tidak punya tempat menyimpan rencana antar step, sehingga
@@ -57,11 +55,18 @@ const GLYPH: Record<TodoStatus, string> = {
 // Fail-closed hanya di arah yang berbahaya: `failed` MENOLAK `completed`.
 // Menolak tanpa bukti (default) akan mematikan pemakaian normal yang tidak
 // menjalankan verify, jadi itu tidak dilakukan.
-export type CompletionVerdict = "unverified" | "passed" | "failed"
+export type CompletionVerdict = "unverified" | "passed" | "failed" | "stale"
 
 export interface CompletionEvidence {
   verdict: CompletionVerdict
   detail?: string
+  /**
+   * P10.1.1: turn yang diobservasi bukti ini (diisi produsen verify,
+   * yaitu runner `--verify`). Absen/null = bukti tanpa ikatan turn
+   * (bukti lama/test) → diperlakukan `unverified` untuk freshness, BUKAN
+   * passed: tak ada ikatan, tak ada klaim kesegaran.
+   */
+  turn?: number | null
 }
 
 const UNVERIFIED: CompletionEvidence = { verdict: "unverified" }
@@ -83,6 +88,45 @@ export function currentCompletionEvidence(): CompletionEvidence {
   } catch {
     // Sumber bukti yang melempar TIDAK boleh menuntaskan task diam-diam.
     return { verdict: "failed", detail: "completion evidence source failed" }
+  }
+}
+
+/**
+ * Selesaikan bukti completion terhadap kesegaran mutasi (P10.1.1).
+ * Dipakai jalur tulis `todo_write` (async) — BUKAN di dalam `normalizeTodos`
+ * yang kontraknya murni tanpa I/O.
+ *
+ * - `passed` + turn + tanpa mutasi lebih baru → `passed` apa adanya.
+ * - `passed` + mutasi lebih baru → `stale` (tolak klaim; label dipertahankan).
+ * - `passed` tanpa turn → `unverified` (tak ada ikatan = perilaku legacy,
+ *   izinkan-tanpa-klaim; BUKAN passed).
+ * - Gagal baca jurnal → `failed` (fail-closed, konsisten dengan
+ *   `currentCompletionEvidence`: ketidakpastian kesegaran tak boleh
+ *   mengotorisasi completion).
+ * - Verdict lain (`failed`/`unverified`) diteruskan tanpa disentuh.
+ */
+export async function resolveFreshEvidence(
+  sessionId: string,
+  cwd: string,
+): Promise<CompletionEvidence> {
+  const base = currentCompletionEvidence()
+  if (base.verdict !== "passed") return base
+  if (typeof base.turn !== "number") return { verdict: "unverified" }
+  let newer: readonly unknown[]
+  try {
+    newer = await mutationsSinceTurn(sessionId, cwd, base.turn)
+  } catch (e) {
+    return {
+      verdict: "failed",
+      detail: `freshness check failed: ${String((e as Error)?.message ?? e).slice(0, 200)}`,
+    }
+  }
+  if (newer.length === 0) return base
+  return {
+    verdict: "stale",
+    detail:
+      `verification stale — ${newer.length} mutation(s) since turn ${base.turn}; ` +
+      `re-verify, then re-claim`,
   }
 }
 
@@ -160,8 +204,12 @@ export function applyCompletionPolicy(
   list: readonly TodoItem[],
   evidence: CompletionEvidence,
 ): TodoItem[] | null {
-  if (evidence.verdict !== "failed") return null
-  const reason = evidence.detail?.trim().slice(0, 300) || "verification failed"
+  // `failed` DAN `stale` menolak `completed` — tapi labelnya dipertahankan
+  // berbeda: gagal uji vs bukti basi. Jangan samakan keduanya.
+  if (evidence.verdict !== "failed" && evidence.verdict !== "stale") return null
+  const reason =
+    evidence.detail?.trim().slice(0, 300) ||
+    (evidence.verdict === "stale" ? "verification stale" : "verification failed")
   if (!list.some((t) => t.status === "completed")) return null
   return list.map((t) =>
     t.status === "completed" ? { ...t, status: "blocked" as const, blockedReason: reason } : t,
@@ -296,7 +344,9 @@ export async function reconcileCompletionEvidence(
   cwd: string,
   evidence: CompletionEvidence,
 ): Promise<TodoItem[] | null> {
-  if (evidence.verdict !== "failed") return null
+  // `stale` diperlakukan seperti `failed` untuk otorisasi (tolak klaim),
+  // dengan label + alasan basi dipertahankan apa adanya.
+  if (evidence.verdict !== "failed" && evidence.verdict !== "stale") return null
   try {
     const current = await loadTodos(sessionId, cwd)
     const next = applyCompletionPolicy(current, evidence)
@@ -418,7 +468,7 @@ export function todoOperationContext(ctx: unknown): { sessionId: string; cwd: st
 export const todoWriteTool: Tool = {
   name: "todo_write",
   description:
-    "Write/replace the todo list for this task. Send the ENTIRE list every time (not a delta). Use for tasks with 3+ steps: keep exactly one item in_progress at a time, mark it completed as soon as it is done. Marking an item completed while verification is failing is REFUSED — it comes back as blocked with the reason, so fix the failing check first.",
+    "Write/replace the todo list for this task. Send the ENTIRE list every time (not a delta). Use for tasks with 3+ steps: keep exactly one item in_progress at a time, mark it completed as soon as it is done. Marking an item completed while verification is failing or stale is REFUSED — it comes back as blocked with the reason, so fix the failing check (or re-verify after newer changes) first.",
   parameters: {
     type: "object",
     properties: {
@@ -458,8 +508,6 @@ export const todoWriteTool: Tool = {
   },
   async execute({ todos }, ctx) {
     ctx.signal.throwIfAborted()
-    const evidence = currentCompletionEvidence()
-    const list = normalizeTodos(todos, evidence)
     // PHASE 4A.4B - bind ONCE, before the first await. `sessionId` and `cwd` are
     // immutable for the rest of this operation, so no later request can redirect
     // the JSON write, the TaskStore namespace, the assignment stamp or the plan
@@ -468,6 +516,10 @@ export const todoWriteTool: Tool = {
     // cwd resolution order is unchanged: ToolContext first (--cwd / sub-agent),
     // then the composition-root global, then the process cwd.
     const { sessionId, cwd } = todoOperationContext(ctx)
+    // P10.1.1: bukti diselesaikan terhadap kesegaran mutasi (async) SEBELUM
+    // gate murni — `normalizeTodos` tetap sync tanpa I/O.
+    const evidence = await resolveFreshEvidence(sessionId, cwd)
+    const list = normalizeTodos(todos, evidence)
 
     // PHASE 4A.5 — reject an identity-blind full declaration once canonical
     // identity already exists for this session (NEW ARCHITECTURE).
@@ -587,9 +639,13 @@ export const todoWriteTool: Tool = {
     // file: tanpa baris ini model mengira item-nya completed lalu mencoba
     // lanjut — persis pola "false completion" yang INV-003 larang.
     const refused = current.filter((t) => t.status === "blocked" && t.blockedReason)
+    // P10.1.1: stale ≠ failed — pesannya dibedakan agar model memperbaiki
+    // hal yang benar (re-verify untuk basi, perbaiki check untuk gagal).
     const notice =
       refused.length > 0
-        ? `refused ${refused.length} completion claim(s): verification is failing, so they are blocked instead of completed. Fix the failing check first.\n`
+        ? evidence.verdict === "stale"
+          ? `refused ${refused.length} completion claim(s): verification evidence is stale — code changed since the last green run; re-verify, then re-claim.\n`
+          : `refused ${refused.length} completion claim(s): verification is failing, so they are blocked instead of completed. Fix the failing check first.\n`
         : ""
     return (
       notice +

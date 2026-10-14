@@ -1489,6 +1489,40 @@ function base_of(name: string): string {
   return isMcpToolName(name) ? "mcp_call" : name
 }
 
+/**
+ * Record mutasi dengan turn lebih baru dari turn bukti (P10.1.1, freshness
+ * bukti completion). Murni baca: tanpa tulis/ubah/compact jurnal.
+ *
+ * Aturan (disetujui owner): relevan = klasifikasi `isMutationTool` (tulis,
+ * bash, delegasi, memori, MCP, tak-dikenal-fail-closed); record turn null
+ * (legacy) DIKECUALIKAN agar sesi lama tak terkunci permanen; state record
+ * (pending/committed/failed) tak membedakan — upaya mutasi yang tercatat
+ * sudah cukup untuk meragukan bukti lama. Gagal baca DILEMPAR ke pemanggil
+ * (konteks gate: pemanggil wajib fail-closed); bedakan dari pembaca display
+ * (committedDelegatesSince) yang gagal-lembut.
+ */
+export async function mutationsSinceTurn(
+  sessionId: string,
+  cwd: string | undefined,
+  evidenceTurn: number,
+): Promise<readonly JournalRecord[]> {
+  const loaded = await loadJournal(sessionId, cwd)
+  // Jurnal tak-terbaca/korup = buktinya sendiri tak bisa diaudit: tolak
+  // diam-diam BUKAN pilihan — lempar agar pemanggil (gate) fail-closed.
+  // `absent` (belum ada berkas) dan `empty` aman: nol record = nol mutasi.
+  if (loaded.status !== "absent" && loaded.status !== "empty" && loaded.status !== "valid") {
+    throw new Error(`journal unreadable for freshness check (status: ${loaded.status})`)
+  }
+  const { records } = loaded
+  return records.filter(
+    (r) =>
+      typeof r.turn === "number" &&
+      r.turn > evidenceTurn &&
+      typeof r.tool === "string" &&
+      isMutationTool(r.tool),
+  )
+}
+
 // ── Resume: muat jurnal (+anak) → putuskan ──
 
 export interface RecoveryInput {

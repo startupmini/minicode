@@ -34,6 +34,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { flagNameOf, valueFlags } from "../cli/args.ts"
 import { loadSession } from "../src/session/persistence.ts"
+import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 import { type FakeReply, startFakeProvider } from "./helpers/fake-provider.ts"
 
 // Reorder args agar flag dikenal selalu sebelum prompt — cegah flag-injection
@@ -771,6 +772,129 @@ describe("cli: --verify (self-heal)", () => {
       expect(observed).toContain("blocked")
     } finally {
       provider.close()
+    }
+  })
+
+  // ── STEP 2c / F1 (P10.1.1): jembatan turn nyata runVerify → lastVerify.turn
+  // → freshness gate. Test unit menyuntik `turn` manual (p92/todo-completion-
+  // evidence); test ini membuktikan alur produksi --verify menangkap turn
+  // yang BENAR dan klaim basi benar-benar tak menulis TaskStore COMPLETED.
+  // Dua proses (pola PF-05 --resume), verify HIJAU deterministik:
+  //   P1: baseline verify hijau → bukti turn 0. Turn model: write_file
+  //       (mutasi, cap turn 1) LALU todo_write klaim di turn yang sama →
+  //       1 > 0 = STALE → ditolak; TaskStore BLOCKED (bukan COMPLETED).
+  //       Pasca-turn verify hijau → bukti turn 1. Keluar (finalize+sweep
+  //       jalan di batas turn, seperti produksi).
+  //   P2: --resume → baseline verify hijau → bukti turn termutakhir; klaim
+  //       ulang tanpa mutasi baru → segar → COMPLETED lewat jalur kanonik.
+  test("PF-07b: klaim setelah mutasi baru ditolak stale; reclaim pasca-verify segar COMPLETED", async () => {
+    const ws = makeWorkspace()
+    const sid = "fresh1"
+    // Seed baris kanonik via API publik store: todo_write id-less adalah
+    // jalur legacy dan TAK PERNAH membuat baris kanonik, jadi klaim kanonik
+    // butuh baris yang sudah ada. Handle dilepas sebelum proses anak membuka
+    // DB yang sama (pola taskstore.test.ts).
+    const seeded = new TaskStore(ws.dir).createTask(sid, {
+      title: "ship X",
+      status: "PENDING",
+      order: 0,
+      provenance: { origin: "runtime", source: "test" },
+    })
+    expect(seeded.id).toBe("t1")
+    resetTaskStoreHandles()
+
+    // Perintah verify hijau deterministik (exit 0) — sumber otoritas tetap
+    // operator (MINICODE_VERIFY_CMD), bukan model.
+    const hijau = `${process.execPath} -e "process.exit(0)"`
+
+    // ── P1: mutasi + klaim prematur di turn yang sama → stale.
+    const p1 = startFakeProvider([
+      {
+        kind: "tool",
+        id: "mutasi_p1",
+        name: "write_file",
+        args: { path: "hasil.txt", content: "v1\n" },
+      },
+      {
+        kind: "tool",
+        id: "claim_p1",
+        name: "todo_write",
+        args: { todos: [{ taskId: "t1", content: "ship X", status: "completed" }] },
+      },
+      { kind: "text", text: "sudah dikerjakan" },
+    ])
+    try {
+      writeProviderConfig(ws, p1.baseUrl)
+      const r1 = await run(
+        ws,
+        [
+          "--session",
+          sid,
+          "--verify",
+          "--cwd",
+          ws.dir,
+          "--model",
+          "gpt-4o-mini",
+          "--allow-local-config",
+          "kerjakan",
+        ],
+        { MINICODE_VERIFY_CMD: hijau },
+      )
+      expect(r1.code).toBe(0)
+      // Hasil tool klaim yang benar-benar diterima model menunjukkan penolakan
+      // STALE — dibedakan dari gagal uji (pesan basi, bukan "failing").
+      const claimResult1 = p1
+        .requests()
+        .flatMap(
+          (r) => (r.messages ?? []) as { role: string; tool_call_id?: string; content?: unknown }[],
+        )
+        .find((m) => m.role === "tool" && m.tool_call_id === "claim_p1")
+      const observed1 = String(claimResult1?.content ?? "")
+      expect(observed1).toContain("refused 1 completion claim")
+      expect(observed1).toContain("stale")
+      expect(observed1).not.toContain("verification is failing")
+      // TaskStore kanonik TIDAK menjadi COMPLETED oleh bukti basi.
+      const after1 = new TaskStore(ws.dir).getTask(sid, "t1")
+      expect(after1?.status).toBe("BLOCKED")
+      expect(after1?.status).not.toBe("COMPLETED")
+      resetTaskStoreHandles()
+    } finally {
+      p1.close()
+    }
+
+    // ── P2: resume → verify baseline segar → reclaim diizinkan jalur kanonik.
+    const p2 = startFakeProvider([
+      {
+        kind: "tool",
+        id: "claim_p2",
+        name: "todo_write",
+        args: { todos: [{ taskId: "t1", content: "ship X", status: "completed" }] },
+      },
+      { kind: "text", text: "klaim ulang" },
+    ])
+    try {
+      writeProviderConfig(ws, p2.baseUrl)
+      const r2 = await run(
+        ws,
+        [
+          "--resume",
+          sid,
+          "--verify",
+          "--cwd",
+          ws.dir,
+          "--model",
+          "gpt-4o-mini",
+          "--allow-local-config",
+          "klaim ulang",
+        ],
+        { MINICODE_VERIFY_CMD: hijau },
+      )
+      expect(r2.code).toBe(0)
+      const after2 = new TaskStore(ws.dir).getTask(sid, "t1")
+      expect(after2?.status).toBe("COMPLETED")
+      resetTaskStoreHandles()
+    } finally {
+      p2.close()
     }
   })
 

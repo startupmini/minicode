@@ -8,6 +8,25 @@
 // Konvensi: DB + jurnal + TaskStore asli di tmpdir; evidence disuntik via
 // seam DI `setCompletionEvidence` (pola P9); turn dibuat deterministik via
 // `appendMutationIntent` (tanpa menjalankan runtime).
+//
+// ── Sweep jurnal vs kesegaran (F2) ──────────────────────────────────────────
+// Implementasi saat ini: bukti verify direkam SETELAH turn model terkait
+// (baseline pra-turn; pasca-turn memakai `session.state.turnCount` yang sama
+// dengan cap `turn` intent mutasi). `finalizeJournal` dipanggil pasca-persist
+// tiap turn (cli/setup.ts) dan sweep menghapus pasangan pending/committed
+// ≤ finalized head — artinya record mutasi dari turn yang SUDAH tercakup
+// bukti (atau lebih lama) boleh hilang dari jurnal. Desain kesegaran bertumpu
+// pada urutan turn, bukan pada keberlangsungan record lama:
+//  - perbandingan ketat `turn > evidenceTurn` membuat mutasi se-turn bukti
+//    tercakup verify itu sendiri, jadi tak perlu bertahan di jurnal;
+//  - mutasi yang lebih BARU dari bukti tercatat pada turn klaim itu sendiri
+//    dan finalize hanya terjadi di batas turn (pasca-persist), klaim terjadi
+//    di tengah turn — sehingga record itu SELALU masih ada saat klaim
+//    dinilai dan tetap membatalkan bukti lama;
+//  - record mutasi turn-null (legacy) dikecualikan agar sesi lama tidak
+//    terkunci permanen (pengecualian kompatibilitas yang disetujui).
+// Ini deskripsi implementasi, bukan klaim sifat abstrak; jembatan turn
+// lintas-proses dibuktikan end-to-end oleh PF-07b di test/cli-session.test.ts.
 import { afterEach, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { rm } from "node:fs/promises"

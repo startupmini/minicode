@@ -110,6 +110,53 @@ test("A stale PASS + mutasi lebih baru → ditolak; TaskStore bukan COMPLETED", 
   expect(storeStatus(sid, dir)).not.toBe("COMPLETED")
 })
 
+// ── A2. Turn nol numerik (M-1) ─────────────────────────────────────────────
+// `turn: 0` adalah angka valid, bukan absen: cek `typeof === "number"`
+// (bukan truthiness) harus mengklasifikasikan mutasi turn 1 sebagai stale.
+// Menguji jalur resolusi freshness aktual, bukan logika duplikat di test.
+test("A2 turn 0 + mutasi turn 1 → stale; TaskStore bukan COMPLETED", async () => {
+  const dir = tmpRoot()
+  const sid = "p1011-a2"
+  await seedT1(sid, dir)
+  setCompletionEvidence(() => ({ verdict: "passed", detail: "bun test", turn: 0 }))
+  await addMutation(sid, dir, "write_file", 1)
+  const out = (await todoWriteTool.execute(
+    { todos: [{ taskId: "t1", content: "ship X", status: "completed" }] } as never,
+    ctxFor(sid, dir),
+  )) as string
+  expect(out).toContain("refused 1 completion claim")
+  expect(out).toContain("stale")
+  expect((await loadTodos(sid, dir))[0]!.status).toBe("blocked")
+  expect(storeStatus(sid, dir)).toBe("BLOCKED")
+  expect(storeStatus(sid, dir)).not.toBe("COMPLETED")
+})
+
+// ── A3. Passed tanpa turn (M-1) ────────────────────────────────────────────
+// Bukti lama tanpa ikatan turn → `unverified` (kontrak kompatibilitas
+// legacy), BUKAN passed: tak ada ikatan, tak ada klaim kesegaran. Klaim
+// completion berjalan seperti perilaku unverified yang sudah ada
+// (diizinkan-tanpa-klaim), dan tak ada query jurnal yang terjadi.
+test("A3 passed tanpa turn → unverified; completion tak diklaim", async () => {
+  const dir = tmpRoot()
+  const sid = "p1011-a3"
+  await seedT1(sid, dir)
+  // Jurnal korup disengaja: resolver turn-less yang benar tak pernah
+  // menyentuh jurnal (short-circuit sebelum query) → tetap unverified,
+  // bukan failed.
+  writeFileSync(journalPath(sid, dir), "not-json{{{", "utf8")
+  setCompletionEvidence(() => ({ verdict: "passed", detail: "bun test" }))
+  const resolved = await resolveFreshEvidence(sid, dir)
+  expect(resolved.verdict).toBe("unverified")
+  const out = (await todoWriteTool.execute(
+    { todos: [{ taskId: "t1", content: "ship X", status: "completed" }] } as never,
+    ctxFor(sid, dir),
+  )) as string
+  expect(out).not.toContain("refused")
+  expect(out).not.toContain("stale")
+  expect((await loadTodos(sid, dir))[0]!.status).toBe("completed")
+  expect(storeStatus(sid, dir)).toBe("COMPLETED")
+})
+
 // ── B. Fresh PASS tetap mengizinkan ──────────────────────────────────────────
 test("B PASS segar (mutasi ≤ turn bukti) → completion lewat jalur kanonik", async () => {
   const dir = tmpRoot()

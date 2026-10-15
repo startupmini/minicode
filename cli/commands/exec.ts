@@ -207,6 +207,10 @@ export async function handleExec(
       // submit_result dari model (bila dipanggil) ikut verbatim — pipeline CI
       // tak perlu menebak batas JSON dari prosa turn terakhir.
       const submitted = getSubmittedResult()
+      // P11.1 — hasil verify TERAKHIR (final pasca-self-heal) untuk summary.
+      // Aditif & absen bila verify tak jalan: cermin lastVerify sesi, bukan
+      // otoritas baru. ok top-level dan exit code SENGAJA tak berubah.
+      const lastVerify = ctx.getLastVerifyResult()
       const result = machineSummary(true, {
         sessionId: ctx.sessionId,
         model: ctx.modelRef.current,
@@ -217,6 +221,15 @@ export async function handleExec(
         usage: ue,
         eventCount: streamed,
         ...(submitted ? { submitted: submitted.result } : {}),
+        ...(lastVerify
+          ? {
+              verify: {
+                active: true,
+                ok: lastVerify.ok,
+                command: lastVerify.command,
+              },
+            }
+          : {}),
       })
       // Event sudah di-stream sebagai JSONL di stdout; summary jadi baris
       // terakhir di stdout juga (bukan stderr) supaya pipeline CI bisa

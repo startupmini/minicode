@@ -275,6 +275,13 @@ export interface CliSession {
   persistCurrent: (usageData: unknown) => Promise<void>
   runPromptWithVerify: (prompt: string, signal?: AbortSignal) => Promise<void>
   /**
+   * P11.1 — ringkasan hasil verify terakhir, read-only untuk summary mesin
+   * (`exec --json`). Null bila verify belum pernah jalan di sesi ini.
+   * Hanya ok+command (output verify tetap di stderr/stream, tak ikut
+   * summary); snapshot disalin agar pemanggil tak bisa memutasi state sesi.
+   */
+  getLastVerifyResult: () => { ok: boolean; command: string } | null
+  /**
    * P3.5 — metadata runtime hasil seleksi konteks (host-side, RAM, lifecycle-
    * scoped). Bukan store/otoritas; hanya membawa identity/frontier/revision/
    * basis/freshness melewati batas seed runtime. Undefined bila sesi bukan resume
@@ -2463,6 +2470,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     detachSimple: () => detachUI(),
     persistCurrent,
     runPromptWithVerify,
+    // P11.1 — baca TERAKHIR-menang: self-heal menimpa lastVerify tiap
+    // siklus, jadi yang terbaca di sini selalu hasil final. Salin nilai
+    // (bukan referensi) agar summary mesin tak bisa memutasi state sesi.
+    getLastVerifyResult: () =>
+      lastVerify ? { ok: lastVerify.ok, command: lastVerify.command } : null,
     // P3.5 — carrier metadata runtime (satu sesi, tanpa registry).
     runtimeContextMetadata,
     permissions,

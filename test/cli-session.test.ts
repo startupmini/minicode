@@ -341,6 +341,141 @@ describe("cli: exec --json machine envelope", () => {
   })
 })
 
+// ── P11.1: hasil verify terakhir (final pasca-self-heal) di summary mesin
+// `exec --json`. Aditif: absen bila verify tak jalan; ok top-level dan exit
+// code SENGAJA tak berubah. Tes async + provider tiruan WAJIB di file ini:
+// harness sync (exec-json-envelope.test.ts) deadlock bila dipasangkan dengan
+// Bun.serve provider tiruan (lihat kepala file ini).
+describe("cli: exec --json verify summary", () => {
+  /** Baris summary = baris terakhir stdout (kontrak: summary terakhir). */
+  function summaryOf(r: Run): Record<string, unknown> {
+    const lines = r.stdout.split("\n").filter(Boolean)
+    return JSON.parse(lines[lines.length - 1]!) as Record<string, unknown>
+  }
+
+  function execArgs(ws: Workspace, prompt: string, verify = true): string[] {
+    // "--verify" eksplisit: MINICODE_VERIFY_CMD saja tak mengaktifkan
+    // (verifyActive=false -> lastVerify null -> kunci absen).
+    return [
+      "exec",
+      "--json",
+      ...(verify ? ["--verify"] : []),
+      prompt,
+      "--cwd",
+      ws.dir,
+      "--model",
+      "gpt-4o-mini",
+      "--allow-local-config",
+    ]
+  }
+
+  test("A: --verify hijau -> summary.verify { active, ok: true, command }", async () => {
+    const ws = makeWorkspace()
+    writeFileSync(join(ws.dir, "hijau.ts"), "process.exit(0)\n", "utf8")
+    const provider = startFakeProvider([{ kind: "text", text: "selesai" }])
+    try {
+      writeProviderConfig(ws, provider.baseUrl)
+      const r = await run(ws, execArgs(ws, "tugas cepat"), {
+        MINICODE_VERIFY_CMD: `${process.execPath} hijau.ts`,
+      })
+      expect(r.code).toBe(0)
+      const last = summaryOf(r)
+      expect(last).toMatchObject({ schema: "minicode.output.v1", type: "summary", ok: true })
+      expect(last).toMatchObject({
+        verify: { active: true, ok: true, command: `${process.execPath} hijau.ts` },
+      })
+    } finally {
+      provider.close()
+    }
+  })
+
+  test("B: --verify merah -> exit 0, ok true, TAPI verify.ok false", async () => {
+    const ws = makeWorkspace()
+    writeFileSync(join(ws.dir, "merah.ts"), "process.exit(1)\n", "utf8")
+    // Self-heal menghabiskan beberapa fix turn sebelum menyerah (semua merah);
+    // provider tiruan mengulang reply terakhir bila script habis, jadi 2 cukup.
+    const provider = startFakeProvider([
+      { kind: "text", text: "percobaan awal" },
+      { kind: "text", text: "percobaan perbaikan" },
+    ])
+    try {
+      writeProviderConfig(ws, provider.baseUrl)
+      const r = await run(
+        ws,
+        execArgs(ws, "tugas mustahil"),
+        { MINICODE_VERIFY_CMD: `${process.execPath} merah.ts` },
+        120_000,
+      )
+      // Kontrak P11.1: exit code dan ok top-level TIDAK berubah walau merah.
+      expect(r.code).toBe(0)
+      const last = summaryOf(r)
+      expect(last).toMatchObject({ schema: "minicode.output.v1", type: "summary", ok: true })
+      const verify = last.verify as Record<string, unknown>
+      expect(verify).toMatchObject({ active: true, ok: false })
+      expect(String(verify.command)).toContain("merah.ts")
+    } finally {
+      provider.close()
+    }
+  })
+
+  test("C: tanpa --verify -> kunci verify absen total (byte-kompatibel)", async () => {
+    const ws = makeWorkspace()
+    const provider = startFakeProvider([{ kind: "text", text: "biasa" }])
+    try {
+      writeProviderConfig(ws, provider.baseUrl)
+      const r = await run(ws, execArgs(ws, "tugas biasa", false))
+      expect(r.code).toBe(0)
+      const last = summaryOf(r)
+      expect(last).toMatchObject({ schema: "minicode.output.v1", type: "summary", ok: true })
+      expect("verify" in last).toBe(false)
+      expect(JSON.stringify(last)).not.toContain('"verify"')
+    } finally {
+      provider.close()
+    }
+  })
+
+  test("D: merah lalu hijau (self-heal) -> verify.ok true (final-menang)", async () => {
+    const ws = makeWorkspace()
+    // Gagal dua kali (baseline + pasca-turn awal) lalu hijau — skenario yang
+    // sama dengan writeFlakyVerify di blok self-heal (fungsi itu scope
+    // describe lain, jadi ditulis ulang minimal di sini).
+    writeFileSync(
+      join(ws.dir, "flaky.ts"),
+      [
+        'import { existsSync, readFileSync, writeFileSync } from "node:fs"',
+        'const p = "verify-count.txt"',
+        'const n = existsSync(p) ? Number(readFileSync(p, "utf8")) : 0',
+        'writeFileSync(p, String(n + 1), "utf8")',
+        'if (n <= 1) { console.error("masih merah"); process.exit(1) }',
+        "process.exit(0)",
+      ].join("\n"),
+      "utf8",
+    )
+    const provider = startFakeProvider([
+      { kind: "text", text: "awal" },
+      { kind: "text", text: "sudah kuperbaiki" },
+    ])
+    try {
+      writeProviderConfig(ws, provider.baseUrl)
+      const r = await run(
+        ws,
+        execArgs(ws, "perbaiki lalu hijau"),
+        { MINICODE_VERIFY_CMD: `${process.execPath} flaky.ts` },
+        120_000,
+      )
+      expect(r.code).toBe(0)
+      const last = summaryOf(r)
+      expect(last).toMatchObject({ schema: "minicode.output.v1", type: "summary", ok: true })
+      // Kegagalan PERTAMA tidak boleh dilaporkan: yang tampil hasil final.
+      expect(last).toMatchObject({
+        verify: { active: true, ok: true, command: `${process.execPath} flaky.ts` },
+      })
+    } finally {
+      provider.close()
+    }
+  })
+})
+
 describe("cli: --budget", () => {
   test("melewati batas -> pesan [budget] dan exit 1", async () => {
     const { run: r } = await runWithProvider(

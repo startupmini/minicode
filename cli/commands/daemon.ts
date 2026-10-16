@@ -132,6 +132,16 @@ function emit(lines: string[], json: string | null, exitCode: number | null = nu
   if (exitCode !== null) process.exit(exitCode)
 }
 
+/**
+ * Tulis diagnostik manusia ke stderr + payload JSON ke stdout, lalu keluar.
+ *
+ * `json` adalah payload MENTAH (objek) — encoding terjadi SEKALI di sini;
+ * `null` = jalur ini memang tak punya kontrak JSON. Jalur kegagalan `stop` dan
+ * `sessions` dulu mewariskan string yang SUDAH `JSON.stringify`, jadi payload
+ * ter-encode dua kali: stdout berisi string-JSON terbungkus dan
+ * `JSON.parse(stdout)` pada konsumen mesin menghasilkan string, bukan objek.
+ * Jangan me-stringify di call site.
+ */
 function fail(json: unknown, human: string, code = 1): never {
   process.stderr.write(human + "\n")
   if (json !== null) process.stdout.write(JSON.stringify(json) + "\n")
@@ -309,11 +319,8 @@ async function statusDaemon(cwd: string | undefined, json: boolean): Promise<voi
 async function stopDaemon(cwd: string | undefined, json: boolean): Promise<void> {
   const probe = await probeDaemon(cwd)
   if (!probe.alive)
-    fail(
-      json ? JSON.stringify({ ok: false, reason: probe.reason }) : null,
-      `daemon: ${probe.reason}`,
-      3,
-    )
+    // Objek mentah, bukan string: `fail()` yang meng-encode (lihat kontraknya).
+    fail(json ? { ok: false, reason: probe.reason } : null, `daemon: ${probe.reason}`, 3)
   try {
     const { client } = await openClient(cwd, ["admin"], "operator")
     const res = await client.control("daemon.shutdown", { reason: "cli" }, `stop-${Date.now()}`)
@@ -364,8 +371,9 @@ async function listSessions(cwd: string | undefined, json: boolean): Promise<voi
     const res = await client.control("session.list", {}, `list-${Date.now()}`)
     client.close()
     if (!res.ok)
+      // Objek mentah — `fail()` meng-encode sekali (D-1).
       fail(
-        json ? JSON.stringify({ ok: false, refusal: res.refusal }) : null,
+        json ? { ok: false, refusal: res.refusal } : null,
         `daemon: ${res.refusal?.code} ${res.refusal?.message}`,
         1,
       )

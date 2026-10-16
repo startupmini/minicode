@@ -5,10 +5,13 @@
 // skrip tidak bisa mendeteksi kesalahan pemakaian.
 
 import { describe, expect, test } from "bun:test"
-import { spawnSync } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import type { ControlActions } from "../src/daemon/control.ts"
+import { readEndpoint } from "../src/daemon/discovery.ts"
+import { DaemonHost } from "../src/daemon/host.ts"
 
 const repoRoot = resolve(import.meta.dir, "..")
 const entry = join(repoRoot, "cli", "index.ts")
@@ -265,6 +268,125 @@ describe("cli: notice sandbox tidak bising", () => {
   })
 })
 
+// ── Fixture CLI daemon yang dipakai bersama P11.3 dan D-1.
+//
+// Satu jalur spawn = satu kebijakan env. Sebelumnya tiap describe menyusun
+// env-nya sendiri, dan `...process.env` polos mewariskan kredensial provider
+// milik mesin ini ke proses anak (temuan hygiene QA §G laporan full-system).
+
+/** Workspace sementara: `<cwd>/.minicode` + HOME palsu terpisah. */
+function hermeticWs(): { dir: string; home: string } {
+  const dir = mkdtempSync(join(tmpdir(), "minicode-daemon-"))
+  mkdirSync(join(dir, ".minicode"), { recursive: true })
+  const home = join(dir, "home")
+  mkdirSync(join(home, ".minicode"), { recursive: true })
+  return { dir, home }
+}
+
+/**
+ * Env anak CLI: tanpa kredensial provider, tanpa state mesin ini.
+ *
+ * `MINICODE_HOME` menunjuk HOME palsu (`resolveDbPath` jatuh ke sana bila
+ * `<cwd>/.minicode` tak ada), dan `NO_UPDATE_CHECK=1` menahan notifier
+ * non-interaktif yang tanpa itu akan `fetch` registry.npmjs.org (jalur
+ * non-`--json`; `--json` sudah di-skip sendiri oleh update-check).
+ */
+function hermeticEnv(home: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const [k, v] of Object.entries(process.env)) {
+    // Pola nama kredensial yang dipakai provider/tool di repo ini
+    // (ANTHROPIC_/OPENAI_/DEEPSEEK_/AGENT_/BRAVE_/TAVILY_ API_KEY, MINICODE_KEY).
+    if (/(API_KEY|_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)$/i.test(k)) continue
+    env[k] = v
+  }
+  env.NO_COLOR = "1"
+  env.NO_UPDATE_CHECK = "1"
+  env.HOME = home
+  env.USERPROFILE = home
+  env.MINICODE_HOME = home
+  return env
+}
+
+/** Spawn CLI di workspace hermetik yang SUDAH ada (fixture daemon hidup). */
+function spawnCliIn(argv: string[], ws: { dir: string; home: string }): Run {
+  const r = spawnSync(process.execPath, [entry, ...argv], {
+    cwd: ws.dir,
+    encoding: "utf8",
+    timeout: 60_000,
+    env: hermeticEnv(ws.home),
+  })
+  const stdout = r.stdout ?? ""
+  const stderr = r.stderr ?? ""
+  return { code: r.status ?? -1, stdout, stderr, out: stdout + stderr }
+}
+
+/**
+ * Varian ASINKRON dari `spawnCliIn` — wajib untuk fixture host in-process.
+ *
+ * `spawnSync` memblokir event loop proses tes, dan host daemon itu hidup DI
+ * proses ini: dengan event loop terblokir, handshake `hello` konsumen tak
+ * pernah dijawab dan CLI gagal dengan "hello timeout" (bukan bug produk —
+ * efek sampling). Karena itu anak di-`await`, bukan ditunggu sinkron.
+ */
+function spawnCliAsync(argv: string[], ws: { dir: string; home: string }): Promise<Run> {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(process.execPath, [entry, ...argv], {
+      cwd: ws.dir,
+      env: hermeticEnv(ws.home),
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    let stdout = ""
+    let stderr = ""
+    child.stdout.setEncoding("utf8")
+    child.stderr.setEncoding("utf8")
+    child.stdout.on("data", (d: string) => {
+      stdout += d
+    })
+    child.stderr.on("data", (d: string) => {
+      stderr += d
+    })
+    const timer = setTimeout(() => {
+      child.kill()
+      rejectRun(new Error(`CLI tak selesai dalam 60s: ${argv.join(" ")}`))
+    }, 60_000)
+    child.on("error", (e) => {
+      clearTimeout(timer)
+      rejectRun(e)
+    })
+    child.on("close", (code) => {
+      clearTimeout(timer)
+      resolveRun({ code: code ?? -1, stdout, stderr, out: stdout + stderr })
+    })
+  })
+}
+
+/**
+ * Buang direktori sementara.
+ *
+ * Windows + bun:sqlite sering menyisakan EBUSY sesudah `Database.close()`
+ * (handle dilepas saat GC, bukan saat close). Itu perilaku runtime, bukan hasil
+ * tes, jadi kegagalan bersih-bersih ditelan di sini saja — seperti pola
+ * `discard()` di test/p2-daemon-guards.test.ts.
+ */
+function discard(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+  } catch {}
+}
+
+/** Workspace baru per panggilan; "<DIR>" diganti direktori ws. */
+function runDaemon(argv: string[]): Run {
+  const ws = hermeticWs()
+  try {
+    return spawnCliIn(
+      argv.map((a) => (a === "<DIR>" ? ws.dir : a)),
+      ws,
+    )
+  } finally {
+    discard(ws.dir)
+  }
+}
+
 // ── P11.3: daemon menerima argv scoped TANPA token routing (cermin P11.2).
 // Guard lokal `args[0] === "daemon"` lama salah saat flag global mendahului:
 // `minicode --json daemon status` dibaca sebagai aksi "daemon" (exit 2 palsu).
@@ -273,41 +395,6 @@ describe("cli: notice sandbox tidak bising", () => {
 // SENGAJA tak diuji di sini (blocking, menahan event loop). Workspace
 // hermetic (HOME palsu + cwd tmp) agar endpoint mesin ini tak ikut terbaca.
 describe("cli: daemon scoped argv (P11.3)", () => {
-  function hermeticWs(): { dir: string; home: string } {
-    const dir = mkdtempSync(join(tmpdir(), "minicode-daemon-"))
-    mkdirSync(join(dir, ".minicode"), { recursive: true })
-    const home = join(dir, "home")
-    mkdirSync(join(home, ".minicode"), { recursive: true })
-    return { dir, home }
-  }
-
-  /** "<DIR>" diganti direktori ws (agar --cwd bisa di posisi mana pun). */
-  function runDaemon(argv: string[]): Run {
-    const { dir, home } = hermeticWs()
-    try {
-      const r = spawnSync(
-        process.execPath,
-        [entry, ...argv.map((a) => (a === "<DIR>" ? dir : a))],
-        {
-          cwd: dir,
-          encoding: "utf8",
-          timeout: 60_000,
-          env: {
-            ...process.env,
-            NO_COLOR: "1",
-            HOME: home,
-            USERPROFILE: home,
-          },
-        },
-      )
-      const stdout = r.stdout ?? ""
-      const stderr = r.stderr ?? ""
-      return { code: r.status ?? -1, stdout, stderr, out: stdout + stderr }
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  }
-
   /** Tanpa endpoint: status = JSON not-alive + exit 3 (kontrak statusDaemon). */
   function expectNotAliveJson(r: Run): void {
     expect(r.code).toBe(3)
@@ -361,16 +448,12 @@ describe("cli: daemon scoped argv (P11.3)", () => {
       expect(r.code).toBe(2)
       expect(r.stderr).toContain("--scopes wajib")
     }
-    // `stop` tanpa endpoint = exit 3 (bukan exit 2 routing).
-    // CATATAN (temuan di luar scope P11.3, tidak diperbaiki di sini):
-    // stdout `stop --json` saat ini double-encoded — stopDaemon mewariskan
-    // string yang SUDAH JSON.stringify ke fail(), yang me-stringify ulang
-    // (`"{\"ok\":false,…}"`). Yang diuji di sini hanya routing tercapai.
+    // `stop` tanpa endpoint = exit 3 (bukan exit 2 routing). Bentuk JSON-nya
+    // diuji penuh di describe D-1; di sini cukup routing-nya tercapai.
     const stop = runDaemon(["--json", "daemon", "stop", "--cwd", "<DIR>"])
     expect(stop.code).toBe(3)
     expect(stop.out).not.toContain("unknown daemon subcommand")
-    expect(stop.stdout).toContain("ok")
-    expect(stop.stdout).toContain("reason")
+    expect(JSON.parse(stop.stdout)).toMatchObject({ ok: false })
     // `help` tetap exit 0 di kedua urutan.
     for (const argv of [
       ["daemon", "help"],
@@ -381,4 +464,108 @@ describe("cli: daemon scoped argv (P11.3)", () => {
       expect(r.stdout).toContain("minicode daemon")
     }
   })
+})
+
+// ── D-1: integritas JSON pada jalur KEGAGALAN daemon.
+//
+// `fail()` sudah meng-encode payload (JSON.stringify terjadi di sana), tapi
+// `stopDaemon`/`listSessions` mewariskan string yang SUDAH di-encode — payload
+// ter-encode dua kali, dan `JSON.parse(stdout)` pada konsumen mesin
+// menghasilkan string, bukan objek. Assertion di sini sengaja memarse penuh:
+// `toContain("ok")`/`toContain("reason")` lolos untuk bentuk yang rusak maupun
+// yang benar, jadi ia tak bisa mengunci bug ini.
+describe("cli: daemon JSON integritas kegagalan (D-1)", () => {
+  /**
+   * Host daemon NYATA di dalam proses tes (loopback, port ephemeral) sebagai
+   * fixture penolakan: dengan `ControlActions` tak terpasang, `session.list`
+   * menolak PROTOCOL_ERROR (fail-closed — lihat src/daemon/control.ts). Itu
+   * jalur `!res.ok` di cli/commands/daemon.ts, persis jalur yang dulu
+   * double-encode. Tak ada proses daemon blocking yang dijalankan, jadi tak
+   * ada yang bisa tertinggal hidup; `shutdown()` + `discard()` di `finally`.
+   */
+  function startHost(dir: string, actions: ControlActions | null): Promise<DaemonHost> {
+    return DaemonHost.start({
+      cwd: dir,
+      port: 0,
+      feeds: { get: () => undefined, known: () => [] },
+      actions,
+      warn: () => {},
+    })
+  }
+
+  const emptyActions: ControlActions = {
+    listSessions: () => [],
+    sessionStatus: () => null,
+    interrupt: () => ({ ok: false, code: "RUN_TERMINAL", message: "tidak ada sesi" }),
+    cancel: () => ({ ok: false, code: "RUN_TERMINAL", message: "tidak ada sesi" }),
+    shutdown: () => {},
+  }
+
+  test("A: `daemon stop --json` tanpa daemon -> JSON.parse = objek, exit 3", () => {
+    for (const argv of [
+      ["daemon", "stop", "--json", "--cwd", "<DIR>"],
+      ["--json", "daemon", "stop", "--cwd", "<DIR>"],
+    ]) {
+      const r = runDaemon(argv)
+      expect(r.code).toBe(3)
+      const parsed: unknown = JSON.parse(r.stdout)
+      expect(parsed).toBeTypeOf("object")
+      expect(Array.isArray(parsed)).toBe(false)
+      expect(parsed).toMatchObject({ ok: false })
+      expect((parsed as { reason?: unknown }).reason).toBeTypeOf("string")
+      // Jalur manusia tetap di stderr dan tak boleh bercampur ke stdout.
+      expect(r.stderr).toContain("daemon: ")
+      expect(r.stdout.trim().startsWith("{")).toBe(true)
+    }
+  })
+
+  test("B: `daemon sessions --json` pada PENOLAKAN host -> objek, exit 1", async () => {
+    const ws = hermeticWs()
+    const host = await startHost(ws.dir, null)
+    try {
+      const r = await spawnCliAsync(["daemon", "sessions", "--json", "--cwd", ws.dir], ws)
+      expect(r.code).toBe(1)
+      const parsed = JSON.parse(r.stdout) as { ok?: unknown; refusal?: { code?: unknown } }
+      expect(parsed).toBeTypeOf("object")
+      expect(Array.isArray(parsed)).toBe(false)
+      expect(parsed.ok).toBe(false)
+      expect(parsed.refusal?.code).toBe("PROTOCOL_ERROR")
+      expect(r.stderr).toContain("PROTOCOL_ERROR")
+
+      // Perintah yang sama punya dua jalur kegagalan; `stop` di sini lewat
+      // `emit()` (daemon hidup, permintaan DITOLAK), bukan `fail()` (daemon
+      // mati) — keduanya harus satu-encode dan exit-nya tetap berbeda.
+      const stop = await spawnCliAsync(["daemon", "stop", "--json", "--cwd", ws.dir], ws)
+      expect(stop.code).toBe(1)
+      const stopParsed = JSON.parse(stop.stdout) as { ok?: unknown; refusal?: { code?: unknown } }
+      expect(stopParsed).toBeTypeOf("object")
+      expect(stopParsed.ok).toBe(false)
+      expect(stopParsed.refusal?.code).toBe("PROTOCOL_ERROR")
+    } finally {
+      await host.shutdown("test")
+      // Bukti tak ada sisa: endpoint/lease milik host ini dilepas sendiri.
+      expect(readEndpoint(ws.dir)).toBeNull()
+      discard(ws.dir)
+    }
+  }, 30_000)
+
+  test("C: jalur SUKSES tetap satu-encode; manusia & stderr tak berubah", async () => {
+    const ws = hermeticWs()
+    const host = await startHost(ws.dir, emptyActions)
+    try {
+      const json = await spawnCliAsync(["daemon", "sessions", "--json", "--cwd", ws.dir], ws)
+      expect(json.code).toBe(0)
+      expect(JSON.parse(json.stdout)).toEqual({ ok: true, sessions: [] })
+
+      const human = await spawnCliAsync(["daemon", "sessions", "--cwd", ws.dir], ws)
+      expect(human.code).toBe(0)
+      expect(human.stdout.trim()).toBe("(tidak ada sesi yang di-host)")
+      expect(() => JSON.parse(human.stdout)).toThrow()
+      expect(human.stderr).toBe("")
+    } finally {
+      await host.shutdown("test")
+      expect(readEndpoint(ws.dir)).toBeNull()
+      discard(ws.dir)
+    }
+  }, 30_000)
 })

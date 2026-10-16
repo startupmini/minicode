@@ -132,8 +132,13 @@ export async function dispatch(
     // P2.12 — host daemon lintas-platform (loopback + capability bercakupan).
     // Terpisah dari exec/acp: daemon adalah proses panjang yang melayani
     // konsumen, bukan pelaksana satu prompt.
+    // P11.3 — argv scoped TANPA token "daemon" (cermin pola exec P11.2):
+    // guard lokal `args[0] === "daemon"` di handler salah saat flag global
+    // mendahului ("--json daemon status" dibaca sebagai aksi "daemon" →
+    // exit 2 palsu). subGetArg tak berubah (tetap di atas subArgv penuh).
     const { handleDaemon } = await import("./commands/daemon.ts")
-    await handleDaemon(args, subGetArg, HELP)
+    const cmdArgv = [...subArgv.slice(0, cmdTokenPos), ...args.slice(cmdIndex + 1)]
+    await handleDaemon(cmdArgv, subGetArg, HELP)
     return true
   }
   if (cmd === "memory") {

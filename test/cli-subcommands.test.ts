@@ -264,3 +264,121 @@ describe("cli: notice sandbox tidak bising", () => {
     }
   })
 })
+
+// ── P11.3: daemon menerima argv scoped TANPA token routing (cermin P11.2).
+// Guard lokal `args[0] === "daemon"` lama salah saat flag global mendahului:
+// `minicode --json daemon status` dibaca sebagai aksi "daemon" (exit 2 palsu).
+// Tanpa endpoint, `status`/`stop` deterministik (tanpa probe jaringan — probe
+// hanya jalan bila berkas endpoint ada): JSON not-alive + exit 3. `start`
+// SENGAJA tak diuji di sini (blocking, menahan event loop). Workspace
+// hermetic (HOME palsu + cwd tmp) agar endpoint mesin ini tak ikut terbaca.
+describe("cli: daemon scoped argv (P11.3)", () => {
+  function hermeticWs(): { dir: string; home: string } {
+    const dir = mkdtempSync(join(tmpdir(), "minicode-daemon-"))
+    mkdirSync(join(dir, ".minicode"), { recursive: true })
+    const home = join(dir, "home")
+    mkdirSync(join(home, ".minicode"), { recursive: true })
+    return { dir, home }
+  }
+
+  /** "<DIR>" diganti direktori ws (agar --cwd bisa di posisi mana pun). */
+  function runDaemon(argv: string[]): Run {
+    const { dir, home } = hermeticWs()
+    try {
+      const r = spawnSync(
+        process.execPath,
+        [entry, ...argv.map((a) => (a === "<DIR>" ? dir : a))],
+        {
+          cwd: dir,
+          encoding: "utf8",
+          timeout: 60_000,
+          env: {
+            ...process.env,
+            NO_COLOR: "1",
+            HOME: home,
+            USERPROFILE: home,
+          },
+        },
+      )
+      const stdout = r.stdout ?? ""
+      const stderr = r.stderr ?? ""
+      return { code: r.status ?? -1, stdout, stderr, out: stdout + stderr }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  /** Tanpa endpoint: status = JSON not-alive + exit 3 (kontrak statusDaemon). */
+  function expectNotAliveJson(r: Run): void {
+    expect(r.code).toBe(3)
+    const parsed = JSON.parse(r.stdout) as Record<string, unknown>
+    expect(parsed).toMatchObject({ alive: false, status: "none" })
+    expect(parsed).toHaveProperty("reason")
+    expect(parsed).toHaveProperty("incarnation")
+    expect(parsed).toHaveProperty("port")
+    expect(parsed).toHaveProperty("leaseAgeMs")
+    expect(r.stderr).not.toContain("unknown daemon subcommand")
+  }
+
+  test("A: --json SEBELUM daemon -> aksi status tercapai (bukan exit 2)", () => {
+    expectNotAliveJson(runDaemon(["--json", "daemon", "status", "--cwd", "<DIR>"]))
+    // Value-flag global sebelum subcommand ikut tercakup.
+    expectNotAliveJson(runDaemon(["--json", "--cwd", "<DIR>", "daemon", "status"]))
+  })
+
+  test("B/C: bentuk daemon-first dan biasa tak berubah", () => {
+    expectNotAliveJson(runDaemon(["daemon", "--json", "status", "--cwd", "<DIR>"]))
+    // Tanpa --json: baris manusia, bukan JSON, exit tetap 3.
+    const human = runDaemon(["daemon", "status", "--cwd", "<DIR>"])
+    expect(human.code).toBe(3)
+    expect(human.stdout).toContain("daemon: not alive")
+    expect(() => JSON.parse(human.stdout)).toThrow()
+    // Bare `daemon` = default status (kontrak: first ?? "status").
+    const bare = runDaemon(["daemon", "--cwd", "<DIR>"])
+    expect(bare.code).toBe(3)
+    expect(bare.stdout).toContain("daemon: not alive")
+    expectNotAliveJson(runDaemon(["--json", "daemon", "--cwd", "<DIR>"]))
+  })
+
+  test("D: aksi asing tetap ditolak exit 2 (tak diubah jadi status)", () => {
+    for (const argv of [
+      ["daemon", "bogus", "--cwd", "<DIR>"],
+      ["--json", "daemon", "bogus", "--cwd", "<DIR>"],
+    ]) {
+      const r = runDaemon(argv)
+      expect(r.code).toBe(2)
+      expect(r.out).toContain("unknown daemon subcommand: bogus")
+    }
+  })
+
+  test("E: aksi lain lewat kontrak argv yang sama", () => {
+    // `issue` tanpa --scopes = usage error exit 2 (tanpa endpoint).
+    for (const argv of [
+      ["daemon", "issue", "--cwd", "<DIR>"],
+      ["--json", "daemon", "issue", "--cwd", "<DIR>"],
+    ]) {
+      const r = runDaemon(argv)
+      expect(r.code).toBe(2)
+      expect(r.stderr).toContain("--scopes wajib")
+    }
+    // `stop` tanpa endpoint = exit 3 (bukan exit 2 routing).
+    // CATATAN (temuan di luar scope P11.3, tidak diperbaiki di sini):
+    // stdout `stop --json` saat ini double-encoded — stopDaemon mewariskan
+    // string yang SUDAH JSON.stringify ke fail(), yang me-stringify ulang
+    // (`"{\"ok\":false,…}"`). Yang diuji di sini hanya routing tercapai.
+    const stop = runDaemon(["--json", "daemon", "stop", "--cwd", "<DIR>"])
+    expect(stop.code).toBe(3)
+    expect(stop.out).not.toContain("unknown daemon subcommand")
+    expect(stop.stdout).toContain("ok")
+    expect(stop.stdout).toContain("reason")
+    // `help` tetap exit 0 di kedua urutan.
+    for (const argv of [
+      ["daemon", "help"],
+      ["--json", "daemon", "help"],
+    ]) {
+      const r = runDaemon(argv)
+      expect(r.code).toBe(0)
+      expect(r.stdout).toContain("minicode daemon")
+    }
+  })
+})

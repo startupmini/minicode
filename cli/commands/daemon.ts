@@ -22,18 +22,23 @@ import { flagNameOf, valueFlags } from "../args.ts"
 import type { CliSession } from "../setup.ts"
 
 export async function handleDaemon(
-  args: string[],
+  // P11.3 — router mengirim argv scoped TANPA token subcommand ("daemon"):
+  // flag global yang dikenal (sebelum subcommand) + semua token sesudahnya.
+  // Irisan lokal `args[0] === "daemon"` lama hanya benar bila daemon token
+  // pertama; dengan flag global mendahului, token routing dibaca sebagai
+  // nama aksi ("unknown daemon subcommand: daemon", exit 2 palsu). Handler
+  // mempercayai argv yang sudah scoped — jangan iris lagi di sini.
+  sub: string[],
   getArg: (name: string) => string | undefined,
   HELP: string,
 ): Promise<void> {
-  const sub = args[0] === "daemon" ? args.slice(1) : args
   const first = firstPositional(sub)
   // Bantuan cetak `<mulai|...>` (bahasa Indonesia) tapi perintahnya `start`;
   // terima keduanya supaya yang menyalin dari --help tidak kena "unknown".
   const action = first === "mulai" ? "start" : (first ?? "status")
-  // argv handler subcommand SELALU diawali positional subcommand, sehingga
-  // `hasFlag` berhenti di token pertama (boundary prompt). Konvensi repo:
-  // handler memakai `args.includes` langsung — lihat catatan di cli/args.ts.
+  // `--json` dibaca via includes (tak tergantung posisi): argv scoped selalu
+  // memuat flag global + token setelah subcommand. `getArg` (= subGetArg
+  // router) membaca --cwd/--port/--prompt/--who/--scopes/--ttl di mana pun.
   const json = sub.includes("--json")
   const cwdRaw = getArg("--cwd")
   const cwd = cwdRaw ? cwdRaw : undefined

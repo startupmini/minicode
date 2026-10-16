@@ -79,3 +79,45 @@ describe("exec --json: kegagalan setup membawa envelope", () => {
     }
   })
 })
+
+// ── P11.2: prompt diambil dari argv scoped TANPA token subcommand.
+// Tanpa provider, sesi gagal SETELAH prompt dibangun — envelope failure
+// tetap memuat prompt yang sama dengan yang dikirim ke model, jadi jalur
+// produksi penuh (router → handleExec) teruji tanpa request jaringan.
+// Guard lama `args[0] === "exec"` hanya benar bila exec token pertama;
+// dengan flag global mendahului, token "exec" + nilai flag bocor ke prompt.
+describe("exec: prompt scoping (P11.2)", () => {
+  /** Jalankan argv di ws hermetic; "<DIR>" diganti direktori ws. */
+  function failurePrompt(argv: string[]): unknown {
+    const { dir, home } = hermeticWs()
+    try {
+      const r = run(
+        argv.map((a) => (a === "<DIR>" ? dir : a)),
+        dir,
+        home,
+      )
+      expect(r.code).toBe(1)
+      const lines = r.stdout.split("\n").filter(Boolean)
+      expect(lines.length).toBe(1)
+      const summary = JSON.parse(lines[0]!) as Record<string, unknown>
+      expect(summary.ok).toBe(false)
+      expect(summary.error).toMatchObject({ category: "CONFIGURATION_ERROR" })
+      return summary.prompt
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  test("A/B: exec-first dan flag-first menghasilkan prompt identik", () => {
+    expect(failurePrompt(["exec", "--json", "--cwd", "<DIR>", "tugas cepat"])).toBe("tugas cepat")
+    expect(failurePrompt(["--json", "exec", "--cwd", "<DIR>", "tugas cepat"])).toBe("tugas cepat")
+  })
+
+  test("D: kata exec milik user tidak dipangkas", () => {
+    // exec di tengah prompt + sebagai kata pertama prompt.
+    expect(failurePrompt(["--json", "exec", "--cwd", "<DIR>", "tugas", "exec", "ulang"])).toBe(
+      "tugas exec ulang",
+    )
+    expect(failurePrompt(["exec", "--json", "--cwd", "<DIR>", "exec", "ulang"])).toBe("exec ulang")
+  })
+})

@@ -476,6 +476,88 @@ describe("cli: exec --json verify summary", () => {
   })
 })
 
+// ── P11.2: prompt dibangun dari argv scoped TANPA token subcommand.
+// Harness `run` selalu menaikkan flag dikenal ke depan (reorderForSecureCli),
+// sehingga setiap pemanggilan exec di file ini melewati jalur flag-mendahului
+// yang dulu bocor ("exec tugas ..."). Tes ini menegaskan prompt yang
+// benar-benar sampai ke model + summary yang sama, plus P11.1 tetap benar.
+describe("cli: exec prompt scoping (P11.2)", () => {
+  function summaryOf(r: Run): Record<string, unknown> {
+    const lines = r.stdout.split("\n").filter(Boolean)
+    return JSON.parse(lines[lines.length - 1]!) as Record<string, unknown>
+  }
+
+  // Request pertama = [system, prompt] dan KEDUANYA role "user" (sistem
+  // dikirim sebagai pesan user pertama) — prompt asli selalu yang TERAKHIR.
+  function userTextOf(provider: { requests(): Record<string, unknown>[] }): string {
+    const msgs = provider.requests()[0]?.messages as { role: string; content: unknown }[]
+    const users = msgs.filter((m) => m.role === "user")
+    return String(users[users.length - 1]?.content)
+  }
+
+  test("flag mendahului subcommand: prompt model + summary = teks user", async () => {
+    const ws = makeWorkspace()
+    writeFileSync(join(ws.dir, "hijau.ts"), "process.exit(0)\n", "utf8")
+    const provider = startFakeProvider([{ kind: "text", text: "beres" }])
+    try {
+      writeProviderConfig(ws, provider.baseUrl)
+      const r = await run(
+        ws,
+        [
+          "--json",
+          "exec",
+          "--verify",
+          "tugas cepat",
+          "--cwd",
+          ws.dir,
+          "--model",
+          "gpt-4o-mini",
+          "--allow-local-config",
+        ],
+        { MINICODE_VERIFY_CMD: `${process.execPath} hijau.ts` },
+      )
+      expect(r.code).toBe(0)
+      // 1) Yang benar-benar sampai ke model (bukan "exec tugas cepat"):
+      const userText = userTextOf(provider)
+      expect(userText).toContain("tugas cepat")
+      expect(userText).not.toContain("exec tugas")
+      // 2) Summary mesin memuat prompt yang sama:
+      const last = summaryOf(r)
+      expect(last).toMatchObject({ prompt: "tugas cepat", ok: true })
+      // 3) P11.1 tetap benar di jalur yang sama:
+      expect(last).toMatchObject({ verify: { active: true, ok: true } })
+    } finally {
+      provider.close()
+    }
+  })
+
+  test("teks user yang memuat kata exec tidak dipangkas", async () => {
+    const ws = makeWorkspace()
+    const provider = startFakeProvider([{ kind: "text", text: "oke" }])
+    try {
+      writeProviderConfig(ws, provider.baseUrl)
+      const r = await run(ws, [
+        "--json",
+        "exec",
+        "tugas",
+        "exec",
+        "ulang",
+        "--cwd",
+        ws.dir,
+        "--model",
+        "gpt-4o-mini",
+        "--allow-local-config",
+      ])
+      expect(r.code).toBe(0)
+      const last = summaryOf(r)
+      expect(last).toMatchObject({ prompt: "tugas exec ulang", ok: true })
+      expect(userTextOf(provider)).toContain("tugas exec ulang")
+    } finally {
+      provider.close()
+    }
+  })
+})
+
 describe("cli: --budget", () => {
   test("melewati batas -> pesan [budget] dan exit 1", async () => {
     const { run: r } = await runWithProvider(

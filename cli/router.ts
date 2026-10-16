@@ -44,6 +44,11 @@ export async function dispatch(
       }
     }
   }
+  // P11.2 — posisi token subcommand di subArgv. Semua flag global sudah
+  // ter-push di titik ini; catat sebelum cmd+rest bergabung agar handler
+  // exec bisa menerima argv scoped TANPA token routing (cmd tetap ikut di
+  // subArgv demi subGetArg dan kompatibilitas handler lain).
+  const cmdTokenPos = subArgv.length
   subArgv.push(...args.slice(cmdIndex))
   // subGetArg untuk handler: cari flag di subArgv TANPA boundary prompt,
   // karena token subcommand ("sessions") sendiri akan memicu early-return di
@@ -107,7 +112,13 @@ export async function dispatch(
   }
   if (cmd === "exec") {
     const { handleExec } = await import("./commands/exec.ts")
-    await handleExec(args, subGetArg)
+    // P11.2 — argv scoped TANPA token "exec": guard lokal `args[0] === "exec"`
+    // di handler hanya benar bila exec token pertama; dengan flag global
+    // mendahului ("--json exec ...") token routing bocor ke prompt + summary
+    // mesin. cmdArgv = flag global yang dikenal + semua token setelah
+    // subcommand. subGetArg tak berubah (tetap di atas subArgv penuh).
+    const cmdArgv = [...subArgv.slice(0, cmdTokenPos), ...args.slice(cmdIndex + 1)]
+    await handleExec(cmdArgv, subGetArg)
     return true
   }
   if (cmd === "acp") {

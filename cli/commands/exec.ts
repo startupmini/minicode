@@ -31,24 +31,24 @@ function machineFailure(prompt: string, e: unknown): Record<string, unknown> {
 }
 
 export async function handleExec(
-  args: string[],
+  // P11.2 — router mengirim argv scoped TANPA token subcommand ("exec"):
+  // flag global yang dikenal (sebelum subcommand) + semua token sesudahnya.
+  // Irisan lokal `args[0] === "exec"` lama hanya benar bila exec token
+  // pertama; dengan flag global mendahului ("--json exec ..."), token
+  // routing bocor ke prompt + summary mesin. Handler mempercayai argv yang
+  // sudah scoped — jangan iris lagi di sini.
+  subArgs: string[],
   getArg: (name: string) => string | undefined,
 ): Promise<never> {
   // Bersihkan state submit_result dari run sebelumnya — tanpa ini, exec
   // berturut-turut dalam proses sama bisa membaca hasil run lama.
   clearSubmittedResult()
-  //
   // Prompt diambil lewat promptFromArgs() — satu implementasi yang sama dengan
   // jalur non-exec. Versi sebelumnya menyaring dengan `a !== getArg("--model")`,
   // yang hanya membuang NILAI dari dua flag (`--model`, `--cwd`); nilai flag lain
   // ikut masuk ke prompt. `exec "tes" --provider gorouter --timeout 60000` benar-
   // benar mengirim "tes gorouter 60000" ke model, dan model membalas dengan
   // menebak-nebak soal "gorouter" dan "60000".
-  // Router memanggil dengan argv penuh (["exec", ...]) sementara hasFlag/
-  // getArg berhenti di token subcommand (boundary anti-injeksi) — tanpa
-  // slice, SEMUA flag boolean exec (--json/--verify/--ask/...) mati diam-diam
-  // di CLI nyata. Pola yang sama dengan promptFromArgs di bawah.
-  const subArgs = args[0] === "exec" ? args.slice(1) : args
   const prompt = promptFromArgs(subArgs) || (rawGetArg(subArgs, "--prompt") ?? "")
   const jsonMode = hasFlag(subArgs, "--json") || rawGetArg(subArgs, "--output-format") === "json"
   const cwdRaw = getArg("--cwd")

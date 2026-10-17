@@ -149,8 +149,8 @@ full-suite.
 |---|---|---|---|
 | 1 | Kontrak + tes di tingkat slice (P11.1, P11.2, P11.3) | **PASS** | Setiap slice punya kontrak tertulis di kode + tes regresi subprocess berdetektor-mutasi (lihat §C); suite berfokus hijau saat penerimaan; `bun x tsc --noEmit` pada checkpoint melaporkan 28 error — seluruhnya berada pada kelompok file tes Phase 3/4 dan tidak ada yang berasal dari file yang diubah P11.1–P11.3 dalam pemeriksaan tersebut (dokumen historis mencatat kondisi berbeda untuk kelompok error ini, jadi penyebab historisnya tidak disimpulkan dari angka ini) |
 | 2 | Dokumentasi + CHANGELOG | **PASS** (lewat artefak ini) | Field `verify` terdokumentasi di `docs/exec.md` dan `docs/OUTPUT_PROTOCOL_SPEC.md` §7; entri `[Unreleased]` di `CHANGELOG.md` menutup P11.1–P11.3 |
-| 3 | Full-system QA | **COMPLETED** (verdict `ACCEPT WITH NON-BLOCKING FINDINGS`) | QA sistem penuh Agent C pada checkpoint `04c1e1e` **sudah dilaksanakan dan laporannya tersedia** di `P11_FULL_SYSTEM_QA_REPORT.md`: baseline `9e1e550` 4645 tes (4609 pass / 13 fail / 23 skip) vs target `04c1e1e` 4649 tes (4612 pass / 14 fail / 23 skip); **tidak ada regresi yang terkonfirmasi** (PF-05 flake sensitif-beban, 11 kegagalan kontaminasi antar-tes, 2 kegagalan deterministik baseline). Status `PASS` di sini berarti **QA terlaksana + laporan tersedia**, BUKAN berarti full suite hijau — runner target berakhir dengan kegagalan (14 fail), dan gate `coverage`/`pack`/`bash`/`bench:smoke`/`audit:harness` tidak dijalankan Agent C dalam audit ini |
-| 4 | Keputusan pemilik | **DECIDED (2026-10-18)** — pengecualian strict-green diterima; rincian di `P11_OWNER_DECISION_MEMO.md` | **(N-1)** memperluas field `verify` ke failure-path summary (budget/stale-writer/catch) = perubahan permukaan envelope error → **diputuskan Opsi A** (diterima sebagai keterbatasan terdokumentasi; klarifikasi `609a417`), tidak diperluas. **(F3)** anchor kode `src/presentation/projection.ts:682` memproyeksikan `diagnostic.raised` sebagai status `active` tanpa cabang severity; remap severity-error → status non-`active` = machine-visible → butuh pertimbangan kompat. Kode TIDAK diubah dan perilakunya tidak diklaim sudah diperbaiki. **Temuan daemon:** double-encode JSON pada `stop`/`sessions` refusal — **diperbaiki di D-1** (`dbcf836`) sebagai slice terpisah, dengan tes regresi. **Temuan lain non-blocking:** F2 fallback `??"completed"` di `src/ui/tui/transcript.ts` (latent, tanpa jalur produksi terbukti), F5 U+2028/2029 lolos `sanitizeAnsiLine` (low) |
+| 3 | Full-system QA | **COMPLETED** (verdict `ACCEPT WITH NON-BLOCKING FINDINGS`) | QA sistem penuh Agent C pada checkpoint `04c1e1e` **sudah dilaksanakan dan laporannya tersedia** di `P11_FULL_SYSTEM_QA_REPORT.md`: baseline `9e1e550` 4645 tes (4609 pass / 13 fail / 23 skip) vs target `04c1e1e` 4649 tes (4612 pass / 14 fail / 23 skip); **tidak ada regresi yang terkonfirmasi** (PF-05 flake sensitif-beban, 11 kegagalan kontaminasi antar-tes, 2 kegagalan deterministik baseline). Status `PASS` di sini berarti **QA terlaksana + laporan tersedia**, BUKAN berarti full suite hijau — runner target berakhir dengan kegagalan (14 fail), dan gate `coverage`/`pack`/`bash`/`bench:smoke`/`audit:harness` tidak dijalankan Agent C dalam audit pada checkpoint `04c1e1e` (bukan status eksekusi final) |
+| 4 | Arahan pemilik | **CLOSURE PREPARATION AUTHORIZED — FINAL OWNER APPROVAL PENDING (2026-10-18)** — pengecualian strict-green dipakai sebagai dasar proposal penutupan; rincian di `P11_OWNER_DECISION_MEMO.md` | **(N-1)** memperluas field `verify` ke failure-path summary (budget/stale-writer/catch) = perubahan permukaan envelope error → **diputuskan Opsi A** (diterima sebagai keterbatasan terdokumentasi; klarifikasi `609a417`), tidak diperluas. **(F3)** anchor kode `src/presentation/projection.ts:682` memproyeksikan `diagnostic.raised` sebagai status `active` tanpa cabang severity; remap severity-error → status non-`active` = machine-visible → butuh pertimbangan kompat. Kode TIDAK diubah dan perilakunya tidak diklaim sudah diperbaiki. **Temuan daemon:** double-encode JSON pada `stop`/`sessions` refusal — **diperbaiki di D-1** (`dbcf836`) sebagai slice terpisah, dengan tes regresi. **Temuan lain non-blocking:** F2 fallback `??"completed"` di `src/ui/tui/transcript.ts` (latent, tanpa jalur produksi terbukti), F5 U+2028/2029 lolos `sanitizeAnsiLine` (low) |
 | 5 | Penutupan administratif fase | **PREPARED — menunggu review pemilik** | Paket closure disusun (`P11_PHASE_CLOSURE_REPORT.md`); integrasi ke `main` dan push belum dilakukan |
 | 6 | Gate final pada `609a417` | **`gate:pack` FAIL · `gate:coverage` FAIL · tiga gate lain NOT RUN** | Pack: 21 pass/2 fail, 4121 KB vs 2304 KB (keduanya baseline). Coverage: 13 test gagal, funcs 87,05%/lines 88,06%, 19/19 lantai kritis hijau — merah karena test, bukan ambang. `gate:bash`/`bench:smoke`/`audit:harness`, full typecheck, dan full lint tidak dijalankan. Bukti: `P11_FINAL_GATE_EXECUTION_REPORT.md` |
 
@@ -163,8 +163,8 @@ sudah dilaksanakan + laporan tersedia", dengan verdict
 target `04c1e1e` berakhir dengan 14 kegagalan terklasifikasi (lihat
 `P11_FULL_SYSTEM_QA_REPORT.md`). Kosakata status dokumen ini: `PASS` = kriteria
 terpenuhi di tingkat slice/dokumentasi, `COMPLETED` = aktivitas QA terlaksana
-dengan verdict non-blocking, `PENDING` = menunggu keputusan pemilik,
-`NOT APPLICABLE (belum)` = belum berlaku. Tiga tingkat bukti tetap
+dengan verdict non-blocking, `CLOSURE PREPARATION AUTHORIZED` = persiapan
+penutupan disetujui dengan persetujuan final masih pending. Tiga tingkat bukti tetap
 dibedakan: (i) pengujian berfokus per slice hijau saat penerimaan, (ii)
 full-system QA selesai tanpa regresi terkonfirmasi, (iii) full suite masih
 memiliki kegagalan.
@@ -179,9 +179,9 @@ terintegrasi ke `main` dan push belum dilakukan.**
 - (a) Full-system QA `04c1e1e` — **TERPENUHI**
   (`P11_FULL_SYSTEM_QA_REPORT.md`, verdict `ACCEPT WITH NON-BLOCKING FINDINGS`;
   full suite tetap 14 kegagalan terklasifikasi).
-- (b) Keputusan pemilik — **TERCATAT**: pengecualian strict-green diterima,
-  status target `COMPLETE WITH DOCUMENTED LIMITATIONS`
-  (`P11_OWNER_DECISION_MEMO.md`).
+- (b) Arahan pemilik — **TERCATAT**: persiapan closure dengan status target
+  `COMPLETE WITH DOCUMENTED LIMITATIONS` menggunakan pengecualian strict-green;
+  persetujuan final **BELUM** diberikan (`P11_OWNER_DECISION_MEMO.md`).
 - (c) Gate final `609a417` — **DILAKSANAKAN**: `gate:pack` FAIL,
   `gate:coverage` FAIL; tiga gate lain NOT RUN
   (`P11_FINAL_GATE_EXECUTION_REPORT.md`).

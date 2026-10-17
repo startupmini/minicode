@@ -1,14 +1,15 @@
 # P11 PHASE CLOSURE REPORT — Presentation & UX
 
-**Verdict: `PHASE 11 — COMPLETE WITH DOCUMENTED LIMITATIONS`.**
+**PROPOSED VERDICT — `COMPLETE WITH DOCUMENTED LIMITATIONS` (PENDING OWNER APPROVAL).**
 
 P11 menggarap tiga slice presentasi/UX (verification summary, prompt scoping,
 daemon dispatch) di atas fondasi P10. Ketiga slice mendarat, D-1 diperbaiki,
 dan N-1 diputuskan serta didokumentasikan. Paket ini **tidak** mengklaim
 strict-green: `gate:pack` dan `gate:coverage` keduanya **FAIL** pada checkpoint
-`609a417`, dan beberapa pemeriksaan tidak dijalankan. Status penutupan adalah
-pengecualian terdokumentasi yang diotorisasi pemilik (`P11_OWNER_DECISION_MEMO.md`),
-bukan pernyataan bahwa repository sehat.
+`609a417`, dan beberapa pemeriksaan tidak dijalankan. Status yang diusulkan
+adalah pengecualian terdokumentasi yang disiapkan berdasarkan arahan pemilik
+2026-10-18 (`P11_OWNER_DECISION_MEMO.md`); persetujuan final belum diberikan dan
+dokumen ini bukan pernyataan bahwa repository sehat.
 
 ---
 
@@ -18,9 +19,9 @@ bukan pernyataan bahwa repository sehat.
   "Provider Hardening" di `PLAN.md` §P11; lihat disambiguasi di
   `P11_PRESENTATION_SCOPE_AND_EVIDENCE.md` §A).
 - Report date: 2026-10-18.
-- Checkpoint penutupan: `609a417e06cb80c0d995e884284d281136b19846`
+- Checkpoint yang diusulkan untuk penutupan: `609a417e06cb80c0d995e884284d281136b19846`
   (parent `dbcf836`; `origin/main` tetap `04c1e1e`, belum dipush).
-- Dasar penutupan: seluruh slice P11 beserta D-1/N-1 dapat ditelusuri ke commit
+- Dasar proposal penutupan: seluruh slice P11 beserta D-1/N-1 dapat ditelusuri ke commit
   dan bukti QA; tidak ada regresi P11 yang terkonfirmasi pada eksekusi gate
   final; sisa temuan berbentuk keterbatasan terdokumentasi.
 - **Bukan dasar penutupan:** klaim full suite hijau, klaim gate lulus, atau
@@ -170,12 +171,13 @@ Rincian lengkap: `P11_OWNER_DECISION_MEMO.md` §3 dan
 Tidak ada temuan di atas yang dinaikkan menjadi "bug produksi terbukti" tanpa
 bukti. Tidak ada temuan yang diperbaiki dalam paket dokumentasi ini.
 
-## 7. Owner decision dan closure determination
+## 7. Arahan pemilik dan status proposal penutupan
 
-Pemilik mengotorisasi penutupan P11 dengan **pengecualian strict-green yang
-eksplisit** dan status `COMPLETE WITH DOCUMENTED LIMITATIONS`. Keputusan,
-alasan, batas pengecualian, risiko yang diterima, dan pembagian tindakan
-wajib/ditunda dicatat di `P11_OWNER_DECISION_MEMO.md`.
+Pemilik **mengarahkan penyusunan paket penutupan** P11 menggunakan pengecualian
+strict-green terdokumentasi dengan status target `COMPLETE WITH DOCUMENTED
+LIMITATIONS`; ini **bukan** persetujuan penutupan final. Arahan, alasan, batas
+pengecualian, risiko yang diterima, dan pembagian tindakan wajib/ditunda
+dicatat di `P11_OWNER_DECISION_MEMO.md`. Persetujuan final masih menunggu.
 
 **Pengecualian ini tidak sama dengan strict-green.** Konsekuensinya:
 
@@ -198,14 +200,19 @@ wajib/ditunda dicatat di `P11_OWNER_DECISION_MEMO.md`.
    arsip + `npm pack --dry-run --json`, bukan run gate penuh di baseline.
 6. 603 temuan lint dan 23 skip merujuk run/transkripsi sebelumnya, tidak
    diverifikasi ulang pada `609a417`.
+7. Laporan D-1 (`dbcf836`) dan laporan gate final Agent E (`609a417`,
+   2026-10-17) adalah artefak historis; pernyataan status atau "menunggu
+   keputusan" di dalamnya menggambarkan tanggal eksekusi masing-masing, bukan
+   status paket ini. Laporan Agent E dipertahankan byte-identik.
 
 ## 9. Future-work boundary dan prasyarat P12
 
 **Wajib sebelum P12 dimulai:**
 
 1. Review paket ini dan konfirmasi status dokumentasi P11.
-2. Persetujuan akhir pemilik atas `COMPLETE WITH DOCUMENTED LIMITATIONS` dan
-   pengecualian strict-green.
+2. Persetujuan final pemilik atas penutupan P11 dengan status
+   `COMPLETE WITH DOCUMENTED LIMITATIONS` dan atas penggunaan pengecualian
+   strict-green.
 3. Keputusan terpisah untuk integrasi branch dokumentasi ke `main` dan push.
 
 **Wajib sebelum rilis npm berikutnya (bukan syarat penutupan P11):**

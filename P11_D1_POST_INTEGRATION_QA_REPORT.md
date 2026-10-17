@@ -9,7 +9,9 @@ merekam run pada `dbcf836`. Gate final kemudian dijalankan pada checkpoint
 `609a417` — `gate:pack` dan `gate:coverage` keduanya FAIL — dan status penutupan
 dicatat di `P11_PHASE_CLOSURE_REPORT.md` / `P11_OWNER_DECISION_MEMO.md`.
 Pernyataan "gate tidak dijalankan" di §8 berlaku untuk tahap `dbcf836` ini,
-bukan untuk gate final.
+bukan untuk gate final. N-1 kemudian didokumentasikan pada `609a417`; pernyataan
+status terbuka di §10 juga menggambarkan keadaan pada `dbcf836`, bukan keadaan
+paket closure ini.
 
 ---
 
@@ -21,7 +23,7 @@ bukan untuk gate final.
 | Checkpoint sesudah D-1 | `dbcf8366376a19098039c26528cc8fc3bf774ce7` (`fix(daemon): prevent double-encoded JSON failures`) | idem |
 | Hubungan | `dbcf836` **anak langsung** `04c1e1e` (parent persis cocok) | idem |
 | `main` | `dbcf836` (integrasi fast-forward sudah dilakukan sebelumnya); `origin/main` = `04c1e1e` (**belum dipush**) | `git rev-parse main origin/main` |
-| Scope diff D-1 | hanya `cli/commands/daemon.ts` (+20/−…), `test/cli-subcommands.test.ts` (+273/−…) | `git diff --stat 04c1e1e dbcf836` |
+| Scope diff D-1 | hanya `cli/commands/daemon.ts` (+14/−6), `test/cli-subcommands.test.ts` (+230/−43) | `git diff --numstat 04c1e1e..dbcf836` |
 | Worktree QA | `…\Temp\opencode\qa-dbcheck` (detached HEAD `dbcf836`), **bersih** sebelum dan sesudah pengujian | `git status --short` |
 
 Worktree lain (`p11-docs`, `p11-docs-final`, `p113-base`, `p113-target`,
@@ -217,8 +219,9 @@ yang boleh dianggap lulus.**
   4. Keterbatasan lingkungan/dependensi lintas-run (§9.3).
 
 **Bukan klaim kesehatan sistem penuh.** P11 **tidak ditutup** oleh laporan ini;
-temuan pemilik lain (N-1, D-2, F2, F3, F5, G-1, V-1, QA-EV, QA-GATE, QA-HYG)
-tetap terbuka.
+pada tanggal run ini temuan pemilik lain (N-1, D-2, F2, F3, F5, G-1, V-1,
+QA-EV, QA-GATE, QA-HYG) masih terbuka (N-1 kemudian didokumentasikan di
+`609a417`).
 
 ---
 

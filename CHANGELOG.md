@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Docs — Klarifikasi kontrak `verify` pada summary `exec --json` (N-1)
+
+- `docs/exec.md` + `docs/OUTPUT_PROTOCOL_SPEC.md` §7 kini menyatakan eksplisit: field opsional `verify` hanya berlaku pada **success summary**; **failure summary tidak menyertakannya**, termasuk bila verifikasi sudah berjalan sebelum proses gagal — hasil verifikasi terakhir tidak dapat diandalkan lewat summary pada jalur itu karena field-nya memang tidak ada. Ini kontrak saat ini yang sengaja diterima untuk P11 (keputusan pemilik atas temuan N-1); perluasan `verify` ke failure summary adalah pekerjaan protokol tersendiri di luar P11. **Tidak ada perubahan implementasi/perilaku — klarifikasi dokumentasi saja.**
+
 ### Fixed — Task system durability & evidence-gated completion
 
 - Task state sekarang bertahan lintas `--resume`. `cli/index.ts` menurunkan `sessionId` dari `--session` atau sebuah id acak, **tidak** dari `--resume`, sedangkan todo diikat ke `sessionId`. Akibatnya `minicode --resume foo` mengikat task ke `.minicode/todos/<acak>.json` dan `todo_read` mengembalikan `"(no todos yet)"` padahal `.minicode/todos/foo.json` ada — task state hilang tepat di batas yang seharusnya dilewatinya, dan setiap resume meninggalkan file todo yatim. Todo kini terikat ke id kanonik `presentationSessionId` (`resumeId ?? sessionId`), sama dengan history dan presentation events.

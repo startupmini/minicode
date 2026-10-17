@@ -179,6 +179,15 @@ Record terminal `summary` harus membawa:
 Prompt adalah data user-visible, tetapi harus disanitasi/scrubbed dan tidak boleh
 mengandung secret.
 
+Field opsional aditif pada record terminal didokumentasikan per jalurnya. Saat
+ini `verify` (hasil verifikasi terakhir) hanya berlaku pada **success summary**
+(`ok:true`) — failure summary (`ok:false`) **tidak** menyertakannya, termasuk
+pada jalur yang mungkin sudah memiliki hasil verifikasi sebelumnya. Perbedaan
+ini adalah kontrak yang sengaja diterima untuk P11; perluasan `verify` ke
+failure summary memerlukan keputusan protokol tersendiri. Field wajib yang
+terdaftar di atas tidak berubah. Detail kontrak: `docs/exec.md` §Ringkasan
+mesin.
+
 ### ACP JSON-RPC
 
 ACP memakai transport JSON-RPC, bukan transport lain. Notification semantic

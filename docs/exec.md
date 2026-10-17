@@ -10,6 +10,45 @@
 
 `exec --json` memancarkan satu JSON per event lifecycle kanonik (langkah tool, output, error) dengan envelope `minicode.output.v1` (`eventId`, `timestamp`, `sessionId`, `turnId`, `correlationId`, `severity`, `status`, `payload`) dan **summary** terstruktur berversi di akhir — cukup untuk diparse pipeline tanpa screen-scraping. Kegagalan *setup* (mis. tanpa provider) pun membawa satu baris `{"type":"summary","ok":false,…}` di stdout — stream tak pernah kosong; pesan manusia tetap di stderr, exit `1`. Teks model mengalir sebagai record `{type:"text",delta}` terpisah yang sudah di-scrub dan bebas ANSI.
 
+## Ringkasan mesin: field opsional `verify`
+
+Summary **sukses** `exec --json` dapat membawa hasil verifikasi terakhir (opt-in
+`--verify`) sebagai field opsional:
+
+```json
+{
+  "schema": "minicode.output.v1",
+  "type": "summary",
+  "ok": true,
+  "verify": { "active": true, "ok": false, "command": "bun run lint" }
+}
+```
+
+- `verify` muncul **hanya pada success summary** dan **hanya bila verifikasi
+  benar-benar dijalankan** pada run ini; tanpa `--verify` (atau tanpa perintah
+  verify efektif) kuncinya **absen** dari summary (bukan `null`).
+- `verify.ok` menyatakan hasil verifikasi operator (lulus/gagal) dan **bukan**
+  pengganti top-level `ok`. Keduanya independen: summary dapat `"ok":true`
+  (exit `0`) meski `verify.ok:false`.
+- `verify.command` = perintah verifikasi yang diotorisasi operator
+  (`MINICODE_VERIFY_CMD`, config, atau hasil deteksi) — bukan output verifier.
+
+**Failure summary tidak menyertakan `verify`.** Saat proses gagal (mis. budget
+habis, writer basi, error penghenti) — **termasuk bila verifikasi sudah berjalan
+sebelum kegagalan** — record terminal memakai error envelope yang telah
+ditentukan (`schema`, `type`, `ok:false`, `error`, `prompt`) dan tidak membawa
+field `verify`. Hasil verifikasi terakhir **tidak dapat diandalkan** lewat
+summary pada jalur ini karena field-nya memang tidak ada.
+
+Perbedaan sukses/gagal ini adalah **kontrak saat ini yang sengaja diterima
+untuk P11** (keputusan pemilik atas temuan N-1): implementasi dan bentuk output
+tidak diubah, hanya dinyatakan eksplisit di dokumentasi. Ini **bukan** jaminan
+desain permanen — perluasan `verify` ke failure summary (memuat hasil
+verifikasi yang sudah berjalan beserta tes kontraknya) memerlukan keputusan
+protokol tersendiri di luar P11. Cakupan bukti: kombinasi "verifikasi sudah
+berjalan lalu proses gagal" **tidak** diklaim telah diuji pada seluruh jalur
+kegagalan.
+
 ## Server JSON-RPC untuk IDE: `minicode acp`
 
 `minicode acp` membaca satu JSON per baris di stdin dan menulis respons/notifikasi satu JSON per baris di stdout (stderr murni diagnostik manusia). Subset minimal Fase 5 — **bukan klaim kompatibel ACP penuh**:

@@ -6,6 +6,19 @@
 
 - `docs/exec.md` + `docs/OUTPUT_PROTOCOL_SPEC.md` §7 kini menyatakan eksplisit: field opsional `verify` hanya berlaku pada **success summary**; **failure summary tidak menyertakannya**, termasuk bila verifikasi sudah berjalan sebelum proses gagal — hasil verifikasi terakhir tidak dapat diandalkan lewat summary pada jalur itu karena field-nya memang tidak ada. Ini kontrak saat ini yang sengaja diterima untuk P11 (keputusan pemilik atas temuan N-1); perluasan `verify` ke failure summary adalah pekerjaan protokol tersendiri di luar P11. **Tidak ada perubahan implementasi/perilaku — klarifikasi dokumentasi saja.**
 
+### Added — P11 presentation: hasil verifikasi pada summary `exec --json`
+
+- `exec --json`: summary mesin **sukses** dapat memuat field opsional `verify: { active: true, ok, command }` — cermin hasil verifikasi terakhir (final pasca self-heal) ketika `--verify` dijalankan; kunci absen bila verifikasi tidak berjalan. `verify.ok` bukan pengganti top-level `ok`: kegagalan verifikasi tidak mengubah `ok` maupun exit code. Failure summary tidak menyertakan `verify` (keputusan pemilik N-1: Opsi A, keterbatasan terdokumentasi di `609a417`; perluasan field = pekerjaan protokol tersendiri). Commit `8cbda02`.
+
+### Fixed — P11 routing: argv scoped untuk prompt `exec` dan dispatch `daemon`
+
+- `exec`: prompt tidak lagi membocorkan token routing `exec` ketika flag global mendahului subcommand (`minicode --json exec "tugas"` dulu mengirim `"exec tugas"` ke model dan summary). Handler kini mengonsumsi argv scoped dari router — tanpa pengirisan lokal yang mengasumsikan `exec` argumen pertama. Teks user yang sah (termasuk kata `exec` di dalamnya) tetap utuh. Commit `9e1e550`.
+- `daemon`: dispatch memakai argv scoped yang sama — `minicode --json daemon status` dulu gagal sebagai `unknown daemon subcommand: daemon` (exit 2 palsu) karena guard lokal `args[0] === "daemon"`; sekarang aksi `status` tercapai dengan output JSON dan exit code state daemon yang mapan. Aksi, opsi, exit code, dan lifecycle daemon tidak berubah. Commit `04c1e1e`.
+
+### Fixed — P11 daemon JSON integrity (D-1)
+
+- Jalur gagal `daemon stop --json` dan `daemon sessions --json` meng-encode payload dua kali (`fail()` men-`JSON.stringify` string yang sudah JSON), sehingga konsumen menerima string yang membungkus objek. `fail()` kini menerima objek mentah dan meng-encode sekali; jalur sukses tetap satu-encode. Tiga tes regresi di `test/cli-subcommands.test.ts` mengunci bentuk objek + exit code. Commit `dbcf836`.
+
 ### Fixed — Task system durability & evidence-gated completion
 
 - Task state sekarang bertahan lintas `--resume`. `cli/index.ts` menurunkan `sessionId` dari `--session` atau sebuah id acak, **tidak** dari `--resume`, sedangkan todo diikat ke `sessionId`. Akibatnya `minicode --resume foo` mengikat task ke `.minicode/todos/<acak>.json` dan `todo_read` mengembalikan `"(no todos yet)"` padahal `.minicode/todos/foo.json` ada — task state hilang tepat di batas yang seharusnya dilewatinya, dan setiap resume meninggalkan file todo yatim. Todo kini terikat ke id kanonik `presentationSessionId` (`resumeId ?? sessionId`), sama dengan history dan presentation events.

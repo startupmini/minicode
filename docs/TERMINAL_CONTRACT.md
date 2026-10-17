@@ -1,4 +1,16 @@
-# Kontrak Terminal MiniCode (TUI fullscreen — v7.2, 2026-09-25)
+# Kontrak Terminal MiniCode (TUI fullscreen — v7.3, 2026-10-16)
+
+Perubahan v7.3 (P11 Presentation & UX): invarian baru I34 — subcommand `exec`
+dan `daemon` menerima argv SCOPE dari router (flag global dikenal yang
+mendahului token subcommand tetap berlaku; token subcommand tidak ikut ke
+handler). Kalimat lama I28 "Flag `exec` diparse dari argv SESUDAH token
+subcommand" sudah tidak lengkap sejak P11.2 menerima bentuk flag-mendahului,
+diganti rujukan ke I34. Registrasi peta proteksi: `test/cli-subcommands.test.ts`
+sudah ada SEBELUM P11.3 — yang ditambahkan hanya describe `cli: daemon scoped
+argv (P11.3)` di dalamnya, BUKAN file baru; `test/exec-json-envelope.test.ts`
++ `test/cli-session.test.ts` melindungi kontrak exec scoping (P11.2) dan
+verification summary (P11.1). Nol perubahan perilaku runtime — dokumen mengejar
+kontrak yang sudah diterima + diuji.
 
 Perubahan v7.2 (2026-09-25): mouse tracking `?1002h + ?1006h`, drag selection
 app-level, `Ctrl+C` copy selection, wheel tetap scroll, popup turun ke `?1000h`,
@@ -262,8 +274,8 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      positional id = salah pakai (exit 2). `exec --json` yang gagal di fase
      setup (tanpa provider) TETAP memancarkan satu baris `{"type":"summary",
      "ok":false,…}` (di-scrub) di stdout — pipeline CI tak pernah menerima
-     stream kosong; jalur manusia (stderr + exit 1) tidak berubah. Flag `exec`
-     diparse dari argv SESUDAH token subcommand.
+     stream kosong; jalur manusia (stderr + exit 1) tidak berubah. Flag
+     handler `exec`/`daemon` dibaca dari argv scope — lihat I34.
 29. `minicode acp` = server JSON-RPC stdio satu-JSON-per-baris untuk IDE
      (subset: `initialize`/`run`/`cancel`/`shutdown`; BUKAN klaim ACP penuh):
      stdout murni mesin (semua di-scrub), diagnostik manusia ke stderr,
@@ -278,6 +290,18 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      listener `resize` baru (frame basi cukup ditimpa render berikutnya), dan
      `printedW` tidak ikut di-reset — nilainya konservatif; dikosongkan justru
      membiarkan ekor lama.
+34. Routing argv-scope (P11.2/P11.3): handler `exec` dan `daemon` menerima
+     argv SCOPE dari router — flag global dikenal yang mendahului token
+     subcommand tetap berlaku, token subcommand dibuang, urutan token
+     sisanya utuh. Ditunjukkan tes: `--json exec "t"` identik dengan
+     `exec --json "t"` (prompt model = teks user persis, tanpa token
+     routing maupun nilai flag); `--json daemon status` mencapai aksi
+     `status` alih-alih error subcommand asing; aksi/opsi yang tidak
+     dikenal TETAP salah pakai sesuai I28; posisi argumen pertama
+     (prompt/aksi) tidak bergeser. Hanya kedua handler itu menerima scope
+     — subcommand lain menerima args mentah. Invarian ini tidak mengubah
+     semantik, aksi, atau exit code masing-masing aksi; yang berubah hanya
+     invokasi flag-mendahului yang dulu salah rute menjadi rute benar.
 
 ## Grammar (ringkas)
 
@@ -337,7 +361,9 @@ panjang).
 - `test/writer-inventory.test.ts` — OAP-008 (setiap writer langsung terdaftar
   dengan owner; jumlah tak boleh naik diam-diam).
 - `test/exec-json-envelope.test.ts` + `test/cli-session.test.ts` (envelope
-  machine) — I28/I33 (summary berversi, tanpa ANSI/secret, tanpa raw kernel).
+  machine) — I28/I33/I34 (summary berversi, tanpa ANSI/secret, tanpa raw
+  kernel; P11.2 scoping prompt: flag-mendahului vs `exec`-dahulu identik,
+  kata `exec` milik user tetap utuh).
 
 - `test/tui-popup.test.ts` — I16 (komposit di atas transkrip, anti-bocor,
   anti-hantu).
@@ -384,6 +410,10 @@ panjang).
   hermetic subprocess).
 - `test/exec-json-envelope.test.ts` — I28 (summary ok:false di stdout saat
   setup gagal; jalur manusia tak berubah).
+- `test/cli-subcommands.test.ts` — I34 (daemon scoped argv: `--json daemon
+  status` mencapai aksi `status`, bukan exit 2 palsu; bentuk `daemon`-dahulu
+  tidak berubah; aksi asing tetap exit 2; HOME hermetik, exit 3 not-alive
+  mengikuti kontrak daemon yang sudah ada — bukan klaim baru I34).
 - `test/acp.test.ts` — I29 (parser/framing/params + smoke spawn stdio:
   initialize→shutdown exit 0, tanpa provider).
 - `test/input-resize.test.ts` — I30 (gagal di kode lama: CUP `\x1b[1A` ke

@@ -1,11 +1,11 @@
-# P11 — Owner Decision Memo: Closure Preparation with Documented Limitations
+# P11 — Owner Decision Memo: Approved Closure with Documented Limitations
 
-**Status: arahan pemilik (2026-10-18) untuk menyiapkan paket penutupan P11
-dengan status target `COMPLETE WITH DOCUMENTED LIMITATIONS`; persetujuan final
-belum diberikan.**
-Memo ini merekam arahan tersebut untuk mempersiapkan closure, bukan review
-independen, bukan keputusan penutupan final, dan bukan sertifikasi bahwa
-repository sehat. Integrasi ke `main` dan push **belum disetujui** (lihat §7).
+**Status: pemilik menyetujui penutupan P11 dengan status
+`COMPLETE WITH DOCUMENTED LIMITATIONS` pada 2026-10-18.**
+Memo ini merekam persetujuan final tersebut, bukan review independen dan bukan
+sertifikasi bahwa repository sehat. Persetujuan ini menerima penutupan dengan
+keterbatasan terdokumentasi. Integrasi ke `main` dan push **belum dijalankan
+dan belum disetujui** (lihat §7).
 
 Memo ini menggantikan draf pra-keputusan `P11_OWNER_DECISION_MEMO.md` yang
 tersimpan untracked di worktree `p11-docs-final` (tidak pernah di-commit).
@@ -17,17 +17,17 @@ angkanya.
 
 ---
 
-## 1. Arahan pemilik dan status target
+## 1. Keputusan pemilik
 
-**P11 diusulkan ditutup dengan status `COMPLETE WITH DOCUMENTED LIMITATIONS`.**
+**Pemilik menyetujui status P11 `COMPLETE WITH DOCUMENTED LIMITATIONS` pada
+2026-10-18.** Keputusan ini secara eksplisit menerima penutupan P11 dengan
+keterbatasan terdokumentasi, walaupun semua gate repository belum hijau; ini
+bukan penutupan strict-green dan bukan pernyataan bahwa seluruh gate lulus.
+`gate:pack` dan `gate:coverage` **tetap berstatus FAIL** pada checkpoint
+`609a417`; coverage threshold yang terpenuhi **tidak** boleh dibaca sebagai
+gate coverage lulus.
 
-Pengecualian strict-green **dipakai sebagai dasar penyusunan proposal
-penutupan**; ini bukan keputusan penutupan final dan bukan pernyataan bahwa
-seluruh gate lulus. `gate:pack` dan `gate:coverage` **tetap
-berstatus FAIL** pada checkpoint `609a417`; coverage threshold yang terpenuhi
-**tidak** boleh dibaca sebagai gate coverage lulus.
-
-Alasan arahan:
+Alasan keputusan:
 
 1. Seluruh slice implementasi P11 (P11.1, P11.2, P11.3) beserta perbaikan D-1
    dan klarifikasi dokumentasi N-1 sudah mendarat dan tervalidasi pada tingkat
@@ -45,8 +45,8 @@ Alasan arahan:
 
 Batas pengecualian (penting):
 
-- Hanya berlaku untuk **penyusunan proposal penutupan P11** pada checkpoint
-  `609a417`; keputusan final menunggu persetujuan pemilik.
+- Hanya berlaku untuk **keputusan penutupan P11** pada checkpoint `609a417`;
+  tidak mengubah status gate atau hasil QA.
 - **Tidak** mengubah kebijakan gate repository untuk fase berikutnya.
 - **Tidak** menutup, memperbaiki, atau menurunkan ambang kegagalan baseline.
 - **Tidak** menyatakan full suite hijau, repository sehat, atau siap rilis.
@@ -103,15 +103,16 @@ berasal dari eksekusi Agent E pada 2026-10-17 di worktree QA terisolasi
 
 ## 5. Tindakan lanjutan: wajib vs dapat ditunda
 
-**Wajib sebelum P12 dimulai:**
+**Persetujuan penutupan P11 sudah diberikan (2026-10-18). Wajib sebelum P12 dimulai:**
 
-1. Review paket penutupan ini (`P11_PHASE_CLOSURE_REPORT.md` + memo ini) dan
-   konfirmasi status dokumentasi P11.
-2. Persetujuan final pemilik atas penutupan P11 dengan status
-   `COMPLETE WITH DOCUMENTED LIMITATIONS` dan atas penggunaan pengecualian
-   strict-green.
-3. Keputusan terpisah untuk integrasi branch dokumentasi ke `main` dan push
-   (keduanya **belum** dilakukan).
+1. Persetujuan terpisah untuk integrasi paket dokumentasi ke `main` (belum
+   dijalankan dan belum disetujui).
+2. Integrasikan paket ke `main` dan verifikasi status penutupan pada `main`.
+3. Persetujuan terpisah untuk push ke `origin/main`; push **belum disetujui**
+   (integrasi lokal dan push adalah dua keputusan berbeda).
+
+P12 belum boleh dimulai sebelum integrasi ke `main` dan verifikasi status
+penutupan pada `main` selesai.
 
 **Wajib sebelum rilis npm berikutnya (bukan syarat penutupan P11):**
 
@@ -128,8 +129,8 @@ berasal dari eksekusi Agent E pada 2026-10-17 di worktree QA terisolasi
 
 ## 6. Konsekuensi yang eksplisit
 
-- Status target P11 **bukan** strict-green; ini pengecualian terdokumentasi
-  yang masih menunggu persetujuan final.
+- Status P11 **bukan** strict-green; ini pengecualian terdokumentasi yang
+  **telah disetujui pemilik pada 2026-10-18**.
 - Repository **tidak** dinyatakan sehat menyeluruh.
 - Semua test **tidak** dinyatakan lulus; 13 kegagalan tetap tercatat.
 - Semua gate **tidak** dinyatakan lulus; dua gate tetap FAIL dan tiga lainnya
@@ -140,7 +141,8 @@ berasal dari eksekusi Agent E pada 2026-10-17 di worktree QA terisolasi
 - Branch dokumentasi: `p11-closure-docs`, berbasis `609a417`.
 - `main` tetap di `609a417e06cb80c0d995e884284d281136b19846` selama penyusunan
   paket ini; `origin/main` tetap `04c1e1e` (D-1 dan N-1 belum dipush).
-- Commit dokumentasi pada branch ini **belum di-merge** dan **belum dipush**;
-  keduanya menunggu review pemilik.
+- Persetujuan penutupan P11 sudah diberikan; **integrasi branch ke `main`
+  belum dijalankan dan belum disetujui**, dan **push belum disetujui**.
+  Keduanya adalah keputusan terpisah.
 - P11 **tidak** dinyatakan terintegrasi ke `main` dan P12 **tidak** dinyatakan
   boleh dimulai oleh memo ini.

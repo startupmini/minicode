@@ -1,15 +1,15 @@
 # P11 PHASE CLOSURE REPORT — Presentation & UX
 
-**PROPOSED VERDICT — `COMPLETE WITH DOCUMENTED LIMITATIONS` (PENDING OWNER APPROVAL).**
+**PHASE 11 — COMPLETE WITH DOCUMENTED LIMITATIONS (OWNER APPROVED 2026-10-18).**
 
 P11 menggarap tiga slice presentasi/UX (verification summary, prompt scoping,
 daemon dispatch) di atas fondasi P10. Ketiga slice mendarat, D-1 diperbaiki,
 dan N-1 diputuskan serta didokumentasikan. Paket ini **tidak** mengklaim
 strict-green: `gate:pack` dan `gate:coverage` keduanya **FAIL** pada checkpoint
-`609a417`, dan beberapa pemeriksaan tidak dijalankan. Status yang diusulkan
-adalah pengecualian terdokumentasi yang disiapkan berdasarkan arahan pemilik
-2026-10-18 (`P11_OWNER_DECISION_MEMO.md`); persetujuan final belum diberikan dan
-dokumen ini bukan pernyataan bahwa repository sehat.
+`609a417`, dan beberapa pemeriksaan tidak dijalankan. Status penutupan
+`COMPLETE WITH DOCUMENTED LIMITATIONS` disetujui pemilik pada 2026-10-18
+(`P11_OWNER_DECISION_MEMO.md`); dokumen ini bukan pernyataan bahwa repository
+sehat, dan integrasi/push belum dijalankan atau disetujui.
 
 ---
 
@@ -19,9 +19,9 @@ dokumen ini bukan pernyataan bahwa repository sehat.
   "Provider Hardening" di `PLAN.md` §P11; lihat disambiguasi di
   `P11_PRESENTATION_SCOPE_AND_EVIDENCE.md` §A).
 - Report date: 2026-10-18.
-- Checkpoint yang diusulkan untuk penutupan: `609a417e06cb80c0d995e884284d281136b19846`
+- Checkpoint penutupan: `609a417e06cb80c0d995e884284d281136b19846`
   (parent `dbcf836`; `origin/main` tetap `04c1e1e`, belum dipush).
-- Dasar proposal penutupan: seluruh slice P11 beserta D-1/N-1 dapat ditelusuri ke commit
+- Dasar penutupan: seluruh slice P11 beserta D-1/N-1 dapat ditelusuri ke commit
   dan bukti QA; tidak ada regresi P11 yang terkonfirmasi pada eksekusi gate
   final; sisa temuan berbentuk keterbatasan terdokumentasi.
 - **Bukan dasar penutupan:** klaim full suite hijau, klaim gate lulus, atau
@@ -171,13 +171,15 @@ Rincian lengkap: `P11_OWNER_DECISION_MEMO.md` §3 dan
 Tidak ada temuan di atas yang dinaikkan menjadi "bug produksi terbukti" tanpa
 bukti. Tidak ada temuan yang diperbaiki dalam paket dokumentasi ini.
 
-## 7. Arahan pemilik dan status proposal penutupan
+## 7. Keputusan penutupan
 
-Pemilik **mengarahkan penyusunan paket penutupan** P11 menggunakan pengecualian
-strict-green terdokumentasi dengan status target `COMPLETE WITH DOCUMENTED
-LIMITATIONS`; ini **bukan** persetujuan penutupan final. Arahan, alasan, batas
+Pemilik menyetujui status penutupan P11 `COMPLETE WITH DOCUMENTED LIMITATIONS`
+pada 2026-10-18. Persetujuan ini secara eksplisit menerima penutupan dengan
+keterbatasan terdokumentasi, walaupun `gate:pack` dan `gate:coverage` tetap
+FAIL dan beberapa pemeriksaan tidak dijalankan. Keputusan, alasan, batas
 pengecualian, risiko yang diterima, dan pembagian tindakan wajib/ditunda
-dicatat di `P11_OWNER_DECISION_MEMO.md`. Persetujuan final masih menunggu.
+dicatat di `P11_OWNER_DECISION_MEMO.md`. Persetujuan ini **bukan** strict-green
+dan **tidak** mencakup integrasi ke `main` atau push.
 
 **Pengecualian ini tidak sama dengan strict-green.** Konsekuensinya:
 
@@ -207,13 +209,15 @@ dicatat di `P11_OWNER_DECISION_MEMO.md`. Persetujuan final masih menunggu.
 
 ## 9. Future-work boundary dan prasyarat P12
 
-**Wajib sebelum P12 dimulai:**
+**Persetujuan penutupan P11 sudah diberikan (2026-10-18). Wajib sebelum P12 dimulai:**
 
-1. Review paket ini dan konfirmasi status dokumentasi P11.
-2. Persetujuan final pemilik atas penutupan P11 dengan status
-   `COMPLETE WITH DOCUMENTED LIMITATIONS` dan atas penggunaan pengecualian
-   strict-green.
-3. Keputusan terpisah untuk integrasi branch dokumentasi ke `main` dan push.
+1. Persetujuan terpisah untuk integrasi paket dokumentasi ke `main` (belum
+   dijalankan dan belum disetujui).
+2. Integrasikan paket ke `main` dan verifikasi status penutupan pada `main`.
+3. Persetujuan terpisah untuk push ke `origin/main` (belum disetujui).
+
+P12 belum boleh dimulai sebelum integrasi ke `main` dan verifikasi status
+penutupan pada `main` selesai.
 
 **Wajib sebelum rilis npm berikutnya (bukan syarat penutupan P11):**
 
@@ -225,8 +229,8 @@ kontaminasi/flake, perbedaan 14 vs 13, 28 error TypeScript, lint baseline, D-2,
 F2, F3, F5, G-1, V-1, QA-HYG, serta tes dinamis `daemon start --prompt`.
 
 Paket ini **tidak** menyatakan P11 sudah terintegrasi ke `main`, **tidak**
-menyatakan P12 boleh dimulai, dan **tidak** memberikan persetujuan akhir atas
-nama pemilik.
+menyatakan P12 boleh dimulai, dan **tidak** memberikan persetujuan integrasi
+atau push atas nama pemilik.
 
 ---
 

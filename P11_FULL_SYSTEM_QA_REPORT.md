@@ -195,3 +195,8 @@ selisih 14 vs 13 **belum direkonsiliasi penuh**.
 `P11_FINAL_GATE_EXECUTION_REPORT.md`. Status penutupan P11 beserta pengecualian
 strict-green dicatat di `P11_PHASE_CLOSURE_REPORT.md` dan
 `P11_OWNER_DECISION_MEMO.md`.
+
+**Perkembangan 2026-10-18:** pemilik menyetujui status penutupan P11
+`COMPLETE WITH DOCUMENTED LIMITATIONS`. Catatan ini **tidak** mengubah angka
+§B–§I: `gate:pack` dan `gate:coverage` tetap FAIL, dan pemeriksaan yang tidak
+dijalankan tetap NOT RUN.

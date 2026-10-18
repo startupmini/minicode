@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Docs — P12.1 Work Modes & Permission Architecture: catatan keputusan pemilik (REV-2)
+
+- Paket keputusan arsitektur P12.1 dimuat ke repo: `P12_ENTRY_GATE_AND_SCOPE_AUDIT.md` (audit entry-gate/scope P12.0), `P12_1_ARCHITECTURE_DECISION_PACKAGE.md` (baseline) dengan revisi `REV-1` + laporan diff-nya, serta `P12_1_ARCHITECTURE_DECISION_PACKAGE_REV2.md` + `P12_1_REV2_OWNER_DECISION_REPORT.md` (catatan keputusan). Isi inti: pemisahan **WorkMode** (DISCUSS/PLAN/EXECUTE — lapis intent tipis, bukan engine baru) dari **PermissionMode**, matriks kompatibilitas 18 sel sebagai baseline arah, invarian tanpa eskalasi implisit (WorkMode hanya memperketat; policy terinjeksi tak lemah; transisi kapabilitas wajib aksi operator), koreksi K-1 (jawaban approval `always` menulis persisten ke `.minicode/allowlist.json` repo-lokal via `saveAlways`, inert tanpa `--allow-local-config`), dan rencana S1 contract tests. Arah D-1…D-7 `OWNER APPROVED — DIRECTION` (2026-10-18); detail implementasi tetap PENDING; setiap edit `vendor/minicore` tetap tertahan bukti. **Dokumen saja — tanpa perubahan source/test/konfigurasi; implementasi P12 belum dimulai.**
+
 ### Docs — Klarifikasi kontrak `verify` pada summary `exec --json` (N-1)
 
 - `docs/exec.md` + `docs/OUTPUT_PROTOCOL_SPEC.md` §7 kini menyatakan eksplisit: field opsional `verify` hanya berlaku pada **success summary**; **failure summary tidak menyertakannya**, termasuk bila verifikasi sudah berjalan sebelum proses gagal — hasil verifikasi terakhir tidak dapat diandalkan lewat summary pada jalur itu karena field-nya memang tidak ada. Ini kontrak saat ini yang sengaja diterima untuk P11 (keputusan pemilik atas temuan N-1); perluasan `verify` ke failure summary adalah pekerjaan protokol tersendiri di luar P11. **Tidak ada perubahan implementasi/perilaku — klarifikasi dokumentasi saja.**

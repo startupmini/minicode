@@ -11,6 +11,7 @@ import {
   type PermissionAsk,
   type PermissionMode,
 } from "../policy/permission.ts"
+import { composeWorkModePermissionHandler, type WorkMode } from "../policy/work-mode.ts"
 import type { ApprovalEventHook } from "../presentation/events.ts"
 
 // P2 cap wrapper: limit retryAfter to 30s without mutating original error.
@@ -52,6 +53,11 @@ export async function createMinicodeSession(
     systemExtra?: string
     cwd?: string
     permissionMode?: "auto" | "readonly" | "plan" | "allow-all" | "ask" | "allowlist"
+    /** S2.1: WorkMode adalah lapis intent TERPISAH dari PermissionMode.
+     * Default EXECUTE = perilaku lama (base handler apa adanya). Nilai selain
+     * EXECUTE memasang ceiling tipis di atas handler PM (lihat work-mode.ts);
+     * belum ada permukaan CLI/TUI — wiring itu slice integrasi berikutnya. */
+    workMode?: WorkMode
     /** Teruskan flag --allow-local-config ke permission handler (allowlist
      * lokal). Default deny — lihat loadAllowlist. */
     allowLocalConfig?: boolean
@@ -86,6 +92,15 @@ export async function createMinicodeSession(
     permissionHandler?: PermissionHandler
   },
 ): Promise<Session> {
+  // Fail-closed lebih awal (sebelum provider/system prompt): WorkMode non-
+  // EXECUTE di atas handler terinjeksi belum punya komposisi yang terbukti
+  // aman — jangan pernah membungkus atau melewati policy yang diinjeksi 6S.
+  const resolvedWorkMode: WorkMode = opts.workMode ?? "EXECUTE"
+  if (opts.permissionHandler !== undefined && resolvedWorkMode !== "EXECUTE") {
+    throw new Error(
+      `createMinicodeSession: workMode ${resolvedWorkMode} dengan permissionHandler terinjeksi belum didukung (fail-closed S2.1)`,
+    )
+  }
   const planHint =
     opts.permissionMode === "plan"
       ? "\n\nPLAN MODE: You are in read-only planning mode. Do NOT modify files, run bash, or use write/edit tools. Only read, search, and reason — then output a concrete implementation plan."
@@ -100,6 +115,7 @@ export async function createMinicodeSession(
     writeConcurrency,
     cwd,
     permissionMode,
+    workMode: _workMode,
     allowLocalConfig,
     systemExtra: _extra,
     provider,
@@ -138,12 +154,16 @@ export async function createMinicodeSession(
       : undefined
   const permissions =
     opts.permissionHandler ??
-    createPermissionHandler({
-      mode: permissionMode ?? "auto",
+    composeWorkModePermissionHandler({
+      workMode: resolvedWorkMode,
+      base: createPermissionHandler({
+        mode: permissionMode ?? "auto",
+        root: cwd,
+        ask,
+        allowLocalConfig,
+        onApprovalEvent,
+      }),
       root: cwd,
-      ask,
-      allowLocalConfig,
-      onApprovalEvent,
     })
   // [PHASE 6U] An INJECTED handler is not a mode, and has no mode control.
   //

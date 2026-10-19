@@ -107,6 +107,18 @@ function decide(mode: PermissionMode, root: string, name: string, ask?: Ask): Pr
   return h.check({ name, args: ARGS[name] ?? {} } as never, {} as never) as Promise<string>
 }
 
+// Varian decide dengan args bebas: kasus tepi jail butuh path/cwd spesifik
+// (di luar root, berkas sensitif) yang tidak ada di ARGS benign.
+function decideArgs(
+  mode: PermissionMode,
+  root: string,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  const h = createPermissionHandler({ mode, root })
+  return h.check({ name, args } as never, {} as never) as Promise<string>
+}
+
 // promptAskOr (jalur GATED) menolak bila non-TTY walau ask fn ada —
 // ekspektasi harus sadar TTY agar tidak flaky antara lokal dan CI.
 const TTY = !!process.stdin.isTTY
@@ -197,6 +209,119 @@ test("code_run di auto mengikuti MINICODE_SANDBOX", async () => {
   } finally {
     if (saved === undefined) delete process.env.MINICODE_SANDBOX
     else process.env.MINICODE_SANDBOX = saved
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+// ── Perluasan S1 (P12): kasus tepi jail di dalam matriks ──
+//
+// Blok jail permission.ts (komentar "universal file-path jail — harus sebelum
+// allow-all") dieksekusi SEBELUM dispatch mode. Kasus di bawah memetakannya
+// ke seluruh 6 mode; deny dibuktikan pada mode yang tanpa jail akan allow
+// (allow-all/allowlist/auto/readonly untuk tool baca), bukan sekadar deny
+// bawaan mode ketat. Hermetik: root/outside tmp per test, tanpa eksekusi tool.
+
+test("matriks jail: operasi keluar root ditolak di semua mode", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mc-matrix-jail-"))
+  const outside = mkdtempSync(join(tmpdir(), "mc-matrix-out-"))
+  try {
+    const outsideFile = join(outside, "x.txt")
+    for (const mode of MODES) {
+      // Tulis ke luar root: allow-all/allowlist akan allow tanpa jail.
+      expect(await decideArgs(mode, root, "write_file", { path: outsideFile, content: "x" })).toBe(
+        "deny",
+      )
+      // Baca ke luar root: mode baca (auto/readonly/plan/ask) akan allow.
+      expect(await decideArgs(mode, root, "read_file", { path: outsideFile })).toBe("deny")
+      // move_file punya DUA ujung (from+to): keduanya harus dijail.
+      expect(await decideArgs(mode, root, "move_file", { from: outsideFile, to: "b.txt" })).toBe(
+        "deny",
+      )
+      expect(await decideArgs(mode, root, "move_file", { from: "a.txt", to: outsideFile })).toBe(
+        "deny",
+      )
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+    rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+test("matriks jail: berkas sensitif ditolak di semua mode", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mc-matrix-sens-"))
+  try {
+    for (const mode of MODES) {
+      // auto/allow-all/allowlist akan allow baca/tulis .env tanpa cek sensitif.
+      expect(await decideArgs(mode, root, "read_file", { path: ".env" })).toBe("deny")
+      expect(await decideArgs(mode, root, "write_file", { path: ".env", content: "x" })).toBe(
+        "deny",
+      )
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("matriks jail: tulis state .minicode/ ditolak di mode permisif", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mc-matrix-owned-"))
+  try {
+    // Mode di mana tool tulis file memang diizinkan tanpa kunci owned-state —
+    // deny di sini membuktikan kunci .minicode/ (bukan efek mode ketat).
+    for (const mode of ["auto", "allow-all", "allowlist"] as const) {
+      expect(
+        await decideArgs(mode, root, "write_file", {
+          path: ".minicode/allowlist.json",
+          content: "x",
+        }),
+      ).toBe("deny")
+      expect(
+        await decideArgs(mode, root, "edit", {
+          path: ".minicode/allowlist.json",
+          oldString: "a",
+          newString: "b",
+        }),
+      ).toBe("deny")
+      expect(await decideArgs(mode, root, "delete_file", { path: ".minicode/sessions.db" })).toBe(
+        "deny",
+      )
+      // Menggeser state keluar workspace = menyebar bukti; tetap deny.
+      expect(
+        await decideArgs(mode, root, "move_file", {
+          from: ".minicode/sessions.db",
+          to: "docs/s.db",
+        }),
+      ).toBe("deny")
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("matriks jail: cwd di luar root ditolak untuk bash/glob/grep/git_*", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mc-matrix-cwd-"))
+  const outside = mkdtempSync(join(tmpdir(), "mc-matrix-cwd-out-"))
+  try {
+    for (const mode of ["auto", "allow-all", "allowlist"] as const) {
+      expect(await decideArgs(mode, root, "bash", { cmd: "echo hi", cwd: outside })).toBe("deny")
+      expect(await decideArgs(mode, root, "glob", { pattern: "*.ts", cwd: outside })).toBe("deny")
+      expect(await decideArgs(mode, root, "grep", { pattern: "x", cwd: outside })).toBe("deny")
+      expect(await decideArgs(mode, root, "git_status", { cwd: outside })).toBe("deny")
+      expect(await decideArgs(mode, root, "git_diff", { cwd: outside })).toBe("deny")
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+    rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+test("matriks allow-all: inspeksi bash tetap aktif (bukan bypass)", async () => {
+  const root = mkdtempSync(join(tmpdir(), "mc-matrix-bashguard-"))
+  try {
+    // Destruktif & akses rahasia ditolak walau allow-all; perintah jinak lolos.
+    expect(await decideArgs("allow-all", root, "bash", { cmd: "rm -rf /" })).toBe("deny")
+    expect(await decideArgs("allow-all", root, "bash", { cmd: "cat .env" })).toBe("deny")
+    expect(await decideArgs("allow-all", root, "bash", { cmd: "echo hi" })).toBe("allow")
+  } finally {
     rmSync(root, { recursive: true, force: true })
   }
 })

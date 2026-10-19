@@ -152,9 +152,20 @@ test("delegate: forced explore untuk parent plan/readonly/ask; default explore",
     // Tanpa mode → explore.
     await delegateTaskTool.execute({ prompt: "x" }, ctxFor(dir, "auto"))
     expect(seen).toHaveLength(4)
-    for (const s of seen) {
-      expect(s.tools.map((t) => t.name).sort()).toEqual([...EXPLORE_TOOL_NAMES].sort())
+    // Eksplisit per parent (bukan loop generik): spec anak wajib memakai
+    // toolset explore penuh + izin anak auto (mapping task.ts:449 — parent
+    // selain allowlist → auto). Untuk parent ask ini kasus F-07: bila cabang
+    // `ask` hilang dari forcedExplore (task.ts:235), mode "plan" yang diminta
+    // berubah jadi 29 tool sehingga assertion sAsk di bawah merah (begitu
+    // pula outAsk di atas).
+    const [sPlan, sReadonly, sAsk, sAuto] = seen
+    const asExplore = (s: SubAgentSpec) => s.tools.map((t) => t.name).sort()
+    for (const s of [sPlan!, sReadonly!, sAuto!]) {
+      expect(asExplore(s)).toEqual([...EXPLORE_TOOL_NAMES].sort())
+      expect(s.permissionMode).toBe("auto")
     }
+    expect(asExplore(sAsk!)).toEqual([...EXPLORE_TOOL_NAMES].sort())
+    expect(sAsk!.permissionMode).toBe("auto")
   } finally {
     todoSession.id = prevTodo
     clearSubAgentSessionFactory()

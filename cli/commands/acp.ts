@@ -92,6 +92,8 @@ export interface AcpRunParams {
   timeoutMs?: number
   budget?: number
   mode?: "auto" | "plan"
+  /** P12 S2.2 — WorkMode terpisah dari `mode` (permission). Default EXECUTE. */
+  workMode?: "DISCUSS" | "PLAN" | "EXECUTE"
 }
 
 /** Validasi params `run`: prompt wajib non-kosong; angka harus hingga-positif;
@@ -117,7 +119,20 @@ export function parseRunParams(
   const mode =
     p.mode === undefined || p.mode === "auto" ? "auto" : p.mode === "plan" ? "plan" : null
   if (mode === null) return { ok: false, error: 'params.mode must be "auto" or "plan"' }
-  const out: AcpRunParams = { prompt, mode }
+  // P12 S2.2 — WorkMode default EXECUTE; nilai invalid → error (bukan diam
+  // melebar). Case-insensitive agar konsisten dengan flag CLI.
+  const wmRaw = p.workMode === undefined ? "EXECUTE" : String(p.workMode).toUpperCase()
+  const workMode =
+    wmRaw === "DISCUSS"
+      ? "DISCUSS"
+      : wmRaw === "PLAN"
+        ? "PLAN"
+        : wmRaw === "EXECUTE"
+          ? "EXECUTE"
+          : null
+  if (workMode === null)
+    return { ok: false, error: 'params.workMode must be "DISCUSS" | "PLAN" | "EXECUTE"' }
+  const out: AcpRunParams = { prompt, mode, workMode }
   if (typeof p.cwd === "string" && p.cwd) out.cwd = p.cwd
   if (typeof p.model === "string" && p.model) out.model = p.model
   const ms = num(p.maxSteps)
@@ -377,6 +392,8 @@ export async function runAcpSession(
       plan: rp.mode === "plan",
       allowlist: false,
       verify: false,
+      // P12 S2.2 — WorkMode terpisah dari `mode` (permission). Default EXECUTE.
+      workMode: rp.workMode,
       budget: rp.budget,
       budgetStrict: false,
       ...(rp.maxSteps ? { maxSteps: rp.maxSteps } : {}),

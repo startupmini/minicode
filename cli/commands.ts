@@ -146,6 +146,7 @@ export const BUILTIN_COMMANDS: BuiltinCommand[] = [
  * Opsi A audit UX: undo/redo/clear/copy/history tidak punya duplikat lain. */
 export const DRIVER_HELP_COMMANDS: BuiltinCommand[] = [
   { name: "mode", args: "[name]", descKey: "help.desc.mode" },
+  { name: "work-mode", args: "[DISCUSS|PLAN|EXECUTE]", descKey: "help.desc.work-mode" },
   { name: "lang", args: "[en|id]", descKey: "help.desc.lang" },
   { name: "undo", descKey: "help.desc.undo" },
   { name: "redo", descKey: "help.desc.redo" },

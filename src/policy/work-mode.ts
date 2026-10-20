@@ -25,7 +25,16 @@ type ModeControl = {
 
 export type WorkModePermissionHandler = PermissionHandler &
   ModeControl & {
-    describeDenial(call: ToolCall): string | undefined
+    // P12 S2.2 Slice 5 — kontrol WorkMode runtime (setWorkMode/getWorkMode).
+    // Mirip __setMode/__getMode milik PM: kernel mengkonsultasi handler per
+    // tool call, jadi __setWorkMode menggeser ceiling tanpa meng-ganti handler.
+    __setWorkMode(m: WorkMode): void
+    __getWorkMode(): WorkMode
+    // Sinkronis dengan kontrak PermissionHandler vendor (dapat sinkron ATAU
+    // Promise): deskripsi deny diharapkan sinkron oleh semua handler produksi,
+    // tetapi executor kernel meng-await hasilnya — mengetik hanya string akan
+    // memicu TS2322 dan mengabaikan kemungkinan handler asinkron.
+    describeDenial(call: ToolCall): Promise<string | undefined> | string | undefined
   }
 
 function requireModeControl(base: PermissionHandler): ModeControl {
@@ -53,11 +62,15 @@ function ceilingFor(
 }
 
 export function createWorkModePermissionHandler(opts: {
-  workMode: RestrictiveWorkMode
+  workMode: WorkMode
   base: PermissionHandler
   root?: string
 }): WorkModePermissionHandler {
   const ctrl = requireModeControl(opts.base)
+  // P12 S2.2 Slice 5 — WorkMode MUTABLE (bukan snapshot konstruksi). Kernel
+  // mengkonsultasi handler per tool call, jadi __setWorkMode runtime menggeser
+  // ceiling tanpa mengganti handler. EXECUTE = delegasi base (perilaku identik).
+  let wm: WorkMode = opts.workMode
   const ceilings = {
     readonly: createPermissionHandler({
       mode: "readonly",
@@ -103,9 +116,16 @@ export function createWorkModePermissionHandler(opts: {
 
   const handler = {
     async check(call: ToolCall, _deps?: unknown): Promise<"allow" | "deny"> {
+      // EXECUTE = identitas: delegasi penuh ke base tanpa ceiling (perilaku
+      // lama). Memungkinkan upgrade runtime EXECUTE→DISCUSS/PLAN walau komposisi
+      // awal EXECUTE (compose mengembalikan base) TIDAK menyediakan __setWorkMode —
+      // jalur ini dipakai createMinicodeSession yang SELALU membungkus.
+      if (wm === "EXECUTE") return opts.base.check(call, _deps as never)
       // Baca mode PM sekarang: `__setMode` runtime menggeser seleksi ceiling
       // (PLAN × allowlist/readonly = read-only), bukan membekukan yang lama.
-      const ceiling = ceilings[ceilingFor(opts.workMode, ctrl.__getMode())]
+      // Baca WorkMode sekarang (`wm` mutable) — __setWorkMode runtime menggeser
+      // ceiling DISCUSS↔PLAN.
+      const ceiling = ceilings[ceilingFor(wm, ctrl.__getMode())]
       // Ceiling DULU: operasi di luar ceiling tak boleh memicu prompt base
       // (requirement S2.1 #1) — ceiling readonly/plan tak pernah prompt.
       const ceilingDecision = await ceiling.check(call, _deps as never)
@@ -126,7 +146,19 @@ export function createWorkModePermissionHandler(opts: {
       // Metadata yang dilaporkan tetap mode PM asli; WorkMode tidak bocor.
       return ctrl.__getMode()
     },
-    describeDenial(call: ToolCall): string | undefined {
+    __setWorkMode(m: WorkMode): void {
+      wm = m
+    },
+    __getWorkMode(): WorkMode {
+      return wm
+    },
+    describeDenial(call: ToolCall): Promise<string | undefined> | string | undefined {
+      // EXECUTE: base mengambil keputusan langsung (check delegasi), jadi alasan
+      // deny ada di base.describeDenial sendiri — bukan di owner map wrapper.
+      if (wm === "EXECUTE") {
+        const baseSeam = opts.base.describeDenial
+        return typeof baseSeam === "function" ? baseSeam.call(opts.base, call) : undefined
+      }
       const owner = takeDenyOwner(call)
       const seam = owner?.describeDenial
       return typeof seam === "function" ? seam.call(owner, call) : undefined

@@ -73,8 +73,24 @@ function getArg(name: string, fallback: number): number {
 // + idempotency + read-back verifier + 50 test baru, verification.ts 97,01/99,66,
 // evidence.ts 100/100): 86,65 funcs / 87,54 lines satu run. Kunci di 85/86
 // (margin ~1,6/1,5 pp anti-flaky, konsisten praktik repo).
+// P12 S2.2 WorkMode (ceiling runtime + visibilitas tool + CLI/exec/ACP + subagent
+// + hooks + command `/work-mode`; 65 test baru): 87,18-87,20 funcs / 88,17 lines
+// — dua sampel identik (gate:coverage), di atas baseline P12.1 87,05/88,06.
+// Kenaikan terukur: funcs +0,15 pp, lines +0,11 pp.
+//
+// KEPUTUSAN AMBANG (aturan AGENTS.md baris 15: "Coverage naik → naikkan juga
+// minimum"): FUNCS dinaikkan 85 → 86. Lines TETAP 86 — kenaikan +0,11 pp
+// berada di kelas "noise" yang secara historis repo TAHAN (presiden: "Lines
+// +0,14 — margin terlalu tipis untuk dikunci", "Lines +0,05 (noise) — kunci
+// tetap 84,5"), sedangkan repo menaikkan minimum lines hanya saat kenaikannya
+// SIGNIFIKAN (Phase 2 parity +0,82 pp; P2.10 +2,08 pp). Menaikkan ambang lines
+// 86 → 87 dengan hasil terukur 88,17 tidak menambah deteksi regresi bermakna
+// (regresi harus >1,17 pp untuk tertangkap, vs >2,17 pp bila ambang 86) — jadi
+// tidak diambil. Ambang funcs 86 memberi margin 1,20 pp terhadap baseline
+// terendah 87,05, sejalan dengan preseden "Audit menyeluruh 2026-09-23" yang
+// mengunci 83 dengan margin 1,2 pp. Ambang TIDAK PERNAH diturunkan.
 const MIN_LINES = getArg("--lines", 86)
-const MIN_FUNCS = getArg("--funcs", 85)
+const MIN_FUNCS = getArg("--funcs", 86)
 
 // ── lantai per-berkas modul kritis (audit F5) ──
 // Gate agregat BUTA terhadap modul tunggal yang jatuh: policy/jail 97% → 5%

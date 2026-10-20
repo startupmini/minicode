@@ -25,6 +25,7 @@ import {
   promptFromArgs,
   getArg as rawGetArg,
   readPrompt,
+  resolveWorkModeFlag,
 } from "./args.ts"
 import { dispatch } from "./router.ts"
 import { createCliSession } from "./setup.ts"
@@ -72,6 +73,8 @@ Options:
   --budget <usd>      session cost limit
   --budget-strict     unknown cost + spend counts as over budget (fail-closed default)
   --tool-scope <s>    full (default) | explore (read-only subset)
+  --work-mode <m>     DISCUSS | PLAN | EXECUTE (default). Intent layer above the
+                      permission mode: DISCUSS = read-only, PLAN = plan tools only.
   --tui               deprecated no-op (interactive mode is always the fullscreen TUI)
   --enable-scheduler  EXPERIMENTAL: opt in to the autonomous scheduler (default: off).
                       Manual only - run /scheduler run. No timer; autonomous turns are
@@ -237,6 +240,10 @@ if (args.includes("-h") || args.includes("--help")) {
           { flag: "--budget <usd>", desc: "session cost limit" },
           { flag: "--budget-strict", desc: "unknown cost + spend counts as over budget (default)" },
           { flag: "--tool-scope <full|explore>", desc: "tool subset (explore = read-only)" },
+          {
+            flag: "--work-mode <DISCUSS|PLAN|EXECUTE>",
+            desc: "intent layer: DISCUSS (read-only), PLAN (plan tools only), EXECUTE (default)",
+          },
           { flag: "--json", desc: "JSON output (help/exec)" },
           { flag: "--tui", desc: "deprecated no-op (interactive is always the fullscreen TUI)" },
         ],
@@ -262,6 +269,13 @@ const cwd = cwdRaw ? resolvePath(cwdRaw) : undefined
 // eksplisit per-invokasi (flag atau env). Tanpa ini repo clone-an bisa
 // men-spawn MCP server dan menyedot prompt ke endpoint penyerang.
 const allowLocal = allowLocalConfig(args)
+// P12 S2.2 — WorkMode (lapis intent di ATAS permission mode). Flag mengalahkan
+// env; keduanya tak ada = EXECUTE. Nilai tak dikenal = EXECUTE + warning
+// (fail-closed, jangan pernah melebar). `--plan` (permission mode) TIDAK
+// disamakan dengan WorkMode PLAN — keduanya lapisan terpisah.
+const workModeResolved = resolveWorkModeFlag(getArg)
+const workMode = workModeResolved.workMode
+if (workModeResolved.warning) process.stderr.write(`[warn] ${workModeResolved.warning}\n`)
 // [PHASE 6U] Autonomous Scheduler opt-in. DEFAULT OFF.
 //
 // [DESIGN DECISION] `hasFlag` and nothing else - deliberately NOT `|| process.env.`,
@@ -476,6 +490,8 @@ try {
     budget,
     budgetStrict,
     toolScope,
+    // P12 S2.2 — WorkMode efektif (sudah di-resolve, default EXECUTE).
+    workMode,
     maxSteps,
     contextWindowTokens,
     ...(keepRecentTurns !== undefined ? { keepRecentTurns } : {}),

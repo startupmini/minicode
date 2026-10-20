@@ -44,6 +44,7 @@ import { setReasoningVisible } from "../src/ui/render/reasoning.ts"
 import { c } from "../src/ui/render/theme.ts"
 import { TuiApp, type TuiHost } from "../src/ui/tui/app.ts"
 import { Transcript } from "../src/ui/tui/transcript.ts"
+import { parseWorkModeValue } from "./args.ts"
 import {
   BUILTIN_COMMANDS,
   type CommandContext,
@@ -108,6 +109,7 @@ export async function runTui(ctx: CliSession): Promise<void> {
     modelRef,
     permissionMode,
     permissions,
+    workModeControl,
     sessionTools,
     allLoadedSkills,
     allowLocalConfig,
@@ -412,6 +414,34 @@ export async function runTui(ctx: CliSession): Promise<void> {
       transcript.pushInfo([c.muted(t("tui.modeLine", { m: mode }))])
       return
     }
+    // P12 S2.2 Slice 5 - WorkMode (lapis intent di ATAS permission mode).
+    // Aksi operator EKSPLISIT: hanya command ini yang menggeser WorkMode.
+    // Tab/Shift+Tab dan `/mode` tetap khusus permission mode.
+    if (name === "work-mode") {
+      const current = workModeControl?.getWorkMode() ?? "EXECUTE"
+      if (!args) {
+        transcript.pushInfo([
+          c.muted(t("tui.workModeUsage", { m: current })),
+        ])
+        return
+      }
+      const next = parseWorkModeValue(args)
+      if (!next) {
+        transcript.pushInfo([
+          c.muted(t("tui.workModeUnknown", { a: args, modes: "DISCUSS, PLAN, EXECUTE" })),
+        ])
+        return
+      }
+      if (!workModeControl) {
+        // Sesi tanpa kontrol WorkMode (handler izin terinjeksi = policy, bukan
+        // mode) - tolak, jangan diam-diam tampak berubah.
+        transcript.pushInfo([c.muted(t("tui.workModeUnavailable"))])
+        return
+      }
+      workModeControl.setWorkMode(next)
+      transcript.pushInfo([c.muted(t("tui.workModeLine", { m: next }))])
+      return
+    }
     if (name === "lang") {
       const { currentLocale, setSessionLocale } = await import("../src/ui/i18n/locale.ts")
       if (!args) {
@@ -558,6 +588,9 @@ export async function runTui(ctx: CliSession): Promise<void> {
       const status = {
         footer: {
           mode,
+          // P12 S2.2 Slice 5 - WorkMode LIVE (bukan snapshot boot): footer
+          // mencerminkan mode aktif saat frame digambar.
+          workMode: workModeControl?.getWorkMode() ?? "EXECUTE",
           model: modelRef.current ?? cfg.providers[0]?.models[0] ?? t("tui.noModel"),
           cwd: cwd ?? process.cwd(),
           context: fmtCtx(session.contextTokens),

@@ -1,4 +1,13 @@
-# Kontrak Terminal MiniCode (TUI fullscreen — v7.3, 2026-10-16)
+# Kontrak Terminal MiniCode (TUI fullscreen — v7.4, 2026-10-20)
+
+Perubahan v7.4 (P12 S2.2 WorkMode): invarian baru I35 — WorkMode (lapis
+intent `DISCUSS`/`PLAN`/`EXECUTE`) sebagai dimensi TERPISAH dari permission
+mode. Command `/work-mode <DISCUSS|PLAN|EXECUTE>` (aksi operator eksplisit,
+transisi berlaku pada sesi yang sedang berjalan); footer menampilkan
+`<WorkMode>·<permission mode>` saat WorkMode ≠ EXECUTE (`PLAN·auto`,
+`DISCUSS·auto`, `PLAN·readonly`); `EXECUTE` (default) mempertahankan label
+permission mode seperti sebelumnya. Tab/Shift+Tab dan `/mode` TETAP khusus
+permission mode. Rincian di I35.
 
 Perubahan v7.3 (P11 Presentation & UX): invarian baru I34 — subcommand `exec`
 dan `daemon` menerima argv SCOPE dari router (flag global dikenal yang
@@ -302,18 +311,51 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      — subcommand lain menerima args mentah. Invarian ini tidak mengubah
      semantik, aksi, atau exit code masing-masing aksi; yang berubah hanya
      invokasi flag-mendahului yang dulu salah rute menjadi rute benar.
+35. **WorkMode = lapis intent di ATAS permission mode (P12 S2.2)** — dua
+    dimensi yang BERJALAN BERSAMA, bukan pengganti:
+    - Nilai: `DISCUSS` (read-only penuh) · `PLAN` (ceiling rencana) ·
+      `EXECUTE` (tanpa ceiling tambahan). Default `EXECUTE` = perilaku lama
+      (kompatibel: sesi tanpa WorkMode yang eksplisit tetap EXECUTE).
+    - **Permission handler tetap satu-satunya gerbang penolakan yang menentukan
+      keamanan eksekusi.** WorkMode hanya MEMASANG CEILING di atasnya; ia
+      tidak pernah memperluas kewenangan permission mode dasar (INV-WM1).
+    - `/work-mode <DISCUSS|PLAN|EXECUTE>`: aksi operator EKSPLISIT. Tanpa
+      argumen → tampilkan mode aktif + usage; nilai invalid → pesan kesalahan
+      dan mode AKTIF TIDAK berubah; sesi tanpa kontrol WorkMode (handler izin
+      terinjeksi = policy, bukan mode) → ditolak, bukan diam-diam tampak
+      berubah. Transisi berlaku pada SESI YANG SEDANG BERJALAN: ceiling
+      permission dievaluasi per pemanggilan tool, daftar tool yang dilihat model
+      ikut turun/naik, hooks dievaluasi terhadap WorkMode aktif, dan delegasi
+      berikutnya mewarisi WorkMode parent yang aktif. WorkMode TIDAK bisa
+      dinaikkan otomatis oleh model, anak, atau argumen delegasi.
+    - **Tab/Shift+Tab dan `/mode` TETAP khusus permission mode** — WorkMode
+      tak masuk siklus Tab. WorkMode ≠ permission mode: permission mode
+      yang memutuskan allow/deny per tool; WorkMode memilih postur
+      (diskusi/rencana/bebas) dan hanya mempersempit.
+    - Hooks: gate `shouldRunHooks(permissionMode, workMode)` dievaluasi **per
+      pemanggilan** dengan WorkMode **AKTIF** (transisi `/work-mode` langsung
+      berlaku); sisi permission mode memakai **nilai startup sesi** (semantik
+      lama dipertahankan — `Tab`/`Shift+Tab` menggeser mode izin di dalam
+      handler, bukan nilai gate hooks). WorkMode `DISCUSS` tetap menahan hook
+      walau permission mode `auto`.
+    - Footer: mode WorkMode aktif tampil sebagai `<WorkMode>·<permission mode>`
+      hanya saat WorkMode ≠ EXECUTE (mis. `PLAN·auto`, `DISCUSS·auto`,
+      `PLAN·readonly`); saat EXECUTE label permission mode apa adanya (mis.
+      `auto`) — perilaku lama dipertahankan.
 
 ## Grammar (ringkas)
 
 prompt `minicode ›` tampil saat boot/idle dan hilang saat busy (dropdown `/`
 berbingkai di atasnya) ·
 status bar `✦ 00.00.00 mode  model  cwd` (timer redup idle; detik putih aktif,
-menit mulai terang di 60 dtk, jam di 1 jam; tanpa bullet separator) + satu
-spacer sebelum footer · ledger tool
+menit mulai terang di 60 dtk, jam di 1 jam; tanpa bullet separator; mode =
+permission mode, atau `<WorkMode>·<permission mode>` bila WorkMode ≠ EXECUTE)
++ satu spacer sebelum footer · ledger tool
 `  › name target` (hijau) / merah saat error · error `✗ pesan` sekali per
 kegagalan · thinking: dots clock / alir redup · popup: konten redup di
 belakang + kotak terpusat (form di dalam) + Esc tutup · approval tercatat ·
 `/status`, `/history`, `/help` ringkas & `/expand` mengalir ke transkrip ·
+`/mode` = permission mode · `/work-mode` = WorkMode (intent layer) ·
 Projection V2: `› name target … running`, ledger status ber-glyph/kata,
 retry/grup anak, ringkasan turn, dan marker evict sesuai flag ·
 
@@ -372,6 +414,27 @@ panjang).
 - `test/approval-tui.test.ts` — I23 (blok + keputusan tercatat, deny;
   stdout-pipe tanpa sink = deny).
 - `test/footer-render.test.ts` — I13 (footer minimal tanpa label status).
+- `test/work-mode-runtime.test.ts` — I35 (WorkMode runtime: ceiling permission
+  dievaluasi per pemanggilan tool; transisi EXECUTE↔DISCUSS↔PLAN pada sesi
+  yang sama; daftar tool yang dilihat kernel ikut berubah; hooks mengikuti
+  WorkMode aktif; delegasi mewarisi WorkMode parent terbaru; argumen
+  delegasi tak bisa menaikkan WorkMode; `/work-mode` end-to-end lewat TUI
+  termasuk nilai invalid; `/mode` + Shift+Tab tak menyentuh WorkMode; label
+  footer `PLAN·auto`/`DISCUSS·auto`).
+- `test/work-mode-contract.test.ts` — I35 (ceiling handler WorkMode di atas
+  handler PM: 18 sel matriks, gerbang approval `PLAN × auto/ask`, `describeDenial`
+  per pemilik keputusan, `always`/K-1 tetap utuh, `__setMode` tak mencabut
+  ceiling).
+- `test/work-mode-tool-visibility.test.ts` — I35 (visibilitas tool = irisan
+  permission mode ∧ WorkMode; `PLAN × readonly` tak memperluas readonly;
+  tool MCP ikut dibatasi).
+- `test/work-mode-hooks.test.ts` — I35 (hooks: `DISCUSS` menahan, `PLAN`/
+  `EXECUTE` mengikuti permission mode; pemanggil lama tanpa WorkMode kompatibel).
+- `test/work-mode-subagent.test.ts` — I35 (child mewarisi WorkMode parent;
+  tak ada eskalasi lewat mode child; default tanpa WorkMode = perilaku lama).
+- `test/work-mode-cli.test.ts` — I35 (`--work-mode`/env: flag > env > default
+  EXECUTE; nilai invalid → EXECUTE + peringatan; ACP `workMode` terpisah dari
+  `mode`).
 - `test/tui-app.test.ts`, `test/tui-popup.test.ts` — I13/I17 (composer
   editing/busy, dots clock, timer, spacer, cursor, resize, popup).
 - `test/markdown-table.test.ts` — I8/I11/I17 (pipe-table parser, streaming

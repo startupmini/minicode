@@ -11,7 +11,7 @@ import {
   type PermissionAsk,
   type PermissionMode,
 } from "../policy/permission.ts"
-import { composeWorkModePermissionHandler, type WorkMode } from "../policy/work-mode.ts"
+import { createWorkModePermissionHandler, type WorkMode } from "../policy/work-mode.ts"
 import type { ApprovalEventHook } from "../presentation/events.ts"
 
 // P2 cap wrapper: limit retryAfter to 30s without mutating original error.
@@ -46,6 +46,18 @@ export type PermissionControl = {
   getMode(): "auto" | "readonly" | "plan" | "allow-all" | "ask" | "allowlist"
 }
 
+/**
+ * P12 S2.2 Slice 5 — kontrol WorkMode runtime (DISCUSS/PLAN/EXECUTE). Mirip
+ * PermissionControl: handler WorkMode menyimpan WorkMode MUTABLE dan kernel
+ * mengkonsultasi handler per tool call, jadi setWorkMode menggeser ceiling
+ * tanpa mengganti handler. Composition root menangkap handle ini dan
+ * meneruskannya ke footer/subagent/hooks (live, bukan snapshot).
+ */
+export type WorkModeControl = {
+  setWorkMode(m: WorkMode): void
+  getWorkMode(): WorkMode
+}
+
 export async function createMinicodeSession(
   opts: Partial<
     Omit<SessionConfig, "permissions" | "estimator" | "recovery" | "system" | "executor">
@@ -69,6 +81,11 @@ export async function createMinicodeSession(
      * `config`, jadi satu-satunya cara mengubah mode saat runtime (mis.
      * Shift+Tab di TUI) adalah menangkap handler di sini. */
     onPermissions?: (control: PermissionControl) => void
+    /** P12 S2.2 Slice 5 — menerima handle kontrol WorkMode runtime (setWorkMode
+     * / getWorkMode). Sama seperti onPermissions: kernel tidak mengekspos
+     * `config`, jadi satu-satunya cara menggeser WorkMode saat runtime (mis.
+     * command `/work-mode` di TUI) adalah menangkap handler di sini. */
+    onWorkMode?: (control: WorkModeControl) => void
     /** View persetujuan tool (di-inject dari cli/; tanpa ini mode interaktif
      * menolak semua prompt — aman untuk headless/library). */
     ask?: PermissionAsk
@@ -120,6 +137,7 @@ export async function createMinicodeSession(
     systemExtra: _extra,
     provider,
     onPermissions,
+    onWorkMode,
     ask,
     onApprovalEvent,
     turnCount,
@@ -152,9 +170,15 @@ export async function createMinicodeSession(
     writeConcurrency > 0
       ? Math.floor(writeConcurrency)
       : undefined
+  // P12 S2.2 Slice 5 — handler WorkMode SELALU dibungkus (bukan `compose`,
+  // yang mengembalikan base polos untuk EXECUTE). Alasannya runtime upgrade:
+  // `compose` EXECUTE = base tanpa __setWorkMode, jadi operator tak bisa
+  // menggeser EXECUTE→DISCUSS/PLAN di sesi yang sama. Wrapper EXECUTE
+  // mendelegasikan keputusan ke base apa adanya (perilaku identik) tetapi
+  // tetap menyediakan __setWorkMode.
   const permissions =
     opts.permissionHandler ??
-    composeWorkModePermissionHandler({
+    createWorkModePermissionHandler({
       workMode: resolvedWorkMode,
       base: createPermissionHandler({
         mode: permissionMode ?? "auto",
@@ -182,6 +206,19 @@ export async function createMinicodeSession(
     onPermissions({
       setMode: (m) => withMode.__setMode(m),
       getMode: () => withMode.__getMode(),
+    })
+  }
+  // P12 S2.2 Slice 5 — handle kontrol WorkMode runtime. Hanya di-wire bila
+  // handler BUKAN terinjeksi (handler terinjeksi = policy, bukan mode; juga
+  // tak punya __setWorkMode — fail-closed, sama seperti onPermissions).
+  if (onWorkMode && !injected) {
+    const wm = permissions as typeof permissions & {
+      __setWorkMode(m: WorkMode): void
+      __getWorkMode(): WorkMode
+    }
+    onWorkMode({
+      setWorkMode: (m) => wm.__setWorkMode(m),
+      getWorkMode: () => wm.__getWorkMode(),
     })
   }
   // Teruskan mode live ke kernel agar ToolContext.permissionMode selalu

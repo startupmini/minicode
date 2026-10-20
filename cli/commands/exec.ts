@@ -14,7 +14,13 @@ import { clearSubmittedResult, getSubmittedResult } from "../../src/tools/submit
 import { formatError } from "../../src/ui/assistant/simple.ts"
 import { formatUsd } from "../../src/ui/render/money.ts"
 import { cleanUntrusted } from "../../src/ui/render/sanitize.ts"
-import { allowLocalConfig, hasFlag, promptFromArgs, getArg as rawGetArg } from "../args.ts"
+import {
+  allowLocalConfig,
+  hasFlag,
+  promptFromArgs,
+  getArg as rawGetArg,
+  resolveWorkModeFlag,
+} from "../args.ts"
 import { createCliSession } from "../setup.ts"
 
 /** Satu baris stdout mesin: JSON yang sudah di-scrub + tanpa ANSI apa pun. */
@@ -96,6 +102,10 @@ export async function handleExec(
     ""
   ).toLowerCase()
   const toolScope = toolScopeRaw === "explore" ? ("explore" as const) : ("full" as const)
+  // P12 S2.2 — WorkMode (flag > env, default EXECUTE; invalid → EXECUTE+warn).
+  const workModeResolved = resolveWorkModeFlag(getArg)
+  const workMode = workModeResolved.workMode
+  if (workModeResolved.warning) console.error(`[warn] ${workModeResolved.warning}`)
   const ratelimitRaw = getArg("--ratelimit")
   const rateLimiter = ratelimitRaw ? createRateLimiter(Number(ratelimitRaw)) : undefined
 
@@ -136,6 +146,8 @@ export async function handleExec(
     budget,
     budgetStrict,
     toolScope,
+    // P12 S2.2 — WorkMode efektif (sudah di-resolve, default EXECUTE).
+    workMode,
     rateLimiter,
     // Notice hanya bila user eksplisit meminta mode (daemon mati / tak dikenal).
     sandboxNotice: requestedSandbox ? sandbox.notice : undefined,

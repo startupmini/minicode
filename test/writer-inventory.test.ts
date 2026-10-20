@@ -27,7 +27,11 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // given an unknown value. Silent fail-closed here would be an expectation
   // trap — the operator would believe the runtime is active while the process
   // runs the legacy path. Declared, not absorbed, per the rule above.
-  "cli/index.ts": { max: 26, owner: "human-cmd" },
+  // [P12 S2.2] 26 -> 27 for exactly ONE writer: the warning when `--work-mode`
+  // carries an unknown value. Silent fail-closed here would let the operator
+  // believe a narrower work mode is active while the session runs EXECUTE.
+  // Declared, not absorbed, per the rule above.
+  "cli/index.ts": { max: 27, owner: "human-cmd" },
   "cli/model-manager.ts": { max: 2, owner: "human-cmd" },
   "cli/provider-manager.ts": { max: 3, owner: "human-cmd" },
   // [P2.1] 26 -> 27 for exactly ONE writer: the canonical identity line
@@ -86,7 +90,10 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // [P2.2] 7 -> 8 for exactly ONE writer: the stale-writer message on the
   // non-JSON path when history could not be made durable (mirrors the JSON
   // machineFailure branch). Exit 1 either way. Declared, not absorbed.
-  "cli/commands/exec.ts": { max: 8, owner: "machine" },
+  // [P12 S2.2] 8 -> 9 for exactly ONE writer: the `--work-mode` unknown-value
+  // warning on the machine path (stderr; stdout stays pure JSONL). Declared,
+  // not absorbed.
+  "cli/commands/exec.ts": { max: 9, owner: "machine" },
   "cli/commands/mcp.ts": { max: 2, owner: "human-cmd" },
   "cli/commands/memory.ts": { max: 11, owner: "human-cmd" },
   "cli/commands/pricing.ts": { max: 23, owner: "human-cmd" },

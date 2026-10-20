@@ -5,7 +5,7 @@ import { resolve as resolvePath } from "node:path"
 import type { Message, Session, Tool } from "#minicore"
 import { createProviderLayer } from "../src/app/provider-layer.ts"
 import { createRagLayer } from "../src/app/rag-layer.ts"
-import { createMinicodeSession, type PermissionControl } from "../src/app/session.ts"
+import { createMinicodeSession, type PermissionControl, type WorkModeControl } from "../src/app/session.ts"
 import { setupToolLayer } from "../src/app/tool-layer.ts"
 import type { MinicodeConfig } from "../src/config.ts"
 import { loadLastModel, localConfigNotice } from "../src/config.ts"
@@ -152,6 +152,7 @@ import {
   setSubAgentExecutionRunner,
   setSubAgentParentRouting,
   setSubAgentParentRunId,
+  setSubAgentWorkMode,
 } from "../src/tools/task.ts"
 import {
   reconcileCompletionEvidence,
@@ -205,6 +206,14 @@ export interface CliSessionOptions {
   budgetStrict?: boolean
   /** Harness-P2: scope tool sesi — explore = subset read-only. */
   toolScope?: "full" | "explore"
+  /**
+   * P12 S2.2 — WorkMode (lapis intent di ATAS permission mode). Default
+   * EXECUTE = perilaku lama. DISCUSS = read-only ceiling; PLAN = ceiling
+   * rencana (explore + tool rencana). TIDAK pernah memperluas permission mode
+   * (INV-WM1). Diisi CLI dari --work-mode / MINICODE_WORK_MODE; diserahkan ke
+   * setupToolLayer (visibilitas) dan createMinicodeSession (handler ceiling).
+   */
+  workMode?: "DISCUSS" | "PLAN" | "EXECUTE"
   /**
    * [PHASE 6U] Opt-in autonomous Scheduler. DEFAULT OFF - `undefined` and
    * `false` behave identically, and for both the composition root is never called.
@@ -261,6 +270,13 @@ export interface CliSession {
   effectiveInitialModel: string
   effectiveTimeoutMs: number
   permissionMode: string
+  /** P12 S2.2 — WorkMode efektif sesi ini (default EXECUTE). Dipakai label/
+   * readout TUI; diisi composition root dari flag/env. */
+  workMode: "DISCUSS" | "PLAN" | "EXECUTE"
+  /** P12 S2.2 Slice 5 — handle kontrol WorkMode runtime (transisi operator
+   * lewat command `/work-mode`). Undefined bila sesi memakai handler izin
+   * terinjeksi (policy, bukan mode — fail-closed). */
+  workModeControl?: WorkModeControl
   sessionTools: Tool[]
   allLoadedSkills: Skill[]
   usage: ReturnType<typeof createUsageCollector>
@@ -653,6 +669,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     schedulerEnabled,
     runtimeMode,
     allowLocalConfig,
+    workMode = "EXECUTE",
     maxSteps,
     contextWindowTokens,
     keepRecentTurns,
@@ -1336,20 +1353,24 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         },
       })
     : undefined
-  const { sessionTools, evidenceMode } = await startupPhase("tool-layer", () =>
-    setupToolLayer(
-      cfg,
-      toolScope ?? "full",
-      permissionMode,
-      {
+  const { sessionTools, evidenceMode, setWorkMode: setToolWorkMode } = await startupPhase(
+    "tool-layer",
+    () =>
+      setupToolLayer(
+        cfg,
+        toolScope ?? "full",
+        permissionMode,
+        {
+          sessionId,
+          threadId: DEFAULT_THREAD_ID,
+          cwd: cwd ?? process.cwd(),
+        },
+        // F-03 (P5 §C2): background bash job diikat ke sid kanonik sesi ini —
+        // instance yang diikat sid tidak pernah dipasok lewat argumen tool.
         sessionId,
-        threadId: DEFAULT_THREAD_ID,
-        cwd: cwd ?? process.cwd(),
-      },
-      // F-03 (P5 §C2): background bash job diikat ke sid kanonik sesi ini —
-      // instance yang diikat sid tidak pernah dipasok lewat argumen tool.
-      sessionId,
-    ),
+        // P12 S2.2: ceiling WorkMode untuk visibilitas tool (DISCUSS/PLAN).
+        workMode,
+      ),
   )
 
   // todo_write/todo_read menyimpan state per sesi di .minicode/todos/<id>.json,
@@ -1374,6 +1395,18 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   //-satunya pemilik Run hidup; tooltak pernah mengarang id ini (vendor
   // ToolContext tak membawa execution id).
   setSubAgentParentRunId(() => currentRunId)
+  // P12 S2.2 Slice 5 — WorkMode RUNTIME. Handle kontrol diambil dari session
+  // (onWorkMode) lalu dibaca LIVE di mana pun WorkMode dibutuhkan, supaya
+  // transisi operator (command `/work-mode`) berlaku pada sesi yang sedang
+  // berjalan — bukan snapshot saat session dibuat.
+  let workModeControl: WorkModeControl | undefined
+  // Warisan WorkMode ke sub-agen: composition root adalah satu-satunya pemilik
+  // WorkMode efektif. Suntikkan sebagai fn LIVE (dibaca saat delegate_task
+  // execute) supaya delegasi berikutnya mewarisi WorkMode parent yang AKTIF
+  // saat itu — bukan snapshot lama. Tanpa ini ToolContext.permissionMode
+  // (hanya PM, bukan WorkMode) membuat delegate_task melahirkan anak tanpa
+  // ceiling WorkMode.
+  setSubAgentWorkMode(() => workModeControl?.getWorkMode() ?? "EXECUTE")
 
   let permissions: PermissionControl | undefined
   // Validasi concurrency: 0, NaN, Infinity → fallback ke default (jangan teruskan 0 ke executor)
@@ -1392,6 +1425,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       cwd,
       permissionMode,
       allowLocalConfig,
+      // P12 S2.2 — WorkMode efektif sesi ini (default EXECUTE). Sesi dengan
+      // workMode non-EXECUTE dipasangi ceiling handler di session.ts; sesi
+      // yang memakai permissionHandler terinjeksi (6S/autonomous) akan
+      // di-reject oleh fail-closed di sana (tak pernah melewati ceiling).
+      workMode,
       systemExtra: (systemExtra ?? "") + recoveryAppendix,
       model: modelRef.current,
       ask: promptAsk,
@@ -1402,6 +1440,21 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       },
       onPermissions: (ctl) => {
         permissions = ctl
+      },
+      // P12 S2.2 Slice 5 — handle kontrol WorkMode runtime. Setelah sesi
+      // dibangun, handle ini di-warisi ke sub-agent/hooks/footer sehingga
+      // transisi operator berlaku pada sesi yang sedang berjalan.
+      onWorkMode: (ctl) => {
+        // P12 S2.2 Slice 5 - SATU sumber state: handler WorkMode (ctl).
+        // Visibilitas tool DITURUNKAN dari state yang sama (bukan state
+        // terpisah) supaya ceiling dan daftar tool tak bisa berbeda.
+        workModeControl = {
+          setWorkMode: (m) => {
+            ctl.setWorkMode(m)
+            setToolWorkMode?.(m)
+          },
+          getWorkMode: () => ctl.getWorkMode(),
+        }
       },
       ...(initialMessages ? { initialMessages } : {}),
       ...(resumeTurnCount !== undefined ? { turnCount: resumeTurnCount } : {}),
@@ -1752,15 +1805,21 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   }
   // Audit #10 P1: hooks berjalan di luar permission system — di mode tanpa
   // eksekusi (plan/readonly) hook TETAP mengeksekusi tanpa gate, melanggar
-  // kontrak read-only. Lewati + beri tahu sekali per sesi.
-  const hooksAllowed = shouldRunHooks(permissionMode)
+  // kontrak read-only. Lewati + beri tahu sekali per sesi. P12 S2.2: WorkMode
+  // DISCUSS (posture read-only penuh) juga menahan hooks walau permissionMode
+  // auto — lihat shouldRunHooks.
+  //
+  // P12 S2.2 Slice 5: predicate dievaluasi PER PEMANGGILAN (bukan snapshot
+  // `hooksAllowed` saat session dibuat) supaya transisi WorkMode operator
+  // berlaku pada sesi yang sedang berjalan.
   let hooksSkippedNotice = false
   const runHooksGated = async (
     phase: "pre" | "post",
     ctx: { phase: "pre" | "post"; prompt: string; cwd?: string; result?: unknown },
     signal?: AbortSignal,
   ): Promise<void> => {
-    if (!hooksAllowed) {
+    const liveWorkMode = workModeControl?.getWorkMode() ?? "EXECUTE"
+    if (!shouldRunHooks(permissionMode, liveWorkMode)) {
       if (!hooksSkippedNotice) {
         hooksSkippedNotice = true
         process.stderr.write(
@@ -2460,6 +2519,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     effectiveInitialModel,
     effectiveTimeoutMs,
     permissionMode,
+    workMode,
+    workModeControl,
     allowLocalConfig: allowLocalConfig === true,
     sessionTools,
     allLoadedSkills,

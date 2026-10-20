@@ -19,6 +19,13 @@ export type TimerHighlight = "seconds" | "minutes" | "hours"
 
 export interface FooterStatus {
   mode: string
+  /**
+   * P12 S2.2 Slice 5 — WorkMode aktif sesi (DISCUSS|PLAN|EXECUTE). Hanya
+   * ditampilkan bila bukan EXECUTE: label jadi `<WorkMode>·<permission mode>`
+   * (mis. `PLAN·auto`, `DISCUSS·auto`) agar dua lapis intent/permission bisa
+   * dibedakan. EXECUTE (default) = perilaku lama, label permission mode saja.
+   */
+  workMode?: string
   model: string
   cwd: string
   /** Jumlah konteks polos (mis. "14.2k"). Kosong = tak ditampilkan. */
@@ -48,13 +55,20 @@ export function shortModel(id: string): string {
  * Warna + PAD token mode. Padding dilakukan sebelum pewarnaan supaya lebar
  * kolom mode tetap sama untuk semua mode (anti-geser), sementara warna tetap
  * dipilih dari nama mode asli.
+ *
+ * P12 S2.2 Slice 5 - WorkMode non-EXECUTE digabung ke label (`PLAN·auto`):
+ * dua lapis intent/permission dibedakan dalam satu token. Warna mengikuti
+ * lapis yang lebih ketat (WorkMode DISCUSS/PLAN -> warning seperti plan PM).
  */
-export function paintFooterMode(mode: string): string {
+export function paintFooterMode(mode: string, workMode?: string): string {
+  const restrictive = workMode === "DISCUSS" || workMode === "PLAN"
+  const label = restrictive ? `${workMode}·${mode}` : mode
   // Padding per KOLOM (bukan padEnd karakter): CJK/emoji = 2 kolom, dan
   // displayWidth sudah dipakai di bawah — konsisten satu penggaris.
   // Mode satu-baris: newline dari input tak terpercaya wajib dibuang agar tak
   // memecah frame lengket 2-baris chrome.ts.
-  const padded = padToWidth(sanitizeAnsiLine(mode), MODE_WIDTH)
+  const padded = padToWidth(sanitizeAnsiLine(label), MODE_WIDTH)
+  if (restrictive) return c.warning(padded)
   return mode === "plan" ? c.warning(padded) : mode === "ask" ? c.info(padded) : c.success(padded)
 }
 
@@ -106,7 +120,7 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
     ? `${paintTimer(timerText, s.timerActive === true, s.timerHighlight)}  `
     : ""
   const lead = `${spark}  ${timer}`
-  const mode = paintFooterMode(s.mode)
+  const mode = paintFooterMode(s.mode, s.workMode)
   const fieldGap = "  "
   // Satu-baris: cwd/model bisa berisi newline (nama dir) — sanitizeAnsiLine
   // agar \n tak memecah frame lengket ke scrollback (displayWidth menghitung

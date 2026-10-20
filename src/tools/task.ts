@@ -7,6 +7,7 @@ import { loadConfig } from "../config.ts"
 import { LIMITS } from "../constants.ts"
 import { resolveLocalDbPath } from "../lib/db-path.ts"
 import type { RateLimiter } from "../policy/ratelimit.ts"
+import type { WorkMode } from "../policy/work-mode.ts"
 import { buildProviderListAsync } from "../providers/build.ts"
 import { createRouterProvider } from "../providers/router.ts"
 import type { ProductionExecutionRunner } from "../runtime/production-execution.ts"
@@ -70,6 +71,14 @@ export interface SubAgentSpec {
   // parent ask adalah eskalasi (satu approval delegasi menjadi N aksi
   // tak-disetujui), jadi pembatasan ditaruh di mode alat, bukan izin.
   permissionMode: "auto" | "allowlist"
+  /**
+   * P12 S2.2 — WorkMode sesi anak (intent layer di ATAS permissionMode).
+   * Diisi delegateTaskTool dari WorkMode induk (lihat subAgentWorkMode).
+   * EXECUTE = tanpa ceiling tambahan (perilaku lama). Non-EXECUTE dipakai
+   * factory (`cli/index.ts`) untuk membangun `createMinicodeSession` anak
+   * dengan ceiling WorkMode sendiri — menutup eskalasi jalur PLAN×auto.
+   */
+  workMode?: WorkMode
   maxSteps: number
   timeoutMs: number
   systemExtra: string
@@ -128,6 +137,8 @@ export function clearSubAgentSessionFactory(): void {
   parentRouting = {}
   childExecutionRunner = undefined
   parentRunIdFn = () => null
+  // P12 S2.2 — reset WorkMode induk agar test terisolasi (pola reset lain).
+  subAgentWorkModeFn = () => undefined
 }
 
 /**
@@ -161,6 +172,28 @@ export function subAgentParentRunId(): string | null {
     return parentRunIdFn()
   } catch {
     return null
+  }
+}
+
+// P12 S2.2 — WorkMode sesi induk (intent layer). ToolContext.permissionMode
+// hanya membawa permission mode (bukan WorkMode), dan kontrak vendor tak boleh
+// diubah — jadi WorkMode induk disuntikkan dari composition root (satu-satunya
+// pemilik WorkMode efektif), pola identik `setSubAgentParentRunId`. Tanpa ini
+// jalur `PLAN × auto` (delegate_task di-approve) melahirkan anak `auto` dengan
+// tool penuh — eskalasi terhadap ceiling WorkMode induk. Setter menerima fn
+// (dibaca live saat delegate) bukan nilai, agar resume/Shift+Tab tak basi.
+let subAgentWorkModeFn: () => WorkMode | undefined = () => undefined
+
+export function setSubAgentWorkMode(fn: () => WorkMode | undefined): void {
+  subAgentWorkModeFn = fn
+}
+
+/** WorkMode induk saat ini (live), undefined = EXECUTE (perilaku lama). */
+export function subAgentWorkMode(): WorkMode {
+  try {
+    return subAgentWorkModeFn() ?? "EXECUTE"
+  } catch {
+    return "EXECUTE"
   }
 }
 
@@ -234,6 +267,15 @@ export const delegateTaskTool: Tool = {
     const parentMode = (ctx as unknown as { permissionMode?: string }).permissionMode
     const forcedExplore = parentMode === "plan" || parentMode === "readonly" || parentMode === "ask"
     const m = forcedExplore ? "explore" : ((mode as string) ?? "explore")
+    // P12 S2.2 — anak mewarisi WorkMode induk (intent layer, di-inject dari
+    // composition root via subAgentWorkMode). ToolContext.permissionMode hanya
+    // membawa PM (bukan WorkMode) dan vendor tak boleh diubah — jadi WorkMode
+    // induk disuntikkan. Tanpa ini jalur `PLAN × auto` (delegate_task
+    // di-approve, parentMode="auto" → forcedExplore=false) melahirkan anak
+    // `auto` mode "plan" dengan tool penuh: eskalasi ceiling WorkMode induk.
+    // Anak non-EXECUTE dipaksa workMode yang sama → ceiling handler anak
+    // menahan tulis (INV-WM1: WorkMode tak pernah memperluas akses).
+    const childWorkMode = subAgentWorkMode()
     const requested = Number(maxSteps)
     // P9.1 (ADR-25 — mode-specific contracts): DUA kontrak admission yang
     // sengaja terpisah. Cabang fallback di bawah (tanpa maxSteps eksplisit)
@@ -272,12 +314,26 @@ export const delegateTaskTool: Tool = {
     )
     const subTools =
       m === "explore" ? base.filter((t) => EXPLORE_TOOL_NAMES.includes(t.name)) : base
+    // P12 S2.2 — visibilitas tool anak mengikuti WorkMode (INV-WM1). Untuk
+    // child non-EXECUTE, tool tulis/eksekusi disembunyikan dari daftar agar
+    // model tidak buang langkah mencoba yang pasti ditolak ceiling (mis.
+    // parent PLAN×auto yang melahirkan anak workMode PLAN). Catatan: `base`
+    // di atas sudah membuang todo_write/delegate_task/submit_result (milik
+    // parent), jadi satu-satunya tool ekstra mode "plan" yang tersisa adalah
+    // file-write/bash — yang persis ingin disembunyikan ceiling WorkMode.
+    // EXPLORE_TOOL_NAMES adalah satu-satunya sumber read-only yang dipakai
+    // sesi utama (tool-layer), jadi anak memakai set yang sama — tanpa
+    // menduplikasi daftar.
+    const subToolsFiltered =
+      childWorkMode === "DISCUSS" || childWorkMode === "PLAN"
+        ? subTools.filter((t) => EXPLORE_TOOL_NAMES.includes(t.name))
+        : subTools
     // F-07: anak tidak punya bash_output/bash_kill (diamputasi di atas),
     // sehingga background:true di anak = proses yatim di tabel job global:
     // tak bisa dibaca, tak bisa di-kill, menghabiskan slot parent. Tolak
     // eksplisit di sini (tool layer tahu ia membangun sesi anak; kernel
     // tak perlu tahu konsep parent/anak).
-    const subToolsGuarded: Tool[] = subTools.map((t) => {
+    const subToolsGuarded: Tool[] = subToolsFiltered.map((t) => {
       if (t.name !== "bash") return t
       return {
         ...t,
@@ -447,6 +503,10 @@ export const delegateTaskTool: Tool = {
           cwd: parentCwd,
           // Parent allowlist → anak allowlist (lihat komentar tipe di atas).
           permissionMode: parentMode === "allowlist" ? "allowlist" : "auto",
+          // P12 S2.2 — child mewarisi WorkMode induk (ceiling WorkMode anak
+          // dipasang di createMinicodeSession oleh factory). EXECUTE = perilaku
+          // lama (tanpa ceiling tambahan).
+          workMode: childWorkMode,
           maxSteps: cap,
           timeoutMs: LIMITS.SUB_AGENT_TIMEOUT_MS,
           // Warisan model parent (audit #14): baca live dari ToolContext agar

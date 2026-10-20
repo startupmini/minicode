@@ -31,6 +31,7 @@ const VALUE_FLAGS = new Set([
   "--ratelimit",
   "--budget",
   "--tool-scope", // full | explore (read-only) — tanpa ini jadi kata prompt!
+  "--work-mode", // DISCUSS | PLAN | EXECUTE — HARUS dikenal agar tak bocor ke prompt.
   // [P1 M15] Mode runtime produksi (off | constructed | owned). HARUS terdaftar:
   // flag tak dikenal menghentikan scan `hasFlag`/`getArg` (dianggap prompt
   // boundary), sehingga flag yang diletakkan SETELAH `--runtime` akan hilang
@@ -99,6 +100,40 @@ export function hasFlag(argv: string[], name: string): boolean {
  * karena argv-nya selalu diawali positional subcommand. */
 export function allowLocalConfig(argv: string[]): boolean {
   return hasFlag(argv, "--allow-local-config") || process.env.MINICODE_ALLOW_LOCAL_CONFIG === "1"
+}
+
+export type CliWorkMode = "DISCUSS" | "PLAN" | "EXECUTE"
+
+/**
+ * P12 S2.2 — Parse nilai WorkMode dari argumen operator (command `/work-mode`).
+ * Murni + diekspor untuk test. Hanya tiga nilai yang sah; nilai lain = tak
+ * dikenal (undefined) agar pemanggil bisa menolak tanpa mengubah state.
+ */
+export function parseWorkModeValue(raw: string): CliWorkMode | undefined {
+  const norm = raw.trim().toUpperCase()
+  if (norm === "DISCUSS" || norm === "PLAN" || norm === "EXECUTE") return norm
+  return undefined
+}
+
+/**
+ * P12 S2.2 — Resolusi WorkMode dari flag CLI + env, murni & diekspor untuk
+ * test (pola repo). Flag `--work-mode` mengalahkan env `MINICODE_WORK_MODE`;
+ * keduanya tak ada = EXECUTE (perilaku lama). Nilai tak dikenal TIDAK
+ * melebar diam-diam — gagal ke EXECUTE + pesan peringatan (fail-closed).
+ * Case-insensitive agar konsisten dengan flag permission lainnya.
+ */
+export function resolveWorkModeFlag(getArg: (n: string) => string | undefined): {
+  workMode: CliWorkMode
+  warning?: string
+} {
+  const raw = getArg("--work-mode") ?? process.env.MINICODE_WORK_MODE
+  if (raw === undefined) return { workMode: "EXECUTE" }
+  const parsed = parseWorkModeValue(raw)
+  if (parsed) return { workMode: parsed }
+  return {
+    workMode: "EXECUTE",
+    warning: `--work-mode requires DISCUSS|PLAN|EXECUTE, ignoring "${raw}" (using EXECUTE)`,
+  }
 }
 
 export function getArg(argv: string[], name: string): string | undefined {

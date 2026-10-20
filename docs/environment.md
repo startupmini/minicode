@@ -15,6 +15,7 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | `MINICODE_PLAN` | `1` → mode plan (tanpa `--plan`) |
 | `MINICODE_PERMISSION` | `allowlist` → mode permission |
 | `MINICODE_TOOL_SCOPE` | `explore` → subset read-only 12 tool (sama `--tool-scope explore`) |
+| `MINICODE_WORK_MODE` | `DISCUSS` \| `PLAN` \| `EXECUTE` → work mode (lapis intent di atas permission mode; sama `--work-mode`; flag menang atas env; nilai tak dikenal = EXECUTE) |
 | `MINICODE_HOOKS` | `1` → jalankan hook `pre/post-run` dari `~/.minicode/hooks/*.js` & `.minicode/hooks/*.js` (konteks di env `MINICODE_HOOK_CTX`; env hook disanitasi tanpa secret; dilewati bila sesi dibatalkan) |
 | `MINICODE_SESSION_TTL_DAYS` | TTL sesi (default 30; `0` = selamanya) |
 | `MINICODE_HOME` | Override home untuk DB lokal/global (sessions + vector); default `~` |

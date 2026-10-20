@@ -24,9 +24,9 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { TaskGraph } from "../src/task/graph.ts"
-import { TaskStore, resetTaskStoreHandles, type NewTaskInput } from "../src/task/store.ts"
-import type { Blocker } from "../src/task/readiness.ts"
 import type { Task, TaskSnapshot, TaskStatus } from "../src/task/model.ts"
+import type { Blocker } from "../src/task/readiness.ts"
+import { type NewTaskInput, resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = join(HERE, "..")

@@ -19,8 +19,8 @@
 // parent tak bisa diandalkan.
 
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { mkdtempSync, rmSync } from "node:fs"
+import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { FakeProvider } from "#minicore/test/fakes.ts"
@@ -33,8 +33,8 @@ import {
 } from "../src/policy/work-mode.ts"
 import { readFileTool } from "../src/tools/read_file.ts"
 import type { ToolCall } from "../vendor/minicore/src/core/types.ts"
-import { WORK_MODE_CELLS, cellOf } from "./helpers/work-mode-matrix.ts"
 import { type FakeTty, installFakeTty } from "./helpers/tui-harness.ts"
+import { cellOf, WORK_MODE_CELLS } from "./helpers/work-mode-matrix.ts"
 
 const ALL_MODES: PermissionMode[] = ["auto", "readonly", "plan", "allow-all", "ask", "allowlist"]
 

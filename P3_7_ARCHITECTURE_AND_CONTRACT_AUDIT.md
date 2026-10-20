@@ -514,8 +514,8 @@ HIGH
 
 ## 23. Owner Ratification Record
 
-**Status at audit time:** the audit's single bounded condition (non-blocking finding 1) was the unratified content policy. **Ratified** via P3_7_CONTENT_POLICY_RATIFICATION_REPORT.md and the P3.7 — Owner-Ratified Full-Coverage Fold Content Policy subsection in P3_ROADMAP.md.
+**Status at audit time:** the audit's single bounded condition (non-blocking finding 1) was the unratified content policy. **Ratified** via P3_7_CONTENT_POLICY_RATIFICATION_REPORT.md and the P3.7 โ€” Owner-Ratified Full-Coverage Fold Content Policy subsection in P3_ROADMAP.md.
 
 - **Original audit finding:** content policy (preserve-vs-omit + LLM-free) needed owner ratification; all other contracts defined.
-- **Owner-ratified content policy:** deterministic, rule-based, LLM-free, network-free fold model; full coverage = processed-and-accounted (not lossless); preservation categories (ง4.3) and condensation rules (ง4.4) as specified; unsupported content fails safe without new statuses; A+C invariant preserved.
+- **Owner-ratified content policy:** deterministic, rule-based, LLM-free, network-free fold model; full coverage = processed-and-accounted (not lossless); preservation categories (ยง4.3) and condensation rules (ยง4.4) as specified; unsupported content fails safe without new statuses; A+C invariant preserved.
 - **Implementation status:** NOT STARTED (this ratification authorizes scope only, not code).

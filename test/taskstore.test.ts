@@ -11,13 +11,13 @@
 // deletes "whatever looks like ours", and no cleanup is built around
 // `process.cwd()`.
 
-import { afterEach, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
-import { mkdtemp, rm } from "node:fs/promises"
+import { afterEach, expect, test } from "bun:test"
 import { existsSync } from "node:fs"
+import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { isTaskId, isTaskStatus, taskIdFromIndex, TaskError } from "../src/task/model.ts"
+import { isTaskId, isTaskStatus, TaskError, taskIdFromIndex } from "../src/task/model.ts"
 import {
   legacyDigest,
   type NewTaskInput,

@@ -26,8 +26,8 @@ import {
   type TaskIdentityProvider,
 } from "../src/presentation/adapter.ts"
 import type { DomainEvent, EventBusLike, PlanUpdatedEvent } from "../src/presentation/events.ts"
-import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 import { isTaskId } from "../src/task/model.ts"
+import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 
 const owned: string[] = []
 async function ownedDir(): Promise<string> {

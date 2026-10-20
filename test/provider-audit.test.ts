@@ -3,9 +3,9 @@
 
 import { expect, test } from "bun:test"
 import { ProviderError } from "#minicore/core/errors.ts"
+import type { ToolExecutor } from "#minicore/core/executor.ts"
 import { createSession } from "#minicore/core/index.ts"
 import type { ModelProvider, ProviderEvent, StreamRequest } from "#minicore/core/provider.ts"
-import type { ToolExecutor } from "#minicore/core/executor.ts"
 import type { ToolResult } from "#minicore/core/types.ts"
 import { allowAll, FakeProvider, fastRetryRecovery, finish, text, tool, toolCall } from "#minicore/test/fakes.ts"
 import { createRouterProvider } from "../src/providers/router.ts"

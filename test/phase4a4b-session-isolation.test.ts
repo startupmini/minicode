@@ -32,10 +32,10 @@ import { existsSync } from "node:fs"
 import { mkdtemp, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { todoReadTool, todoSession, todoWriteTool, todoOperationContext } from "../src/tools/todo.ts"
-import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
-import { decodeCanonicalAssignments } from "../src/task/assignment.ts"
 import { applyMcpContext, newMcpContextId } from "../src/mcp/server.ts"
+import { decodeCanonicalAssignments } from "../src/task/assignment.ts"
+import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
+import { todoOperationContext, todoReadTool, todoSession, todoWriteTool } from "../src/tools/todo.ts"
 
 const owned: string[] = []
 async function ownedDir(): Promise<string> {

@@ -246,6 +246,25 @@ describe("web ssg", () => {
     expect(offenders).toEqual([])
   })
 
+  test("dokumen yang pernah memakai nested list tetap bebas (regresi per-file)", () => {
+    // Guard di atas sudah memindai SELURUH docs, tapi pesannya tak menyebut
+    // file mana yang bersalah. Test ini mengunci dua dokumen yang pernah
+    // memakai list indentasi: sub-poin di bawah harus ditulis sebagai
+    // paragraf lanjutan (konvensi dokumen), bukan bullet bersarang.
+    // - TERMINAL_CONTRACT.md: invarian I35 (WorkMode) pernah memakai bullet
+    //   indentasi; sub-poin kini paragraf berlabel.
+    // - TASK_EVENT_MODEL.md: tiga sub-poin lama yang kini dirapikan.
+    for (const f of ["TERMINAL_CONTRACT.md", "TASK_EVENT_MODEL.md"]) {
+      const offenders: string[] = []
+      readFileSync(join(repoRoot, "docs", f), "utf8")
+        .split("\n")
+        .forEach((line, i) => {
+          if (/^\s+[-*] /.test(line)) offenders.push(`docs/${f}:${i + 1}`)
+        })
+      expect(offenders, `docs/${f} memakai nested list`).toEqual([])
+    }
+  })
+
   test("artikel blog contoh ter-render", () => {
     // Gagal di kode lama: CRLF membuat frontmatter tak terparse (title = nama file).
     // Niat test ini frontmatter-parsing, bukan string judul — judul mengikuti file.

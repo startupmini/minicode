@@ -23,6 +23,7 @@ import { afterEach, expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 import {
   loadTodos,
   normalizeTodos,
@@ -32,7 +33,6 @@ import {
   todoSession,
   todoWriteTool,
 } from "../src/tools/todo.ts"
-import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 
 const owned: string[] = []
 async function ownedDir(): Promise<string> {
@@ -43,8 +43,8 @@ async function ownedDir(): Promise<string> {
 
 const mkctx = () => ({ signal: new AbortController().signal }) as never
 
-let prevId = todoSession.id
-let prevCwd = todoSession.cwd
+const prevId = todoSession.id
+const prevCwd = todoSession.cwd
 afterEach(async () => {
   todoSession.id = prevId
   todoSession.cwd = prevCwd

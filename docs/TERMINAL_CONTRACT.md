@@ -313,35 +313,36 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      invokasi flag-mendahului yang dulu salah rute menjadi rute benar.
 35. **WorkMode = lapis intent di ATAS permission mode (P12 S2.2)** — dua
     dimensi yang BERJALAN BERSAMA, bukan pengganti:
-    - Nilai: `DISCUSS` (read-only penuh) · `PLAN` (ceiling rencana) ·
-      `EXECUTE` (tanpa ceiling tambahan). Default `EXECUTE` = perilaku lama
-      (kompatibel: sesi tanpa WorkMode yang eksplisit tetap EXECUTE).
-    - **Permission handler tetap satu-satunya gerbang penolakan yang menentukan
-      keamanan eksekusi.** WorkMode hanya MEMASANG CEILING di atasnya; ia
-      tidak pernah memperluas kewenangan permission mode dasar (INV-WM1).
-    - `/work-mode <DISCUSS|PLAN|EXECUTE>`: aksi operator EKSPLISIT. Tanpa
-      argumen → tampilkan mode aktif + usage; nilai invalid → pesan kesalahan
-      dan mode AKTIF TIDAK berubah; sesi tanpa kontrol WorkMode (handler izin
-      terinjeksi = policy, bukan mode) → ditolak, bukan diam-diam tampak
-      berubah. Transisi berlaku pada SESI YANG SEDANG BERJALAN: ceiling
-      permission dievaluasi per pemanggilan tool, daftar tool yang dilihat model
-      ikut turun/naik, hooks dievaluasi terhadap WorkMode aktif, dan delegasi
-      berikutnya mewarisi WorkMode parent yang aktif. WorkMode TIDAK bisa
-      dinaikkan otomatis oleh model, anak, atau argumen delegasi.
-    - **Tab/Shift+Tab dan `/mode` TETAP khusus permission mode** — WorkMode
-      tak masuk siklus Tab. WorkMode ≠ permission mode: permission mode
-      yang memutuskan allow/deny per tool; WorkMode memilih postur
-      (diskusi/rencana/bebas) dan hanya mempersempit.
-    - Hooks: gate `shouldRunHooks(permissionMode, workMode)` dievaluasi **per
-      pemanggilan** dengan WorkMode **AKTIF** (transisi `/work-mode` langsung
-      berlaku); sisi permission mode memakai **nilai startup sesi** (semantik
-      lama dipertahankan — `Tab`/`Shift+Tab` menggeser mode izin di dalam
-      handler, bukan nilai gate hooks). WorkMode `DISCUSS` tetap menahan hook
-      walau permission mode `auto`.
-    - Footer: mode WorkMode aktif tampil sebagai `<WorkMode>·<permission mode>`
-      hanya saat WorkMode ≠ EXECUTE (mis. `PLAN·auto`, `DISCUSS·auto`,
-      `PLAN·readonly`); saat EXECUTE label permission mode apa adanya (mis.
-      `auto`) — perilaku lama dipertahankan.
+    **Nilai:** `DISCUSS` (read-only penuh) · `PLAN` (ceiling rencana) ·
+    `EXECUTE` (tanpa ceiling tambahan). Default `EXECUTE` = perilaku lama
+    (kompatibel: sesi tanpa WorkMode yang eksplisit tetap EXECUTE).
+    **Gerbang penolakan:** permission handler tetap satu-satunya yang menentukan
+    keamanan eksekusi. WorkMode hanya MEMASANG CEILING di atasnya; ia tidak
+    pernah memperluas kewenangan permission mode dasar (INV-WM1).
+    **Command `/work-mode <DISCUSS|PLAN|EXECUTE>`:** aksi operator EKSPLISIT.
+    Tanpa argumen → tampilkan mode aktif + usage; nilai invalid → pesan
+    kesalahan dan mode AKTIF TIDAK berubah; sesi tanpa kontrol WorkMode
+    (handler izin terinjeksi = policy, bukan mode) → ditolak, bukan
+    diam-diam tampak berubah. Transisi berlaku pada SESI YANG SEDANG
+    BERJALAN: ceiling permission dievaluasi per pemanggilan tool, daftar tool
+    yang dilihat model ikut turun/naik, hooks dievaluasi terhadap WorkMode
+    aktif, dan delegasi berikutnya mewarisi WorkMode parent yang aktif.
+    WorkMode TIDAK bisa dinaikkan otomatis oleh model, anak, atau argumen
+    delegasi.
+    **Pemisahan dari permission mode:** Tab/Shift+Tab dan `/mode` TETAP
+    khusus permission mode — WorkMode tak masuk siklus Tab. Permission mode
+    yang memutuskan allow/deny per tool; WorkMode memilih postur
+    (diskusi/rencana/bebas) dan hanya mempersempit.
+    **Hooks:** gate `shouldRunHooks(permissionMode, workMode)` dievaluasi
+    **per pemanggilan** dengan WorkMode **AKTIF** (transisi `/work-mode`
+    langsung berlaku); sisi permission mode memakai **nilai startup sesi**
+    (semantik lama dipertahankan — `Tab`/`Shift+Tab` menggeser mode izin di
+    dalam handler, bukan nilai gate hooks). WorkMode `DISCUSS` tetap menahan
+    hook walau permission mode `auto`.
+    **Footer:** mode WorkMode aktif tampil sebagai
+    `<WorkMode>·<permission mode>` hanya saat WorkMode ≠ EXECUTE (mis.
+    `PLAN·auto`, `DISCUSS·auto`, `PLAN·readonly`); saat EXECUTE label
+    permission mode apa adanya (mis. `auto`) — perilaku lama dipertahankan.
 
 ## Grammar (ringkas)
 

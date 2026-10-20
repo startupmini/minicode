@@ -34,20 +34,20 @@ import { afterEach, expect, test } from "bun:test"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { applyMcpContext, newMcpContextId } from "../src/mcp/server.ts"
 import {
   createPresentationAdapter,
   type TaskIdentityProvider,
 } from "../src/presentation/adapter.ts"
 import type { DomainEvent, EventBusLike, PlanUpdatedEvent } from "../src/presentation/events.ts"
-import { todoSession, todoWriteTool } from "../src/tools/todo.ts"
-import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
-import { createTaskIdentityResolver, synchronizeCanonicalTasks } from "../src/task/sync.ts"
 import {
+  type CanonicalAssignmentTable,
   decodeCanonicalAssignments,
   encodeCanonicalAssignments,
-  type CanonicalAssignmentTable,
 } from "../src/task/assignment.ts"
-import { applyMcpContext, newMcpContextId } from "../src/mcp/server.ts"
+import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
+import { createTaskIdentityResolver, synchronizeCanonicalTasks } from "../src/task/sync.ts"
+import { todoSession, todoWriteTool } from "../src/tools/todo.ts"
 
 const owned: string[] = []
 async function ownedDir(): Promise<string> {

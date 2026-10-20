@@ -18,15 +18,15 @@
 // directory per test, removed by that exact absolute path. No `readdir(".")`, no
 // pattern delete, no cwd-based cleanup.
 
-import { afterEach, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
+import { afterEach, expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { loadTodos, todoSession, todoWriteTool } from "../src/tools/todo.ts"
 import { TaskError } from "../src/task/model.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 import { hasCanonicalIdentity, synchronizeCanonicalTasks } from "../src/task/sync.ts"
+import { loadTodos, todoSession, todoWriteTool } from "../src/tools/todo.ts"
 
 const owned: string[] = []
 async function ownedDir(): Promise<string> {

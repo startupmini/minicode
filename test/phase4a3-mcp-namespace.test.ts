@@ -25,8 +25,8 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { applyMcpContext, newMcpContextId } from "../src/mcp/server.ts"
-import { todoSession, todoWriteTool } from "../src/tools/todo.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
+import { todoSession, todoWriteTool } from "../src/tools/todo.ts"
 
 const owned: string[] = []
 async function ownedDir(): Promise<string> {

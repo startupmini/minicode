@@ -18,22 +18,22 @@
 // `cancel` or `complete`. Not by omission — adding any of them would make
 // TaskGraph a second authority competing with TaskStore (design lock S14).
 
-import type { TaskSnapshot, TaskStatus } from "./model"
 import {
   analyseRelations,
   type Diagnostic,
   type GraphNode,
   type RelationAnalysis,
 } from "./graph-validate"
+import type { TaskSnapshot, TaskStatus } from "./model"
 import {
-  computeBlockers,
-  eligibleForReadiness,
-  isReady as computeIsReady,
   type Blocker,
+  computeBlockers,
+  isReady as computeIsReady,
+  eligibleForReadiness,
   type NotReady,
 } from "./readiness"
 
-export type { GraphNode, Diagnostic } from "./graph-validate"
+export type { Diagnostic, GraphNode } from "./graph-validate"
 export type { Blocker, BlockerKind, NotReady } from "./readiness"
 
 const EMPTY_IDS: readonly string[] = Object.freeze([])

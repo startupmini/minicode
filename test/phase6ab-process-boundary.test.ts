@@ -20,6 +20,7 @@ import { deleteSession } from "../src/session/persistence.ts"
 import { resetSessionOwnershipForTests } from "../src/task/session-ownership.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 import { type FakeProvider, startFakeProvider } from "./helpers/fake-provider.ts"
+import { cleanEnvForChild } from "./helpers/pty-harness.ts"
 
 const REPO = import.meta.dir.replace(/[\\/]test$/, "").replace(/\\/g, "/")
 
@@ -281,7 +282,7 @@ async function runChild(
       opts.signal ?? "-",
       opts.withProvider ? (provider as FakeProvider).baseUrl : "-",
     ],
-    { cwd: dir, stdout: "pipe", stderr: "pipe", env: { ...process.env, MINICODE_COMPACT: "1" } },
+    { cwd: dir, stdout: "pipe", stderr: "pipe", env: cleanEnvForChild({ MINICODE_COMPACT: "1" }) },
   )
 
   const out = await new Response(p.stdout).text()
@@ -345,6 +346,13 @@ describe("6AB S19 P1/P2 - the trigger is real, and OFF has no Scheduler", () => 
 describe("6AB S19 P3 - two enabled processes, one session", () => {
   test("P3: the second process is excluded by the lease", async () => {
     const signal = join(dir, "held.signal")
+    // [HERMETIC] Anak pertama melakukan komposisi sesi NYTIF (createCliSession),
+    // jadi ia BUTUH provider — tanpa itu `createCliSession` menolak (NoProviderError)
+    // dan anak tak pernah "armed", sehingga test gagal karena alasan yang salah
+    // (bukan karena lease). Provider tiruan lokal + config repo-lokal sementara
+    // (ditulis anak itu sendiri dari baseUrl yang diteruskan) → tanpa API key
+    // eksternal dan tanpa `~/.minicode/config.json` milik pengguna.
+    const fake = startFakeProvider([{ kind: "text", text: "autonomous work done" }])
     const first = Bun.spawn(
       [
         "bun",
@@ -357,28 +365,32 @@ describe("6AB S19 P3 - two enabled processes, one session", () => {
         "hold",
         "-",
         signal,
-        "-",
+        fake.baseUrl,
       ],
-      { cwd: dir, stdout: "pipe", stderr: "pipe" },
+      { cwd: dir, stdout: "pipe", stderr: "pipe", env: cleanEnvForChild() },
     )
 
-    // Wait for the child's own signal file: never a sleep.
-    const deadline = Date.now() + 60_000
-    while (!existsSync(signal)) {
-      if (Date.now() > deadline) throw new Error("first child never armed")
-      await Bun.sleep(5)
+    try {
+      // Wait for the child's own signal file: never a sleep.
+      const deadline = Date.now() + 60_000
+      while (!existsSync(signal)) {
+        if (Date.now() > deadline) throw new Error("first child never armed")
+        await Bun.sleep(5)
+      }
+
+      const second = await runChild("p3", { enabled: true, action: "fire", withProvider: true })
+      // [FACT] The lease held by the live process excludes the newcomer LOUDLY:
+      // construction throws, it does not silently produce a second Scheduler.
+      expect(second.report.ok).toBe(false)
+      expect(second.exitCode).toBe(4)
+      expect(second.report.error).toContain("lease")
+
+      // The first child exits by itself when its hold window expires; awaiting it
+      // here keeps the assertion honest without signalling a process group.
+      await first.exited
+    } finally {
+      fake.close()
     }
-
-    const second = await runChild("p3", { enabled: true, action: "fire" })
-    // [FACT] The lease held by the live process excludes the newcomer LOUDLY:
-    // construction throws, it does not silently produce a second Scheduler.
-    expect(second.report.ok).toBe(false)
-    expect(second.exitCode).toBe(4)
-    expect(second.report.error).toContain("lease")
-
-    // The first child exits by itself when its hold window expires; awaiting it
-    // here keeps the assertion honest without signalling a process group.
-    await first.exited
   }, 120_000)
 })
 
@@ -414,7 +426,10 @@ describe("6AB S19 P4/P5 - deletion and restart", () => {
 
   test("P5: a restarted process cannot continue the old authority", async () => {
     // Child 1 takes the lease and is killed without releasing it.
-    const crashed = await runChild("p5", { action: "crash" })
+    // [HERMETIC] "crash" DAN "fire" sama-sama melakukan komposisi sesi lebih dulu,
+    // jadi keduanya butuh provider — tanpa provider tiruan, anak menolak
+    // (NoProviderError) dan test gagal karena alasan yang salah (bukan lease).
+    const crashed = await runChild("p5", { action: "crash", withProvider: true })
     expect(crashed.report.ok).toBe(true)
     expect(crashed.report.hasAuthority).toBe(true)
     const oldToken = crashed.report.token
@@ -428,7 +443,7 @@ describe("6AB S19 P4/P5 - deletion and restart", () => {
     expect(row?.ownerToken).toBe(oldToken as string | undefined)
     expect(row!.leaseExpiresAt).toBeGreaterThan(Date.now())
 
-    const restarted = await runChild("p5", { action: "fire" })
+    const restarted = await runChild("p5", { action: "fire", withProvider: true })
     expect(restarted.report.ok).toBe(false)
     expect(restarted.exitCode).toBe(4)
     expect(restarted.report.error).toContain("lease")

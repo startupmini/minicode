@@ -53,10 +53,7 @@ function requireModeControl(base: PermissionHandler): ModeControl {
 // Seleksi ceiling per mode PM SAAT INI (bukan snapshot konstruksi):
 // DISCUSS selalu read-only; PLAN memakai ceiling read-only saat PM sudah lebih
 // ketat (`allowlist`/`readonly`), selain itu ceiling plan.
-function ceilingFor(
-  workMode: RestrictiveWorkMode,
-  baseMode: PermissionMode,
-): "readonly" | "plan" {
+function ceilingFor(workMode: RestrictiveWorkMode, baseMode: PermissionMode): "readonly" | "plan" {
   if (workMode === "DISCUSS") return "readonly"
   return baseMode === "allowlist" || baseMode === "readonly" ? "readonly" : "plan"
 }
@@ -76,7 +73,10 @@ export function createWorkModePermissionHandler(opts: {
       mode: "readonly",
       root: opts.root,
     }) as unknown as PermissionHandler,
-    plan: createPermissionHandler({ mode: "plan", root: opts.root }) as unknown as PermissionHandler,
+    plan: createPermissionHandler({
+      mode: "plan",
+      root: opts.root,
+    }) as unknown as PermissionHandler,
   }
 
   // Pemilik keputusan deny per-call, supaya `describeDenial` membaca seam

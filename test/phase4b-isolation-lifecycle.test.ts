@@ -19,10 +19,10 @@ import { existsSync } from "node:fs"
 import { mkdtemp, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
-import { todoReadTool, todoWriteTool } from "../src/tools/todo.ts"
-import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
-import { decodeCanonicalAssignments } from "../src/task/assignment.ts"
 import { applyMcpContext, newMcpContextId } from "../src/mcp/server.ts"
+import { decodeCanonicalAssignments } from "../src/task/assignment.ts"
+import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
+import { todoReadTool, todoWriteTool } from "../src/tools/todo.ts"
 
 const owned: string[] = []
 async function ownedDir(): Promise<string> {
@@ -42,7 +42,9 @@ const opCtx = (dir: string, sessionId: string) =>
   ({ signal: new AbortController().signal, cwd: dir, sessionId }) as never
 const seed = (dir: string, sessionId: string, titles: string[]) => {
   const s = new TaskStore(dir)
-  titles.forEach((t, i) => s.createTask(sessionId, { title: t, status: "PENDING", order: i, provenance: prov }))
+  titles.forEach((t, i) => {
+    s.createTask(sessionId, { title: t, status: "PENDING", order: i, provenance: prov })
+  })
 }
 const rows = (dir: string, sessionId: string) =>
   Object.fromEntries(new TaskStore(dir).listTasks(sessionId).map((t) => [t.id, t.title]))

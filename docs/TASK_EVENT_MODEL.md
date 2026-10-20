@@ -55,11 +55,11 @@ Ditambah tiga field baru yang tidak ada di event lain:
 actor: "user" | "agent" | "system"
 
 /** Mengaitkan perubahan dengan sebabnya (verifikasi, mutasi file, event lain).
- *  Untuk `task.reconciled`, ini menunjuk verdict yang menyiksanya. */
+    Untuk `task.reconciled`, ini menunjuk verdict yang menyiksanya. */
 correlationId?: string
 
 /** Event yang dioxide oleh event ini. Untuk `task.reconciled`, ini event
- *  `task.completion_claimed` yang dibatalkan. */
+    `task.completion_claimed` yang dibatalkan. */
 supersedes?: number
 ```
 
@@ -140,10 +140,10 @@ berpisah - persis kelas bug yang sudah diperbaiki di PF-02.
 
 **Tidak ada event lama yang dibuang.** `plan.updated` yang sudah terbit dengan
 `planId` per-turn tetap bisa dibaca. Reducer harus bisa menangani keduanya:
-  - `planId` per-turn (lama) → dipetakan ke task lewat `stepId` yang lama
-  (yaitu indeks posisi), sehingga tidak bisa dipetakan dengan benar, jadi
-  **diabaikan untuk rekonstruksi TaskState**.
-- Task event baru (dengan `taskId`) → sumber TaskState.
+`planId` per-turn (lama) → dipetakan ke task lewat `stepId` yang lama (yaitu
+indeks posisi), sehingga tidak bisa dipetakan dengan benar, jadi **diabaikan
+untuk rekonstruksi TaskState**; Task event baru (dengan `taskId`) → sumber
+TaskState.
 
 Artinya: TaskState yang direplay dari log **mulai berlaku sejak task events
 pertama**, dan sebelum itu state diambil dari `loadTodoStore`. Ini bukan

@@ -14,8 +14,8 @@
 // directory per test, removed by that exact absolute path. No `readdir(".")`, no
 // pattern delete, no cwd-based cleanup.
 
-import { afterEach, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
+import { afterEach, expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"

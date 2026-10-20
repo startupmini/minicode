@@ -26,12 +26,12 @@ import { afterEach, expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { todoReadTool, todoWriteTool } from "../src/tools/todo.ts"
-import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
-import { decodeCanonicalAssignments } from "../src/task/assignment.ts"
 import { createPresentationAdapter, type TaskIdentityProvider } from "../src/presentation/adapter.ts"
-import { createTaskIdentityResolver } from "../src/task/sync.ts"
 import type { DomainEvent, EventBusLike, PlanUpdatedEvent } from "../src/presentation/events.ts"
+import { decodeCanonicalAssignments } from "../src/task/assignment.ts"
+import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
+import { createTaskIdentityResolver } from "../src/task/sync.ts"
+import { todoReadTool, todoWriteTool } from "../src/tools/todo.ts"
 
 const owned: string[] = []
 async function ownedDir(): Promise<string> {
@@ -55,9 +55,9 @@ const opCtx = (dir: string, sessionId = S) =>
 const open = (dir: string) => new TaskStore(dir)
 const seed = (dir: string, titles: string[], sessionId = S) => {
   const store = open(dir)
-  titles.forEach((title, i) =>
-    store.createTask(sessionId, { title, status: "PENDING", order: i, provenance: prov }),
-  )
+  titles.forEach((title, i) => {
+    store.createTask(sessionId, { title, status: "PENDING", order: i, provenance: prov })
+  })
   return store
 }
 /** id -> title, as the durable truth. */

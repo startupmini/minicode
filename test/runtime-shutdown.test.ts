@@ -8,8 +8,8 @@
 // journal uncertainty dipancing lewat seam resmi M3/M11 (hooks, checkpoint),
 // bukan lewat mock yang mengubah kontrak.
 
-import { expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { afterEach, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -24,6 +24,7 @@ import { createProductionRuntime, RUNTIME_GATE_ENABLED } from "../src/runtime/pr
 import type { RedispatchPlan } from "../src/runtime/recovery.ts"
 import type { RuntimeHostHooks } from "../src/runtime/runtime-host.ts"
 import { normalizeSourceEol } from "./helpers/source-eol.ts"
+import type { FakeProvider } from "./helpers/fake-provider.ts"
 
 const PHASE_ORDER: readonly RuntimeShutdownPhase[] = [
   "admission-latch",
@@ -36,6 +37,41 @@ const PHASE_ORDER: readonly RuntimeShutdownPhase[] = [
 ]
 
 const dirs: string[] = []
+const providers: FakeProvider[] = []
+
+/**
+ * Seed provider tiruan + config repo-lokal sementara di `dir`.
+ *
+ * [HERMETIC] `createCliSession` melakukan komposisi sesi yang MEMBUTUHKAN
+ * provider — tanpa ini sesi ditolak (NoProviderError) dan test gagal karena
+ * alasan yang salah (bukan karena kontrak yang diuji). Config ditulis ke
+ * workspace sementara dan dibaca lewat `allowLocalConfig`, jadi tidak butuh
+ * API key eksternal dan tidak menyentuh `~/.minicode/config.json` milik
+ * pengguna. Server tiruan ditutup di afterEach — termasuk saat assertion
+ * gagal (cleanup tak boleh bocor).
+ */
+async function seedFakeProvider(dir: string): Promise<FakeProvider> {
+  const { startFakeProvider } = await import("./helpers/fake-provider.ts")
+  const fake = startFakeProvider([{ kind: "text", text: "halo" }])
+  providers.push(fake)
+  mkdirSync(join(dir, ".minicode"), { recursive: true })
+  writeFileSync(
+    join(dir, ".minicode", "config.json"),
+    JSON.stringify({
+      providers: [{ id: "fake", baseUrl: fake.baseUrl, apiKey: "sk-test", models: ["m"] }],
+    }),
+    "utf8",
+  )
+  return fake
+}
+
+afterEach(async () => {
+  for (const p of providers.splice(0)) {
+    try {
+      p.close()
+    } catch {}
+  }
+})
 
 function tmpDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "mc-m14s-"))
@@ -550,8 +586,14 @@ test("S15 E2E: CLI -> production runtime -> dispatch -> kernel -> journal -> shu
   const dir = tmpDir()
   const journalPath = join(dir, ".minicode", "runtime-journal-m14-e2e.db")
   const { createCliSession } = await import("../cli/setup.ts")
+  // [HERMETIC] `createCliSession` melakukan komposisi sesi NYTIF, jadi ia butuh
+  // provider. Tanpa provider tiruan, sesi ditolak (NoProviderError) dan test
+  // gagal karena alasan yang salah. Provider lokal + config repo-lokal
+  // sementara → tanpa API key eksternal, tanpa `~/.minicode/config.json` user.
+  await seedFakeProvider(dir)
   const session = await createCliSession({
     cwd: dir,
+    allowLocalConfig: true,
     sessionId: "m14-e2e",
     prompt: "",
     enterRepl: false,
@@ -616,8 +658,12 @@ test("S15 E2E: CLI -> production runtime -> dispatch -> kernel -> journal -> shu
 test("S15b resume: identitas jurnal tetap resumeId, shutdown+reopen menemukan history", async () => {
   const dir = tmpDir()
   const { createCliSession } = await import("../cli/setup.ts")
+  // [HERMETIC] Sama seperti S15: komposisi sesi butuh provider → provider
+  // tiruan + config repo-lokal sementara (lihat seedFakeProvider).
+  await seedFakeProvider(dir)
   const base = {
     cwd: dir,
+    allowLocalConfig: true,
     prompt: "",
     enterRepl: false,
     verbose: false,

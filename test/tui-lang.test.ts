@@ -1,22 +1,23 @@
 // Integrasi /lang end-to-end (driver cli/tui.ts + TuiApp + state.json):
 // ketik "/lang id" → locale sesi berubah + tersimpan; sesi berikut baca.
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+
 import { Database } from "bun:sqlite"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { CliSession } from "../cli/setup.ts"
 import { createCliSession } from "../cli/setup.ts"
 import { runTui } from "../cli/tui.ts"
+import { loadLang } from "../src/config.ts"
 import { acquireSessionWriter } from "../src/session/authority.ts"
 import { saveSession } from "../src/session/persistence.ts"
 import { SESSION_LEASE_MS } from "../src/task/session-authority.ts"
 import { resetTaskStoreHandles } from "../src/task/store.ts"
-import { loadLang } from "../src/config.ts"
 import { attachSimpleLogger } from "../src/ui/assistant/simple.ts"
 import { currentLocale, resetLocaleState } from "../src/ui/i18n/locale.ts"
-import { createFakeBus, installFakeTty, KEY } from "./helpers/tui-harness.ts"
 import { startFakeProvider } from "./helpers/fake-provider.ts"
+import { createFakeBus, installFakeTty, KEY } from "./helpers/tui-harness.ts"
 
 let tty: ReturnType<typeof installFakeTty> | null = null
 const tmpRoots: string[] = []

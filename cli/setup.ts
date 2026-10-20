@@ -85,8 +85,8 @@ import {
 } from "../src/session/checkpoint.ts"
 import {
   attachHeadlessCompactionBridge,
-  runtimeMetadataFromSelection,
   type RuntimeContextMetadata,
+  runtimeMetadataFromSelection,
 } from "../src/session/context-adapter.ts"
 import {
   assembleContext,
@@ -94,11 +94,11 @@ import {
   stripContextOnly,
 } from "../src/session/context-assembly.ts"
 import { countDurableCompactions, deriveFrontierFromDurable } from "../src/session/context-identity.ts"
-import { rowsToCanonicalRefs, selectContext } from "../src/session/context-selector.ts"
 import {
   produceSummaryProjection,
   readConsumableSummaryProjection,
 } from "../src/session/context-projection.ts"
+import { rowsToCanonicalRefs, selectContext } from "../src/session/context-selector.ts"
 import { formatSessionIdentityLine, resolveSessionIdentity } from "../src/session/identity.ts"
 import {
   attachMutationJournal,

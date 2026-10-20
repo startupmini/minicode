@@ -40,9 +40,9 @@ import { afterEach, expect, test } from "bun:test"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { todoWriteTool } from "../src/tools/todo.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
-import { synchronizeCanonicalTasks, type CanonicalTaskInput } from "../src/task/sync.ts"
+import { type CanonicalTaskInput, synchronizeCanonicalTasks } from "../src/task/sync.ts"
+import { todoWriteTool } from "../src/tools/todo.ts"
 
 const owned: string[] = []
 async function ownedDir(): Promise<string> {
@@ -63,7 +63,9 @@ const opCtx = (dir: string) => ({ signal: new AbortController().signal, cwd: dir
 
 const seed = (dir: string, titles: string[]) => {
   const s = new TaskStore(dir)
-  titles.forEach((t, i) => s.createTask(S, { title: t, status: "PENDING", order: i, provenance: prov }))
+  titles.forEach((t, i) => {
+    s.createTask(S, { title: t, status: "PENDING", order: i, provenance: prov })
+  })
 }
 
 /** The FULL durable snapshot. Every atomicity assertion compares against this. */

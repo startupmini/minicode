@@ -12,9 +12,9 @@
 // sama dengan isolasi per-handler di events kernel). Dual-subscribe dengan
 // sink lama — perilaku user NOL berubah pada Fase 1.
 
+import { type CanonicalAssignmentTable, decodeCanonicalAssignments } from "../task/assignment.ts"
 import { classifyToolResult, denyReasonOf, summarizeArgs } from "../telemetry/trace.ts"
 import { normalizeTodos } from "../tools/todo.ts"
-import { decodeCanonicalAssignments, type CanonicalAssignmentTable } from "../task/assignment.ts"
 import type {
   ApprovalEventHook,
   ApprovalHookEvent,

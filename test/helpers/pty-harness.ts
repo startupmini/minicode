@@ -183,6 +183,59 @@ export function cleanEnvForChild(extra: Record<string, string | undefined> = {})
   return { ...out, ...extra }
 }
 
+/**
+ * Hasil self-check: apakah EXIT CODE anak bisa diverifikasi di platform ini?
+ *
+ * [KENAPA PERLU] Di Windows ConPTY, node-pty melaporkan keluar anak yang
+ * diinterupsi secara interaktif TANPA kode (`{exitCode: undefined}`), padahal
+ * anak yang keluar biasa (`process.exit(0)`) dilaporkan `0` dengan benar.
+ * "undefined" berarti "harness tak bisa melihat status keluar" — BUKAN
+ * "berhasil" dan BUKAN "gagal". Test yang menganggapnya sukses = hijau
+ * palsu; test yang menganggapnya gagal = merah palsu.
+ *
+ * Probe memakaijalur NYATA (CLI TUI via spawnTui + Ctrl+D), bukan probe
+ * generik, karena yang diperiksa justru perilaku jalur interaktif itu.
+ * Hasil di-cache per proses test.
+ */
+export interface PtyExitAvailability {
+  ok: boolean
+  reason: string
+}
+let exitAvailability: PtyExitAvailability | undefined
+
+export async function ptyExitCodeVerifiable(): Promise<PtyExitAvailability> {
+  if (exitAvailability) return exitAvailability
+  const spawn = await loadPty()
+  if (!spawn) {
+    exitAvailability = { ok: false, reason: "PTY tidak tersedia" }
+    return exitAvailability
+  }
+  let tui: TuiPtyHandle | undefined
+  try {
+    tui = await spawnTui({ cols: 80, rows: 24 })
+    await tui.waitFor((raw) => raw.includes("00.00.00"), 20_000)
+    tui.send("\x04")
+    await tui.waitFor((raw) => raw.includes("\x1b[?1049l"), 10_000)
+    const e = await tui.exit()
+    exitAvailability =
+      typeof e.exitCode === "number"
+        ? { ok: true, reason: "ok" }
+        : {
+            ok: false,
+            reason:
+              "platform tak melaporkan exit code anak yang keluar via PTY interaktif " +
+              "(ConPTY/node-pty) — verifikasi exit code DILEWATI, bukan dianggap sukses",
+          }
+  } catch (e) {
+    exitAvailability = { ok: false, reason: `probe exit code gagal: ${(e as Error).message}` }
+  } finally {
+    try {
+      tui?.dispose()
+    } catch {}
+  }
+  return exitAvailability
+}
+
 export interface TuiPtyHandle {
   /** Byte stream mentah sejauh ini (append-only). */
   raw(): string
@@ -194,8 +247,17 @@ export interface TuiPtyHandle {
   waitFor(pred: (raw: string) => boolean, timeoutMs?: number): Promise<void>
   /** Kirim sinyal (POSIX: "SIGTERM"/"SIGKILL"; Windows: terminate). */
   kill(signal?: string): void
-  /** Resolve saat proses anak mati. */
-  exit(): Promise<{ exitCode: number; signal?: number }>
+  /**
+   * Resolve saat proses anak mati.
+   *
+   * `exitCode` MAYBE `undefined`: di Windows ConPTY, node-pty sometimes reports
+   * the exit of an interactively-quit child WITHOUT a code (`{exitCode:
+   * undefined}`), while a plain `process.exit(0)` child reports `0` fine. So
+   * `undefined` means "the harness could not observe the exit status" — NOT
+   * "success" and NOT "failure". Callers must treat it as unverifiable
+   * (see `ptyExitCodeVerifiable`).
+   */
+  exit(): Promise<{ exitCode: number | undefined; signal?: number }>
   /** Matikan anak (bila masih hidup) + hapus workspace hermetic. */
   dispose(): void
   /** Direktori kerja hermetic sesi ini. */
@@ -269,7 +331,7 @@ export async function spawnTui(opts: SpawnTuiOptions = {}): Promise<TuiPtyHandle
 
   let acc = ""
   child.onData((d: string) => (acc += d))
-  const exited = new Promise<{ exitCode: number; signal?: number }>((r) =>
+  const exited = new Promise<{ exitCode: number | undefined; signal?: number }>((r) =>
     child.onExit((e) => r(e)),
   )
   // Jangan biarkan unhandled rejection bila test tak memanggil exit().

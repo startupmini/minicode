@@ -4,8 +4,8 @@
 // in-txn). Waktu disuntik via `now` (tanpa sleep), takeover diuji termasuk
 // simultan, basi, dan idempoten. Tanpa flaky timing.
 
-import { expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
+import { expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -29,8 +29,8 @@ import {
   saveSession,
   takeoverSessionEpoch,
 } from "../src/session/persistence.ts"
-import { TaskStore } from "../src/task/store.ts"
 import { SESSION_LEASE_MS } from "../src/task/session-authority.ts"
+import { TaskStore } from "../src/task/store.ts"
 import { startFakeProvider } from "./helpers/fake-provider.ts"
 
 function ws(): string {

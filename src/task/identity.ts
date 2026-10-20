@@ -24,7 +24,7 @@
 // `TodoItem` is NOT modified here.
 
 import type { TodoStatus } from "../tools/todo.ts"
-import { isTaskId, type Task, type TaskStatus, TaskError } from "./model.ts"
+import { isTaskId, type Task, TaskError, type TaskStatus } from "./model.ts"
 import type { NewTaskInput, TaskStore } from "./store.ts"
 
 // ── status mapping ───────────────────────────────────────────────────────────

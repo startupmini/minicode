@@ -34,10 +34,10 @@
 //   - one `todo_write` is one `withTransaction`: every update, creation, order
 //     change and metadata write either all commit or all roll back.
 
-import { TaskError, isTaskId, type Task } from "./model.ts"
-import { type DeclaredTask, planTaskIdentities, todoStatusToTask } from "./identity.ts"
-import { TaskStore } from "./store.ts"
 import type { CanonicalAssignment, CanonicalAssignmentTable } from "./assignment.ts"
+import { type DeclaredTask, planTaskIdentities, todoStatusToTask } from "./identity.ts"
+import { isTaskId, type Task, TaskError } from "./model.ts"
+import { TaskStore } from "./store.ts"
 
 /** One declared item, already mapped out of the legacy `TodoItem` shape.
  *  `content` is mapped to `title` by the caller - the store requires `title`,

@@ -15,8 +15,8 @@
 // only to those. `READY` is not one of them either — it is a derived answer,
 // not a status.
 
-import type { TaskStatus } from "./model"
 import type { Diagnostic, GraphNode, RelationAnalysis } from "./graph-validate"
+import type { TaskStatus } from "./model"
 
 export type BlockerKind =
   | "DEPENDENCY_UNSATISFIED"

@@ -1,7 +1,7 @@
 import { constants } from "node:fs"
 import type { FileHandle } from "node:fs/promises"
 import { open, realpath } from "node:fs/promises"
-import { tmpdir, homedir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from "node:path"
 import { isPathOutsideRoot, isSensitive } from "../policy/jail.ts"
 

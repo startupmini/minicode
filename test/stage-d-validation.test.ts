@@ -56,6 +56,43 @@ function writeProviderConfig(ws: { configPath: string }, baseUrl: string): void 
   )
 }
 
+/**
+ * [P12 Stage 3] Seed provider tiruan pada jalur CONFIG GLOBAL.
+ *
+ * `getProvider()` (src/tools/task.ts) memanggil `loadConfig()` tanpa cwd/allowLocal
+ * → yang dibaca hanya config global `homeDir()/.minicode/config.json`, dengan
+ * `homeDir()` = `MINICODE_HOME` || `homedir()`. Test ini harus mandiri: tanpa
+ * seeding, ia gagal "no provider for sub-agent" — atau, lebih buruk, "lulus"
+ * karena provider bocor dari test lain / konfigurasi mesin.
+ *
+ * `MINICODE_HOME` diarahkan ke home PALSU di dalam tmp milik test, jadi home
+ * asli mesin tidak pernah disentuh. Env dikembalikan saat test selesai.
+ */
+function seedGlobalProvider(home: string, baseUrl: string): () => void {
+  const prev = process.env.MINICODE_HOME
+  process.env.MINICODE_HOME = home
+  mkdirSync(join(home, ".minicode"), { recursive: true })
+  writeFileSync(
+    join(home, ".minicode", "config.json"),
+    JSON.stringify({
+      providers: [
+        {
+          id: "fake",
+          baseUrl,
+          apiKey: "sk-test",
+          models: ["gpt-4o-mini"],
+          providerHint: "openai",
+        },
+      ],
+    }),
+    "utf8",
+  )
+  return () => {
+    if (prev === undefined) delete process.env.MINICODE_HOME
+    else process.env.MINICODE_HOME = prev
+  }
+}
+
 interface CliRun {
   code: number
   stdout: string
@@ -608,6 +645,13 @@ test("D13: delegate_task dengan runner — satu eksekusi, parent terikat, dipang
   const { createProductionExecutionRunner } = await import("../src/runtime/production-execution.ts")
   const dir = mkdtempSync(join(tmpdir(), "minicode-staged-child-"))
   tmpRoots.push(dir)
+  // [P12 Stage 3] Provider tiruan mandiri untuk child: `getProvider()` hanya
+  // membaca config global, jadi `MINICODE_HOME` diarahkan ke home palsu di
+  // dalam tmp test (home asli mesin tak disentuh) dan provider ditulis di sana.
+  const childHome = join(dir, "home")
+  mkdirSync(join(childHome, ".minicode"), { recursive: true })
+  const childProvider = startFakeProvider([{ kind: "text", text: "jawaban anak" }])
+  const restoreHome = seedGlobalProvider(childHome, childProvider.baseUrl)
   const runtime = createRuntimeComposition({
     sessionId: "d13",
     workspaceCwd: dir,
@@ -657,6 +701,9 @@ test("D13: delegate_task dengan runner — satu eksekusi, parent terikat, dipang
   } finally {
     clearSubAgentSessionFactory()
     setSubAgentExecutionRunner(undefined)
+    // [P12 Stage 3] Kembalikan env + tutup provider tiruan walau assertion gagal.
+    restoreHome()
+    childProvider.close()
   }
 }, 120_000)
 

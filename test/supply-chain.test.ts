@@ -313,7 +313,10 @@ test("supply: hooks opt-in jalan + tercatat di stderr (observability)", async ()
   const prev = process.env.MINICODE_HOOKS
   process.env.MINICODE_HOOKS = "1"
   const lines: string[] = []
-  const orig = process.stderr.write.bind(process.stderr)
+  // [P12 Stage 3] Reference, bukan `.bind(process.stderr)` — `.bind` membungkus
+  // writer yang terpasang (bisa wrapper statusline) sehingga restore-nya revive
+  // rantai writer menumpuk; konteks `this` tetap (process.stderr).
+  const orig = process.stderr.write
   process.stderr.write = ((c: unknown) => {
     lines.push(String(c))
     return true

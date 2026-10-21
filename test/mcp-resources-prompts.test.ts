@@ -332,7 +332,10 @@ describe("MCP connectAll paralel", () => {
   test("satu server gagal tak menggagalkan batch; pesan urut config", async () => {
     const url = serveMcp(minimal)
     const chunks: string[] = []
-    const prev = process.stderr.write.bind(process.stderr)
+    // [P12 Stage 3] Reference, bukan `.bind(process.stderr)` — `.bind` membungkus
+    // writer yang terpasang (bisa wrapper statusline) sehingga restore-nya
+    // revive rantai writer menumpuk; konteks `this` tetap (process.stderr).
+    const prev = process.stderr.write
     ;(process.stderr as unknown as { write: unknown }).write = (c: string | Uint8Array) => {
       chunks.push(typeof c === "string" ? c : Buffer.from(c).toString("utf8"))
       return true

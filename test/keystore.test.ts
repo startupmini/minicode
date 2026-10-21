@@ -95,7 +95,10 @@ describe("keystore di buildProviderListAsync", () => {
     await setSecret("provider:zk", "sk-ZED")
     __resetKeystoreForTest()
     const errs: string[] = []
-    const prevErr = process.stderr.write.bind(process.stderr)
+    // [P12 Stage 3] Reference, bukan `.bind(process.stderr)` — lihat catatan di
+    // test/config-honest.test.ts: `.bind` membungkus writer yang terpasang
+    // (bisa wrapper statusline) dan restore-nya revive rantai writer menumpuk.
+    const prevErr = process.stderr.write
     ;(process.stderr as unknown as { write: unknown }).write = (c: unknown) => {
       errs.push(String(c))
       return true

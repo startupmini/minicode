@@ -255,7 +255,11 @@ describe("globalConfigPath hermetic", () => {
     // Jadikan path config sebuah DIREKTORI: readFile → EISDIR.
     mkdirSync(join(home, ".minicode", "config.json"), { recursive: true })
     const errs: string[] = []
-    const origWrite = process.stderr.write.bind(process.stderr)
+    // [P12 Stage 3] Reference, bukan `.bind(process.stderr)`: `.bind` membungkus
+    // writer yang saat ini terpasang (bisa wrapper statusline) sehingga restore
+    // menghidupkan rantai writer yang menumpuk. Konteks `this` tetap
+    //(process.stderr) karena pemanggilannya tetap method-call.
+    const origWrite = process.stderr.write
     ;(process.stderr as unknown as { write: unknown }).write = (c: string | Uint8Array) => {
       errs.push(typeof c === "string" ? c : new TextDecoder().decode(c))
       return true

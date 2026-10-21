@@ -2,7 +2,7 @@
 // Hermetic: tmp SQLite + createCliSession nyata (gate mati = tak ada journal).
 
 import { afterEach, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { CliSession } from "../cli/setup.ts"
@@ -14,8 +14,10 @@ import {
   runtimeGateFor,
   runtimeJournalPath,
 } from "../src/runtime/production-runtime.ts"
+import type { FakeProvider } from "./helpers/fake-provider.ts"
 
 const created: string[] = []
+const providers: FakeProvider[] = []
 
 function tmpDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "mc-m14p-"))
@@ -23,7 +25,35 @@ function tmpDir(): string {
   return dir
 }
 
+/**
+ * [P12 Stage 3] Provider tiruan + config repo-lokal sementara.
+ *
+ * Tanpa ini, `createCliSession` menolak komposisi (NoProviderError) karena
+ * mesin ini tak punya provider — atau, lebih buruk, test "lulus" karena
+ * provider bocor dari test lain/lingkungan. Kontrak yang diuji di file ini
+ * adalah wiring journal & runtime (bukan perilaku provider nyata), jadi endpoint
+ * tiruan lokal memadai.
+ */
+async function seedFakeProvider(dir: string): Promise<void> {
+  const { startFakeProvider } = await import("./helpers/fake-provider.ts")
+  const fake = startFakeProvider([{ kind: "text", text: "ok" }])
+  providers.push(fake)
+  mkdirSync(join(dir, ".minicode"), { recursive: true })
+  writeFileSync(
+    join(dir, ".minicode", "config.json"),
+    JSON.stringify({
+      providers: [{ id: "fake", baseUrl: fake.baseUrl, apiKey: "sk-test", models: ["m"] }],
+    }),
+    "utf8",
+  )
+}
+
 afterEach(async () => {
+  for (const p of providers.splice(0)) {
+    try {
+      p.close()
+    } catch {}
+  }
   while (created.length > 0) {
     const dir = created.pop()!
     for (let i = 0; i < 10; i++) {
@@ -138,9 +168,11 @@ test("M14 path: jurnal milik workspace, per identitas, deterministik", () => {
 // ── wiring CLI: gate mati = tak ada jejak sama sekali ────────────────────────
 test("M14 wiring: createCliSession denga gate mati tidak membangun journal", async () => {
   const dir = tmpDir()
+  await seedFakeProvider(dir)
   const { createCliSession } = await import("../cli/setup.ts")
   const session = (await createCliSession({
     cwd: dir,
+    allowLocalConfig: true,
     sessionId: "m14p-off",
     prompt: "",
     enterRepl: false,
@@ -163,9 +195,11 @@ test("M14 wiring: createCliSession denga gate mati tidak membangun journal", asy
 // ── wiring CLI: gate hidup = journal milik sesi itu, ditutup saat close() ─────
 test("M14 wiring: gate hidup membangun journal di .minicode dan menutupnya di close()", async () => {
   const dir = tmpDir()
+  await seedFakeProvider(dir)
   const { createCliSession } = await import("../cli/setup.ts")
   const session = (await createCliSession({
     cwd: dir,
+    allowLocalConfig: true,
     sessionId: "m14p-on",
     prompt: "",
     enterRepl: false,
@@ -192,9 +226,11 @@ test("M14 wiring: gate hidup membangun journal di .minicode dan menutupnya di cl
 // ── wiring CLI: resume memakai identitas yang di-resume, bukan yang baru ──────
 test("M14 wiring: resume memakai path jurnal sesi yang di-resume", async () => {
   const dir = tmpDir()
+  await seedFakeProvider(dir)
   const { createCliSession } = await import("../cli/setup.ts")
   const base = {
     cwd: dir,
+    allowLocalConfig: true,
     prompt: "",
     enterRepl: false,
     verbose: false,
@@ -235,9 +271,11 @@ test("M14 wiring: resume memakai path jurnal sesi yang di-resume", async () => {
 // ── urutan shutdown: scheduler dulu, runtime kedua ───────────────────────────
 test("M14 wiring: close() menutup runtime (tepat setelah scheduler)", async () => {
   const dir = tmpDir()
+  await seedFakeProvider(dir)
   const { createCliSession } = await import("../cli/setup.ts")
   const session = (await createCliSession({
     cwd: dir,
+    allowLocalConfig: true,
     sessionId: "m14p-order",
     prompt: "",
     enterRepl: false,

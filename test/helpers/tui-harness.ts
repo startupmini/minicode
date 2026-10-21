@@ -165,8 +165,15 @@ export function installFakeTty(opts: FakeTtyOptions = {}): FakeTty {
   let rawMode = false
 
   const origStdin = process.stdin
-  const origWrite = process.stdout.write.bind(process.stdout)
-  const origErrWrite = process.stderr.write.bind(process.stderr)
+  // [P12 Stage 3] Simpan REFERENCE writer, bukan `.bind(process.stderr)`.
+  // `.bind` membungkus writer yang SAAT INI terpasang — bisa jadi wrapper
+  // statusline (`ourWrite`) — sehingga restore menghidupkan rantai writer yang
+  // menumpuk (wrapper lama bertahan hidup setelah statusline di-reset). Dengan
+  // reference, yang dipulihkan persis fungsi yang terpasang sebelumnya, dan
+  // konteks `this` (process.stderr) tetap terjaga saat dipanggil sebagai
+  // method — syarat Bun Windows (`this[kWriteMonkeyPatchDefense]`).
+  const origWrite = process.stdout.write
+  const origErrWrite = process.stderr.write
   const origLog = console.log
   const origError = console.error
   const origColumns = process.stdout.columns

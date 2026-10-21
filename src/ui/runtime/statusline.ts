@@ -85,18 +85,37 @@ function ensureWrap(): void {
   const cur = process.stderr.write
   if (ourWrite && (cur as unknown) === ourWrite) return
   origWrite = process.stderr.write
-  bound = process.stderr.write.bind(process.stderr) as RawWrite
+  // Target tulis yang dibungkus INI, disimpan di CLOSURE wrapper (bukan
+  // variabel modul `bound`).
+  //
+  // Kenapa closure: wrapper bisa tetap hidup di rantai writer stderr setelah
+  // state modul di-reset — test lain boleh membungkus writer yang sedang
+  // terpasang lalu mengembalikannya (pola `write.bind(write)`), sehingga wrapper
+  // lama ini masih dirujuk saat `bound` sudah dinolkan. Kalau wrapper membaca
+  // `bound` dari modul, tulis asing setelah reset melempar "bound is not a
+  // function" — pesan diagnostik hilang bersama turn. Dengan target per-install,
+  // wrapper lama tetap menulis ke TUJUANNYA (tanpa kehilangan maupun duplikasi
+  // byte), kapan pun dipanggil.
+  //
+  // `target` di-bind ke `process.stderr` (bukan detached): Bun Windows memanggil
+  // `this[kWriteMonkeyPatchDefense]` di writeFast → detached melempar TypeError.
+  const target = process.stderr.write.bind(process.stderr) as RawWrite
+  bound = target
   ourWrite = ((chunk: string | Uint8Array, ...rest: never[]) => {
     if (ownerWriting || !owner) {
       try {
-        return bound!(chunk, ...rest)
+        return target(chunk, ...rest)
       } catch (e) {
         // Runtime stderr rusak (bug Bun di atas): jangan gagalkan tulis
-        // diagnostik — matikan transient lalu coba sekali via method-call.
+        // diagnostik — matikan transient lalu coba sekali lagi via leaf yang
+        // sama (method-call, `this` = process.stderr).
         if (isBunWriteBug(e)) {
           disableTransient()
           try {
-            return process.stderr.write(chunk, ...rest)
+            // Leaf install-time (`target`) — BUKAN writer yang terpasang:
+            // bila writer terpasang masih wrapper ini, memanggilnya akan
+            // memanggil wrapper yang sama lagi (rekursi).
+            return target(chunk, ...rest)
           } catch {
             return false
           }
@@ -107,13 +126,13 @@ function ensureWrap(): void {
     // Tulis ASING saat garis transient aktif: komit sebagai baris permanen.
     ownerWriting = true
     try {
-      bound!("\r\x1b[2K")
+      target("\r\x1b[2K")
     } finally {
       ownerWriting = false
     }
     let r: boolean
     try {
-      r = bound!(chunk, ...rest)
+      r = target(chunk, ...rest)
     } catch (e) {
       if (isBunWriteBug(e)) {
         disableTransient()

@@ -854,7 +854,10 @@ describe("simple logger (one-shot)", () => {
     const bus = createFakeBus()
     const { attachTurnStatus } = await import("../src/ui/assistant/turn-status.ts")
     const chunks: string[] = []
-    const prevWrite = process.stderr.write.bind(process.stderr)
+    // [P12 Stage 3] Reference, bukan `.bind(process.stderr)` — `.bind` membungkus
+    // writer yang terpasang (bisa wrapper statusline) sehingga restore-nya revive
+    // rantai writer menumpuk; konteks `this` tetap (process.stderr).
+    const prevWrite = process.stderr.write
     ;(process.stderr as unknown as { write: unknown }).write = (c: string | Uint8Array) => {
       chunks.push(typeof c === "string" ? c : Buffer.from(c).toString("utf8"))
       return true

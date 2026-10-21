@@ -16,7 +16,12 @@ import {
 
 const MARKER = "undefined is not an object (evaluating 'kWriteMonkeyPatchDefense')"
 
-const realWrite = process.stderr.write.bind(process.stderr)
+// [P12 Stage 3] Reference, bukan `.bind(process.stderr)`: `.bind` membungkus
+// writer yang SAAT INI terpasang (bisa wrapper statusline dari file lain),
+// sehingga afterEach menghidupkan rantai writer menumpuk. Reference memulihkan
+// persis fungsi sebelumnya; konteks `this` tetap (process.stderr) karena
+// pemanggilannya tetap method-call.
+const realWrite = process.stderr.write
 
 afterEach(() => {
   try {
@@ -80,5 +85,54 @@ describe("statusline bun-windows guard", () => {
     // Write asli (fake rusak) dikembalikan — bukan wrapper yatim.
     expect((process.stderr.write as unknown) === alwaysBroken).toBe(true)
     expect(recorded).toEqual([])
+  })
+
+  // [P12 Stage 3] Regresi lifecycle: wrapper statusline yang SUDAH DIPASANG
+  // dibungkus test lain (pola `write.bind(write)`), lalu state statusline
+  // di-reset. Wrapper lama lalu dipanggil lagi (masih dirujuk di rantai
+  // `process.stderr.write`).
+  //
+  // Gagal pada implementasi lama: wrapper lama membaca `bound` dari variabel
+  // modul, dan `bound` sudah dinolkan saat reset → "TypeError: bound is not a
+  // function" → pesan diagnostik hilang bersama turnnya.
+  test("wrapper lama yang dibungkus test lain tetap aman setelah reset (tanpa TypeError)", () => {
+    const recorded: string[] = []
+    __resetTransientForTest()
+
+    // 1) Aktifkan wrapper statusline (owner transient → ensureWrap).
+    const t = acquireTransientPaint("turn", () => {})
+    expect(isTransientPainting()).toBe(true)
+
+    // 2) Test lain membungkus writer yang SEDANG terpasang (wrapper statusline)
+    //    dan menyimpan reference-nya — persis pola yang dipakai test lain di repo.
+    const wrapped = process.stderr.write
+    const outer = function (this: unknown, chunk: string | Uint8Array): boolean {
+      recorded.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"))
+      return wrapped.call(process.stderr, chunk)
+    }
+    process.stderr.write = outer as typeof process.stderr.write
+
+    // 3) Reset statusline SAAT wrapper lama masih dirujuk (state modul dinolkan:
+    //    `bound` = null, `ourWrite` = null).
+    __resetTransientForTest()
+    expect(isTransientPainting()).toBe(false)
+
+    // 4) Panggil wrapper lama — harus TIDAK melempar, dan output harus tetap
+    //    sampai (tak hilang, tak diduplikasi).
+    let threw: unknown = null
+    try {
+      process.stderr.write("setelah-reset\n")
+    } catch (e) {
+      threw = e
+    }
+    expect(threw).toBeNull()
+    expect(recorded.join("")).toContain("setelah-reset")
+    // Tak diduplikasi: chunk muncul tepat satu kali di penangkap.
+    expect(recorded.filter((l) => l.includes("setelah-reset")).length).toBe(1)
+
+    // 5) Pulihkan writer + state statusline dengan aman.
+    process.stderr.write = wrapped as typeof process.stderr.write
+    t.release()
+    __resetTransientForTest()
   })
 })

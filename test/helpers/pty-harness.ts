@@ -236,6 +236,318 @@ export async function ptyExitCodeVerifiable(): Promise<PtyExitAvailability> {
   return exitAvailability
 }
 
+// ── Capability: apakah transport PTY mengantar byte mouse SGR? ──
+//
+// [KENAPA PERLU] Jalur SGR (drag-selection → OSC52) punya dua bagian yang
+// bisa gagal: (1) TRANSPORT tak mengantarkan byte mouse, (2) APLIKASI tak
+// memprosesnya. Keduanya berakhir sama dari luar (test timeout tanpa OSC52),
+// padahal akar masalahnya beda. Test lama memakai koordinat mouse hardcoded
+// yang mendarat di luar area transcript → TUI tak pernah membuat selection →
+// OSC52 tak pernah terbit; itu BUKAN kegagalan transport.
+//
+// Probe di sini menjawab HANYA (1): apakah byte mouse SGR yang ditulis
+// benar-benar sampai ke stdin proses anak. Observasinya bukan "write() tidak
+// error", tapi "anak membalas byte yang ia terima" — anak melaporkan byte
+// yang ia terima (base64) supaya bisa dibandingkan dengan yang ditulis.
+//
+// [JEBakan yang pernah menyesatkan] Anak WAJIB membaca dalam RAW mode. Di
+// mode canonical (line-buffered) byte tanpa newline tertahan di line
+// discipline dan tak pernah sampai ke aplikasi: probe lama menyimpulkan
+// "ConPTY membuang byte SGR" padahal itu artefak buffering, bukan transport.
+// Karena itu anak mengonfirmasi raw mode, dan tanpa itu probe dinyatakan
+// TIDAK KONKLUSIF (bukan "SGR tak didukung").
+//
+// [KENAPA TRAILER] Byte SGR ditulis bersama marker teks dalam satu write.
+// Kalau marker tiba tapi byte SGR tidak, itu bukti langsung bahwa transport
+// membuang SGR (bukan write-nya yang hilang seluruhnya). Kalau keduanya tak
+// tiba, jalur input-nya sendiri tak hidup → TIDAK KONKLUSIF.
+
+/** Sekuens mouse SGR yang ditulis probe (press di kolom 1, baris 1). */
+const SGR_PROBE_SEQUENCE = "\x1b[<0;1;1M"
+/** Marker delivery: menyertai write SGR dalam satu write. */
+const SGR_PROBE_TRAILER = "MINICODE-PTY-SGR-TRAILER"
+/** Marker kontrol: write terpisah, membuktikan jalur input hidup. */
+const SGR_PROBE_CONTROL = "MINICODE-PTY-SGR-CONTROL"
+const SGR_PROBE_READY = "MINICODE-PTY-SGR-READY"
+const SGR_PROBE_GOT = "MINICODE-PTY-SGR-GOT:"
+
+// Skrip anak probe: raw mode → aktifkan mouse reporting (cermin TUI
+// MiniCode) → lapor siap → lapor setiap byte yang benar-benar diterima.
+const SGR_PROBE_CHILD = `
+let acc = Buffer.alloc(0)
+let raw = 0
+try {
+  if (typeof process.stdin.setRawMode === "function") { process.stdin.setRawMode(true); raw = 1 }
+} catch (e) {}
+process.stdout.write("\\x1b[?1002h\\x1b[?1006h")
+process.stdout.write("${SGR_PROBE_READY} raw=" + raw + "\\n")
+process.stdin.on("data", (d) => {
+  acc = Buffer.concat([acc, Buffer.isBuffer(d) ? d : Buffer.from(d)])
+  process.stdout.write("${SGR_PROBE_GOT}" + acc.toString("base64") + "\\n")
+})
+setTimeout(() => process.exit(0), 20000)
+`
+
+/**
+ * Parse baris READY probe dari output kumulatif.
+ *
+ * [KENAPA BUKAN includes] Baris READY bisa tiba sebagai beberapa chunk
+ * (ConPTY menulis per write, dan baris bisa terpecah di tengah). Pencocokan
+ * `out.includes("…READY")` bisa cocok pada baris yang BELUM lengkap →
+ * sufiks "raw=1" belum terbaca → probe salah menyimpulkan "raw mode tak
+ * aktif" (inconclusive palsu). Karena itu baris protokol hanya dianggap sah
+ * setelah newline-nya terlihat.
+ *
+ * @returns true = raw mode aktif · false = anak siap tapi raw mode MATI ·
+ *          null = baris READY belum lengkap/tak ada → JANGAN disimpulkan.
+ */
+export function parseSgrReadyRawMode(out: string): boolean | null {
+  let from = 0
+  for (;;) {
+    const idx = out.indexOf(SGR_PROBE_READY, from)
+    if (idx < 0) return null
+    const nl = out.indexOf("\n", idx)
+    // Baris belum lengkap → jangan simpulkan apa pun.
+    if (nl < 0) return null
+    const line = out.slice(idx, nl).replace(/\r$/, "")
+    const m = /raw=([01])/.exec(line)
+    if (m) return m[1] === "1"
+    from = idx + SGR_PROBE_READY.length
+  }
+}
+
+/**
+ * Keputusan gate untuk test mouse SGR end-to-end.
+ *
+ * - PTY tak tersedia → SKIP beralasan (tak ada transport untuk diuji).
+ * - Probe "supported" → RUN (assertion tetap utuh, tanpa diubah).
+ * - Probe "unsupported" (terbukti transport tak mengantar SGR) → SKIP
+ *   beralasan: inilah satu-satunya dasar sah untuk skip.
+ * - Probe "inconclusive" → tak boleh disamarkan jadi "unsupported"; di luar
+ *   CI → SKIP dengan alasan "tak konklusif", di CI Linux → GAGAL.
+ * - CI Linux mewajibkan verdict "supported": kalau tidak, jalur SGR end-to-end
+ *   wajib gagal dengan diagnosa (bukan skip senyap) — audit runtime tak boleh
+ *   diam-diam berubah jadi no-op.
+ */
+export type SgrGateDecision = "run" | "skip" | "fail"
+
+export function decideSgrGate(input: {
+  ptyAvailable: boolean
+  verdict: PtySgrVerdict
+  reason: string
+  ciLinux: boolean
+}): { decision: SgrGateDecision; reason: string } {
+  if (!input.ptyAvailable) return { decision: "skip", reason: input.reason }
+  if (input.verdict === "supported") return { decision: "run", reason: input.reason }
+  if (input.ciLinux) {
+    return {
+      decision: "fail",
+      reason:
+        `CI Linux mewajibkan jalur mouse SGR end-to-end terverifikasi, tapi probe capability ` +
+        `memberi verdict="${input.verdict}" — ${input.reason}`,
+    }
+  }
+  // Di luar CI: verdict "unsupported" (terbukti) atau "inconclusive" (tak
+  // dapat disimpulkan) → skip beralasan, TIDAK pernah "hijau palsu".
+  return { decision: "skip", reason: input.reason }
+}
+
+/** Verdict capability: "supported" | "unsupported" | "inconclusive". */
+export type PtySgrVerdict = "supported" | "unsupported" | "inconclusive"
+
+export interface PtySgrAvailability {
+  /** true HANYA bila verdict === "supported" (SGR terbukti sampai ke anak). */
+  ok: boolean
+  /**
+   * "supported" = byte SGR terbukti sampai ke stdin anak.
+   * "unsupported" = terbukti TIDAK sampai (transport lain mengantar byte,
+   *   byte SGR hilang) — inilah satu-satunya dasar yang sah untuk skip.
+   * "inconclusive" = tak dapat disimpulkan (probe gagal/tak konklusif) —
+   *   BUKAN bukti SGR tak didukung.
+   */
+  verdict: PtySgrVerdict
+  /** Alasan yang bisa dibaca manusia; dipakai sebagai alasan skip. */
+  reason: string
+  /** Observasi mentah probe (byte yang benar-benar diterima anak). */
+  observation?: SgrProbeObservation
+}
+
+/** Observasi mentah dari probe SGR (dipisah dari klasifikasi agar bisa diuji). */
+export interface SgrProbeObservation {
+  /** Anak berhasil masuk raw mode (tanpa ini observasi tak bisa dipercaya). */
+  rawMode: boolean
+  /** Byte yang BENAR-BENAR diterima anak; null = anak tak pernah melapor. */
+  received: string | null
+  /** Sekuens SGR yang ditulis probe. */
+  sgrSequence: string
+  /** Marker delivery yang menyertai write SGR. */
+  trailer: string
+  /** Marker kontrol (write terpisah, sebelum write SGR). */
+  controlMarker: string
+}
+
+/**
+ * Klasifikasi hasil probe SGR — MURNI (tanpa IO), supaya kedua
+ * kemungkinan (SGR diterima / SGR tak diterima) bisa diuji tanpa
+ * bergantung pada platform. Tak ada asumsi platform di sini.
+ */
+export function classifySgrProbe(o: SgrProbeObservation): PtySgrAvailability {
+  const received = o.received ?? ""
+  const sgrDelivered = received.includes(o.sgrSequence)
+  const trailerDelivered = received.includes(o.trailer)
+  const controlDelivered = received.includes(o.controlMarker)
+  const base = { observation: o }
+  if (!o.rawMode) {
+    return {
+      ...base,
+      ok: false,
+      verdict: "inconclusive",
+      reason:
+        "anak probe tak bisa masuk raw mode (input line-buffered) — kemakmuran transport " +
+        "tak bisa dinilai; ini BUKAN bukti SGR tak didukung",
+    }
+  }
+  if (sgrDelivered) {
+    return { ...base, ok: true, verdict: "supported", reason: "byte mouse SGR sampai ke stdin anak" }
+  }
+  if (trailerDelivered) {
+    return {
+      ...base,
+      ok: false,
+      verdict: "unsupported",
+      reason:
+        "transport mengantar byte lain pada write yang sama, tapi byte mouse SGR hilang — " +
+        "SGR tidak diantarkan transport ini",
+    }
+  }
+  if (controlDelivered) {
+    return {
+      ...base,
+      ok: false,
+      verdict: "inconclusive",
+      reason:
+        "kontrol sampai (jalur input hidup) tapi write kedua tak pernah sampai — " +
+        "tak dapat disimpulkan (BUKAN bukti SGR tak didukung)",
+    }
+  }
+  return {
+    ...base,
+    ok: false,
+    verdict: "inconclusive",
+    reason:
+      "jalur input PTY tak mengantar byte sama sekali — probe tidak konklusif " +
+      "(BUKAN bukti SGR tak didukung)",
+  }
+}
+
+let sgrAvailability: PtySgrAvailability | undefined
+
+/**
+ * Self-check: apakah transport PTY yang tersedia MENGANTARKAN byte mouse
+ * SGR ke proses anak? Hasil di-cache per proses test.
+ *
+ * Yang diukur HANYA kemampuan transport. Kemakmuran aplikasi (parser SGR →
+ * selection → OSC52) dibuktikan test lain; probe ini tak pernah menyentuh
+ * assertion aplikasi, hanya memberi alasan skip yang jujur.
+ */
+export async function ptySgrMouseDelivered(): Promise<PtySgrAvailability> {
+  if (sgrAvailability) return sgrAvailability
+  const spawn = await loadPty()
+  if (!spawn) {
+    sgrAvailability = {
+      ok: false,
+      verdict: "inconclusive",
+      reason: "PTY tidak tersedia (@lydell/node-pty tak terpasang) — probe tidak konklusif",
+    }
+    return sgrAvailability
+  }
+  let child: PtyTerm | undefined
+  try {
+    child = spawn(process.execPath, ["--eval", SGR_PROBE_CHILD], {
+      name: "xterm-256color",
+      cols: 80,
+      rows: 24,
+      env: cleanEnvForChild(),
+    })
+    let out = ""
+    child.onData((d: string) => (out += d))
+
+    const waitFor = async (pred: () => boolean, timeoutMs: number): Promise<boolean> => {
+      const start = Date.now()
+      for (;;) {
+        if (pred()) return true
+        if (Date.now() - start > timeoutMs) return false
+        await new Promise((r) => setTimeout(r, 50))
+      }
+    }
+    // Baris GOT terakhir yang LENGKAP (ada newline-nya) — baris yang masih
+    // streaming tak boleh didekode (base64 terpotong → byte palsu).
+    const lastGot = (): string | null => {
+      let from = 0
+      let result: string | null = null
+      for (;;) {
+        const idx = out.indexOf(SGR_PROBE_GOT, from)
+        if (idx < 0) break
+        const rest = out.slice(idx + SGR_PROBE_GOT.length)
+        const nl = rest.indexOf("\n")
+        if (nl >= 0) {
+          const line = rest.slice(0, nl).replace(/\r$/, "")
+          try {
+            result = Buffer.from(line, "base64").toString("utf8")
+          } catch {
+            /* baris tak valid → abaikan */
+          }
+        }
+        from = idx + SGR_PROBE_GOT.length
+      }
+      return result
+    }
+
+    // Readiness: hanya baris READY yang LENGKAP (newline-nya terlihat) yang
+    // sah — baris terpecah antar-chunk tak boleh disimpulkan apa pun.
+    const ready = await waitFor(() => parseSgrReadyRawMode(out) !== null, 10_000)
+    if (!ready) {
+      sgrAvailability = {
+        ok: false,
+        verdict: "inconclusive",
+        reason: "anak probe tak pernah siap (baris READY tak lengkap) — probe tidak konklusif",
+      }
+      return sgrAvailability
+    }
+    const rawMode = parseSgrReadyRawMode(out) === true
+
+    // Write 1 — kontrol: bukti jalur input hidup.
+    child.write(`${SGR_PROBE_CONTROL}\r`)
+    await waitFor(() => (lastGot() ?? "").includes(SGR_PROBE_CONTROL), 8000)
+
+    // Write 2 — SGR + marker delivery dalam satu write.
+    child.write(`${SGR_PROBE_SEQUENCE}${SGR_PROBE_TRAILER}\r`)
+    await waitFor(() => (lastGot() ?? "").includes(SGR_PROBE_TRAILER), 8000)
+
+    sgrAvailability = classifySgrProbe({
+      rawMode,
+      received: lastGot(),
+      sgrSequence: SGR_PROBE_SEQUENCE,
+      trailer: SGR_PROBE_TRAILER,
+      controlMarker: SGR_PROBE_CONTROL,
+    })
+    return sgrAvailability
+  } catch (e) {
+    sgrAvailability = {
+      ok: false,
+      verdict: "inconclusive",
+      reason: `probe SGR gagal: ${(e as Error).message} — probe tidak konklusif`,
+    }
+    return sgrAvailability
+  } finally {
+    // Anak dibunuh di semua jalur (sukses/gagal/timeout) → tak ada proses
+    // nyasar yang ikut menggantung suite.
+    try {
+      child?.kill()
+    } catch {}
+  }
+}
+
 export interface TuiPtyHandle {
   /** Byte stream mentah sejauh ini (append-only). */
   raw(): string

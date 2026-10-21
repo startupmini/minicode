@@ -381,6 +381,17 @@ panjang).
    sampai PgDn), tapi prompt jawaban + bell selalu terlihat di bawah.
 6. Area yang dibuka kembali saat kotak menyusut = kosong (bukan transkrip
    di belakangnya) sampai popup tutup + repaint penuh.
+7. Jalur end-to-end mouse SGR bergantung pada TRANSPORT PTY: kalau byte SGR
+   tak sampai ke stdin anak, selection → OSC52 tak bisa diverifikasi lewat
+   byte stream nyata. Pada lingkungan diagnostik Windows (ConPTY + node-pty
+   1.2.0-beta.15) byte SGR terbukti sampai ke anak yang membaca dalam raw
+   mode — kegagalan lama yang disangka "ConPTY membuang SGR" adalah artefak
+   line buffering probe, bukan keterbatasan transport. Perilaku platform lain
+   belum diuji; capability gate mengukur kemampuannya secara langsung
+   (bukan asumsi platform): di luar CI Linux, SGR yang memang tak diantarkan
+   → SKIP beralasan; di CI Linux jalur SGR end-to-end WAJIB terverifikasi,
+   jadi probe yang verdict-nya bukan "supported" → GAGAL dengan diagnosa
+   (bukan skip senyap yang menghapus coverage).
 
 ## Peta proteksi (test → invariant)
 
@@ -500,6 +511,13 @@ panjang).
 - `test/pty.test.ts` — I13/I17/I31/I28 via BYTE STREAM NYATA (harness PTY
   `test/helpers/pty-harness.ts`, CLI di pseudo-terminal sesungguhan +
   provider fake hermetic): boot → ?1049h + timer idle, turn penuh end-to-end,
-  resize → repaint, SIGTERM → restore + exit 143 (POSIX), dan exec --json
-  bersih tanpa ANSI. Platform tak mampu (ConPTY rusak) = SKIP beralasan,
-  bukan hijau palsu.
+  drag-selection mouse SGR → Ctrl+C → OSC52 (koordinat mouse dihitung dari
+  LAYAR NYATA, bukan hardcoded), resize → repaint, SIGTERM → restore + exit
+  143 (POSIX), dan exec --json bersih tanpa ANSI. Platform tak mampu
+  (ConPTY rusak) = SKIP beralasan, bukan hijau palsu. Jalur mouse SGR punya
+  capability gate (`ptySgrMouseDelivered()`): transport yang TAK
+  mengantarkan byte SGR → SKIP beralasan; probe tak konklusif → SKIP dengan
+  alasan "tak konklusif" (BUKAN bukti SGR tak didukung); di CI Linux verdict
+  WAJIB "supported" — selain itu test SGR GAGAL dengan diagnosa, bukan skip
+  senyap. Parser SGR dan selection SGR tetap terverifikasi terpisah di
+  `test/prompt-engine.test.ts` dan `test/tui-app.test.ts` (fake TTY).

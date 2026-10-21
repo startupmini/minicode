@@ -16,11 +16,14 @@
 import { describe, expect, test } from "bun:test"
 import {
   cleanEnvForChild,
+  decideSgrGate,
   ptyAvailable,
   ptyExitCodeVerifiable,
+  ptySgrMouseDelivered,
   spawnTui,
   type TuiPtyHandle,
 } from "./helpers/pty-harness.ts"
+import { parseScreenBuffer } from "./helpers/tui-harness.ts"
 
 const pty = await ptyAvailable()
 const runsPty = pty.ok
@@ -34,6 +37,37 @@ const skipReason = pty.reason
 const exitCode = await ptyExitCodeVerifiable()
 const exitVerifiable = exitCode.ok
 const exitSkipReason = exitCode.reason
+
+// [P12 S2.2 Stage 4B] Apakah transport PTY yang tersedia MENGANTARKAN byte
+// mouse SGR ke proses anak? Self-check mengukur byte yang benar-benar
+// diterima anak (bukan "write() tidak error"), dan TIGA kemungkinan:
+// "supported" (SGR sampai), "unsupported" (terbukti hilang), "inconclusive"
+// (tak dapat disimpulkan - BUKAN bukti SGR tak didukung).
+// Gate ini hanya menyaring kemakmuran TRANSPORT; assertion test tetap sama
+// persis saat test dieksekusi.
+const sgrProbe = await ptySgrMouseDelivered()
+
+/** Geometri PTY yang dipakai test mouse (harus sama dengan spawnTui). */
+const PTY_COLS = 100
+const PTY_ROWS = 30
+
+/**
+ * CI Linux = lingkungan di mana audit runtime WAJIB bukan no-op.
+ *
+ * Di sini jalur mouse SGR end-to-end bukan opsional: probe capability harus
+ * "supported", kalau tidak test SGR GAGAL dengan diagnosa (bukan skip
+ * senyap). Di luar CI Linux, keterbatasan transport yang terbukti → SKIP
+ * beralasan.
+ */
+const ciLinux = process.env.CI === "true" && process.platform === "linux"
+
+/** Keputusan gate SGR (terpusat, unit-test-able di test/pty-sgr-capability). */
+const sgrGate = decideSgrGate({
+  ptyAvailable: runsPty,
+  verdict: sgrProbe.verdict,
+  reason: runsPty ? sgrProbe.reason : skipReason,
+  ciLinux,
+})
 
 /** Nama test yang membawa alasan skip — ringkasan runner cukup untuk diagnosis. */
 function skipped(name: string, reason: string): string {
@@ -64,6 +98,70 @@ function ptyExitCodeTest(name: string, fn: () => Promise<void>) {
     console.warn("[pty] SKIP: " + name + " - " + skip)
   }
   test.skipIf(skip !== null)(skip === null ? name : skipped(name, skip), fn)
+}
+
+/**
+ * Wrapper untuk test yang MEMBUTUHKAN transport mouse SGR.
+ *
+ * Gate hanya menyaring kemakmuran TRANSPORT: kalau probe membuktikan byte
+ * SGR tak diantarkan (atau tak dapat disimpulkan), test di-SKIP dengan
+ * alasan eksplisit — bukan hijau palsu, dan assertion test TIDAK pernah
+ * diubah/disembunyikan di lingkungan yang SGR-nya didukung.
+ *
+ * Di CI Linux jalurnya WAJIB: probe yang bukan "supported" membuat test
+ * GAGAL dengan diagnosa (verdict + alasan), bukan skip senyap — coverage
+ * byte-stream tak boleh hilang tanpa suara.
+ */
+function ptySgrTest(name: string, fn: () => Promise<void>, timeoutMs = 60_000) {
+  const skip = sgrGate.decision === "skip" ? sgrGate.reason : null
+  if (skip !== null) {
+    // Reporter standar Bun tak mencetak baris skip -> cetak sendiri, supaya
+    // "kemakmuran transport tak terverifikasi" TERLIHAT di output pengujian.
+    console.warn(`[pty] SKIP: ${name} - ${skip}`)
+  }
+  test.skipIf(skip !== null)(
+    skip === null ? name : skipped(name, skip),
+    async () => {
+      if (sgrGate.decision === "fail") {
+        throw new Error(`[pty] ${sgrGate.reason}`)
+      }
+      await fn()
+    },
+    timeoutMs,
+  )
+}
+
+/**
+ * Tunggu sampai teks target benar-benar TERLIHAT di layar PTY, lalu
+ * kembalikan koordinat mouse (baris 1-based + kolom ujung 1-based).
+ *
+ * [KENAPA TAK LANGSUNG BACA byte stream] "teks muncul di byte stream" BUKAN
+ * berarti "teks sedang tampil": repaint TUI diawali `ESC[H` + `ESC[2J`
+ * (bersihkan layar) lalu isi ulang. Jendela antara "byte teks masuk" dan
+ * "frame baru selesai" bisa menghapus teks dari layar — teks masih ada di
+ * stream tapi sudah hilang dari grid. Koordinat mouse harus diambil dari
+ * frame yang benar-benar terlihat, bukan dari byte stream.
+ */
+async function waitForScreenText(
+  tui: TuiPtyHandle,
+  needle: string,
+  timeoutMs = 15_000,
+): Promise<{ row: number; endX: number }> {
+  const start = Date.now()
+  for (;;) {
+    const screen = parseScreenBuffer(tui.raw(), PTY_COLS, PTY_ROWS)
+    const idx = screen.findIndex((line) => line.includes(needle))
+    if (idx >= 0) {
+      // Kolom ujung = panjang baris terender + 1 (1-based, seperti terminal).
+      return { row: idx + 1, endX: (screen[idx]!.length ?? 0) + 1 }
+    }
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(
+        `teks "${needle}" tak terlihat di layar PTY dalam ${timeoutMs}ms — layar: ${JSON.stringify(screen)}`,
+      )
+    }
+    await new Promise((r) => setTimeout(r, 50))
+  }
 }
 
 async function withTui(
@@ -113,18 +211,29 @@ describe("PTY: boot & kontrak layar", () => {
     })
   })
 
-  ptyTest("SGR drag selection + Ctrl+C OSC52 melewati byte stream nyata", async () => {
-    await withTui({ reply: { kind: "text", text: "selected line\n" } }, async (tui) => {
-      await tui.waitFor((raw) => raw.includes("00.00.00"))
-      tui.send("copy\r")
-      await tui.waitFor((raw) => raw.includes("selected line"), 30000)
-      tui.send("\x1b[<0;1;1M\x1b[<32;14;1M\x1b[<0;14;1m\x03")
-      await tui.waitFor((raw) => raw.includes("\x1b]52;c;"), 10000)
-      expect(tui.raw()).toContain(Buffer.from("selected line", "utf8").toString("base64"))
-      tui.send("\x04")
-      await tui.waitFor((raw) => raw.includes("\x1b[?1049l"), 10000)
-      // Exit code: dijaga test terpisah (lihat catatan pada test boot di atas).
-    })
+  ptySgrTest("SGR drag selection + Ctrl+C OSC52 melewati byte stream nyata", async () => {
+    await withTui(
+      { cols: PTY_COLS, rows: PTY_ROWS, reply: { kind: "text", text: "selected line\n" } },
+      async (tui) => {
+        await tui.waitFor((raw) => raw.includes("00.00.00"))
+        tui.send("copy\r")
+        await tui.waitFor((raw) => raw.includes("selected line"), 30000)
+        // [P12 S2.2 Stage 4B] Koordinat mouse HARUS dihitung dari LAYAR NYATA.
+        // Versi lama memakai koordinat hardcoded (y=1) yang mendarat di luar
+        // area transcript → TUI tak pernah membuat selection → Ctrl+C tak
+        // punya isi untuk disalin → OSC52 tak pernah terbit. Gejalanya
+        // sama dengan "transport tak mengantar SGR", tapi akar masalahnya
+        // berbeda: transport-nya sehat. Pola yang sama (baris target dari
+        // layar) dipakai test/tui-app.test.ts untuk fake TTY.
+        const { row, endX } = await waitForScreenText(tui, "selected line")
+        tui.send(`\x1b[<0;1;${row}M\x1b[<32;${endX};${row}M\x1b[<0;${endX};${row}m\x03`)
+        await tui.waitFor((raw) => raw.includes("\x1b]52;c;"), 10000)
+        expect(tui.raw()).toContain(Buffer.from("selected line", "utf8").toString("base64"))
+        tui.send("\x04")
+        await tui.waitFor((raw) => raw.includes("\x1b[?1049l"), 10000)
+        // Exit code: dijaga test terpisah (lihat catatan pada test boot di atas).
+      },
+    )
   })
 
   ptyTest("pipe-table model tampil sebagai grid, bukan Markdown mentah", async () => {
@@ -244,7 +353,14 @@ describe("PTY: sinyal & resize", () => {
 // CI Linux WAJIB punya PTY: tanpa itu seluruh audit runtime (byte stream
 // nyata) jadi no-op tanpa suara — persis kelas "hijau palsu" yang ditutup
 // audit TUI-008. Di mesin dev tanpa ConPTY test ini hanya SKIP.
-const ciLinux = process.env.CI === "true" && process.platform === "linux"
 test.skipIf(!ciLinux)("PTY tersedia di CI Linux (audit runtime bukan no-op)", () => {
   expect(runsPty, `pty tidak tersedia: ${skipReason}`).toBe(true)
+  // Jalur mouse SGR end-to-end juga WAJIB di CI Linux: probe capability harus
+  // "supported". "unsupported" (terbukti) maupun "inconclusive" (tak dapat
+  // disimpulkan) TIDAK boleh hilang senyap — keduanya GAGAL di sini
+  // dengan diagnosa verdict + alasan, dan test SGR di atas ikut gagal.
+  expect(
+    sgrProbe.verdict,
+    `probe SGR harus "supported" di CI Linux (verdict=${sgrProbe.verdict}): ${sgrProbe.reason}`,
+  ).toBe("supported")
 })

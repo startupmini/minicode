@@ -5,6 +5,8 @@
 // masing-masing membuat satu operasi melompati validasi yang operasi lain
 // patuhi — dan celah persis di situ yang dicari penyerang lokal.
 
+import type { RuntimeView } from "../runtime/runtime-status.ts"
+import { absentRuntimeView } from "../runtime/runtime-status-provider.ts"
 import { readWriterEpoch } from "../session/persistence.ts"
 import type { ApprovalBroker } from "./approvals.ts"
 import type { ControlOp, DaemonScope, RefusalBody, RefusalCode, ServerMessage } from "./protocol.ts"
@@ -49,6 +51,12 @@ export interface ControlDeps {
   /** false = tekanan penyimpanan; op mutasi ditolak, op baca tetap jalan. */
   storageOk: () => boolean
   shuttingDown: () => boolean
+  /**
+   * Status runtime kanonik (P13.1) — SATU model yang sama dengan yang dipakai
+   * CLI. Opsional supaya host tanpa runtime (atau test lama) tetap compiles;
+   * bila absen, daemon menyajikan view ABSENT kanonik, bukan status karangan.
+   */
+  runtimeStatus?: () => RuntimeView
 }
 
 export interface ControlRequest {
@@ -131,20 +139,20 @@ export class IdempotencyStore {
 
 function fingerprintOf(op: string, args: Record<string, unknown>): string {
   const keys = Object.keys(args).sort()
-  const parts = keys.map((k) => k + "=" + stableString(args[k]))
-  return op + "|" + parts.join("&")
+  const parts = keys.map((k) => `${k}=${stableString(args[k])}`)
+  return `${op}|${parts.join("&")}`
 }
 
 function stableString(v: unknown): string {
   if (v === null || v === undefined) return "null"
   if (typeof v !== "object") return String(v)
-  if (Array.isArray(v)) return "[" + v.map(stableString).join(",") + "]"
+  if (Array.isArray(v)) return `[${v.map(stableString).join(",")}]`
   const rec = v as Record<string, unknown>
   return (
     "{" +
     Object.keys(rec)
       .sort()
-      .map((k) => k + ":" + stableString(rec[k]))
+      .map((k) => `${k}:${stableString(rec[k])}`)
       .join(",") +
     "}"
   )
@@ -223,6 +231,9 @@ function runOp(op: ControlOp, req: ControlRequest, deps: ControlDeps): ControlOu
           shuttingDown: deps.shuttingDown(),
           storageOk: deps.storageOk(),
           actions: deps.actions !== null,
+          // P13.1: status runtime KANONIK ikut piggyback di op yang sudah ada.
+          // Tidak ada endpoint health terpisah — satu model, satu sumber.
+          runtime: deps.runtimeStatus ? deps.runtimeStatus() : absentRuntimeView(),
         },
         replayed: false,
       }

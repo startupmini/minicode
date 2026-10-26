@@ -6,12 +6,13 @@ Semua cara menjalankan Minicode: interaktif, sekali jalan, pipe, dan otomasi CI 
 
 | Perintah | Fungsi |
 |---|---|
-| `minicode` | Mode interaktif (REPL) + wizard bila belum ada provider |
+| `minicode` | Mode interaktif (TUI fullscreen) + wizard bila belum ada provider |
 | `minicode "prompt"` | Sekali jalan (headless) |
 | `echo "prompt" \| minicode` | Via pipe |
 | `minicode exec "prompt" [--json]` | Headless CI — event JSONL + baris `{"type":"summary"}` di stdout |
 | `minicode acp` | Server JSON-RPC stdio untuk IDE (subset minimal: initialize/run/cancel/shutdown) |
-| `minicode --interactive` | Paksa REPL |
+| `minicode daemon <start\|status\|stop\|issue\|sessions>` | Daemon lokal: host proses, status, hentikan, terbitkan perintah, daftar sesi anak |
+| `minicode --interactive` | Paksa TUI interaktif |
 | `minicode --provider <id> "prompt"` | Paksa provider agnostik tanpa ubah config (atau `provider::model`) |
 | `minicode config add --baseUrl <url> --apiKey <key>` | Tambah provider LLM |
 | `minicode config mcp add <id> --command <cmd> --args "<a1,a2>"` | Daftarkan MCP server stdio |
@@ -26,7 +27,7 @@ Semua cara menjalankan Minicode: interaktif, sekali jalan, pipe, dan otomasi CI 
 | `minicode doctor [--json]` | Diagnosis lokal |
 | `minicode mcp serve` | Ekspos minicode sebagai MCP server |
 
-Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `skills`, `providers`, `auth`, `pricing`, `exec`, `memory`, `doctor`, `acp`).
+Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `skills`, `providers`/`models`/`sync`, `auth`, `pricing`, `exec`, `daemon`, `memory`, `doctor`, `acp`).
 
 ## Flags
 
@@ -54,8 +55,11 @@ Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `s
 | `--max-steps <n>` | Batas langkah tool (default 50) |
 | `--context-window <n>` | Ukuran jendela konteks (token) |
 | `--session <id>` | ID sesi (default random, disanitasi) |
+| `--work-mode <m>` | `DISCUSS` \| `PLAN` \| `EXECUTE` (default). **Lapis intent di atas** permission mode: `DISCUSS` = read-only penuh, `PLAN` = hanya tool rencana, `EXECUTE` = tanpa ceiling tambahan. Tidak pernah memperluas kewenangan permission mode; permission mode tetap yang memutuskan allow/deny per tool. Lihat [TUI](repl.md) untuk `/work-mode` (aksi operator saat sesi berjalan) |
+| `--enable-scheduler` | Opt-in scheduler otonom (default **off**). Tanpa flag ini, scheduler tidak dibangun sama sekali dan `/scheduler` menjawab "not enabled". Eksekusi manual saja lewat `/scheduler run` — tidak ada timer; turn otonom bersifat read-only. Lihat `/scheduler status` dan `/scheduler stop` |
+| `--runtime <mode>` | `off` (default) \| `constructed` \| `owned`. Arsitektur eksekusi: `off` = perilaku sekarang, tak berubah; `constructed` = runtime + jurnal durable dibangun, turn masih jalan jalur lama; `owned` = setiap turn di-admit lewat runtime (kernel + jurnal durable) dan admission yang ditolak menjalankan tak apa pun. Nilai tak dikenal = `off` |
 
-Di REPL, **Shift+Tab** memutar permission (`auto` → `ask` → `plan` → `allowlist`) dan benar-benar mengubah keputusan, bukan label. Di baris kosong, **Tab** juga memutar mode (`auto` → `ask` → `plan` → `allowlist`).
+Di TUI, **Shift+Tab** memutar permission (`auto` → `ask` → `plan` → `allowlist`) dan benar-benar mengubah keputusan, bukan label. Di baris kosong, **Tab** juga memutar mode (`auto` → `ask` → `plan` → `allowlist`). Shift+Tab **tidak** memutar WorkMode — itu lapis intent terpisah (`/work-mode`).
 
 ## Kapan memakai apa
 
@@ -117,7 +121,7 @@ itu MCP server lokal tidak di-spawn, endpoint provider lokal tidak dipakai,
 
 ## Anti-injeksi flag
 
-`cli/args.ts:53` berhenti di prompt word pertama: prompt `"review --allow-all"` tidak mengaktifkan flag. `--cwd`/value-flag setelah nama subcommand diparse per-subcommand agar tidak menembus boundary prompt.
+`cli/args.ts:59-67` berhenti di prompt word pertama: prompt `"review --allow-all"` tidak mengaktifkan flag. `--cwd`/value-flag setelah nama subcommand diparse per-subcommand agar tidak menembus boundary prompt.
 
 ## Exit codes
 

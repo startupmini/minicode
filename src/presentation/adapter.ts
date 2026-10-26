@@ -426,21 +426,21 @@ export function createPresentationAdapter(
       return undefined
     }
     if (list.length === 0) return undefined
-  const steps: PlanStep[] = list.map((t, i) => ({
-    stepId: String(i + 1),
-    // PHASE 4A.4 - the declared id is passed to the resolver as a HINT only. It
-    // is kept on the step solely when TaskStore confirms that row exists for
-    // this session; otherwise it is stripped below, so an unverified id can
-    // never appear on a published plan.
-    ...(t.taskId ? { taskId: t.taskId } : {}),
-    title: t.content,
-    status:
-      t.status === "completed" || t.status === "cancelled" || t.status === "blocked"
-        ? t.status
-        : t.status === "in_progress"
-          ? "active"
-          : "pending",
-  }))
+    const steps: PlanStep[] = list.map((t, i) => ({
+      stepId: String(i + 1),
+      // PHASE 4A.4 - the declared id is passed to the resolver as a HINT only. It
+      // is kept on the step solely when TaskStore confirms that row exists for
+      // this session; otherwise it is stripped below, so an unverified id can
+      // never appear on a published plan.
+      ...(t.taskId ? { taskId: t.taskId } : {}),
+      title: t.content,
+      status:
+        t.status === "completed" || t.status === "cancelled" || t.status === "blocked"
+          ? t.status
+          : t.status === "in_progress"
+            ? "active"
+            : "pending",
+    }))
     const status = steps.every((step) => step.status === "completed")
       ? "completed"
       : steps.every((step) => step.status === "cancelled")

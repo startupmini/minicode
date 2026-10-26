@@ -31,7 +31,15 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // carries an unknown value. Silent fail-closed here would let the operator
   // believe a narrower work mode is active while the session runs EXECUTE.
   // Declared, not absorbed, per the rule above.
-  "cli/index.ts": { max: 27, owner: "human-cmd" },
+  // [P14] 27 -> 29 for exactly TWO writers: (a) the refusal when
+  // `--adopt-task` is malformed (must fire BEFORE any session/lease exists —
+  // silently ignoring it would let the operator believe a task was adopted
+  // while it was not) and (b) the single-line refusal when adoption itself is
+  // declined by policy (stale incarnation/revision, busy source writer,
+  // target id conflict, unresolved relation). Both are "setup refused", not
+  // crashes, so they print one line instead of a stack trace. Declared,
+  // not absorbed, per the rule above.
+  "cli/index.ts": { max: 29, owner: "human-cmd" },
   "cli/model-manager.ts": { max: 2, owner: "human-cmd" },
   "cli/provider-manager.ts": { max: 3, owner: "human-cmd" },
   // [P2.1] 26 -> 27 for exactly ONE writer: the canonical identity line
@@ -96,6 +104,17 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   "cli/commands/exec.ts": { max: 9, owner: "machine" },
   "cli/commands/mcp.ts": { max: 2, owner: "human-cmd" },
   "cli/commands/memory.ts": { max: 11, owner: "human-cmd" },
+  // [P14.4] 0 -> 8 for the openwork command's writers, per the terminal
+  // contract emission classes. [P14 full-scope, 2026-10-26] restructured to
+  // TWO shared sinks + TWO failure writers, still within the declared max:
+  // (1) emitJson — the ONE machine-JSON site for every action (list/inventory/
+  // context/export envelope, merge success/refusal), (2) printLines — the ONE
+  // human stdout site (collected, written once) for list/inventory/context/
+  // export/merge/help, (3) usageError (stderr), (4) exit1 (stderr) shared by
+  // all runtime/refusal/lookup failures. No per-row writers: multi-line
+  // output is assembled first. New P14.4/P14.5 actions (inventory, context,
+  // export) deliberately REUSE these four sites instead of adding classes.
+  "cli/commands/openwork.ts": { max: 8, owner: "human-cmd" },
   "cli/commands/pricing.ts": { max: 23, owner: "human-cmd" },
   "cli/commands/providers.ts": { max: 17, owner: "human-cmd" },
   "cli/commands/sessions.ts": { max: 11, owner: "human-cmd" },

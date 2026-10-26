@@ -106,8 +106,14 @@ test("15. concurrent canonical writes in two sessions create no cross-wired iden
   expect(new TaskStore(dir).listTasks("sess-A")).toHaveLength(2)
   expect(new TaskStore(dir).listTasks("sess-B")).toHaveLength(2)
   // Assignment did not cross-wire.
-  expect(decodeCanonicalAssignments(outA, { sessionId: "sess-A" })?.map((a) => a.taskId)).toEqual(["t1", "t2"])
-  expect(decodeCanonicalAssignments(outB, { sessionId: "sess-B" })?.map((a) => a.taskId)).toEqual(["t1", "t2"])
+  expect(decodeCanonicalAssignments(outA, { sessionId: "sess-A" })?.map((a) => a.taskId)).toEqual([
+    "t1",
+    "t2",
+  ])
+  expect(decodeCanonicalAssignments(outB, { sessionId: "sess-B" })?.map((a) => a.taskId)).toEqual([
+    "t1",
+    "t2",
+  ])
   expect(decodeCanonicalAssignments(outA, { sessionId: "sess-B" })).toBeUndefined()
   // No transaction contamination: each namespace's next id is independent.
   expect(new TaskStore(dir).nextId("sess-A")).toBe("t3")
@@ -120,8 +126,22 @@ test("15b. concurrent operations in ONE session do not duplicate or cross-wire",
   seed(dir, S, ["A"])
   // Two different new tasks racing in the same namespace.
   const [outX, outY] = await Promise.all([
-    write(dir, [{ taskId: "t1", content: "A", status: "pending" }, { content: "X", status: "pending" }], S),
-    write(dir, [{ taskId: "t1", content: "A", status: "pending" }, { content: "Y", status: "pending" }], S),
+    write(
+      dir,
+      [
+        { taskId: "t1", content: "A", status: "pending" },
+        { content: "X", status: "pending" },
+      ],
+      S,
+    ),
+    write(
+      dir,
+      [
+        { taskId: "t1", content: "A", status: "pending" },
+        { content: "Y", status: "pending" },
+      ],
+      S,
+    ),
   ])
   const after = rows(dir, S)
   // Whatever the interleaving, identity is unique and each payload's item kept
@@ -171,24 +191,40 @@ async function startMcp(dir: string) {
   }
   const call = async (id: number, name: string, args: unknown) => {
     proc.stdin.write(
-      JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } }) + "\n",
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: { name, arguments: args },
+      })}\n`,
     )
     for (;;) {
       const m = await next()
-      if (m.id === id) return m as { result?: { isError?: boolean; content?: Array<{ text?: string }> } }
+      if (m.id === id)
+        return m as { result?: { isError?: boolean; content?: Array<{ text?: string }> } }
     }
   }
   proc.stdin.write(
-    JSON.stringify({
+    `${JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
       method: "initialize",
-      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "d", version: "1" } },
-    }) + "\n",
+      params: {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "d", version: "1" },
+      },
+    })}\n`,
   )
   await next()
-  proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n")
-  return { call, stop: async () => { proc.kill(); await proc.exited } }
+  proc.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`)
+  return {
+    call,
+    stop: async () => {
+      proc.kill()
+      await proc.exited
+    },
+  }
 }
 const todosDir = (dir: string) => join(dir, ".minicode", "todos")
 
@@ -197,19 +233,27 @@ test("14. MCP: one context is stable across requests, and canonical identity wor
   const mcp = await startMcp(dir)
   try {
     // Two writes in the SAME server context must share one durable namespace.
-    const w1 = await mcp.call(11, "todo_write", { todos: [{ content: "from-mcp", status: "pending" }] })
+    const w1 = await mcp.call(11, "todo_write", {
+      todos: [{ content: "from-mcp", status: "pending" }],
+    })
     expect(w1.result?.isError ?? false).toBe(false)
-    const w2 = await mcp.call(12, "todo_write", { todos: [{ content: "from-mcp", status: "pending" }] })
+    const w2 = await mcp.call(12, "todo_write", {
+      todos: [{ content: "from-mcp", status: "pending" }],
+    })
     expect(w2.result?.isError ?? false).toBe(false)
     const files = (await readdir(todosDir(dir))).sort()
     // Exactly ONE namespace file, named by a per-instance mcp:<uuid>.
     expect(files).toHaveLength(1)
     expect(files[0]).toMatch(/^mcp-[0-9a-f-]{36}\.json$/)
     // The JSON-RPC request ids (11, 12) were NOT used as durable identity.
-    expect(files[0]).not.toContain("11")
-    expect(files[0]).not.toContain("12")
+    // Yang diperiksa adalah ID-nya sendiri: kemunculan "11"/"12" di dalam
+    // UUID acak adalah kebetulan yang sering terjadi (~1 dari 4 namespace),
+    // BUKAN kebocoran identitas — assertion lama membuat tes ini flaky.
+    expect(files[0]).not.toMatch(/^mcp-(11|12)\.json$/)
     // The sessionId recorded inside is the mcp: form of that same namespace.
-    const stored = JSON.parse(await Bun.file(join(todosDir(dir), files[0]!)).text()) as { sessionId: string }
+    const stored = JSON.parse(await Bun.file(join(todosDir(dir), files[0]!)).text()) as {
+      sessionId: string
+    }
     expect(stored.sessionId).toBe(files[0]!.replace(/\.json$/, "").replace("mcp-", "mcp:"))
   } finally {
     await mcp.stop()
@@ -244,7 +288,9 @@ test("14c. MEASURED LIMITATION: MCP canonical identity does NOT survive a server
   const first = await startMcp(dir)
   let firstNs: string
   try {
-    await first.call(11, "todo_write", { todos: [{ content: "before-restart", status: "pending" }] })
+    await first.call(11, "todo_write", {
+      todos: [{ content: "before-restart", status: "pending" }],
+    })
     firstNs = (await readdir(todosDir(dir)))[0]!
   } finally {
     await first.stop()
@@ -252,7 +298,9 @@ test("14c. MEASURED LIMITATION: MCP canonical identity does NOT survive a server
   // Restart: a brand new server instance against the SAME project directory.
   const second = await startMcp(dir)
   try {
-    await second.call(11, "todo_write", { todos: [{ content: "after-restart", status: "pending" }] })
+    await second.call(11, "todo_write", {
+      todos: [{ content: "after-restart", status: "pending" }],
+    })
   } finally {
     await second.stop()
   }

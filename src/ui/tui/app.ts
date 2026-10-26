@@ -22,6 +22,7 @@ import {
   type PromptState,
   toGraphemes,
 } from "../input/prompt-engine.ts"
+import { formatError } from "../render/errors.ts"
 import { sanitizeAnsi, sanitizeAnsiLine, stripSgr } from "../render/sanitize.ts"
 import { c } from "../render/theme.ts"
 import {
@@ -695,7 +696,11 @@ export class TuiApp {
       const res = await this.host.submit(line)
       if (res?.quit) this.quit()
     } catch (e) {
-      this.transcript.pushError(e instanceof Error ? e.message : String(e))
+      // [P0 UI Security] Pesan error = TEKS TAK DIPERCAYA: bisa memuat body
+      // provider, header `Authorization: Bearer …`, atau escape ANSI. Jalur
+      // lama `e.message` mentah membocorkan credential ke layar TUI — kini
+      // lewat formatter kanonik (redaksi credential + sanitasi + pemotongan).
+      this.transcript.pushError(formatError(e))
     } finally {
       this.busy = false
       this.editing = true

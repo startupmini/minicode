@@ -24,6 +24,7 @@ import { Scheduler } from "../src/task/scheduler.ts"
 import { SESSION_LEASE_MS, SESSION_RENEW_INTERVAL_MS } from "../src/task/session-authority.ts"
 import { resetSessionOwnershipForTests } from "../src/task/session-ownership.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
+import { PROVEN_READ_ONLY_CONTINUITY } from "./helpers/continuity.ts"
 
 const S = "6y-prod"
 const prov = { origin: "model", source: "6y-prod" } as const
@@ -141,7 +142,12 @@ describe("§16 authority loss fails closed on every autonomous path", () => {
 
 describe("§17 only valid authority may reconcile", () => {
   test("valid lease -> the authority reconciles; no lease -> it may not", async () => {
-    const withLease = new Scheduler(S, { store, runTurn: (() => OK) as never, instruction: "x" })
+    const withLease = new Scheduler(S, {
+      store,
+      runTurn: (() => OK) as never,
+      instruction: "x",
+      continuity: PROVEN_READ_ONLY_CONTINUITY,
+    })
     await withLease.start()
     // A stranded, Scheduler-owned claim is exactly what reconcile() reverts.
     const id = pending()

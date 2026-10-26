@@ -97,13 +97,13 @@ async function runTodoWrite(dir: string, todos: unknown[], sessionId = S): Promi
 function fakeBus(): EventBusLike & { emit: (type: string, payload: unknown) => void } {
   const handlers = new Map<string, Set<(e: unknown) => void>>()
   return {
-    on(type, handler) {
+    on(type: string, handler: (e: unknown) => void) {
       const set = handlers.get(type) ?? new Set<(e: unknown) => void>()
       set.add(handler)
       handlers.set(type, set)
       return () => set.delete(handler)
     },
-    emit(type, payload) {
+    emit(type: string, payload: unknown) {
       const set = handlers.get(type)
       if (set) for (const h of [...set]) h(payload)
     },
@@ -117,7 +117,11 @@ function build(dir: string, sessionId = S, provider?: TaskIdentityProvider) {
     // Production injects the TaskStore-backed resolver (cli/setup.ts). It is used
     // here so these tests exercise the real production wiring, not a convenient
     // stand-in.
-    ...(provider === undefined ? { taskIdentityProvider: createTaskIdentityResolver(dir) } : provider ? { taskIdentityProvider: provider } : {}),
+    ...(provider === undefined
+      ? { taskIdentityProvider: createTaskIdentityResolver(dir) }
+      : provider
+        ? { taskIdentityProvider: provider }
+        : {}),
   })
   const seen: DomainEvent[] = []
   adapter.onEvent((e) => seen.push(e))
@@ -136,7 +140,10 @@ function complete(
   bus.emit("execution:started", { execution: { call: { id: callId, name: "todo_write" } } })
   bus.emit("execution:completed", {
     sessionId,
-    execution: { call: { id: callId, name: "todo_write", args }, result: { isError: false, content } },
+    execution: {
+      call: { id: callId, name: "todo_write", args },
+      result: { isError: false, content },
+    },
   })
 }
 
@@ -208,7 +215,12 @@ test("D. reordered explicit ids keep their own identity and are not remapped", a
   expect(ids(decodeCanonicalAssignments(out, { sessionId: S }))).toEqual(["t3", "t1", "t2"])
   // Reordering moves order, never identity: no new row was minted.
   const store = new TaskStore(dir)
-  expect(store.listTasks(S).map((x) => x.id).sort()).toEqual(["t1", "t2", "t3"])
+  expect(
+    store
+      .listTasks(S)
+      .map((x) => x.id)
+      .sort(),
+  ).toEqual(["t1", "t2", "t3"])
   expect(store.getTask(S, "t1")?.title).toBe("A")
   expect(store.getTask(S, "t3")?.title).toBe("C")
 })
@@ -287,10 +299,7 @@ test("G. no incomplete assignment can produce payloadVersion=2", async () => {
       encodeCanonicalAssignments(S, [{ taskId: "nope", kind: "existing" }, good[1]!]),
     ],
     // duplicate ids
-    [
-      "duplicate",
-      encodeCanonicalAssignments(S, [good[0]!, { taskId: "t1", kind: "new" }]),
-    ],
+    ["duplicate", encodeCanonicalAssignments(S, [good[0]!, { taskId: "t1", kind: "new" }])],
     // stale: rewrites an id the model actually declared
     [
       "stale rewrite",
@@ -307,7 +316,10 @@ test("G. no incomplete assignment can produce payloadVersion=2", async () => {
     // The plan still publishes - it is the legacy positional shape, never a lie.
     expect(ev, label).toBeDefined()
     expect(ev!.payloadVersion, label).toBeUndefined()
-    expect(ev!.steps.every((s) => s.taskId === undefined), label).toBe(true)
+    expect(
+      ev!.steps.every((s) => s.taskId === undefined),
+      label,
+    ).toBe(true)
   }
 })
 

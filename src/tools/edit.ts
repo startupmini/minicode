@@ -109,6 +109,19 @@ export function flexibleMatch(content: string, needle: string): MatchResult | nu
   return null
 }
 
+// Aturan uniqueness: `needle` harus menunjuk SATU tempat di `content` menurut
+// matcher yang sama dengan flexibleMatch (exact → crlf → trimmed → fuzzy).
+// Satu aturan untuk DUA jalur edit (hashline cepat & fallback) — sebelumnya
+// jalur hashline hanya mencari duplikat SUBSTRING PERSIS, sehingga needle yang
+// unik-persis tapi ambigu-fuzzy lolos dan blok PERTAMA diedit diam-diam.
+// `first` dipakai kalau pemanggil sudah punya hasil flexibleMatch (jalur
+// fallback); kalau tidak, dihitung di sini.
+function isAmbiguousMatch(content: string, needle: string, first?: MatchResult | null): boolean {
+  const m = first ?? flexibleMatch(content, needle)
+  if (!m) return false
+  return flexibleMatch(content.slice(m.end), needle) !== null
+}
+
 export const editTool: Tool = {
   name: "edit",
   description:
@@ -158,9 +171,24 @@ export const editTool: Tool = {
     if (canHashline) {
       const hunk = applyHashline(content, oldS, newS)
       if (hunk !== null) {
-        // uniqueness: if exact oldString occurs >1 times, require more context (mirror flexibleMatch)
-        const firstIdx = content.indexOf(oldS)
-        if (firstIdx !== -1 && content.indexOf(oldS, firstIdx + oldS.length) !== -1) {
+        // Uniqueness: aturan YANG SAMA dengan jalur flexibleMatch di bawah
+        // (exact → crlf → trimmed → fuzzy). Pemeriksaan lama hanya mencari
+        // duplikat SUBSTRING PERSIS, jadi needle yang unik-persis tapi
+        // ambigu-fuzzy (mis. "\tfoo" vs "  foo") lolos dan blok PERTAMA
+        // diedit diam-diam — kelas bug yang sama dengan "duplikat diam-diam
+        // edit blok pertama" yang sudah ditutup di jalur bawah.
+        //
+        // flexibleMatch di sini TIDAK memilih target (itu tetap hashline) —
+        // hanya menjawab "apakah needle ini unik?", supaya kedua jalur
+        // menjawab pertanyaan yang sama.
+        const first = flexibleMatch(content, oldS)
+        if (!first) {
+          // Hashline menemukan, flexibleMatch tidak (atau fuzzy-nya ambigu →
+          // flexibleMatch sengaja null). Jalur bawah menolak dengan "not
+          // found"; jalur cepat tidak boleh lebih longgar.
+          throw new Error(`oldString not found in ${p}`)
+        }
+        if (isAmbiguousMatch(content, oldS, first)) {
           throw new Error(
             `oldString found multiple times in ${p} — provide more surrounding lines to make it unique`,
           )
@@ -185,8 +213,7 @@ export const editTool: Tool = {
 
     // ensure uniqueness untuk semua mode (exact/crlf/trimmed/fuzzy) — trimmed/fuzzy
     // sebelumnya hanya dicek untuk exact/crlf sehingga duplikat diam-diam edit blok pertama
-    const second = flexibleMatch(content.slice(match.end), oldS)
-    if (second) {
+    if (isAmbiguousMatch(content, oldS, match)) {
       throw new Error(
         `oldString found multiple times in ${p} — provide more surrounding lines to make it unique`,
       )

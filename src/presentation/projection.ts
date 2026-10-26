@@ -198,9 +198,7 @@ export function describeTurn(turn: TurnLike): TurnDescription {
  * dijaga test display agar tak divergen. Hanya verdict present eksplisit yang
  * menjadi penanda sukses; absen field = UNKNOWN dan tidak dirender apa pun.
  */
-export function verificationMark(
-  verification: ActivityDescription["verification"],
-): string {
+export function verificationMark(verification: ActivityDescription["verification"]): string {
   if (!verification) return ""
   if (verification.verdict === "present") return " [verified]"
   return ` [unverified:${verification.verdict}]`
@@ -476,7 +474,7 @@ export function pendingVerificationObservation(
   const observedAt =
     typeof latest.observedAt === "number" && Number.isFinite(latest.observedAt)
       ? latest.observedAt
-      : opts.now ?? 0
+      : (opts.now ?? 0)
   return {
     toolCallId: call.toolCallId,
     invocationId,
@@ -569,8 +567,7 @@ export interface MachineEventInput {
 const VALID_PROVENANCE: readonly string[] = ["live", "replay", "reconstructed", "unknown"]
 
 function asProvenance(value: unknown): Provenance | undefined {
-  return typeof value === "string" &&
-    (VALID_PROVENANCE as readonly string[]).includes(value)
+  return typeof value === "string" && (VALID_PROVENANCE as readonly string[]).includes(value)
     ? (value as Provenance)
     : undefined
 }

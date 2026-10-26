@@ -6,7 +6,7 @@ Satu pertanyaan, satu jawaban: **mode mana untuk tujuan saya?**
 
 | Saya ingin… | Gunakan | Karena |
 |---|---|---|
-|Memahami repo tanpa mengubah apa pun | `readonly` (atau `--tool-scope explore`) | Hanya 18 tool baca yang lolos; tulis/bash/commit/deligasi ditolak di gerbang |
+|Memahami repo tanpa mengubah apa pun | `readonly` (atau `--tool-scope explore`) | Gerbang izin mengizinkan 18 tool baca (`READONLY_TOOLS`); model tetap hanya **melihat 12** tool baca (visibilitas `EXPLORE_TOOL_NAMES`) — tulis/bash/commit/delegasi ditolak di gerbang |
 | Minta agen membuat perubahan | `auto` (default) | Tulis terjail + bash aman langsung jalan; yang berisiko (commit, MCP, delegasi) tetap minta izin sekali |
 | Menyetujui setiap perubahan | `ask` | Tiap tool non-sepele menunggu jawaban; `todo`/`bash_output` tak ditanya (bookkeeping sendiri) |
 | Menyusun rencana tanpa eksekusi | `plan` | Baca + tulis rencana (`todo_write`) + delegasi yang dipaksa read-only; tanpa mutasi file/git/memori |
@@ -25,7 +25,7 @@ Satu pertanyaan, satu jawaban: **mode mana untuk tujuan saya?**
 
 - Semakin otonom → semakin cepat, semakin besar blast radius bila model salah paham. Tidak ada mode yang membuat model lebih bijak — mode hanya mengatur **apa yang boleh terjadi**.
 - `allowlist` (otomatis saat tanpa sandbox OS) paling ketat untuk shell, tetapi model tetap bisa menulis file via tool terjail — pahami beda sumbunya: allowlist membatasi *perintah*, jail membatasi *file*.
-- Ganti mode kapan pun: flag saat start, `/mode` atau Shift+Tab saat REPL berjalan.
+- Ganti mode kapan pun: flag saat start, `/mode` atau Shift+Tab saat TUI berjalan.
 
 ## Lanjut
 

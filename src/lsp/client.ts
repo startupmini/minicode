@@ -4,12 +4,35 @@ import { extname, resolve as resolvePath } from "node:path"
 import { pathToFileURL } from "node:url"
 import { LIMITS } from "../constants.ts"
 import { sanitizeSpawnEnv } from "../policy/scrub.ts"
+import type {
+  ManagedChild,
+  ManagedChildObservation,
+  ProcessSupervision,
+} from "../runtime/process-supervision.ts"
 
 export interface LspServerEntry {
   ext: string // ".ts"
   command: string
   args: string[]
   env?: Record<string, string>
+}
+
+/**
+ * [P13.2] Supervisor proses runtime (DI).
+ *
+ * Server LSP adalah anak proses milik runtime ini: ia lahir dari perintah
+ * pengguna, bisa mati sendiri, dan TIDAK boleh lepas begitu saja. Registrar ini
+ * menyerahkan kepemilikan ke SATU jalur ownership proses (runtime), sehingga
+ * "tidak ada child yang terlepas" bisa dibuktikan, bukan diklaim.
+ *
+ * Tanpa pemasang (mode runtime off / tool dipakai tanpa runtime), server LSP
+ * tetap jalan seperti sebelumnya — jalur legacy utuh, tanpa klaim supervisi.
+ */
+let processSupervision: ProcessSupervision | null = null
+
+/** Pasang/lepas jalur ownership proses (composition root). */
+export function setLspProcessSupervisor(supervisor: ProcessSupervision | null): void {
+  processSupervision = supervisor
 }
 
 const LANG_ID: Record<string, string> = {
@@ -61,19 +84,31 @@ class LspConnection {
   private starting?: Promise<void>
   // abort HANYA saat stop() — bukan timeout, agar server tidak mati sendiri
   private killSignal = new AbortController()
-  private opened = new Map<string, number>()
+  private opened = new Map<string, { version: number; text: string; langId: string }>()
   readonly diagnostics = new Map<string, Record<string, unknown>[]>()
   private diagnosticWaiters = new Map<string, Set<() => void>>()
+  /** [P13.2] true saat stop() yang kita minta → keluarannya BUKAN "tak terduga". */
+  private stopping = false
+  /** [P13.2] root workspace — dipakai lagi saat restart. */
+  private rootPath = ""
 
   constructor(public entry: LspServerEntry) {}
 
+  /** Id anak proses (stabil per ekstensi) — kunci recovery di jalur ownership. */
+  private get childId(): string {
+    return `lsp:${this.entry.ext}`
+  }
+
   start(rootPath: string): Promise<void> {
     if (this.started) return Promise.resolve()
+    this.rootPath = rootPath
     this.starting ??= this.doStart(rootPath)
     return this.starting
   }
 
   private async doStart(rootPath: string): Promise<void> {
+    this.rootPath = rootPath
+    this.stopping = false
     this.proc = spawn(this.entry.command, this.entry.args, {
       stdio: ["pipe", "pipe", "pipe"],
       // env kredensial di-strip; env eksplisit config server menang setelahnya
@@ -81,16 +116,38 @@ class LspConnection {
       signal: this.killSignal.signal,
     })
     this.proc.on("error", (err) => this.failAll(err))
+    // [P13.2] Tulis ke server yang sudah mati menghasilkan EPIPE. Itu kondisi
+    // NORMAL saat shutdown/supervisi (kita menutup lebih dulu) — dibiarkan
+    // jadi event tanpa penanganan, ia bisa menjatuhkan proses CLI. Proses mati
+    // dilaporkan lewat handler `exit` ✅, jadi di sini cukup diserap.
+    this.proc.stdin?.on("error", () => {})
+    this.proc.stdout?.on("error", () => {})
     this.proc.on("exit", (code) => {
       const wasStarted = this.started
       this.started = false
       this.starting = undefined
       if (wasStarted) this.failAll(new Error(`LSP server ${this.entry.ext} exited (${code})`))
+      // [P13.2] Keluar saat kita TIDAK minta = anak hilang: serahkan ke jalur
+      // proses (bounded restart / eskalasi jujur). Keluar karena stop() kita
+      // sendiri bukan kegagalan.
+      if (!this.stopping) {
+        const supervisor = processSupervision
+        if (supervisor) {
+          void supervisor.notifyExit(this.childId, {
+            status: code === 0 ? "exited" : "failed",
+            exitCode: code,
+          })
+        }
+      }
     })
     this.proc.stderr?.on("data", (d: Buffer) =>
       process.stderr.write(`[lsp${this.entry.ext}] ${d.toString().trim().slice(0, 500)}\n`),
     )
     this.proc.stdout!.on("data", (chunk: Buffer) => this.handleData(chunk))
+
+    // [P13.2] Serahkan kepemilikan anak ke jalur ownership proses runtime.
+    const supervisor = processSupervision
+    if (supervisor) supervisor.register(this.managedChild())
 
     // initialize handshake
     await this.request(
@@ -113,6 +170,40 @@ class LspConnection {
     )
     this.notify("initialized", {})
     this.started = true
+  }
+
+  /**
+   * [P13.2] Port anak yang dikelola runtime.
+   *
+   * Restart server LSP TIDAK mengulang kerja pengguna — server hanya menjawab
+   * permintaan, jadi restart otomatis aman (dibatasi policy M9). Untuk
+   *_background command_ yang bisa mengulang efek, restartSafety-nya "unsafe"
+   * dan runtime akan MENOLAK me-restart-nya.
+   */
+  private managedChild(): ManagedChild {
+    return {
+      id: this.childId,
+      kind: "lsp-server",
+      restartSafety: "safe",
+      observe: (): ManagedChildObservation => {
+        if (this.started) return { status: "running" }
+        if (this.proc) return { status: "exited", exitCode: null }
+        return { status: "unknown", detail: "not started" }
+      },
+      stop: async (): Promise<void> => {
+        await this.stop()
+      },
+      restart: async (): Promise<void> => {
+        // Diagnostics lama milik server lama → dibuang SEBELUM restart. Kalau
+        // dibuang setelah, diagnostics yang baru saja dipublish server baru ikut
+        // hilang (dan hasil waitForDiagnostics jadi kosong tanpa sebab).
+        this.diagnostics.clear()
+        await this.start(this.rootPath)
+        // Server baru tak tahu dokumen yang tadi dibuka → buka ulang dengan isi
+        // terakhir yang klien kirim (bukan isi basi dari disk).
+        this.reopenDocuments()
+      },
+    }
   }
 
   async request(
@@ -145,20 +236,44 @@ class LspConnection {
   openDocument(absPath: string, text: string): string {
     const uri = pathToFileURL(absPath).href
     const langId = languageIdFor(absPath)
-    if (!this.opened.has(uri)) {
+    const known = this.opened.get(uri)
+    if (!known) {
       this.notify("textDocument/didOpen", {
         textDocument: { uri, languageId: langId, version: 1, text },
       })
-      this.opened.set(uri, 1)
+      this.opened.set(uri, { version: 1, text, langId })
     } else {
-      const v = (this.opened.get(uri) ?? 1) + 1
+      const v = known.version + 1
       this.notify("textDocument/didChange", {
         textDocument: { uri, version: v },
         contentChanges: [{ text }],
       })
-      this.opened.set(uri, v)
+      this.opened.set(uri, { version: v, text, langId })
     }
     return uri
+  }
+
+  /**
+   * [P13.2] Buka ulang dokumen yang masih terbuka pada server yang BARU.
+   *
+   * Server yang di-restart tidak tahu dokumen apa pun: isinya hilang bersama
+   * prosesnya. Kalau dibiarkan, state klien (dokumen masih terbuka) dan state
+   * server jadi berbeda — server jadi buta, dan hasil simbol/diagnostics
+   * kosong tanpa alasan.
+   *
+   * Isi yang dikirim adalah TEKS TERAKHIR yang klien kirim (bukan isi file
+   * dari disk): isi disk bisa sudah basi, dan mengirim basi berarti server
+   * bekerja pada dokumen yang berbeda dari yang dilihat pengguna.
+   *
+   * Versi dokumen diteruskan apa adanya, jadi increments seterusnya tetap
+   * naik dan server tak pernah melihat versi yang mundur.
+   */
+  private reopenDocuments(): void {
+    for (const [uri, doc] of this.opened) {
+      this.notify("textDocument/didOpen", {
+        textDocument: { uri, languageId: doc.langId, version: doc.version, text: doc.text },
+      })
+    }
   }
 
   async waitForDiagnostics(uri: string, timeoutMs = 5_000): Promise<Record<string, unknown>[]> {
@@ -197,6 +312,9 @@ class LspConnection {
 
   async stop(): Promise<void> {
     if (!this.proc) return
+    // [P13.2] Tandai stop yang kita minta → keluarannya tak dilaporkan sebagai
+    // [P13.2] Tandai stop yang kita minta: keluarannya tak dilaporkan sebagai
+    this.stopping = true
     try {
       await this.request("shutdown", {}, 2_000)
     } catch {}

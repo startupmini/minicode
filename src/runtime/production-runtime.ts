@@ -29,6 +29,8 @@ import {
   type RuntimeShutdownResult,
 } from "./composition.ts"
 import { type RuntimeProductionMode, runtimeModeFor } from "./production-execution.ts"
+import type { RuntimeFacts } from "./runtime-status.ts"
+import { runtimeFactsFrom } from "./runtime-status-facts.ts"
 
 export type RuntimeGateSource = "session-option" | "absent"
 
@@ -143,4 +145,73 @@ export async function createProductionRuntime(
     shutdownResult: () => runtime.shutdownResult(),
   }
   return handle
+}
+
+// ── P13.1 — Jembatan handle produksi → fakta kontrak status runtime ─────────
+//
+// Kenapa jembatan ini di lapisan runtime: hanya pemilik handle yang boleh
+// membaca state nyata runtime. Kalau CLI/daemon menghitung statusnya sendiri,
+// kita kembali ke N sumber status (persis dual-authority yang dilarang).
+//
+// Yang DIAMBIL dari handle (fakta nyata, bukan dugaan):
+// - gate/constructed/closed: langsung dari handle.
+// - `journalWritable`: jurnal durable = `composition.durable` (jurnal benar-benar
+//   dibuka saat konstruksi — konstruksi gagal mempropagasi error), dan tak ada
+//   append yang gagal pada incarnation ini (`journalAppendFailures`).
+// - admission tertutup (`isAdmissionOpen()`): membedakan "masih melayani" dari
+//   "sedang berhenti" — handle saja tak bisa membedakan keduanya.
+//
+// Yang TIDAK boleh ditebak: keberadaan scheduler/TaskStore (milik lapisan task)
+// dan supervisor (belum terpasang produksi pada P13.1). Kalau pemanggil tak
+// menyediakannya, nilainya `null` = belum diketahui → fail-closed, bukan "besar".
+
+/** Fakta dari lapisan lain yang tak bisa dibaca runtime (lapisan task). */
+export interface ProductionRuntimeObservation {
+  /** Scheduler terpasang? `null` = belum diketahui. */
+  readonly schedulerAttached?: boolean | null
+  /** TaskStore otoritas task terbuka? `null` = belum diketahui. */
+  readonly storeOpen?: boolean | null
+  /** Hasil drain terakhir, bila composition root sudah menangkapnya. */
+  readonly lastFlush?: RuntimeFlushReport | null
+}
+
+export type { ProductionRuntimeFactsInput, TaskLayerFacts } from "./runtime-status-facts.ts"
+export { runtimeFactsFrom } from "./runtime-status-facts.ts"
+
+/**
+ * Turunkan fakta kontrak dari handle produksi.
+ *
+ * Murni: tidak mengubah apa pun pada runtime. `flush()` TIDAK dipanggil di
+ * sini — flush adalah operasi drain, bukan probe; memanggilnya dari jalur
+ * status akan memicu drain setiap kali status dibaca.
+ *
+ * Sumber kebenaran:(handle → composition). FAKTA runtime dibaca dari komposisi
+ * (satu-satunya pemilik state runtime); observation hanya menimpa fakta
+ * lapisan task (scheduler/TaskStore) yang memang tak bisa dibaca dari dalam.
+ */
+export function observeProductionRuntime(
+  handle: ProductionRuntimeHandle,
+  observation: ProductionRuntimeObservation = {},
+): RuntimeFacts {
+  const runtime = handle.runtime()
+  if (!runtime) {
+    // Handle inert (gate tertutup): tak ada komposisi, jadi tak ada runtime.
+    return runtimeFactsFrom({
+      enabled: handle.enabled,
+      constructed: false,
+      closed: handle.isClosed(),
+      admissionOpen: false,
+      durable: false,
+      journalAppendFailures: 0,
+      pendingJournalAppends: 0,
+      supervisionEstablished: false,
+      supervisorAttached: false,
+      supervisedChildren: 0,
+      ...observation,
+    })
+  }
+  return runtime.statusFacts({
+    schedulerAttached: observation.schedulerAttached ?? null,
+    storeOpen: observation.storeOpen ?? null,
+  })
 }

@@ -9,7 +9,7 @@
 
 ## 6 permission mode
 
-`auto` (default) · `readonly` (18 tool read-only) · `plan` (readonly + todo + delegate read-only) · `allowlist` (bash pola aman) · `ask` (prompt tiap tool) · `allow-all` (semua — tetap tolak bash berbahaya, path jail tetap aktif). Putar via Shift+Tab (siklus 5: `allow-all` dilewati), `/mode`, atau flag `--plan/--allowlist/--ask/--allow-all`. Detail per mode di [Policy & Sandbox](policy-sandbox.md).
+`auto` (default) · `readonly` (18 tool read-only di gerbang izin; model melihat 12) · `plan` (readonly + todo + delegate read-only) · `allowlist` (bash pola aman) · `ask` (prompt tiap tool) · `allow-all` (semua — tetap tolak bash berbahaya, path jail tetap aktif). Putar via Shift+Tab (siklus 5: `allow-all` dilewati), `/mode`, atau flag `--plan/--allowlist/--ask/--allow-all`. Detail per mode di [Policy & Sandbox](policy-sandbox.md).
 
 ## Lapisan perlindungan bash
 

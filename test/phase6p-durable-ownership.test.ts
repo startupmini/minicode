@@ -22,6 +22,7 @@ import {
   resetTaskStoreHandles,
   TaskStore,
 } from "../src/task/store.ts"
+import { PROVEN_READ_ONLY_CONTINUITY } from "./helpers/continuity.ts"
 
 let dir: string
 let store: TaskStore
@@ -65,6 +66,7 @@ function reconcileOnly(s: TaskStore = store): Scheduler {
     store: s,
     runTurn: (): ExecutionObservation => ({ kind: "returned", ok: true }),
     instruction: "x",
+    continuity: PROVEN_READ_ONLY_CONTINUITY,
   })
   sc.start()
   return sc
@@ -520,6 +522,7 @@ describe("G. no regression to completion or graph semantics", () => {
       store,
       runTurn: (): ExecutionObservation => ({ kind: "returned", ok: true }),
       instruction: "x",
+      continuity: PROVEN_READ_ONLY_CONTINUITY,
     })
     sc.start()
     await sc.cycle()

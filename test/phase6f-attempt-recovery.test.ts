@@ -42,6 +42,7 @@ import {
   resetSessionOwnershipForTests,
 } from "../src/task/session-ownership.ts"
 import { type ExecutionLineage, resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
+import { PROVEN_READ_ONLY_CONTINUITY } from "./helpers/continuity.ts"
 
 let dir: string
 let store: TaskStore
@@ -130,6 +131,7 @@ function makeHarness(
       return opts.runTurn ? opts.runTurn(w) : { kind: "returned", ok: opts.ok ?? true }
     },
     instruction: "do the work",
+    continuity: PROVEN_READ_ONLY_CONTINUITY,
   })
   return { sc, seen, lineage: (id) => target.getExecutionLineage(S, id) }
 }

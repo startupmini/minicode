@@ -23,13 +23,16 @@ import { type CheckpointResult, openExecutionJournal } from "../src/runtime/exec
 import { createProductionRuntime, RUNTIME_GATE_ENABLED } from "../src/runtime/production-runtime.ts"
 import type { RedispatchPlan } from "../src/runtime/recovery.ts"
 import type { RuntimeHostHooks } from "../src/runtime/runtime-host.ts"
-import { normalizeSourceEol } from "./helpers/source-eol.ts"
 import type { FakeProvider } from "./helpers/fake-provider.ts"
+import { normalizeSourceEol } from "./helpers/source-eol.ts"
 
 const PHASE_ORDER: readonly RuntimeShutdownPhase[] = [
   "admission-latch",
   "host-shutdown",
   "execution-drain",
+  // [P13.2] Cleanup proses: anak yang dikelola dihentikan dan DITUNGGU —
+  // setelah drain kerja terlacak, sebelum flush jurnal.
+  "process-cleanup",
   "event-drain",
   "journal-flush",
   "journal-close",

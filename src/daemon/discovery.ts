@@ -80,7 +80,7 @@ function leasePath(cwd?: string): string {
 /** Tulis atomik (tmp + rename) supaya pembaca tak pernah melihat file separuh. */
 function writeAtomic(path: string, value: unknown, mode = 0o600): void {
   const tmp = `${path}.${process.pid}.tmp`
-  writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n", { mode })
+  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { mode })
   renameSync(tmp, path)
 }
 
@@ -97,8 +97,7 @@ export function readEndpoint(cwd?: string): DaemonEndpoint | null {
   try {
     const raw = JSON.parse(readFileSync(p, "utf8")) as DaemonEndpoint
     if (
-      !raw ||
-      raw.version !== 1 ||
+      raw?.version !== 1 ||
       typeof raw.port !== "number" ||
       !Number.isInteger(raw.port) ||
       raw.port <= 0 ||
@@ -128,7 +127,7 @@ export function readLease(cwd?: string): DaemonLease | null {
   if (!existsSync(p)) return null
   try {
     const raw = JSON.parse(readFileSync(p, "utf8")) as DaemonLease
-    if (!raw || raw.version !== 1 || typeof raw.incarnation !== "string") return null
+    if (raw?.version !== 1 || typeof raw.incarnation !== "string") return null
     if (typeof raw.updatedAt !== "number") return null
     return { ...raw, pid: typeof raw.pid === "number" ? raw.pid : -1 }
   } catch {

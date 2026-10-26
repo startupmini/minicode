@@ -19,11 +19,11 @@ const BEL = String.fromCharCode(7)
 
 // OSC: ESC ] … (BEL | ESC \). Dicek SEBELUM CSI: body OSC sering memuat "ESC ["
 // sehingga urutan membalikkan hasilnya jadi sisa teks nyasar.
-const OSC = new RegExp(ESC + "\\][^" + ESC + BEL + "]*(?:" + BEL + "|" + ESC + "\\\\)", "g")
+const OSC = new RegExp(`${ESC}\\][^${ESC}${BEL}]*(?:${BEL}|${ESC}\\\\)`, "g")
 // CSI: ESC [ params intermediate final.
-const CSI = new RegExp(ESC + "\\[[0-9;?]*[ -/]*[@-~]", "g")
+const CSI = new RegExp(`${ESC}\\[[0-9;?]*[ -/]*[@-~]`, "g")
 // Escape lain (ESC SP F …) — cukup buang dua-byte-nya.
-const OTHER_ESC = new RegExp(ESC + "[ -/]*[@-~]", "g")
+const OTHER_ESC = new RegExp(`${ESC}[ -/]*[@-~]`, "g")
 // C0 tanpa \n \t (kebutuhan teks biasa) + DEL. Ditulis lewat `new RegExp`
 // bukan literal regex: literal akan memaksa byte kontrol ke dalam sumber
 // (melanggar aturan yang sama seperti komentar di atas), sementara

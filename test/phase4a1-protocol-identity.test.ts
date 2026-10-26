@@ -23,7 +23,7 @@ import { afterEach, expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
+import { TaskStore } from "../src/task/store.ts"
 import {
   loadTodos,
   normalizeTodos,
@@ -71,14 +71,19 @@ test("A. schema accepts an optional taskId, and keeps required + additionalPrope
   expect(params.properties.todos.items.properties.taskId).toBeDefined()
   expect(JSON.stringify(params.required)).toContain("todos")
   // still closed to arbitrary properties, so taskId is the ONLY new accepted key
-  expect((params.properties.todos.items as unknown as { additionalProperties: boolean }).additionalProperties).toBe(false)
+  expect(
+    (params.properties.todos.items as unknown as { additionalProperties: boolean })
+      .additionalProperties,
+  ).toBe(false)
   expect(params.additionalProperties).toBe(false)
 })
 
 test("A2. taskId is optional at the item level (required is still content+status only)", () => {
-  const item = (todoWriteTool.parameters as unknown as {
-    properties: { todos: { items: { required: string[]; additionalProperties: boolean } } }
-  }).properties.todos.items
+  const item = (
+    todoWriteTool.parameters as unknown as {
+      properties: { todos: { items: { required: string[]; additionalProperties: boolean } } }
+    }
+  ).properties.todos.items
   expect(item.required).toEqual(["content", "status"])
   expect(item.additionalProperties).toBe(false)
 })
@@ -232,7 +237,10 @@ test("G. unknown identity-like properties are still dropped, not carried", () =>
 test("H. no id is allocated when taskId is absent, across repeated normalization", () => {
   for (let i = 0; i < 3; i++) {
     const out = normalizeTodos(
-      [{ content: "no id here", status: "pending" }, { content: "nor here", status: "pending" }],
+      [
+        { content: "no id here", status: "pending" },
+        { content: "nor here", status: "pending" },
+      ],
       { verdict: "unverified" },
     )
     for (const t of out) expect(t.taskId).toBeUndefined()

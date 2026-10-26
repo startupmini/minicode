@@ -1,8 +1,38 @@
-# PLAN.md — Rencana penyempurnaan aktif
+# PLAN.md — Buku besar milestone internal & legacy
 
-**Untuk agent AI yang melanjutkan pekerjaan ini.** Dokumen ini adalah satu-satunya rencana yang harus dieksekusi. Rencana lama (`docs/PLAN_UIUX_V6.md`) adalah **arsip** — semua itemnya sudah selesai; jangan dikerjakan ulang.
+> **STATUS DOKUMEN (2026-10-21): BUKAN roadmap arsitektur aktif.**
+>
+> **Otoritas roadmap arsitektur = [ROADMAP.md](ROADMAP.md)** (master
+> roadmap milik pemilik, disalin ke root repo pada 2026-10-21). Dokumen itu yang
+> menentukan posisi **Big Phase P1–P14**, next action arsitektur, status track
+> **Quality Remediation Stage 1–10**, dan status follow-up **P0/UX-001**.
+>
+> - `PLAN.md` = **ledger produk/milestone legacy**: riwayat implementasi,
+>   keputusan, dan status historis era 0.9.x, dirujuk sebagai `LEGACY-0.9/*`.
+>   Ia **bukan** sumber status fase dan tidak pernah menjadi "rencana aktif"
+>   lagi. **Tetap ada, tidak dihapus, tidak direnumber.**
+> - Nomor `P10`/`P11`/`P13` pada §P10/§P11/§P13 di bawah = **program legacy
+>   era v0.9** (penilaian skor model/tool/memori). **Bukan** Big Phase P10/P11/
+>   P13. Lihat tabel disambiguasi di [AGENTS.md](AGENTS.md).
+> - `P2.x`/`P3.x`/`P12.x` = sub-milestone internal satu fase, bukan Big Phase.
+> - "Quality Remediation Stage 1–10" = jalur hardening lintas-fase, bukan Big
+>   Phase baru.
+> - Kalau status fase tidak tertulis eksplisit di `ROADMAP.md`, nyatakan belum
+>   tersedia — jangan menyimpulkan status fase dari dokumen mana pun.
+>
+> Laporan Closure/Handoff/QA di root repo adalah **artefak historis terikat
+> checkpoint** (revisi + tanggal pemeriksaan masing-masing), bukan klaim
+> "status sekarang". Snapshot audit dokumentasi terakhir:
+> [docs/REPOSITORY_DOCUMENTATION_AUDIT_2026-10-21.md](docs/REPOSITORY_DOCUMENTATION_AUDIT_2026-10-21.md).
 
-Basis: audit UI/UX menyeluruh (V6), uji live dua gateway nyata (V7), dan bug hunter UI tiga ronde (V8). Riwayat lengkap di [CHANGELOG.md](CHANGELOG.md).
+**Untuk agent AI yang melanjutkan pekerjaan ini.** Semua item "Rencana aktif
+berikutnya" di bawah sudah **SELESAI** — jangan dikerjakan ulang; jangan
+diedarkan sebagai "pekerjaan berikutnya". Rencana lama
+(`docs/PLAN_UIUX_V6.md`) adalah **arsip** — semua itemnya sudah selesai;
+jangan dikerjakan ulang.
+
+Basis: audit UI/UX menyeluruh (V6), uji live dua gateway nyata (V7), dan bug
+hunter UI tiga ronde (V8). Riwayat lengkap di [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -14,7 +44,7 @@ Jalankan sendiri, jangan percaya angka di dokumen:
 bun test                  # harapan: semua hijau, 0 fail
 bun x tsc --noEmit        # harapan: tanpa keluaran
 bun run lint              # harapan: exit 0 (warning boleh ada)
-bun run gate:coverage     # harapan: melewati min 83 funcs / 84,5 lines
+bun run gate:coverage     # harapan: melewati min 87 funcs / 86 lines
 bun run gate:pack         # harapan: 23 pemeriksaan lulus
 bun run extreme           # harapan: 0 bypass, semua pass
 bun run gate:fast         # gabungan per-commit/CI: tsc+lint+test+coverage+pack+bash+bench smoke+audit harness
@@ -33,7 +63,7 @@ Kondisi yang sudah dicapai dan **tidak boleh mundur**:
 
 ---
 
-## Rencana aktif berikutnya — UI/UX minimal + output tabel (2026-09-25)
+## Rencana (SELESAI) — UI/UX minimal + output tabel (2026-09-25)
 
 Status: **SELESAI — implementasi dan gate lokal hijau (2026-09-25)**. Working tree
 masih belum di-commit; fix jitter footer sebelumnya menjadi baseline.
@@ -158,7 +188,7 @@ menaikkan minimum hanya saat coverage naik.
 
 ---
 
-## Rencana aktif berikutnya — TUI mouse selection tanpa mode (2026-09-25)
+## Rencana (SELESAI) — TUI mouse selection tanpa mode (2026-09-25)
 
 Status: **SELESAI — implementasi lokal dan gate hijau (2026-09-25)**. Targetnya meniru
 perilaku OpenCode: mouse tetap aktif untuk wheel dan drag, tetapi selection ditangani
@@ -303,7 +333,7 @@ buffer TUI sendiri. Tidak ada `/select`, `/scroll`, atau mode yang harus diketik
 
 ---
 
-## Rencana aktif berikutnya — Output Architecture Audit (2026-09-25)
+## Rencana (SELESAI) — Output Architecture Audit (2026-09-25)
 
 Status: **PHASE 2–8 LANDED — arsitektur output selesai; rilis 0.12.0 terbit**. Audit memakai skill
 `D:\Download\agent-output-architect-SKILL.md` dan tidak mengubah kernel atau
@@ -360,7 +390,14 @@ sambil mempertahankan kontrak terminal dan fitur selection yang sudah hijau.
 
 ---
 
-## Status eksekusi terbaru (update 2026-09-22)
+## Status eksekusi (historis — update 2026-09-22)
+
+> Riwayat eksekusi per checkpoint. **Bukan** status "sekarang". Untuk status
+> roadmap yang otoritatif lihat catatan di kepala dokumen.
+>
+> Nomor `P10`/`P11`/`P12`/`P13` pada baris riwayat di bawah = **program
+> penilaian era v0.9** (termasuk "P12 UI Shell-Max"), bukan Big Phase
+> P10–P14 milik pemilik.
 
 - ✅ AUDIT KEAMANAN 2026-09-22 — F-CRIT (bypass kunci owned-state via link
   internal) DIPERBAIKI: `write_file linkdir/config.json` menembus `.minicode/`
@@ -696,10 +733,18 @@ sambil mempertahankan kontrak terminal dan fitur selection yang sudah hijau.
 - ✅ SINKRON DOK 0.9.19 (2026-09-14): ledger `›` hijau/merah di `docs/architecture.md` + `docs/terminal.md` (sebelumnya `✓`/`✗` era 0.9.16), ambang coverage `docs/contributing.md` 80/85, badge `ARCHITECTURE.html` v0.9.19, web rebuild 32 halaman + `web:check` lolos. Vendor sync DITUNDA sadar (seam lokal `cwd`/`permissionMode` belum dihilirkan; delta upstream hanya cap retryAfter yang sudah ditutup lapis-app).
 - ✅ AUDIT-FIX + CLEANUP + WEB (2026-09-16, uncommitted): sanitasi ANSI reasoning/thinking/preview-bash/label-tool, bash-guard (`pwsh`, wrapper `su/runuser/cmd`, reader baru, `rm //`), `isDangerousLink` sadar-direktori, pembaca `O_NOFOLLOW`, budget mid-turn, forget dual-scope, `assertSafeWriteTarget` live, ekspektasi footer disinkronkan, guard BOM diperluas, EOL worktree dinormalisasi LF, 5 berkas + 8 fungsi mati dihapus, docs distrukturkan ulang (`USAGE.md` jadi pointer, angka mesin dibuang dari markdown), website direbuild (ledger `›`, invariant 14). Gate `2014 pass 0 fail / tsc / lint 0 warn / coverage 82.48/84.37 (min tetap 80/84) / pack 22/22`.
 
-Next action — sisa aktif (urut):
+### Sisa program legacy v0.9 (HISTORIS — bukan "next action aktif")
+
+> Daftar ini berasal dari program penilaian era v0.9 (`LEGACY-0.9/P10`–`/P13`).
+> **Bukan** urutan kerja aktif dan **bukan** Big Phase roadmap. Item 3 & 4 sudah
+> selesai (lihat tanda ✅). Item 1 & 2 masih terbuka **sebagai utang legacy**;
+> tidak ada instruksi untuk dikerjakan lebih dulu di sini — arahkan ke pemilik
+> kalau mau memformalkan. (Status roadmap otoritatif tidak ada di repo; lihat
+> catatan di kepala dokumen.)
+
 1. **SWE-Lite valid** — `bench/docker/` + `manifest.json` 20 instance + `--docker` MENDARAT; 5 image era TER-BUILD (py36 butuh fix apt kedaluwarsa); validasi: requests-1963 collect+run OK di py3.8, pytest-11143 FAIL dengan benar di py3.10. Sisa: run agen penuh + validasi confidence-low (requests/sympy).
-2. **OAuth Copilot/ChatGPT** (P11 P2) — hanya `qwen` yang punya spec terdaftar; ChatGPT/Copilot TANPA spec (endpoint tak boleh dikarang). `auth login chatgpt` fail-fast non-TTY terverifikasi live. Login aplikasi ChatGPT Desktop tak bisa dipakai CLI (tanpa API publik; baca tokennya = pencurian kredensial). Butuh: device-flow interaktif oleh pemilik akun (`auth login qwen`), atau API key konvensional.
-3. **Coverage 81/83** ✅ TERCAPAI (81,68/85,37; min dikunci 81/83) — via test config in-process + 3 temuan bug nyata (`--cwd` diabaikan list/add branches; flag-sebagai-id; list menulis repo saat test). Sisa per-file rendah di lsp/repl bukan kode baru.
+2. **OAuth Copilot/ChatGPT** (LEGACY-0.9/P11 P2) — hanya `qwen` yang punya spec terdaftar; ChatGPT/Copilot TANPA spec (endpoint tak boleh dikarang). `auth login chatgpt` fail-fast non-TTY terverifikasi live. Login aplikasi ChatGPT Desktop tak bisa dipakai CLI (tanpa API publik; baca tokennya = pencurian kredensial). Butuh: device-flow interaktif oleh pemilik akun (`auth login qwen`), atau API key konvensional.
+3. **Coverage 81/83** ✅ TERCAPAI (81,68/85,37; min dikunci 81/83) — via test config in-process + 3 temuan bug nyata (`--cwd` diabaikan list/add branches; flag-sebagai-id; list menulis repo saat test). Sisa per-file rendah di lsp/repl bukan kode baru. *(Catatan: ambang sudah naik lagi sejak ini — kini 87 funcs / 86 lines, lihat `scripts/coverage-gate.ts`.)*
 4. **TOCTOU Linux CI** ✅ TERVALIDASI di WSL Ubuntu (swapper 1000× 0 lolos, 293ms) — temukan bug test: swapper tanpa yield menggantung selamanya (klaim lama tak pernah tervalidasi). Full suite Linux 1334/8/0; Windows (dev-mode + daemon) 1336/6/0. 5 fail platform-spesifik diperbaiki + `MINICODE_HOME` baru (global-DB hermetic di POSIX).
 
 ---
@@ -713,7 +758,11 @@ Next action — sisa aktif (urut):
 
 ---
 
-## P10 — Path to 9+: TOCTOU, `--cwd` repo-wide, SWE-bench Lite, flake TUI
+## LEGACY-0.9/P10 — Path to 9+: TOCTOU, `--cwd` repo-wide, SWE-bench Lite, flake TUI
+
+> **ID ini = program penilaian era v0.9, BUKAN Big Phase P10.** Pertahankan
+> penomoran legacy apa adanya (tanpa renumber massal) supaya referensi lama
+> tak patah. Big Phase P10–P14 milik pemilik ada di luar dokumen ini.
 
 Empat pekerjaan rumah terakhir sebelum skor 9+ bisa diklaim (audit 2026-09-06). Detail ada di bagian ini.
 
@@ -731,7 +780,11 @@ Empat pekerjaan rumah terakhir sebelum skor 9+ bisa diklaim (audit 2026-09-06). 
 
 **Selesai bila:** artefak `--cwd` selalu lokal, swapper 3×1000 iterasi 0 lolos, timeout manager ≤5000 + 10/10 hijau, angka SWE-Lite-20 dari run nyata, gate hijau.
 
-## P11 — Provider Hardening: correctness, harga, Responses, retry
+## LEGACY-0.9/P11 — Provider Hardening: correctness, harga, Responses, retry
+
+> **ID ini = program penilaian era v0.9, BUKAN Big Phase P11.** Lihat catatan
+> di §LEGACY-0.9/P10. Laporan `P11_*_REPORT.md` di root terikat checkpoint
+> 2026-10-18 dan bersifat historis.
 
 Audit 2026-09-06 menemukan provider skor terendah (7.5): shim Gemini drop `thought_signature` (400 diam-diam), harga Opus usang 3× (rusak `--budget`), tanpa Responses API dan `reasoning_effort`, 429 bakar-daftar provider, deteksi via substring URL, OAuth 1 provider belum terverifikasi, tanpa observabilitas, `max_tokens` 4096 sunyi. Detail ada di bagian ini.
 
@@ -752,7 +805,12 @@ Audit 2026-09-06 menemukan provider skor terendah (7.5): shim Gemini drop `thoug
 
 **Sengaja ditolak:** proxy universal ala LiteLLM — tiga adapter kecil yang jujur > satu proxy ajaib (postur zero-dep).
 
-## P13 — Raise 3 Dimensi Tertinggal: Model 8.0→8.7, Tool 8.5→9.0, Sesi/Memori 8.5→9.0
+## LEGACY-0.9/P13 — Raise 3 Dimensi Tertinggal: Model 8.0→8.7, Tool 8.5→9.0, Sesi/Memori 8.5→9.0
+
+> **ID ini = program penilaian era v0.9, BUKAN Big Phase P13.** Big Phase P13
+> milik pemilik = *Desktop & Long-Running Runtime* — topik yang BERBEDA
+> sepenuhnya dan tidak dibahas di bagian ini. Lihat catatan di
+> §LEGACY-0.9/P10 dan tabel disambiguasi di [AGENTS.md](AGENTS.md).
 
 Skor saat ini **8.2**. Target **P0 (≤3 hari): 8.4**, **P1 (sprint): 8.6**. Berbasis riset read-only 2026-09-06 (empat fact-sheet: inventaris 37 tools `src/tools/index.ts:59`, 14 preset `src/providers/presets.ts:14`, 6 mode `src/policy/permission.ts:8`, WAL+shadow-git+FTS5/MMR). **Keputusan pemilik dikunci:** P0 dulu; memori **opt-out** (`MINICODE_AUTO_MEMORY=0`); **sandbox tidak disentuh** (skor 8.0 dibiarkan — pemilik menolak kerja sandbox Windows/Linux). Tanpa TUI, tanpa proxy universal LiteLLM, tanpa edit `vendor/minicore/**` kecuali seam aditif.
 
@@ -779,7 +837,7 @@ Skor saat ini **8.2**. Target **P0 (≤3 hari): 8.4**, **P1 (sprint): 8.6**. Ber
 - **Sesi/Memori:** ✅ plan artifact `.minicode/plans/<id>.md` (`src/tools/todo.ts`, test); auto-extract snippet dari turn verify sukses (`buildVerifySnippet` + `onOk`, opt-out sama, test); branch `branchSession` (`src/session/persistence.ts`, test); TTL hierarkis `fact/decision/preference 180, summary 90, snippet 14` + `accessCount` (test).
 
 **Selesai bila (semua diukur):**
-- Gate: `bun x tsc --noEmit && bun run lint && bun test && bun run gate:coverage && bun run gate:pack` hijau; `MIN_LINES/MIN_FUNCS` di `scripts/coverage-gate.ts` = **82/84,5** (funcs dinaikkan dari 80 setelah terukur 83,42 stabil 2026-09-23; kebijakan lama "jangan kunci funcs" sudah usang — margin 1,4 pp, bukan berayun; lines tetap 84,5 dengan margin 0,14 pp yang disengaja anti-flaky) + 15 lantai per-berkas modul kritis (permission/jail/bash-guard/executor/scrub/net/trusted-exec/safe-open/journal/checkpoint/router/sanitize/width/app/bash).
+- Gate: `bun x tsc --noEmit && bun run lint && bun test && bun run gate:coverage && bun run gate:pack` hijau; `MIN_LINES/MIN_FUNCS` di `scripts/coverage-gate.ts` = **86/87** (angka ini **berkembang** — lihat catatan riwayat ambang di `scripts/coverage-gate.ts`; nilai 82/84,5 di bawah adalah snapshot saat legacy-0.9/P13 ditutup, bukan ambang sekarang) + 19 lantai per-berkas modul kritis (permission/jail/bash-guard/executor/scrub/net/trusted-exec/safe-open/journal/checkpoint/router/sanitize/width/app/bash + presentation model/reducer/label/store).
 - `test/tool-toctou.test.ts` swapper 1000 iterasi **0 lolos** di POSIX (skip bila symlink EPERM; Windows CI: 3 skip by design).
 - `test/cli-subcommands.test.ts`: tiap subcommand `--cwd tmp` → artefak lokal, bukan repo/global. ✅
 - `test/tui-harness.test.ts` 10× hijau. ✅ (2026-09-06)

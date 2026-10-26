@@ -26,6 +26,7 @@ import {
 import { resetSessionOwnershipForTests } from "../src/task/session-ownership.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 import { TriggerCoordinator, type TriggerEvent } from "../src/task/trigger.ts"
+import { PROVEN_READ_ONLY_CONTINUITY } from "./helpers/continuity.ts"
 
 let dir: string
 let store: TaskStore
@@ -65,6 +66,7 @@ const scheduler = (
     store,
     runTurn: runTurn as never,
     instruction: "x",
+    continuity: PROVEN_READ_ONLY_CONTINUITY,
     ...over,
   })
 

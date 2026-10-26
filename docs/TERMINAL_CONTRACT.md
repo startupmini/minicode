@@ -109,6 +109,14 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
   Abort pertama menampilkan hint "tekan Esc lagi untuk keluar" di slot
   indikator SEKALI (anti keluar sesi tak sengaja saat double-tap "memastikan"
   — I14); abort kedua dalam 1,5 dtk = quit.
+- **Checkpoint = milik lifecycle sesi.** Bus kernel memanggil handler `turn:completed`
+  secara sinkron dan tak menunggu promise-nya, jadi operasi tulis checkpoint
+  (async) harus DIMILIKI: operasi yang dimulai dicatat, kegagalannya
+  ditangani saat lahir (bukan unhandled rejection, bukan sukses palsu) dan
+  dilaporkan lewat diagnostic `[warn] checkpoint failed: …` ke stderr.
+  `close()` = BARRIER: setelah ia kembali, tak ada pekerjaan checkpoint milik
+  sesi itu yang masih berjalan (manifest sudah tertulis atau kegagalannya
+  sudah tercatat).
 
 ## Popup, dialog, form & i18n
 
@@ -353,7 +361,10 @@ menit mulai terang di 60 dtk, jam di 1 jam; tanpa bullet separator; mode =
 permission mode, atau `<WorkMode>·<permission mode>` bila WorkMode ≠ EXECUTE)
 + satu spacer sebelum footer · ledger tool
 `  › name target` (hijau) / merah saat error · error `✗ pesan` sekali per
-kegagalan · thinking: dots clock / alir redup · popup: konten redup di
+kegagalan · pesan error TUI = formatter kanonik (`formatError`,
+`src/ui/render/errors.ts`): credential di-redaksi (bearer/key/query), escape
+ANSI dibuang, body provider diringkas + dipotong; `e.message` mentah tak
+pernah tampil · thinking: dots clock / alir redup · popup: konten redup di
 belakang + kotak terpusat (form di dalam) + Esc tutup · approval tercatat ·
 `/status`, `/history`, `/help` ringkas & `/expand` mengalir ke transkrip ·
 `/mode` = permission mode · `/work-mode` = WorkMode (intent layer) ·
@@ -395,20 +406,32 @@ panjang).
 
 ## Peta proteksi (test → invariant)
 
+> **Cara membaca peta ini.** Setiap baris hanya boleh menyatakan perilaku yang
+> **benar-benar di-assert** oleh test yang disebut. Kehadiran nama file test
+> bukan bukti klaim. Baris yang hanya "nominal" (test ada, tapi assertion-nya
+> tak menyentuh perilaku yang diklaim) dipindah ke bagian
+> [Gap proteksi](#gap-proteksi-terbukti-belum-ditutup) di bawah — jangan
+> dipoles dengan mengganti kata-kata.
+
 - `test/tui-app.test.ts` — I1/I13/I14/I17-I20 (boot/exit pairing, transcript
   viewport, mouse-wheel/drag-selection/PgUp/PgDn scroll + indikator, prompt
-  editing, dots/timer, status bar, `/copy [n]`, Esc-only abort, quit,
-  suspend/resume, busy-freeze, live repaint; I14: abort/scroll/selection lolos
-  saat menciut; I17: kunci posisi baca + basis monotonik).
+  editing, dots/timer, status bar, Esc-only abort, quit, suspend/resume,
+  busy-freeze, live repaint; I14: Home/End jump + Shift+PgUp/PgDn + hint abort
+  pertama ada di `test/tui-audit-fixes.test.ts`, bukan di file ini; I17: kunci
+  posisi baca saat stream masuk; basis monotonik ada di
+  `test/tui-transcript.test.ts` + `test/presentation-projections.test.ts`;
+  P0: jalur error TUI meredaksi credential — sentinel bearer tak pernah tampil
+  di layar).
 - `test/prompt-engine.test.ts` — decoder streaming CSI/SGR/X10: wheel menjadi key scroll, klik mouse tidak masuk teks.
+- `test/errors-usage.test.ts` — format error UI: `formatError` (kanonik untuk TUI/wizard/one-shot) meredaksi credential (bearer, kunci provider, query, token di batas potong 150 kolom), membuang escape ANSI, memetakan kategori/kind provider, dan menjaga pesan biasa tetap informatif.
+- `test/checkpoint-lifecycle.test.ts` — checkpoint = milik lifecycle sesi: manifest tersedia saat `close()` kembali (barrier), tak ada operasi yang tertinggal, kegagalan checkpoint tercatat + dilaporkan tanpa unhandled rejection, dan semua operasi dari beberapa turn selesai saat drain.
 - `test/tui-transcript.test.ts` — projection source-mapped: wrap, CJK/ANSI, user prefix, tabel TSV, selection text, cap buffer live, dan render markdown inline jawaban model (heading/bold/code; delimiter fence disembunyikan, isi fence dan gema user tetap literal).
 - `test/screen-buffer.test.ts` — parser frame harness (unit).
-- `test/tui-transcript.test.ts` — I7/I12/I17/I22/I24 (ledger, cap, viewport,
-  thinking, buffer /expand; total() monotonik kebal evict).
-- `test/presentation-projections.test.ts` — I12/I17/I26/I32 (projection
+- `test/tui-transcript.test.ts` — I7/I12/I17/I22 (ledger satu baris per tool, cap 5000 + marker evict, `total()` monotonik kebal evict, viewport, thinking minimized/expanded).
+- `test/presentation-projections.test.ts` — I12/I17/I32 (projection
   snapshot, running/elapsed, status terminal, retry/child grouping, summary,
-  marker evict, dan parity flag OFF).
-- `test/presentation-linear-acp.test.ts` — I2/I6/I28/I33 (linear projection
+  marker evict + `total()` monotonik, dan parity flag OFF).
+- `test/presentation-linear-acp.test.ts` — I33 (linear projection
   status/duration/receipt dan lifecycle ACP terstruktur; parity policy-vs-legacy).
 - `test/presentation-policy.test.ts` — I32/I33 (seleksi node per mode, envelope
   machine, digest divergensi; purity tanpa clock/IO).
@@ -448,19 +471,33 @@ panjang).
   EXECUTE; nilai invalid → EXECUTE + peringatan; ACP `workMode` terpisah dari
   `mode`).
 - `test/tui-app.test.ts`, `test/tui-popup.test.ts` — I13/I17 (composer
-  editing/busy, dots clock, timer, spacer, cursor, resize, popup).
-- `test/markdown-table.test.ts` — I8/I11/I17 (pipe-table parser, streaming
+  editing/busy, dots clock, timer, cursor, resize, popup). *Klausul "satu baris
+  kosong memisahkan composer dari footer" TIDAK punya assertion — lihat
+  [Gap proteksi](#gap-proteksi-terbukti-belum-ditutup).*
+- `test/markdown-table.test.ts` — I8/I11 (pipe-table parser, streaming
   parity, ANSI/CJK width, TTY/non-TTY, TUI resize, machine-output policy).
-- `test/terminal-contract.test.ts` — I2/I3/I5/I7/I8/I9/I12.
+- `test/terminal-contract.test.ts` — I2/I3/I7/I8/I9 (split stdout/stderr,
+  kepemilikan layar tunggal, ledger satu baris per tool, streaming tanpa
+  duplikasi, foreign writer boleh mentah).
 - `test/transient-arbitration.test.ts` — I3/I9/I27 (hold layar interaktif:
   picker/askLine, nesting, delayMs).
-- `test/statusline-bun-guard.test.ts` — I4/I5.
-- `test/turn-status.test.ts` — I5.
-- `test/tui-format.test.ts` — I2/I7/I8 (preview arg sanitasi satu-baris).
+- `test/statusline-bun-guard.test.ts` — I4 (painter Bun/Windows: painter
+  dinonaktifkan sendiri, write asli dipulihkan).
+- `test/turn-status.test.ts` — garis status turn lifecycle deterministik
+  (grace 250 ms, latch anti-strobe, pembersihan saat `endTurn`).
+- `test/tui-format.test.ts` — I2/I7/I8 (preview arg sanitasi satu-baris;
+  stdout = output program / stderr = ledger; 20 tool berurutan = 1 baris
+  masing-masing tanpa overlap) + **I18** (envelope OSC52 `/copy` benar saat
+  TTY, ditolak tanpa TTY, dan 1–10 turn terakhir oldest-to-newest).
 - `test/theme.test.ts` — I6 (strip DCS/APC/PM/SOS + final CSI non-huruf).
-- `test/ansi-fragmentation.test.ts` — I6/I8.
+- `test/ansi-fragmentation.test.ts` — I6/I8 (setiap titik split ≡ string utuh).
 - `test/non-tty-output.test.ts` — I6.
-- `test/thinking-truncation.test.ts` — I12.
+- `test/thinking-truncation.test.ts` — I12 (buffer thinking >200 KB → `/expand`
+  membawa marker truncasi).
+- `test/collapse.test.ts`, `test/presentation-expand.test.ts`,
+  `test/presentation-store.test.ts` — **I24** (semantik `/expand` pada Content
+  Store: buka-ulang identik, dengan id vs tanpa id, miss → durable sqlite +
+  penanda retensi).
 - `test/ui-combined.test.ts` — DIHAPUS bersama chrome.
 - `test/repl-linear.test.ts`, `test/footer-chrome.test.ts`,
   `test/info-window.test.ts` — DIHAPUS bersama REPL/chrome/jendela.
@@ -473,7 +510,9 @@ panjang).
   LC_ALL > LANG, string kosong diabaikan).
 - `test/i18n-hardcode.test.ts` — I26 (lexer sadar-state: tanpa literal
   Indonesia di luar kamus; kontrol positif id.ts kena, negatif en.ts bersih).
-- `test/tui-lang.test.ts` — I26/I24 (/lang end-to-end, /help satu sumber).
+- `test/tui-lang.test.ts` — I26 (locale sesi `/lang` end-to-end + persisten;
+  nilai tak dikenal ditolak) + I24 (`/help` satu sumber; `/copy 2` menyalin dua
+  turn terakhir).
 - `test/cli-help-language.test.ts` — I26/I25 (label en, kelengkapan /help).
 - `test/tui-geometry.test.ts` — I20/I25 (lebar tetap per permukaan, step
   wizard, form error).
@@ -513,11 +552,28 @@ panjang).
   provider fake hermetic): boot → ?1049h + timer idle, turn penuh end-to-end,
   drag-selection mouse SGR → Ctrl+C → OSC52 (koordinat mouse dihitung dari
   LAYAR NYATA, bukan hardcoded), resize → repaint, SIGTERM → restore + exit
-  143 (POSIX), dan exec --json bersih tanpa ANSI. Platform tak mampu
-  (ConPTY rusak) = SKIP beralasan, bukan hijau palsu. Jalur mouse SGR punya
-  capability gate (`ptySgrMouseDelivered()`): transport yang TAK
-  mengantarkan byte SGR → SKIP beralasan; probe tak konklusif → SKIP dengan
-  alasan "tak konklusif" (BUKAN bukti SGR tak didukung); di CI Linux verdict
-  WAJIB "supported" — selain itu test SGR GAGAL dengan diagnosa, bukan skip
-  senyap. Parser SGR dan selection SGR tetap terverifikasi terpisah di
+  143 (POSIX). *Klausa "exec --json bersih tanpa ANSI" di test ini berjalan
+  sebagai proses biasa tanpa PTY (lihat komentar di berkasnya) — jadi ia
+  bukan bukti byte stream; bukti envelope ada di `test/exec-json-envelope.test.ts`.*
+  Platform tak mampu (ConPTY rusak) = SKIP beralasan, bukan hijau palsu.
+  Jalur mouse SGR punya capability gate (`ptySgrMouseDelivered()`): transport
+  yang TAK mengantarkan byte SGR → SKIP beralasan; probe tak konklusif → SKIP
+  dengan alasan "tak konklusif" (BUKAN bukti SGR tak didukung); di CI Linux
+  verdict WAJIB "supported" — selain itu test SGR GAGAL dengan diagnosa, bukan
+  skip senyap. Parser SGR dan selection SGR tetap terverifikasi terpisah di
   `test/prompt-engine.test.ts` dan `test/tui-app.test.ts` (fake TTY).
+
+### Gap proteksi (terbukti, belum ditutup)
+
+Bagian ini menahan klaim yang **benar secara implementasi tetapi belum punya
+assertion** yang menjaganya. Menutup gap = menambah test; mengubah
+kata-kata di sini TIDAK menutup gap.
+
+| Klaim | Status implementasi | Yang hilang |
+|---|---|---|
+| I14 — "berlaku juga saat layar MENCIUT: abort+scroll selalu lolos" | Terimplementasi (`src/ui/tui/app.ts`: scroll/abort tetap lolos saat `tooSmall()`) | Tidak ada assertion. `test/tui-app.test.ts` ("terminal menciut tengah sesi") hanya asserting bahwa ketikan diabaikan + `Ctrl+D` keluar. |
+| I13/I17 — "satu baris kosong memisahkan composer dari footer" | Terimplementasi (`src/ui/tui/app.ts` merender satu spacer per frame) | Kata "spacer" tidak muncul di berkas test mana pun — tak ada assertion tinggi-geometry maupun rendah. |
+| I20 — lebar kotak popup tetap per permukaan | Terimplementasi | `test/tui-app.test.ts` menandai salah satu test-nya sebagai `(I20)`, padahal test itu milik I13 (status bar). Lebar popup diverifikasi di `test/tui-geometry.test.ts` + `test/dialog.test.ts`; label di `tui-app` menyesatkan. |
+| I5 — tak ada popup yatim / input bocor setelah success/failure/cancel/SIGINT/session end | Tak terverifikasi | `test/turn-status.test.ts` dan `test/statusline-bun-guard.test.ts` tidak meng-assert apa pun soal popup yatim atau kebocoran input. |
+| I26 pada jalur presentasi | i18n ada dan dijaga terpisah | `test/presentation-projections.test.ts` mengunci locale `en` di setiap test dan tak pernah menguji locale `id`; klaim i18n dijaga `test/i18n.test.ts` + `test/i18n-hardcode.test.ts`. |
+| I2/I6/I28 pada proyeksi linear/ACP | Alur linear/ACP ada | `test/presentation-linear-acp.test.ts` tak meng-assert split stdout/stderr, absence cursor-control, maupun exit code secara langsung. |

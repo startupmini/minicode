@@ -16,6 +16,7 @@ import { type ExecutionObservation, Scheduler } from "../src/task/scheduler.ts"
 import { newOwnerToken, SESSION_LEASE_MS } from "../src/task/session-authority.ts"
 import { resetSessionOwnershipForTests } from "../src/task/session-ownership.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
+import { PROVEN_READ_ONLY_CONTINUITY } from "./helpers/continuity.ts"
 
 const S = "6x"
 const prov = { origin: "model", source: "6x" } as const
@@ -38,7 +39,12 @@ function procB(): TaskStore {
 }
 
 function sched(store: TaskStore, runTurn: () => ExecutionObservation = () => OK): Scheduler {
-  return new Scheduler(S, { store, runTurn, instruction: "x" })
+  return new Scheduler(S, {
+    store,
+    runTurn,
+    instruction: "x",
+    continuity: PROVEN_READ_ONLY_CONTINUITY,
+  })
 }
 
 beforeEach(async () => {

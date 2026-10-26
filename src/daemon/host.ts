@@ -8,6 +8,7 @@
 // bisa DIUJI, bukan cuma dikomentari.
 
 import { randomBytes, randomUUID } from "node:crypto"
+import { currentRuntimeView } from "../runtime/runtime-status-provider.ts"
 import { ApprovalBroker } from "./approvals.ts"
 import { mintCapability } from "./capability.ts"
 import { ChildSupervisor } from "./children.ts"
@@ -24,6 +25,7 @@ export type ShutdownStep =
   | "mark-closing"
   | "halt-consumers"
   | "settle-approvals"
+  | "close-hosted-session"
   | "stop-monitors"
   | "close-connections"
   | "retire-children"
@@ -47,6 +49,28 @@ export interface DaemonHostOptions {
    * proses, dan satu kanal artinya tak ada tulis yang lolos dari audit.
    */
   warn?: (msg: string) => void
+  /**
+   * [P13.2] Penutup sesi yang di-host.
+   *
+   * Seam, bukan dependensi: lapisan daemon tak boleh tahu apa itu "sesi CLI".
+   * Yang diterimanya hanyalah "ada lifecycle yang harus DITUNGGU selesai sebelum
+   * daemon menutup dirinya" — runtime yang di-host menutup jurnalnya dan
+   * membersihkan anak prosesnya DI SINI. Tanpa seam ini, daemon berhenti
+   * sementara sesi yang di-host masih hidup: proses anak Supervisi bisa
+   * tertinggal (yatim) dan jurnal tak pernah ditutup rapi.
+   */
+  closeHostedSession?: (() => Promise<void>) | null
+  /**
+   * Seam uji: batas antrean per langganan. `0` meniru socket yang sudah
+   * tertahan sejak awal sehingga overflow deterministik. Produksi memakai
+   * `MAX_QUEUE_PER_CONN` (default server).
+   */
+  maxQueuePerSubscription?: number
+  /**
+   * Seam uji: batas antrean per identitas konsumen logis. Dipakai agar satu
+   * konsumen bisa dibuat "tertahan" tanpa ikut menahan konsumen lain.
+   */
+  maxQueuePerConsumer?: (consumerId: string) => number | undefined
 }
 
 export class DaemonHost {
@@ -64,12 +88,14 @@ export class DaemonHost {
   #leaseTimer: ReturnType<typeof setInterval> | null = null
   #closing = false
   #shutdownSteps: ShutdownStep[] = []
+  /** Kegagalan yang tercatat saat shutdown — tak boleh hilang (cleanup tak boleh dilewati diam-diam). */
+  #shutdownErrors: Error[] = []
   #endpointPath: string | null = null
   #port = 0
 
   private constructor(opts: DaemonHostOptions) {
     this.#opts = opts
-    this.#warn = opts.warn ?? ((msg) => process.stderr.write(msg + "\n"))
+    this.#warn = opts.warn ?? ((msg) => process.stderr.write(`${msg}\n`))
     this.incarnation = `inc_${randomUUID()}`
     // Secret HANYA di memori proses ini. Bila bocor ke berkas, siapa pun yang
     // bisa membaca berkas itu bisa menerbitkan capability admin.
@@ -98,8 +124,18 @@ export class DaemonHost {
         telemetry: this.telemetry,
         storageOk: () => this.resource.state === "ok",
         shuttingDown: () => this.#closing,
+        // P13.1: status runtime kanonik dibaca dari SEAM yang sama dengan CLI
+        // (composition root memasang penyedia). Tanpa runtime terpasang, view
+        // ABSENT kanonik yang disajikan — bukan status karangan.
+        runtimeStatus: () => currentRuntimeView(),
       },
       telemetry: this.telemetry,
+      ...(opts.maxQueuePerSubscription !== undefined
+        ? { maxQueuePerSubscription: opts.maxQueuePerSubscription }
+        : {}),
+      ...(opts.maxQueuePerConsumer !== undefined
+        ? { maxQueuePerConsumer: opts.maxQueuePerConsumer }
+        : {}),
     })
     this.resource = new ResourceMonitor({
       ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
@@ -184,6 +220,15 @@ export class DaemonHost {
     return this.#shutdownSteps
   }
 
+  /**
+   * Kegagalan shutdown yang tercatat (mis. sesi yang di-host tak bisa
+   * ditutup). Kosong = shutdown bersih. Kegagalan ini juga membuat
+   * `shutdown()` menolak — jadi tak bisa "hilang" tanpa jejak.
+   */
+  get shutdownErrors(): readonly Error[] {
+    return [...this.#shutdownErrors]
+  }
+
   get endpointPath(): string | null {
     return this.#endpointPath
   }
@@ -206,10 +251,12 @@ export class DaemonHost {
    *  1 mark-closing       -> kontrol baru ditolak SHUTTING_DOWN
    *  2 halt-consumers     -> konsumen berhenti mengirim pekerjaan
    *  3 settle-approvals   -> persetujuan menggantung = DENY, tak digantung
-   *  4 stop-monitors      -> lease + resource berhenti menulis
-   *  5 close-connections  -> socket ditutup
-   *  6 retire-children    -> anak yang tak terkonfirmasi -> lost (bukan finished)
-   *  7 clear-discovery    -> berkas endpoint/lease milik kita dilepas
+   *  4 close-hosted-session -> lifecycle sesi yang di-host SELESAI (jurnal
+   *                            ditutup, anak proses yang disupervisi dibersihkan)
+   *  5 stop-monitors      -> lease + resource berhenti menulis
+   *  6 close-connections  -> socket ditutup
+   *  7 retire-children    -> anak yang tak teronfirmasi -> lost (bukan finished)
+   *  8 clear-discovery    -> berkas endpoint/lease milik kita dilepas
    */
   async shutdown(reason: string): Promise<ShutdownStep[]> {
     if (this.#closing) return [...this.#shutdownSteps]
@@ -221,6 +268,19 @@ export class DaemonHost {
 
     this.approvals.shutdownAll()
     this.#track("settle-approvals")
+
+    // [P13.2] Sesi yang di-host ditutup dan DITUNGGU: lifecycle-nya (jurnal +
+    // anak proses yang disupervisi) harus selesai sebelum daemon menutup
+    // dirinya. Tanpa ini, proses anak bisa tertinggal (yatim).
+    const closeSession = this.#opts.closeHostedSession
+    if (closeSession) {
+      try {
+        await closeSession()
+      } catch (e) {
+        this.#shutdownErrors.push(e instanceof Error ? e : new Error(String(e)))
+      }
+      this.#track("close-hosted-session")
+    }
 
     if (this.#leaseTimer) clearInterval(this.#leaseTimer)
     this.#leaseTimer = null
@@ -238,6 +298,15 @@ export class DaemonHost {
 
     this.telemetry.inc("shutdown.ordered")
     void reason
+    // Kegagalan sesi yang di-host dilaporkan SETELAH semua langkah cleanup
+    // selesai: sisa cleanup tak boleh dilewati, tapi kegagalannya juga tak
+    // boleh hilang (diam-diam = klaim "semua beres" yang tidak benar).
+    if (this.#shutdownErrors.length > 0) {
+      throw new AggregateError(
+        this.#shutdownErrors,
+        `daemon: shutdown selesai dengan ${this.#shutdownErrors.length} kegagalan`,
+      )
+    }
     return [...this.#shutdownSteps]
   }
 

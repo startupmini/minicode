@@ -95,7 +95,10 @@ export async function setupToolLayer(
   try {
     if (cfg.lspServers?.length) lspConfigure(cfg.lspServers)
   } catch (e) {
-    process.stderr.write(`[mcp] init failed: ${errMsg(e)}\n`)
+    // Label "[lsp]" — BUKAN "[mcp]": mengarang label yang salah membuat
+    // operator mengira MCP yang rusak, padahal yang gagal adalah registrasi
+    // server LSP.
+    process.stderr.write(`[lsp] init failed: ${errMsg(e)}\n`)
   }
   if (verification) {
     // P2.10 canonical coverage: one awaited intent/receipt pair per covered

@@ -110,7 +110,7 @@ test("03 persistence corrupt session id → null", () => {
 })
 
 test("03 persistence updated_at sorts most recent first", async () => {
-    const d = track(`.tmp-extreme-${randomUUID().slice(0, 4)}`)
+  const d = track(`.tmp-extreme-${randomUUID().slice(0, 4)}`)
   await mkdir(`${d}/.minicode`, { recursive: true })
   const a = `t-a-${randomUUID().slice(0, 6)}`
   const b = `t-b-${randomUUID().slice(0, 6)}`
@@ -428,7 +428,7 @@ test("09 edit tolerates CRLF vs LF line endings", async () => {
 
 // ── 10 Search ────────────────────────────────────────────────────────────────
 test("10 glob {a,b} expansion", async () => {
-    const d = track(`.tmp-extreme-${randomUUID().slice(0, 4)}`)
+  const d = track(`.tmp-extreme-${randomUUID().slice(0, 4)}`)
   await mkdir(`${d}/sub`, { recursive: true })
   await writeFile(`${d}/sub/a.ts`, "x")
   await writeFile(`${d}/sub/b.ts`, "x")
@@ -440,7 +440,7 @@ test("10 glob {a,b} expansion", async () => {
 })
 
 test("10 grep include filter + null byte skip", async () => {
-    const d = track(`.tmp-extreme-${randomUUID().slice(0, 4)}`)
+  const d = track(`.tmp-extreme-${randomUUID().slice(0, 4)}`)
   await mkdir(`${d}/sub`, { recursive: true })
   await writeFile(`${d}/sub/a.ts`, "hello\nworld")
   await writeFile(`${d}/sub/b.js`, "hello\nworld")
@@ -466,7 +466,7 @@ test("11 git status in non-repo returns message not crash", async () => {
 
 // ── 12 Memory ────────────────────────────────────────────────────────────────
 test("12 vector add/search/forget + dim mismatch cosine", async () => {
-    const d = track(`.tmp-extreme-${randomUUID().slice(0, 4)}`)
+  const d = track(`.tmp-extreme-${randomUUID().slice(0, 4)}`)
   const marker = `ext-${randomUUID().slice(0, 6)}`
   await addMemory(`unique ${marker} marker`, { cwd: d })
   const hits = await searchHybrid("marker", { cwd: d, topK: 3 })

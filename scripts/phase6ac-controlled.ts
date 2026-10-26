@@ -592,7 +592,7 @@ function drill13Help(): void {
   // [DESIGN DECISION] ANSI is stripped with an EXPLICIT escape built from
   // String.fromCharCode(27), not a literal ESC byte in the regex: an invisible control
   // character in source is unreviewable in a diff, and biome rightly rejects it.
-  const plain = help.replace(new RegExp(String.fromCharCode(27) + "\\[[0-9;?]*[a-zA-Z]", "g"), "")
+  const plain = help.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[a-zA-Z]`, "g"), "")
   const lines = plain.split("\n")
   const line = lines.find((l) => l.includes("--enable-scheduler"))
   // [FACT] 6AC's first run printed "(not found)" here while every phrase check

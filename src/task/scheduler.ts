@@ -43,13 +43,20 @@
 // ownership is uncertain.
 
 import {
+  type ContinuityClass,
+  type ContinuityContext,
+  type ContinuityEvidence,
+  type ContinuityGate,
+  classifyContinuity,
+} from "./continuity.ts"
+import {
   type CancelReason,
   type ExecutionHandle,
   newExecutionHandle,
   type PerTurnCancellation,
 } from "./execution-cancellation.ts"
 import { TaskGraph } from "./graph.ts"
-import type { ClaimOutcome, TaskSnapshot } from "./model.ts"
+import { type ClaimOutcome, TaskError, type TaskSnapshot } from "./model.ts"
 import { selectTask } from "./scheduling-policy.ts"
 import { newOwnerToken, SESSION_LEASE_MS, SESSION_RENEW_INTERVAL_MS } from "./session-authority.ts"
 import type { SessionOwner } from "./session-ownership.ts"
@@ -174,6 +181,19 @@ export type SchedulerEvent =
       readonly taskId: string
       readonly outcome: AttemptRecordOutcome
     }
+  /**
+   * [P13.3 Stage C] A stranded generation was deliberately NOT reconciled.
+   *
+   * `class` is the retry-safety classification, `reason` names the missing
+   * proof. This is an observation only: the durable record is untouched, which
+   * is exactly what HOLD/REQUIRES_VERIFIER mean.
+   */
+  | {
+      readonly kind: "task:continuity_held"
+      readonly taskId: string
+      readonly class: ContinuityClass
+      readonly reason: string
+    }
   | { readonly kind: "cycle:invalid_graph" }
   | { readonly kind: "cycle:stopped"; readonly reason: CycleStop }
 
@@ -191,6 +211,16 @@ export interface SchedulerOptions {
    * lease. Omit and the Scheduler mints its own at start().
    */
   readonly authorityToken?: string
+  /**
+   * [P13.3 Stage C] Retry-safety evidence for automatic reconciliation.
+   *
+   * ABSENT = HOLD. The Scheduler cannot prove that re-running arbitrary work is
+   * free of duplicate external effects, so it must not revert a stranded
+   * generation on lineage alone. A composition root that CAN prove it (the
+   * production autonomous bridge, whose tool scope is the 6S read-only matrix)
+   * supplies the evidence here.
+   */
+  readonly continuity?: ContinuityGate
 }
 
 export interface ActiveClaim {
@@ -240,6 +270,8 @@ export class Scheduler {
   private readonly instruction: string
   private readonly onEvent: ((e: SchedulerEvent) => void) | undefined
   private readonly cancellation: { readonly isCancelled: () => boolean } | undefined
+  /** [P13.3 Stage C] Null = no proof, so reconciliation holds (fail closed). */
+  private readonly continuity: ContinuityGate | null
 
   private state: SchedulerState = "CREATED"
   private owner: SessionOwner | null = null
@@ -297,6 +329,7 @@ export class Scheduler {
     this.instruction = opts.instruction
     this.onEvent = opts.onEvent
     this.cancellation = opts.cancellation
+    this.continuity = opts.continuity ?? null
     // P2.2: token otoritas milik composition root (satu penulis per boot).
     // Tanpa ini opsi authorityToken mati (selalu mint sendiri) dan sesi +
     // scheduler-nya saling menolak lease. Bukan redesign protokol: acquire/
@@ -625,6 +658,23 @@ export class Scheduler {
     // 1. Reconciliation first, so a cycle never plans around stranded work.
     const recovered = this.reconcile()
 
+    // [P13.3 Stage C] The guards at the top of the cycle were true when the pass
+    // STARTED. Reconciliation is a durable mutation, and a lease or incarnation can
+    // move while it runs. Re-verify before this cycle is allowed to claim or
+    // dispatch: a cached "authority held" is never permission to keep going.
+    if (
+      this.incarnationAtStart !== null &&
+      this.store.getSessionIncarnation(this.sessionId) !== this.incarnationAtStart
+    ) {
+      this.emit({ kind: "cycle:stopped", reason: "session-superseded" })
+      this.disposeSelf()
+      return { stop: "session-superseded", dispatched: null, recovered }
+    }
+    if (!this.hasAuthority()) {
+      if (!this.authorityLost) this.loseAuthority()
+      return { stop: "authority-lost", dispatched: null, recovered }
+    }
+
     // An active claim means work is already associated with this Scheduler. Do
     // not select anything else.
     if (this.claim !== null) {
@@ -948,9 +998,16 @@ export class Scheduler {
    * reverted every `IN_PROGRESS` row that was not this Scheduler's current
    * in-memory claim — which, because the claim is cleared after every dispatch,
    * reverted the Scheduler's own freshly completed work and re-executed it
-   * forever. Now a generation is reverted ONLY when there is no completion
-   * marker for it. Absence of a marker is the sole admissible evidence that an
-   * attempt never recorded completion.
+   * forever. A generation may be reverted only when it has no completion
+   * marker.
+   *
+   * [P13.3 Stage C] NO MARKER IS NOT PROOF OF NO SIDE EFFECT. A crashed attempt
+   * may already have written files or run commands; a new attempt would repeat
+   * them. Every candidate is therefore classified before the store is asked to
+   * revert it, and only SAFE_TO_RETRY (evidence-backed retry safety, e.g. a
+   * bridge whose entire tool scope is read-only) proceeds. Without a continuity
+   * gate the result is HOLD: the record is preserved and the next cycle
+   * re-evaluates. Reconcile still never writes COMPLETED and never dispatches.
    */
   reconcile(): readonly string[] {
     // [PHASE 6X] No authority, no reconciliation. Unconditionally: this is the single
@@ -967,6 +1024,24 @@ export class Scheduler {
     }
     const snapshot = this.store.getSnapshot(this.sessionId)
     const stranded: string[] = []
+    const incarnationMatches =
+      this.incarnationAtStart === null ||
+      this.store.getSessionIncarnation(this.sessionId) === this.incarnationAtStart
+
+    // [P13.3 Stage C] ONE evidence read per reconcile pass, and only when there
+    // is at least one in-flight candidate. The provider may probe the runtime,
+    // storage and journal; doing that for an empty queue would be pure cost.
+    let evidence: ContinuityEvidence | null = null
+    const evidenceForPass = (): ContinuityEvidence => {
+      if (evidence !== null) return evidence
+      evidence = this.continuityEvidence({
+        ownsSession: owned,
+        authorityHeld: true,
+        incarnationMatches,
+      })
+      return evidence
+    }
+
     for (const task of snapshot.tasks) {
       // Only the two in-flight states are ever targets. Terminal and operator
       // states are untouched by construction, not by a later check.
@@ -974,15 +1049,79 @@ export class Scheduler {
       // Never revert the task this Scheduler is actively executing.
       if (this.claim?.taskId === task.id) continue
 
+      // [PHASE 6I] Read the two durable facts separately. TaskStore remains the
+      // owner of the atomic lineage predicate below; these reads are only the
+      // INPUT to the retry-safety classification, never a replacement for it.
+      const lineage = this.store.getExecutionLineage(this.sessionId, task.id)
+      if (lineage === null) continue
+
+      // [PHASE 6I] An attempt newer than its execution is impossible. Preserve
+      // the store's loud invariant instead of silently classifying it: guessing
+      // which side is wrong either strands live work or re-runs finished work.
+      if (
+        lineage.attemptGeneration !== null &&
+        lineage.attemptGeneration > lineage.execGeneration
+      ) {
+        throw new TaskError(
+          "TASK_PERSISTENCE_FAILURE",
+          `attempt generation ${lineage.attemptGeneration} exceeds execution generation ${lineage.execGeneration} for ${this.sessionId}/${task.id}`,
+        )
+      }
+
+      const ownership = this.store.getExecutionOwnership(this.sessionId, task.id)
+      if (ownership === null) continue
+
+      const verdict = classifyContinuity(
+        {
+          status: task.status,
+          executionOwner: ownership.executionOwner,
+          execGeneration: lineage.execGeneration,
+          attemptGeneration: lineage.attemptGeneration,
+          ownsSession: owned,
+          authorityHeld: true,
+          incarnationMatches,
+        },
+        evidenceForPass(),
+      )
+
+      // [P13.3 Stage C] Only SAFE_TO_RETRY returns to the claim/dispatch cycle.
+      // HOLD and REQUIRES_VERIFIER both leave the durable record untouched; the
+      // next cycle re-evaluates, so recovery is never "dropped".
+      if (!verdict.mayReconcile) {
+        this.emit({
+          kind: "task:continuity_held",
+          taskId: task.id,
+          class: verdict.class,
+          reason: verdict.reason,
+        })
+        continue
+      }
+
+      // [P13.3 Stage C] Re-verify IMMEDIATELY before the durable mutation. The
+      // evidence was read earlier in this pass; a lease/incarnation that moved in
+      // between must not authorise a revert with the old token. Stop the pass and
+      // let TaskStore keep its record untouched.
+      if (!this.hasAuthority()) {
+        this.loseAuthority()
+        break
+      }
+      if (
+        this.incarnationAtStart !== null &&
+        this.store.getSessionIncarnation(this.sessionId) !== this.incarnationAtStart
+      ) {
+        this.disposeSelf()
+        break
+      }
+
       // [PHASE 6I] The lineage decision belongs to TaskStore, which owns both
       // generation columns and can make it in ONE atomic guarded statement. The
-      // Scheduler contributes ownership and nothing else: it does not read the
-      // lineage, does not compare generations, and has no rule of its own.
+      // Scheduler contributes ownership and nothing else: it does not compare
+      // generations here, and has no rule of its own.
       //
       // This is what closes 6G D1. The decision cannot be influenced by an
       // unrelated task write, because `exec_generation` advances only on an
       // accepted claim - not by the title, order, dependency, evidence or status
-      // writes that also advance `revision`.
+      // writes that also advance `revision`. A stale snapshot still loses here.
       const result = this.store.reconcileIfNoCompletedAttempt(
         this.sessionId,
         task.id,
@@ -995,6 +1134,34 @@ export class Scheduler {
     }
     if (stranded.length > 0) this.emit({ kind: "task:recovered", taskIds: stranded })
     return stranded
+  }
+
+  /**
+   * [P13.3 Stage C] Evidence for one reconcile pass, fail-closed.
+   *
+   * No gate and a throwing gate are the same verdict: evidence is MISSING.
+   * Treating an unavailable provider as permission would turn a monitoring
+   * failure into duplicate execution.
+   */
+  private continuityEvidence(ctx: ContinuityContext): ContinuityEvidence {
+    if (this.continuity === null) {
+      return {
+        resume: false,
+        missing: ["continuity-gate-missing"],
+        admission: "REFUSE",
+        retrySafety: "UNPROVEN",
+      }
+    }
+    try {
+      return this.continuity.evidence(ctx)
+    } catch {
+      return {
+        resume: false,
+        missing: ["continuity-gate-error"],
+        admission: "REFUSE",
+        retrySafety: "UNPROVEN",
+      }
+    }
   }
 
   private emit(event: SchedulerEvent): void {

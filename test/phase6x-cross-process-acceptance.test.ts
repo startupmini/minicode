@@ -45,7 +45,10 @@ const existsSync = fs.existsSync
 const readFileSync = fs.readFileSync
 const writeFileSync = fs.writeFileSync
 const store = new TaskStore(cwd, { authority: "SCHEDULER" })
-const mk = (runTurn) => new Scheduler(${SESS}, { store, runTurn, instruction: "x" })
+// [P13.3 Stage C] Gate "terbukti read-only" hanya untuk harness kontensi ini:
+// proses pertama harus reconcile claim langsung lalu dispatch turn yang ditahan,
+// supaya eksekusi lintas-proses benar-benar hidup selama jendela serangan.
+const mk = (runTurn) => new Scheduler(${SESS}, { store, runTurn, instruction: "x", continuity: { evidence: () => ({ resume: true, missing: [], admission: "ALLOW", retrySafety: "READ_ONLY_TOOL_SCOPE" }) } })
 
 const report = (o) => { console.log("__REPORT__" + JSON.stringify(o)) }
 

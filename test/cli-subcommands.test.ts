@@ -463,7 +463,9 @@ describe("cli: daemon scoped argv (P11.3)", () => {
       expect(r.code).toBe(0)
       expect(r.stdout).toContain("minicode daemon")
     }
-  })
+    // Enam spawn CLI berurutan; batas default 5 dtk terlalu ketat saat suite
+    // penuh berjalan paralel (pernah timeout 5,96 dtk tanpa kegagalan kode).
+  }, 20_000)
 })
 
 // ── D-1: integritas JSON pada jalur KEGAGALAN daemon.

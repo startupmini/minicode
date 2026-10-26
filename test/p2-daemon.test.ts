@@ -217,7 +217,7 @@ describe("capability bercakupan", () => {
       who: "u1",
       ttlMs: 60_000,
     })
-    const tampered = tok.slice(0, tok.length - 3) + "aaa"
+    const tampered = `${tok.slice(0, tok.length - 3)}aaa`
     expect(verifyCapability(secret, tampered, { incarnation: inc })).toEqual({
       ok: false,
       reason: "BAD_SIGNATURE",

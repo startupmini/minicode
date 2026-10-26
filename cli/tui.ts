@@ -420,9 +420,7 @@ export async function runTui(ctx: CliSession): Promise<void> {
     if (name === "work-mode") {
       const current = workModeControl?.getWorkMode() ?? "EXECUTE"
       if (!args) {
-        transcript.pushInfo([
-          c.muted(t("tui.workModeUsage", { m: current })),
-        ])
+        transcript.pushInfo([c.muted(t("tui.workModeUsage", { m: current }))])
         return
       }
       const next = parseWorkModeValue(args)

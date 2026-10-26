@@ -19,6 +19,7 @@
 import { describe, expect, test } from "bun:test"
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { join, relative } from "node:path"
+import { PACK_SIZE_BUDGET_KIB, withinSizeBudget } from "../scripts/pack-budget.ts"
 import { vendorFileHash, vendorShippedHash } from "./helpers/vendor-hash.ts"
 
 const repoRoot = process.cwd()
@@ -161,5 +162,36 @@ describe("audit #11: permukaan pack tepat", () => {
     expect(pkg.imports?.["#minicore"]).toBe("./vendor/minicore/src/core/index.ts")
     expect(pkg.imports?.["#minicore/*"]).toBe("./vendor/minicore/src/*")
     expect(coveredByFiles("vendor/minicore/src/core/index.ts")).toBe(true)
+  })
+})
+
+// ── Budget ukuran paket (re-baseline 3,5 MiB, disetujui owner) ─────────────
+//
+// Angkanya TIDAK ditulis di sini sebagai nilai tetap: satu sumber di
+// `scripts/pack-budget.ts` (dipakai gate + tes ini). Tes ini mengunci:
+//   1. nilai budget sesuai keputusan owner (3.584 KiB = 3,5 MiB),
+//   2. ukuran DI ATAS budget tetap GAGAL (alarm regresi tak dimatikan),
+//   3. gate `pack-check` memakai budget yang sama (tak ada angka liar di
+//      dua tempat).
+describe("budget ukuran paket", () => {
+  test("budget = 3.584 KiB (3,5 MiB) sesuai keputusan owner", () => {
+    expect(PACK_SIZE_BUDGET_KIB).toBe(3584)
+    expect(PACK_SIZE_BUDGET_KIB / 1024).toBe(3.5)
+  })
+
+  test("ukuran tepat di bawah budget lolos; di atas budget GAGAL", () => {
+    expect(withinSizeBudget(PACK_SIZE_BUDGET_KIB - 1)).toBe(true)
+    // Tepat di batas = melimpah (perbandingan ketat), dan di atas pasti gagal.
+    expect(withinSizeBudget(PACK_SIZE_BUDGET_KIB)).toBe(false)
+    expect(withinSizeBudget(PACK_SIZE_BUDGET_KIB + 1)).toBe(false)
+    expect(withinSizeBudget(PACK_SIZE_BUDGET_KIB * 2)).toBe(false)
+  })
+
+  test("gate pack-check memakai budget yang sama (satu sumber angka)", () => {
+    const src = readFileSync(join(repoRoot, "scripts", "pack-check.ts"), "utf8")
+    expect(src).toContain("withinSizeBudget(unpackedKb)")
+    expect(src).toContain("PACK_SIZE_BUDGET_KIB")
+    // Tak ada angka batas literal yang lolos di gate (harus lewat helper).
+    expect(src).not.toMatch(/unpackedKb\s*<\s*\d/)
   })
 })

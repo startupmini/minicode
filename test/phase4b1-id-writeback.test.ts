@@ -26,7 +26,6 @@
 // test, removed by that exact absolute path. Nothing resolved from process.cwd().
 
 import { afterEach, expect, test } from "bun:test"
-import { existsSync } from "node:fs"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -129,7 +128,10 @@ test("3. the write result itself names the created id, and still carries the ass
   )) as string
   expect(out).toMatch(/t3\s*—\s*C/)
   // The 4A.4A machine channel is unchanged and still correct.
-  expect(decodeCanonicalAssignments(out, { sessionId: S })?.map((a) => a.taskId)).toEqual(["t1", "t3"])
+  expect(decodeCanonicalAssignments(out, { sessionId: S })?.map((a) => a.taskId)).toEqual([
+    "t1",
+    "t3",
+  ])
 })
 
 // ---------------------------------------------------------------------------
@@ -160,10 +162,14 @@ test("5. a fully-identified payload is left exactly as declared", async () => {
   // Establish the file with a first write that DOES create a task, so there is a
   // real file to compare against.
   await todoWriteTool.execute(
-    { todos: [{ taskId: "t1", content: "A", status: "pending" }, { content: "D", status: "pending" }] } as never,
+    {
+      todos: [
+        { taskId: "t1", content: "A", status: "pending" },
+        { content: "D", status: "pending" },
+      ],
+    } as never,
     opCtx(dir),
   )
-  const before = await readFile(join(dir, ".minicode", "todos", `${S}.json`), "utf8")
   const rowsBefore = rows(dir).map((t) => `${t.id}:${t.title}`)
 
   // A second write that creates nothing: there is no id to merge, so the persisted
@@ -188,8 +194,14 @@ test("5. a fully-identified payload is left exactly as declared", async () => {
     "t3:C",
     "t4:D",
   ])
-  expect(rows(dir).map((t) => `${t.id}:${t.title}`).sort()).toEqual(rowsBefore.sort())
-  expect(decodeCanonicalAssignments(out, { sessionId: S })?.every((a) => a.kind === "existing")).toBe(true)
+  expect(
+    rows(dir)
+      .map((t) => `${t.id}:${t.title}`)
+      .sort(),
+  ).toEqual(rowsBefore.sort())
+  expect(
+    decodeCanonicalAssignments(out, { sessionId: S })?.every((a) => a.kind === "existing"),
+  ).toBe(true)
 })
 
 // ---------------------------------------------------------------------------
@@ -231,7 +243,11 @@ test("7. documented residual: re-sending a known task id-less in a MIXED payload
     } as never,
     opCtx(dir),
   )) as string
-  expect(decodeCanonicalAssignments(first, { sessionId: S })?.map((a) => a.taskId)).toEqual(["t1", "t3", "t2"])
+  expect(decodeCanonicalAssignments(first, { sessionId: S })?.map((a) => a.taskId)).toEqual([
+    "t1",
+    "t3",
+    "t2",
+  ])
   expect(rows(dir)).toHaveLength(3)
 
   // The model now KNOWS t3 (todo_read shows it) but sends C id-less anyway. That
@@ -251,7 +267,12 @@ test("7. documented residual: re-sending a known task id-less in a MIXED payload
   expect(after).toHaveLength(4)
   // Set comparison: `listTasks` returns canonical ORDER, and t3 is D7-retained
   // after the newly declared t4, so positional order is not the invariant.
-  expect(after.filter((t) => t.title === "C").map((t) => t.id).sort()).toEqual(["t3", "t4"])
+  expect(
+    after
+      .filter((t) => t.title === "C")
+      .map((t) => t.id)
+      .sort(),
+  ).toEqual(["t3", "t4"])
   // This is pinned deliberately: it is the boundary of the current contract, not
   // an oversight. 4B.1 makes the identity observable; it does not make a model
   // error impossible.
@@ -293,7 +314,9 @@ test("8. the markdown plan snapshot is a legacy artifact without canonical ids",
 test("9. the 4A.5 guard still fires before the FIRST write, so nothing is persisted", async () => {
   const dir = await ownedDir()
   seed(dir, ["A", "B", "C"])
-  const before = await readFile(join(dir, ".minicode", "todos", `${S}.json`), "utf8").catch(() => "")
+  const before = await readFile(join(dir, ".minicode", "todos", `${S}.json`), "utf8").catch(
+    () => "",
+  )
   await expect(
     todoWriteTool.execute(
       {

@@ -29,7 +29,7 @@ Permission → Jail → Bash Guard → Argument Validation → Executor → Jour
 |---|---|---|---|
 | `auto` (default) | Baca + tulis file terjail + bash aman + memori/todo | Gated tools tanpa persetujuan | Sekali per tool gated (TTY); non-TTY = tolak |
 | `ask` | Sama seperti `auto` | Tanpa jawaban allow | Tiap tool non-sepele |
-| `readonly` | 18 tool baca | Mutasi apa pun, bash, commit, delegasi | Tidak perlu (tak ada efek) |
+| `readonly` | 18 tool baca di gerbang izin (model melihat 12) | Mutasi apa pun, bash, commit, delegasi | Tidak perlu (tak ada efek) |
 | `plan` | Baca + `todo_write` + `delegate_task` (anak dipaksa read-only) + `submit_result` | Tulis file, bash, git, memori | Tidak perlu |
 | `allowlist` | Bash pola aman + tulis terjail | Shell di luar pola, tool gated | Tidak perlu |
 | `allow-all` | Semua tool | Bash berbahaya, path di luar jail | Tidak perlu |

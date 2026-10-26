@@ -34,6 +34,8 @@ import {
   type ExecutionTerminalState,
   isExecutionTerminalState,
 } from "./execution-kernel.ts"
+import { deriveRuntimeView } from "./runtime-status.ts"
+import { admitTaskWork } from "./runtime-task-admission.ts"
 
 /** Token CLI untuk mode produksi runtime (deterministik per invokasi). */
 export const RUNTIME_MODE_FLAG = "--runtime"
@@ -267,6 +269,26 @@ export function createProductionExecutionRunner(deps: {
           "RUNTIME_NOT_OWNED",
           "runtime admission is closed (shutdown in progress) — refusing to execute",
         )
+
+      // [P13.3] GERBANG ADMISSION PER JENIS KERJA (P13.1 `admitDurableWork`).
+      //
+      // M13 (dispatch di bawah) menjawab "apakah INI sah?" — authority, budget,
+      // deadline, lineage. Gerbang ini menjawab pertanyaan YANG BERBEDA:
+      // "apakah runtime ini BOLEH menerima kerja jenis INI sekarang?" — kapabilitas
+      // runtime (jurnal durable, TaskStore, scheduler) dan bukti readiness-nya.
+      //
+      // Keduanya wajib dan tak saling menggantikan: M13 tak tahu kapabilitas
+      // runtime, dan kapabilitas tak tahu authority. Gerbang ini TIDAK
+      // menggantikan M13 — ia menolak lebih awal, sebelum intent dispatch ditulis
+      // ke jurnal, jadi penolakan tak meninggalkan jejak eksekusi.
+      const admission = admitTaskWork(deriveRuntimeView(runtime.statusFacts()), request.kind)
+      if (admission.admission === "REFUSE") {
+        m.rejected++
+        throw notAdmitted(
+          "RUNTIME_NOT_ADMITTED",
+          `work kind ${request.kind} ditolak admission runtime: ${admission.reason}`,
+        )
+      }
 
       // Admission: SATU-SATUNYA jalan masuk (M13 → kernel). Dispatch ditolak ⇒
       // TIDAK ADA legacy fallback: dua jalur untuk satu operasi = dual execution.

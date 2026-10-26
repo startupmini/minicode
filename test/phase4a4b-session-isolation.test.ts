@@ -35,7 +35,12 @@ import { join, resolve } from "node:path"
 import { applyMcpContext, newMcpContextId } from "../src/mcp/server.ts"
 import { decodeCanonicalAssignments } from "../src/task/assignment.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
-import { todoOperationContext, todoReadTool, todoSession, todoWriteTool } from "../src/tools/todo.ts"
+import {
+  todoOperationContext,
+  todoReadTool,
+  todoSession,
+  todoWriteTool,
+} from "../src/tools/todo.ts"
 
 const owned: string[] = []
 async function ownedDir(): Promise<string> {
@@ -115,7 +120,12 @@ test("C. rebinding the global mid-flight cannot steal an in-flight operation's s
 
   // 1. TaskStore rows landed under A, not under the hijacking id.
   const store = new TaskStore(dir)
-  expect(store.listTasks(SESSION).map((t) => t.title).sort()).toEqual(["A", "new-from-A"])
+  expect(
+    store
+      .listTasks(SESSION)
+      .map((t) => t.title)
+      .sort(),
+  ).toEqual(["A", "new-from-A"])
   expect(store.listTasks("HIJACKED-SESSION")).toEqual([])
   // 2. The assignment is stamped with A, so the adapter can still decode it.
   const table = decodeCanonicalAssignments(out, { sessionId: SESSION })
@@ -171,9 +181,19 @@ test("A. two concurrent operations with different sessions stay isolated", async
   expect(fileB.sessionId).toBe("cli-B")
 
   // E. TaskStore isolation: the correct session_id reached the store.
-  expect(new TaskStore(dirA).listTasks("cli-A").map((t) => t.title).sort()).toEqual(["A", "only-A"])
+  expect(
+    new TaskStore(dirA)
+      .listTasks("cli-A")
+      .map((t) => t.title)
+      .sort(),
+  ).toEqual(["A", "only-A"])
   expect(new TaskStore(dirA).listTasks("cli-B")).toEqual([])
-  expect(new TaskStore(dirB).listTasks("cli-B").map((t) => t.title).sort()).toEqual(["B", "only-B"])
+  expect(
+    new TaskStore(dirB)
+      .listTasks("cli-B")
+      .map((t) => t.title)
+      .sort(),
+  ).toEqual(["B", "only-B"])
   expect(new TaskStore(dirB).listTasks("cli-A")).toEqual([])
 
   // F. Assignment isolation: each is bound to its own session and is meaningless
@@ -231,9 +251,19 @@ test("B. two MCP contexts keep their own namespace, and a global swap cannot mov
     ])
 
     // A's work did NOT land in B's namespace even though the global pointed at B.
-    expect(new TaskStore(dirA).listTasks(ctxA).map((t) => t.title).sort()).toEqual(["A", "mcp-A-new"])
+    expect(
+      new TaskStore(dirA)
+        .listTasks(ctxA)
+        .map((t) => t.title)
+        .sort(),
+    ).toEqual(["A", "mcp-A-new"])
     expect(new TaskStore(dirA).listTasks(ctxB)).toEqual([])
-    expect(new TaskStore(dirB).listTasks(ctxB).map((t) => t.title).sort()).toEqual(["B", "mcp-B-new"])
+    expect(
+      new TaskStore(dirB)
+        .listTasks(ctxB)
+        .map((t) => t.title)
+        .sort(),
+    ).toEqual(["B", "mcp-B-new"])
     expect(new TaskStore(dirB).listTasks(ctxA)).toEqual([])
     // Exactly one JSON file per context, named by its sanitized namespace.
     expect(await todoFiles(dirA)).toHaveLength(1)
@@ -305,7 +335,12 @@ test("G. a failing operation leaves a concurrent one's session and data intact",
   const outB = await succeeding
 
   // B is completely unaffected by A's failure: correct namespace, correct data.
-  expect(new TaskStore(dirB).listTasks("f-B").map((t) => t.title).sort()).toEqual(["B", "B-new"])
+  expect(
+    new TaskStore(dirB)
+      .listTasks("f-B")
+      .map((t) => t.title)
+      .sort(),
+  ).toEqual(["B", "B-new"])
   expect(new TaskStore(dirB).listTasks("f-A")).toEqual([])
   expect(decodeCanonicalAssignments(outB, { sessionId: "f-B" })?.map((a) => a.taskId)).toEqual([
     "t1",
@@ -340,7 +375,12 @@ test("G2. an aborted operation does not disturb a continuing one", async () => {
 
   await expect(aborted).rejects.toThrow()
   const outB = await continuing
-  expect(new TaskStore(dirB).listTasks("ab-B").map((t) => t.title).sort()).toEqual(["B", "B-new"])
+  expect(
+    new TaskStore(dirB)
+      .listTasks("ab-B")
+      .map((t) => t.title)
+      .sort(),
+  ).toEqual(["B", "B-new"])
   expect(decodeCanonicalAssignments(outB, { sessionId: "ab-B" })).toBeDefined()
   // The aborted operation left no JSON for its session.
   expect(await todoFiles(dirA)).toEqual([])
@@ -410,12 +450,16 @@ test("I. the composition-root global still drives a normal single operation", as
   )) as string
 
   expect(await todoFiles(dir)).toEqual(["legacy-style-session.json"])
-  expect(new TaskStore(dir).listTasks("legacy-style-session").map((t) => t.title).sort()).toEqual([
-    "A",
-    "C",
-  ])
+  expect(
+    new TaskStore(dir)
+      .listTasks("legacy-style-session")
+      .map((t) => t.title)
+      .sort(),
+  ).toEqual(["A", "C"])
   // The 4A.4A assignment contract is intact through this path too.
-  expect(decodeCanonicalAssignments(out, { sessionId: "legacy-style-session" })?.map((a) => a.taskId)).toEqual(["t1", "t2"])
+  expect(
+    decodeCanonicalAssignments(out, { sessionId: "legacy-style-session" })?.map((a) => a.taskId),
+  ).toEqual(["t1", "t2"])
 })
 
 // ---------------------------------------------------------------------------
@@ -456,7 +500,14 @@ test("K. a todo_write through the real MCP server lands in its per-instance name
     }
   }
   const call = async (id: number, name: string, args: unknown) => {
-    proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } }) + "\n")
+    proc.stdin.write(
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: { name, arguments: args },
+      })}\n`,
+    )
     for (;;) {
       const m = await next()
       if (m.id === id) return m
@@ -464,15 +515,19 @@ test("K. a todo_write through the real MCP server lands in its per-instance name
   }
   try {
     proc.stdin.write(
-      JSON.stringify({
+      `${JSON.stringify({
         jsonrpc: "2.0",
         id: 1,
         method: "initialize",
-        params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "d", version: "1" } },
-      }) + "\n",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "d", version: "1" },
+        },
+      })}\n`,
     )
     await next()
-    proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n")
+    proc.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`)
 
     // An all-id-less payload keeps this test focused on the SESSION, not on
     // canonical sync: where does the JSON land, and under whose name?
@@ -488,9 +543,11 @@ test("K. a todo_write through the real MCP server lands in its per-instance name
     expect(files[0]).not.toBe("mcp-server.json")
     const written = await jsonOf(dir, files[0]!)
     // The durable id keeps its `mcp:` prefix and is a real uuid.
-    expect(written.sessionId).toMatch(/^mcp:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+    expect(written.sessionId).toMatch(
+      /^mcp:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    )
     // The filename is that same id with the sanitized mapping (`:` -> `-`).
-    expect(files[0]).toBe(written.sessionId.replace(/:/g, "-") + ".json")
+    expect(files[0]).toBe(`${written.sessionId.replace(/:/g, "-")}.json`)
     expect(written.contents).toEqual(["through-the-real-server"])
   } finally {
     proc.kill()

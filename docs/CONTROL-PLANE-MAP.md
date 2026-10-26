@@ -30,7 +30,7 @@ Relationship eksplisit:
 | Context size | Kernel loop (`contextTokens`) + `Session.contextTokens` getter (ekspos ke driver/UI) | Kernel: kompaksi + gagal-bila-critical |
 | Compaction | Kernel (pressure + flag) | Kernel: KAPAN + fallback; LLM: ISI ringkasan |
 | Termination | maxSteps/timeout (kernel), budget (driver), abort (user) | Kernel: maxSteps, timeout, post-kompaksi critical; Driver: budget abort; User: Esc (TUI), Ctrl+C/Esc (raw prompt) |
-| Budget | Collector (usage live) + `budgetStatus` | `budgetStatus` (terpusat, seragam REPL/one-shot/exec) + watcher abort |
+| Budget | Collector (usage live) + `budgetStatus` | `budgetStatus` (terpusat, seragam TUI/one-shot/exec) + watcher abort |
 | Backpressure | Producer caps + kernel truncate | Cap di producer (sudah benar); kernel truncate terakhir |
 
 ## 3. Compaction Contract (Phase 6 — seam kernel)

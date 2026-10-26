@@ -12,6 +12,8 @@
 //   3. `bin` menunjuk file yang ikut terkemas.
 //   4. Vendor kernel lengkap (tanpa itu `bun install` bersih akan gagal).
 //   5. Ukuran wajar — deteksi kalau `node_modules` atau test ikut terbawa.
+//      Batasnya ada di `scripts/pack-budget.ts` (satu sumber angka;
+//      re-baseline 3,5 MiB disetujui owner — lihat komentar di sana).
 //
 // Usage: bun scripts/pack-check.ts [--verbose]
 
@@ -24,6 +26,7 @@
 import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { join, relative, resolve } from "node:path"
+import { PACK_SIZE_BUDGET_KIB, withinSizeBudget } from "./pack-budget.ts"
 
 const VERBOSE = process.argv.includes("--verbose")
 const repoRoot = resolve(import.meta.dir, "..")
@@ -238,9 +241,9 @@ try {
 } catch {}
 console.log(`\nukuran unpacked: ${unpackedKb} KB`)
 check(
-  "ukuran di bawah 2.25 MiB (tak ada node_modules/test terbawa)",
-  unpackedKb < 2304,
-  `${unpackedKb} KB`,
+  `ukuran di bawah ${PACK_SIZE_BUDGET_KIB / 1024} MiB (tak ada node_modules/test terbawa)`,
+  withinSizeBudget(unpackedKb),
+  `${unpackedKb} KB (budget ${PACK_SIZE_BUDGET_KIB} KiB)`,
 )
 
 // ── ringkasan ──

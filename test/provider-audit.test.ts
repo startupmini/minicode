@@ -7,7 +7,15 @@ import type { ToolExecutor } from "#minicore/core/executor.ts"
 import { createSession } from "#minicore/core/index.ts"
 import type { ModelProvider, ProviderEvent, StreamRequest } from "#minicore/core/provider.ts"
 import type { ToolResult } from "#minicore/core/types.ts"
-import { allowAll, FakeProvider, fastRetryRecovery, finish, text, tool, toolCall } from "#minicore/test/fakes.ts"
+import {
+  allowAll,
+  FakeProvider,
+  fastRetryRecovery,
+  finish,
+  text,
+  tool,
+  toolCall,
+} from "#minicore/test/fakes.ts"
 import { createRouterProvider } from "../src/providers/router.ts"
 import { friendlyError, friendlyFromCategory } from "../src/ui/render/errors.ts"
 
@@ -417,7 +425,9 @@ test("audit: P4-T01 argumen invalid → error result, tool tak jalan, turn lanju
     expect((res as { isError?: boolean }).isError).toBe(true)
     expect(String((res as { content?: unknown }).content)).toContain("invalid arguments:")
   }
-  expect(String((results[0] as { content?: unknown }).content)).toContain("missing required property")
+  expect(String((results[0] as { content?: unknown }).content)).toContain(
+    "missing required property",
+  )
   expect(String((results[1] as { content?: unknown }).content)).toContain("expected an object")
 })
 
@@ -432,7 +442,11 @@ test("audit: P4-T05-A hasil hilang → pairing tepat, yang hilang jadi error", a
   }
   const p = new FakeProvider([
     {
-      events: [toolCall("echo", { x: "1" }, "c-1"), toolCall("echo", { x: "2" }, "c-2"), finish("tool_calls")],
+      events: [
+        toolCall("echo", { x: "1" }, "c-1"),
+        toolCall("echo", { x: "2" }, "c-2"),
+        finish("tool_calls"),
+      ],
     },
     { events: [text("tutup"), finish("stop")] },
   ])
@@ -492,7 +506,11 @@ test("audit: P4-T07 executor melempar → per-call error result, turn tak crash"
   }
   const p = new FakeProvider([
     {
-      events: [toolCall("echo", { x: "1" }, "c-1"), toolCall("echo", { x: "2" }, "c-2"), finish("tool_calls")],
+      events: [
+        toolCall("echo", { x: "1" }, "c-1"),
+        toolCall("echo", { x: "2" }, "c-2"),
+        finish("tool_calls"),
+      ],
     },
     { events: [text("tutup"), finish("stop")] },
   ])

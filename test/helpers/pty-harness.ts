@@ -408,7 +408,12 @@ export function classifySgrProbe(o: SgrProbeObservation): PtySgrAvailability {
     }
   }
   if (sgrDelivered) {
-    return { ...base, ok: true, verdict: "supported", reason: "byte mouse SGR sampai ke stdin anak" }
+    return {
+      ...base,
+      ok: true,
+      verdict: "supported",
+      reason: "byte mouse SGR sampai ke stdin anak",
+    }
   }
   if (trailerDelivered) {
     return {

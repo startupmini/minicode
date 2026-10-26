@@ -5,16 +5,21 @@ import { resolve as resolvePath } from "node:path"
 import type { Message, Session, Tool } from "#minicore"
 import { createProviderLayer } from "../src/app/provider-layer.ts"
 import { createRagLayer } from "../src/app/rag-layer.ts"
-import { createMinicodeSession, type PermissionControl, type WorkModeControl } from "../src/app/session.ts"
+import {
+  createMinicodeSession,
+  type PermissionControl,
+  type WorkModeControl,
+} from "../src/app/session.ts"
 import { setupToolLayer } from "../src/app/tool-layer.ts"
 import type { MinicodeConfig } from "../src/config.ts"
 import { loadLastModel, localConfigNotice } from "../src/config.ts"
 import { runRunHooks, shouldRunHooks } from "../src/hooks/run.ts"
 import { homeDir } from "../src/lib/db-path.ts"
-import { closeAllLsp as lspCloseAll } from "../src/lsp/client.ts"
+import { closeAllLsp as lspCloseAll, setLspProcessSupervisor } from "../src/lsp/client.ts"
 import { closeAll as mcpCloseAll } from "../src/mcp/client.ts"
 import { addMemory } from "../src/memory/vector.ts"
 import { createLlmCompaction } from "../src/policy/compaction.ts"
+import type { PermissionAsk } from "../src/policy/permission.ts"
 import type { RateLimiter } from "../src/policy/ratelimit.ts"
 import {
   budgetExceededError,
@@ -63,10 +68,15 @@ import {
 } from "../src/runtime/production-execution.ts"
 import {
   createProductionRuntime,
+  observeProductionRuntime,
   type ProductionRuntimeHandle,
   runtimeGateFor,
   runtimeJournalPath,
 } from "../src/runtime/production-runtime.ts"
+import { deriveRuntimeView, evaluateResume } from "../src/runtime/runtime-status.ts"
+import type { TaskLayerFacts } from "../src/runtime/runtime-status-facts.ts"
+import { installRuntimeStatusProvider } from "../src/runtime/runtime-status-provider.ts"
+import { admitTaskWork } from "../src/runtime/runtime-task-admission.ts"
 import {
   acquireSessionWriter,
   checkWriterFresh,
@@ -93,12 +103,21 @@ import {
   type ContextOnlyArtifact,
   stripContextOnly,
 } from "../src/session/context-assembly.ts"
-import { countDurableCompactions, deriveFrontierFromDurable } from "../src/session/context-identity.ts"
+import {
+  countDurableCompactions,
+  deriveFrontierFromDurable,
+} from "../src/session/context-identity.ts"
 import {
   produceSummaryProjection,
   readConsumableSummaryProjection,
 } from "../src/session/context-projection.ts"
 import { rowsToCanonicalRefs, selectContext } from "../src/session/context-selector.ts"
+import {
+  AdoptionRefusedError,
+  type AdoptionResult,
+  type AdoptTaskSpec,
+  adoptUnfinishedTask,
+} from "../src/session/cross-session-adoption.ts"
 import { formatSessionIdentityLine, resolveSessionIdentity } from "../src/session/identity.ts"
 import {
   attachMutationJournal,
@@ -120,6 +139,7 @@ import {
   loadPresentationEvents,
   loadSession,
   loadThreadHistoryWithSeq,
+  type PresentationPersistStats,
   RefusedHistoryRewriteError,
   saveSession,
   shrinkThreadHistory,
@@ -194,6 +214,14 @@ export interface CliSessionOptions {
   verbose: boolean
   allowAll: boolean
   ask: boolean
+  /**
+   * [P13.6] Pengganti ask permission TTY untuk jalur headless (daemon).
+   * Default TIDAK diset: `promptAsk` dipakai, dan non-TTY ⇒ deny (fail-closed)
+   * — daemon yang lupa memasang apa pun tidak pernah bisa mengizinkan
+   * diam-diam. Daemon memasang `ApprovalBroker.asPermissionAsk` supaya
+   * konsumen Desktop yang mengusulkan keputusan lewat op `approval.decide`.
+   */
+  permissionAsk?: PermissionAsk
   plan: boolean
   allowlist: boolean
   verify: boolean
@@ -234,6 +262,23 @@ export interface CliSessionOptions {
    * gagal ke `off`.
    */
   runtimeMode?: RuntimeProductionMode
+  /**
+   * [P14] Adopsi eksplisit SATU task unfinished dari sesi sumber. Diisi CLI
+   * hanya dari `--adopt-task <source>/<taskId>`.
+   *
+   * [DESIGN DECISION] Startup-only, bukan slash-command. Transfer mengubah
+   * namespace task dan mem-fence penulis sesi sumber; itu keputusan operator
+   * yang harus terjadi sebelum turn pertama, bukan di tengah percakapan.
+   */
+  adoptTask?: AdoptTaskSpec
+  /**
+   * [P13.6] Seam injeksi uji deterministik untuk append presentasi —
+   * satu-satunya titik tulis durable presentasi. Produksi TIDAK mengeset ini;
+   * default = `appendPresentationEvents` sesungguhnya (pagar epoch yang sama).
+   * Analog dengan seam checkpoint `openExecutionJournal`: test memakainya
+   * untuk memaksa kegagalan/penghalang TANPA tidur arbiter.
+   */
+  presentationAppend?: (events: readonly DomainEvent[]) => Promise<PresentationPersistStats>
   maxSteps?: number
   contextWindowTokens?: number
   /** F3.2: override keepRecentTurns kompaksi kernel (berapa turn terakhir
@@ -266,6 +311,16 @@ export interface CliSession {
   writerEpoch: number
   isWriterStale: () => boolean
   writerStaleNote: () => string
+  /**
+   * [Stage 5B] Bukti kegagalan checkpoint (dicatat, tak hilang senyap).
+   * Pesan error internal saja — tak ada credential di jalur ini.
+   */
+  checkpointFailures: () => string[]
+  /**
+   * [Stage 5B] Operasi checkpoint yang masih berjalan. Setelah `close()`
+   * selesai HARUS 0 — `close()` adalah barrier lifecycle.
+   */
+  pendingCheckpointCount: () => number
   modelRef: { current?: string }
   effectiveInitialModel: string
   effectiveTimeoutMs: number
@@ -326,6 +381,16 @@ export interface CliSession {
   getPresentationSnapshot: () => UiPresentationSnapshot
   onPresentationEvent: (handler: (event: UiPresentationEvent) => void) => () => void
   /**
+   * [P13.5] DomainEvent mentah — bentuk yang SAMA dengan yang dipersist durable.
+   *
+   * Kenapa terpisah dari `onPresentationEvent`: proyeksi UI memakai field `seq`
+   * dan membuang detail domain (eventSeq/sessionId/lineage). Feed daemon
+   * membutuhkan bentuk DomainEvent agar live dan replay berbicara bahasa yang
+   * sama; melakukan cast proyeksi ke DomainEvent membuat `eventSeq` hilang dan
+   * seluruh live feed diam. Subscriber di sini menerima event sebelum proyeksi.
+   */
+  onDomainEvent: (handler: (event: DomainEvent) => void) => () => void
+  /**
    * [PHASE 6AB] The trigger handle, exposed.
    *
    * 6AA's blocker was precisely that this was NOT here: `createProductionScheduler`
@@ -351,6 +416,12 @@ export interface CliSession {
   startupRecovery: StartupRecoveryReport | null
   /** [PHASE 6AB] Operator projection fed by the Scheduler's own event stream. */
   schedulerObservability: SchedulerObservability
+  /**
+   * [P14] Hasil adopsi lintas sesi saat startup, atau null bila flag tidak
+   * dipakai. Dikembalikan agar tes/operator dapat memeriksa outcome tanpa
+   * membaca ulang pesan stderr.
+   */
+  adoption: AdoptionResult | null
 }
 
 export function toPresentationEvent(event: DomainEvent): UiPresentationEvent | null {
@@ -668,6 +739,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     toolScope,
     schedulerEnabled,
     runtimeMode,
+    adoptTask,
     allowLocalConfig,
     workMode = "EXECUTE",
     maxSteps,
@@ -717,6 +789,29 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   process.stderr.write(
     `${c.dim(`[writer] admitted sid=${sessionId} boot=${bootId} epoch=${expectedEpoch}${admission.admission.tookOver ? " (takeover)" : ""}${admission.admission.fresh ? " (fresh)" : ""}\n`)}`,
   )
+  // [P14] Adopsi eksplisit berjalan SETELAH admission target (token target
+  // sudah sah) dan SEBELUM turn pertama. Gagal = lepas lease target lalu
+  // lempar error terklasifikasi; jangan pernah meninggalkan target terkunci
+  // oleh proses yang tidak jadi berjalan.
+  let adoption: AdoptionResult | null = null
+  if (adoptTask) {
+    adoption = adoptUnfinishedTask({
+      sourceSessionId: adoptTask.sourceSessionId,
+      targetSessionId: sessionId,
+      taskId: adoptTask.taskId,
+      targetOwnerToken: writerToken,
+      bootId,
+      cwd,
+    })
+    if (adoption.outcome !== "ADOPTED") {
+      releaseSessionWriter(sessionId, writerToken, cwd)
+      throw new AdoptionRefusedError(adoption)
+    }
+    const moved = adoption.task
+    process.stderr.write(
+      `${c.dim(`[adopt] ADOPTED ${adoptTask.taskId} ${adoptTask.sourceSessionId} -> ${sessionId} revision=${moved?.revision ?? "?"} status=${moved?.status ?? "?"} exec=${adoption.transfer?.execGeneration ?? "?"}${adoption.fencedFormerOwner ? " (former owner fenced)" : ""}\n`)}`,
+    )
+  }
   // P2.6 — kubur residu crash: RUNNING tanpa holder hidup (admission di atas
   // membuktikan tak ada penulis hidup) → INTERRUPTED/UNKNOWN. BUKAN
   // auto-continue/replay; tanpa ini satu crash mengganjal RUNNING unik
@@ -959,15 +1054,17 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         // Budget pesan = contextWindowTokens dikurangi overhead system+tools;
         // tanpa konfigurasi → tanpa batas (reproduksi P2.8 persis).
         const durableEvents = loadPresentationEvents(sessionId, cwd)
-        const revision = countDurableCompactions(
-          durableEvents as readonly { type: string }[],
-        )
+        const revision = countDurableCompactions(durableEvents as readonly { type: string }[])
         const rowsForSelector = loadThreadHistoryWithSeq(sessionId, defaultThread.thread_id, cwd)
         // P3.4: proyeksi kanonik durable adalah sumber UTAMA untuk selector
         // (cakupan-valid: CURRENT atau STALE berjangkar utuh, P3.0 §8 D6),
         // sehingga `summary-plus-tail` menjadi perilaku produksi nyata. P2.8
         // `assembleContext` (CURRENT-only) tetap jadi fallback kompatibel.
-        const durableProjection = readConsumableSummaryProjection(sessionId, cwd, defaultThread.thread_id)
+        const durableProjection = readConsumableSummaryProjection(
+          sessionId,
+          cwd,
+          defaultThread.thread_id,
+        )
         const projectionSummary =
           durableProjection ??
           (view.source === "projection" && view.summary
@@ -1087,9 +1184,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // P2.11 — replay watershed: state.seq sesaat setelah rebuild. Baris snapshot
   // pada/di bawah ini = replay/reconstructed; di atasnya = live (provenance
   // absen). null = tak pernah rebuild (semua baris live).
-  const replayedUpToSeq: number | null = rebuiltPresentation
-    ? rebuiltPresentation.state.seq
-    : null
+  const replayedUpToSeq: number | null = rebuiltPresentation ? rebuiltPresentation.state.seq : null
   const provenanceOf = (
     entry: { status?: string; incomplete?: boolean },
     seq: number,
@@ -1131,6 +1226,16 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   let presentationWriteTail: Promise<void> = Promise.resolve()
   let presentationFlushTimer: ReturnType<typeof setTimeout> | undefined
   const pendingPresentationEvents: DomainEvent[] = []
+  // [P13.6] Watermark seq live terakhir yang terkonfirmasi durable. Publish
+  // hanya maju; batch yang gagal append tidak pernah majukan (fail-closed).
+  let durableLiveSeq = -1
+  // [P13.6] Satu titik tulis durable presentasi. Produksi = append asli
+  // (pagar epoch sama); test menyuntik penghalang/kegagalan deterministik
+  // lewat opts.presentationAppend (analog seam checkpoint jurnal).
+  const appendPresentation =
+    opts.presentationAppend ??
+    ((events: readonly DomainEvent[]) =>
+      appendPresentationEvents(sessionId, cwd, events, { expectedEpoch }))
   const flushPresentationEvents = (): void => {
     if (presentationFlushTimer !== undefined) {
       clearTimeout(presentationFlushTimer)
@@ -1139,9 +1244,23 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     const batch = pendingPresentationEvents.splice(0)
     if (batch.length === 0) return
     presentationWriteTail = presentationWriteTail
-      .then(() =>
-        appendPresentationEvents(sessionId, cwd, batch, { expectedEpoch }).then(() => {}),
-      )
+      .then(async () => {
+        const stats = await appendPresentation(batch)
+        void stats
+        // [P13.6] LIVE = DURABLE-CONFIRMED: terbitkan event durable hanya
+        // SETELAH append sukses. Watermark menjaga urutan + membuat duplikat
+        // (seq sudah pernah live) tidak dikirim ulang. Batas yang disengaja:
+        // sesi hosted hanya menerima seq segar-adaptif (adapter meneruskan
+        // dari kepala durable saat resume), sehingga collision (baris seq
+        // sudah ada) tak mungkin menyusup ke sini — collision hanya mungkin
+        // lintas-proses dan lintas-proses tak lewat flush ini.
+        for (const event of batch) {
+          if (event.eventSeq > durableLiveSeq) {
+            durableLiveSeq = event.eventSeq
+            publishDomainEvent(event)
+          }
+        }
+      })
       .catch((error) => {
         if (error instanceof StaleWriterError) {
           markWriterStale(`presentation flush refused (expected epoch ${error.expectedEpoch})`)
@@ -1160,6 +1279,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     }
   }
   const presentationSubscribers = new Set<(event: UiPresentationEvent) => void>()
+  // [P13.5] Subscriber DomainEvent mentah. Dipisah dari proyeksi UI supaya feed
+  // daemon bisa memakai `eventSeq` yang sama dengan baris durable.
+  const domainEventSubscribers = new Set<(event: DomainEvent) => void>()
   // Content store in-memory untuk query /expand; jalur production.
   let contentStore: ContentStore | null = null
   const getShadowDiagnostics = (): {
@@ -1331,6 +1453,20 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       } catch {}
     }
   }
+  const onDomainEvent = (handler: (event: DomainEvent) => void): (() => void) => {
+    domainEventSubscribers.add(handler)
+    return () => domainEventSubscribers.delete(handler)
+  }
+  const publishDomainEvent = (event: DomainEvent): void => {
+    for (const handler of [...domainEventSubscribers]) {
+      // Satu subscriber gagal tak boleh memutus subscriber lain atau
+      // mempersentasikan turn sebagai gagal: ini jalur observasi, bukan
+      // authoritas lifecycle.
+      try {
+        handler(event)
+      } catch {}
+    }
+  }
   const compaction = process.env.DEEPSEEK_API_KEY
     ? createLlmCompaction({
         apiKey: process.env.DEEPSEEK_API_KEY,
@@ -1353,24 +1489,26 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         },
       })
     : undefined
-  const { sessionTools, evidenceMode, setWorkMode: setToolWorkMode } = await startupPhase(
-    "tool-layer",
-    () =>
-      setupToolLayer(
-        cfg,
-        toolScope ?? "full",
-        permissionMode,
-        {
-          sessionId,
-          threadId: DEFAULT_THREAD_ID,
-          cwd: cwd ?? process.cwd(),
-        },
-        // F-03 (P5 §C2): background bash job diikat ke sid kanonik sesi ini —
-        // instance yang diikat sid tidak pernah dipasok lewat argumen tool.
+  const {
+    sessionTools,
+    evidenceMode,
+    setWorkMode: setToolWorkMode,
+  } = await startupPhase("tool-layer", () =>
+    setupToolLayer(
+      cfg,
+      toolScope ?? "full",
+      permissionMode,
+      {
         sessionId,
-        // P12 S2.2: ceiling WorkMode untuk visibilitas tool (DISCUSS/PLAN).
-        workMode,
-      ),
+        threadId: DEFAULT_THREAD_ID,
+        cwd: cwd ?? process.cwd(),
+      },
+      // F-03 (P5 §C2): background bash job diikat ke sid kanonik sesi ini —
+      // instance yang diikat sid tidak pernah dipasok lewat argumen tool.
+      sessionId,
+      // P12 S2.2: ceiling WorkMode untuk visibilitas tool (DISCUSS/PLAN).
+      workMode,
+    ),
   )
 
   // todo_write/todo_read menyimpan state per sesi di .minicode/todos/<id>.json,
@@ -1432,7 +1570,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       workMode,
       systemExtra: (systemExtra ?? "") + recoveryAppendix,
       model: modelRef.current,
-      ask: promptAsk,
+      // P13.6 — ask permission: composition root boleh menyuntik jalur headless
+      // (daemon → ApprovalBroker). Tanpa injeksi tetap prompt TTY; non-TTY ⇒
+      // deny (fail-closed), bukan izin diam-diam.
+      ask: opts.permissionAsk ?? promptAsk,
       // Cermin observability persetujuan → adaptor presentasi. Keputusan gate
       // tetap milik permission handler; hook ini hanya melaporkan.
       onApprovalEvent: (e) => {
@@ -1509,6 +1650,14 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         shadowDivergence++
       }
       queuePresentationEvent(e)
+      // [P13.6] Event durable TIDAK diterbitkan live di sini — hanya SETELAH
+      // append durable sukses (lihat flushPresentationEvents). Feed live harus
+      // subset dari toko durable: kalau append gagal/crash sebelum flush, event
+      // itu tidak boleh pernah tampak live (konsumen bisa meng-ack-nya, dan
+      // offset durable akan melampaui sejarah yang sebenarnya ada). Event
+      // non-durable (delta) tetap langsung — feed daemon memfilternya dan UI
+      // butuh delta real-time.
+      if (!DURABILITY[e.type]?.durable) publishDomainEvent(e)
       publishPresentationEvent(e)
     })
   } catch {
@@ -1540,6 +1689,79 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   type TurnSnapshot = Awaited<ReturnType<typeof beginTurnSnapshot>>
   let preTurnPromise: Promise<TurnSnapshot> | null = null
   const postEditSnapshots = new Map<string, { path: string; content: string | null }>()
+
+  // ── Kepemilikan pekerjaan checkpoint (Stage 5B) ──
+  //
+  // Bus kernel memanggil handler SINKRON dan TIDAK menunggu promise yang
+  // dikembalikan handler async. Listener `turn:completed` di bawah memulai
+  // penulisan checkpoint async — tanpa pemilik eksplisit, operasi itu
+  // menjadi yatim: bisa berjalan SETELAH `close()` kembali (rejection →
+  // unhandled error) dan bisa menulis ke direktori yang sudah dibersihkan.
+  //
+  // Kepemilikan: SET promise yang masih berjalan (bukan "promise terakhir"):
+  // beberapa turn bisa memicu beberapa operasi, dan semuanya harus
+  // diselesaikan. Setiap operasi dihapus dari set saat settle (sukses
+  // maupun gagal).
+  const pendingCheckpointWork = new Set<Promise<unknown>>()
+  const checkpointFailureNotes: string[] = []
+  let checkpointUnsub: (() => void) | null = null
+
+  /**
+   * Diagnostic `[warn]` ke stderr (kontrak writer kelas 3: layer non-UI boleh
+   * `process.stderr.write` mentah). Satu helper untuk semua `[warn]` di file
+   * ini — jumlah writer inventory tak naik.
+   */
+  const warnLine = (message: string): void => {
+    try {
+      process.stderr.write(`[warn] ${message}\n`)
+    } catch {}
+  }
+
+  /**
+   * Daftarkan pekerjaan checkpoint async sebagai milik lifecycle sesi ini.
+   *
+   * Rejection ditangani SEKALI di titik lahirnya (bukan ditunggu di
+   * `close()`): kegagalan jadi tercatat — bukan unhandled rejection, dan
+   * bukan sukses palsu. Yang dicatat hanya pesan error (tak ada credential
+   * di jalur ini: pesan internal filesystem/session).
+   */
+  const trackCheckpointWork = (work: Promise<unknown>): void => {
+    pendingCheckpointWork.add(work)
+    const settle = (): void => {
+      pendingCheckpointWork.delete(work)
+    }
+    work
+      .catch((err: unknown) => {
+        const reason = (err as Error)?.message ?? String(err)
+        const note = `checkpoint failed: ${reason}`
+        checkpointFailureNotes.push(note)
+        warnLine(note)
+      })
+      .then(settle, settle)
+      .catch(() => {})
+  }
+
+  /**
+   * Drain: TUNGGU seluruh pekerjaan checkpoint yang sudah dimulai.
+   *
+   * Listener dilepas lebih dulu — tak boleh ada operasi checkpoint baru yang
+   * lahir setelah drain (listener itu yang memulainya). Loop, bukan sekali:
+   * pekerjaan yang lahir saat drain berjalan ikut tertunggu.
+   */
+  const drainCheckpointWork = async (): Promise<void> => {
+    try {
+      checkpointUnsub?.()
+    } catch {}
+    checkpointUnsub = null
+    while (pendingCheckpointWork.size > 0) {
+      const batch = [...pendingCheckpointWork]
+      await Promise.allSettled(batch)
+      // Buang yang sudah selesai — defensif: drain tak boleh bergantung
+      // pada callback settle (kalau tak sempat jalan, loop tak boleh berputar).
+      for (const done of batch) pendingCheckpointWork.delete(done)
+    }
+  }
+
   session.events.on("turn:started", () => {
     preTurnPromise = beginTurnSnapshot(sessionId, cwd ?? ".")
   })
@@ -1555,56 +1777,66 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       postEditSnapshots.set(p, { path: p.replace(/\\/g, "/"), content: null })
     }
   })
-  session.events.on("turn:completed", async (e) => {
-    const pre = await preTurnPromise
-    const redoSnapshots = [...postEditSnapshots.values()]
-    preTurnPromise = null
-    postEditSnapshots.clear()
-    if (!pre) return
-    const turn =
-      typeof e.result?.usage?.turns === "number" ? e.result.usage.turns : session.state.turnCount
-    const desc = `turn ${turn}`
-    if (pre.mode === "git") {
-      const after = await snapshotTree(cwd ?? ".", sessionId, `post-${turn}`)
-      const checkpoint = await recordCheckpointFromTrees(
-        sessionId,
-        turn,
-        pre.tree,
-        after?.tree,
-        desc,
-        cwd,
-      )
-      if (checkpoint) {
-        presentation?.noteCheckpoint({
-          checkpointId: checkpoint.id,
-          turnId: turn,
-          paths: [],
-        })
-      }
-      return
-    }
-    if (pre.snapshots.length === 0) return
-    let redo = redoSnapshots
-    try {
-      const { LIMITS } = await import("../src/constants.ts")
-      const post = await snapshotWorkspace(cwd ?? ".", LIMITS.WORKSPACE_SNAPSHOT_LIMIT)
-      if (post.length) redo = post
-    } catch {}
-    const checkpoint = await recordCheckpointFromSnapshots(
-      sessionId,
-      turn,
-      pre.snapshots,
-      desc,
-      cwd,
-      redo,
+  checkpointUnsub = session.events.on("turn:completed", (e) => {
+    // Handler SINKRON: bus tak menunggu, jadi seluruh pekerjaan async-nya
+    // diambil alih lifecycle (trackCheckpointWork) dan DILEWATI di close().
+    // Handler async yang dilepas ke bus = rejection tanpa pemilik = unhandled
+    // error (bukti Stage 5A).
+    trackCheckpointWork(
+      (async () => {
+        const pre = await preTurnPromise
+        const redoSnapshots = [...postEditSnapshots.values()]
+        preTurnPromise = null
+        postEditSnapshots.clear()
+        if (!pre) return
+        const turn =
+          typeof e.result?.usage?.turns === "number"
+            ? e.result.usage.turns
+            : session.state.turnCount
+        const desc = `turn ${turn}`
+        if (pre.mode === "git") {
+          const after = await snapshotTree(cwd ?? ".", sessionId, `post-${turn}`)
+          const checkpoint = await recordCheckpointFromTrees(
+            sessionId,
+            turn,
+            pre.tree,
+            after?.tree,
+            desc,
+            cwd,
+          )
+          if (checkpoint) {
+            presentation?.noteCheckpoint({
+              checkpointId: checkpoint.id,
+              turnId: turn,
+              paths: [],
+            })
+          }
+          return
+        }
+        if (pre.snapshots.length === 0) return
+        let redo = redoSnapshots
+        try {
+          const { LIMITS } = await import("../src/constants.ts")
+          const post = await snapshotWorkspace(cwd ?? ".", LIMITS.WORKSPACE_SNAPSHOT_LIMIT)
+          if (post.length) redo = post
+        } catch {}
+        const checkpoint = await recordCheckpointFromSnapshots(
+          sessionId,
+          turn,
+          pre.snapshots,
+          desc,
+          cwd,
+          redo,
+        )
+        if (checkpoint) {
+          presentation?.noteCheckpoint({
+            checkpointId: checkpoint.id,
+            turnId: turn,
+            paths: (redo ?? []).map((snapshot) => snapshot.path),
+          })
+        }
+      })(),
     )
-    if (checkpoint) {
-      presentation?.noteCheckpoint({
-        checkpointId: checkpoint.id,
-        turnId: turn,
-        paths: (redo ?? []).map((snapshot) => snapshot.path),
-      })
-    }
   })
 
   // ── Step trace (Harness-P1) ──
@@ -1710,14 +1942,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   }
   session.events.on("execution:completed", (e) => {
     try {
-      const call = e.execution?.call as
-        | { id?: unknown; name?: unknown; args?: unknown }
-        | undefined
+      const call = e.execution?.call as { id?: unknown; name?: unknown; args?: unknown } | undefined
       if (!call || typeof call.id !== "string" || typeof call.name !== "string") return
       const childId = (e as { forwardedChild?: unknown }).forwardedChild
       const scopeSession = typeof childId === "string" && childId ? childId : sessionId
-      const turn =
-        typeof session.state?.turnCount === "number" ? session.state.turnCount : null
+      const turn = typeof session.state?.turnCount === "number" ? session.state.turnCount : null
       const descriptor = {
         id: call.id,
         tool: call.name,
@@ -2190,12 +2419,12 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           )
         }
       } catch (e) {
-        process.stderr.write(`[warn] projection produce failed: ${(e as Error).message}\n`)
+        warnLine(`projection produce failed: ${(e as Error).message}`)
       }
       // Riwayat durable → mutasi turn ini boleh di-finalize (sweep record).
       // Gagal finalize tak menggagalkan persist (warn di dalam).
       await finalizeJournal(sessionId, cwd).catch((e) => {
-        process.stderr.write(`[warn] journal finalize failed: ${(e as Error).message}\n`)
+        warnLine(`journal finalize failed: ${(e as Error).message}`)
       })
     } catch (e) {
       if (e instanceof StaleWriterError) {
@@ -2234,12 +2463,17 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // already exist when the scheduler's deps thunk asks for it, and fail-closed
   // journal open must abort startup before any autonomous machinery is built.
   const runtimeCwd = cwd ?? process.cwd()
+  // [P13.3] Holder fakta lapisan task. Runtime dibuat lebih dulu daripada
+  // scheduler, jadi nilainya baru ada setelah schedulerconstructed — holder ini
+  // dibaca lewat thunk saat fakta dibutuhkan (bukan saat runtime dibangun).
+  let taskLayerFacts: TaskLayerFacts = { schedulerAttached: null, storeOpen: null }
   const productionRuntime: ProductionRuntimeHandle = await createProductionRuntime(
     runtimeGateFor(runtimeMode),
     () => ({
       sessionId: sessionId,
       workspaceCwd: runtimeCwd,
       journalPath: runtimeJournalPath(runtimeCwd, sessionId),
+      taskLayerFacts: () => taskLayerFacts,
     }),
   )
 
@@ -2300,6 +2534,13 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       const autonomousTools = AUTONOMOUS_TOOL_NAMES.map((name) =>
         sessionTools.find((t) => t.name === name),
       ).filter((t): t is NonNullable<typeof t> => t !== undefined)
+
+      // [P13.3 Stage C] Retry safety is DERIVED from the tool scope the bridge
+      // actually receives, not asserted here. Every autonomous tool must still
+      // be classified READ_ONLY by the 6S matrix; one unknown/mutating name and
+      // the whole scope becomes UNPROVEN (which means HOLD, never retry).
+      const { retrySafetyForToolScope } = await import("../src/task/continuity.ts")
+      const retrySafety = retrySafetyForToolScope(autonomousTools.map((t) => t.name))
 
       return {
         sessionId,
@@ -2365,6 +2606,54 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           execGeneration: store.getExecutionLineage(sessionId, taskId)?.execGeneration ?? 0,
           sessionIncarnation: store.getSessionIncarnation(sessionId),
         }),
+        // [P13.3 Stage C] ONE evidence source for automatic continuation:
+        // canonical runtime view + admission for `background`, TaskStore and
+        // journal readability, and the read-only tool scope proven above.
+        //
+        // We do NOT infer safety from a missing completion marker, and we do not
+        // redispatch an old runtime execution: a successful reconcile leads to a
+        // FRESH claim (new exec_generation) and a new autonomous turn.
+        continuity: {
+          evidence: ({ authorityHeld, incarnationMatches, ownsSession }) => {
+            try {
+              const view = deriveRuntimeView(observeProductionRuntime(productionRuntime))
+              let storageUsable = false
+              try {
+                // Store readability is a real probe, not "the handle exists".
+                store.getSnapshot(sessionId)
+                const journal = productionRuntime.runtime()?.journal ?? null
+                storageUsable = journal === null || journal.integrityCheck().mismatched.length === 0
+              } catch {
+                storageUsable = false
+              }
+              const resume = evaluateResume({
+                // `ALLOW` already implies ACTIVE + NONE + COMPLETE + capabilities;
+                // evidenceState is repeated so the intent survives future edits.
+                runtimeStateCurrent:
+                  view.admission === "ALLOW" && view.evidenceState === "COMPLETE",
+                storageUsable,
+                leaseValid: authorityHeld,
+                authorityCurrent: authorityHeld && ownsSession && incarnationMatches,
+              })
+              return {
+                resume: resume.resume,
+                missing: resume.missing,
+                // Re-evaluated at reconcile time, before any dispatch. A fresh
+                // admission is repeated by the execution runner before the turn.
+                admission: admitTaskWork(view, "background").admission,
+                retrySafety,
+              }
+            } catch {
+              // Evidence unavailable is evidence MISSING, never permission.
+              return {
+                resume: false,
+                missing: ["continuity-evidence-error"],
+                admission: "REFUSE" as const,
+                retrySafety: "UNPROVEN" as const,
+              }
+            }
+          },
+        },
         // [PHASE 6AB] The sinks 6AA proved nobody passed. Both events were already
         // produced by 6U/6T's constructors; wiring them here is the entire
         // observability fix. They live INSIDE the `deps` thunk, so with the gate
@@ -2374,6 +2663,46 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       }
     },
   )
+
+  // ── [P13.1] SEAM STATUS RUNTIME ───────────────────────────────────────────
+  //
+  // [DESIGN DECISION] Composition root memasang SATU penyedia status runtime;
+  // CLI (`minicode stats`, nanti footer TUI) dan daemon membacanya lewat simbol
+  // yang sama. Tanpa seam ini tiap konsumen menghitung statusnya sendiri →
+  // N sumber status, dan itu kelas bug yang repo ini kejar sejak awal.
+  //
+  // Yang dipasang HANYA fakta nyata: gate/constructed/closed dari handle
+  // runtime; scheduler/store dari handle scheduler (lapisan task). Status
+  // supervisi TIDAK lagi diisi manual — dibaca dari komposisi (P13.2). Tak ada
+  // tebakan: yang tak diketahui dilaporkan `null` → fail-closed.
+  //
+  // [P13.3] Fakta lapisan task untuk gerbang admission. Runtime dibuat SEBELUM
+  // scheduler, jadi nilainya baru diketahui setelah scheduler ada — karena itu
+  // facts disimpan di holder dan dibaca lewat thunk (nilai basi akan menyesatkan
+  // gerbang admission dengan alasan yang tak pernah benar).
+  const schedulerAttached: boolean | null = productionScheduler.constructed
+    ? true
+    : productionScheduler.enabled
+      ? false
+      : null
+  const storeOpen: boolean | null = productionScheduler.constructed
+    ? true
+    : productionScheduler.enabled
+      ? false
+      : null
+  taskLayerFacts = { schedulerAttached, storeOpen }
+  installRuntimeStatusProvider(() =>
+    deriveRuntimeView(
+      // Satu sumber fakta: komposisi. Fakta lapisan task diambil dari thunk
+      // yang sama dengan yang dipakai gerbang admission.
+      observeProductionRuntime(productionRuntime),
+    ),
+  )
+
+  // [P13.2] Registrar proses pertama: server LSP milik runtime ini. Satu
+  // jalur ownership proses — runtime yang memegang daftarnya, dan shutdown
+  // runtime MENUNGGU anak berhenti (tak ada child yang terlepas).
+  setLspProcessSupervisor(productionRuntime.runtime()?.supervision ?? null)
 
   // ── [P1 M14] RUNTIME COMPOSITION ─────────────────────────────────────────────
   //
@@ -2431,11 +2760,30 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     // dalam masa pakainya (test/embed), dan runner milik sesi yang sudah tutup
     // tak boleh menerima turn baru.
     if (executionRunner.owns) setSubAgentExecutionRunner(undefined)
+    // [P13.1] Lepas seam status runtime: setelah runtime berhenti, penyedia yang
+    // menunjuk handle tertutup tak boleh presenting status basi.
+    installRuntimeStatusProvider(null)
+    // [P13.2] Lepas registrar proses: tak ada runtime aktif ⇒ tak ada pemilik
+    // proses anak yang boleh diklaim.
+    setLspProcessSupervisor(null)
     try {
       await productionRuntime.stop()
     } catch {
       // Same rule as the scheduler: teardown never fails on a runtime that could
       // not close. Whatever is unrecorded stays recoverable from the journal.
+    }
+    // [Stage 5B] Drain checkpoint. POSISI: SESUDAH runtime stop (event
+    // `turn:completed` sudah di-emit saat event-drain runtime, jadi operasi
+    // checkpoint yang dimulai SUDAH tercatat) dan SEBELUM presentation
+    // di-detach (note checkpoint masih bisa sampai ke layar). Listener
+    // checkpoint dilepas di dalam drain → tak ada operasi baru yang lahir
+    // setelah titik ini. close() jadi barrier: setelah kembali, tak ada
+    // pekerjaan checkpoint milik lifecycle ini yang masih berjalan.
+    try {
+      await drainCheckpointWork()
+    } catch {
+      // Drain tak boleh menggagalkan teardown; kegagalan checkpoint sudah
+      // dicatat (checkpointFailureNotes + warn stderr) saat operasi ditolak.
     }
     flushPresentationEvents()
     await presentationWriteTail
@@ -2446,6 +2794,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     } catch {}
     shadowUnsub = null
     presentationSubscribers.clear()
+    domainEventSubscribers.clear()
     shadowState = null
     shadowDiag = null
     contentStore = null
@@ -2484,7 +2833,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       // selesai, dan tak boleh meninggalkan eksekusi durable tanpa pelacak.
       terminalizeChildRuns(sessionId, cwd, { expectedEpoch })
     } catch (e) {
-      process.stderr.write(`[warn] run terminal mark failed: ${(e as Error).message}\n`)
+      warnLine(`run terminal mark failed: ${(e as Error).message}`)
     }
     try {
       if (writerRenewTimer !== undefined) clearInterval(writerRenewTimer)
@@ -2515,6 +2864,13 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     },
     isWriterStale: () => writerStale,
     writerStaleNote: () => writerStaleNote,
+    // [Stage 5B] Bukti kegagalan checkpoint: tercatat (bukan unhandled
+    // rejection, bukan sukses palsu). Pesan error internal saja — tak ada
+    // credential di jalur ini.
+    checkpointFailures: () => checkpointFailureNotes.slice(),
+    // Operasi checkpoint yang masih berjalan. Setelah `close()` selesai
+    // HARUS 0 — close() jadi barrier lifecycle.
+    pendingCheckpointCount: () => pendingCheckpointWork.size,
     modelRef,
     effectiveInitialModel,
     effectiveTimeoutMs,
@@ -2545,6 +2901,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     // the Scheduler of exactly that session and no other.
     productionScheduler,
     schedulerObservability,
+    adoption,
     // [P1 M14] Same rule as the Scheduler handle above: one session owns one
     // runtime, reachable only through the session, never through a registry.
     productionRuntime,
@@ -2558,6 +2915,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     getShadowDiagnostics,
     getPresentationSnapshot,
     onPresentationEvent,
+    onDomainEvent,
     expandAllContent: (): ContentEntry[] => contentStore?.expandAll() ?? [],
     /** Query content store untuk /expand [id] (buka-ulang identik). */
     expandContent: (toolCallId: string): ContentEntry[] => {

@@ -10,7 +10,7 @@ Siapa boleh apa: enam mode izin, penjaga perintah shell, dan isolasi eksekusi â€
 |---|---|
 | `auto` | Readonly + gated-prompt + file/internal-write allow; `code_run`/`bash` dengan guard. `delegate_task`/`mcp_call`/semua MCP bertitik di-gate (prompt saat TTY, tolak tanpa TTY) |
 | `ask` | Readonly + `NO_PROMPT_TOOLS` auto-allow; sisanya prompt/TTY + allowlist persist |
-| `readonly` | Hanya 18 tool `READONLY_TOOLS` |
+| `readonly` | Gerbang izin: 18 tool `READONLY_TOOLS`. Visibilitas: model hanya melihat 12 tool baca (`EXPLORE_TOOL_NAMES`) |
 | `plan` | `readonly` + `todo_write` + `delegate_task` (anak dipaksa explore/read-only) + `submit_result`. Tetap tanpa mutasi file/git/memory |
 | `allowlist` | Bash hanya pola `DEFAULT_BASH_ALLOWLIST`/env; file-write/internal-write sesuai set. Diwariskan ke sub-agent (parent allowlist â†’ anak allowlist, bukan auto) |
 | `allow-all` | Allow semua; **tetap** tolak bash berbahaya + path jail tetap aktif |

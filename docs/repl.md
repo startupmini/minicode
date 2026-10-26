@@ -23,6 +23,7 @@ en. `/lang` tanpa argumen = tampilkan aktif. Semua string lewat kamus i18n
 | `/sessions` | Tanpa argumen = popup picker resume; `/sessions <id>` = langsung resume |
 | `/status` | Runtime + pemakaian & biaya **kumulatif sesi** |
 | `/mode [nama]` | Ganti permission (`auto`, `ask`, `plan`, `allowlist`); tanpa argumen = putar |
+| `/work-mode [DISCUSS\|PLAN\|EXECUTE]` | WorkMode = **lapis intent di atas** permission mode: `DISCUSS` read-only penuh, `PLAN` ceiling rencana, `EXECUTE` tanpa ceiling tambahan. Tanpa argumen = tampilkan mode aktif + usage; nilai invalid ditolak dan mode aktif tidak berubah. Terpisah dari `/mode` dan dari Tab/Shift+Tab (keduanya khusus permission mode). Di footer tampil `PLAN·auto` dsb. hanya saat WorkMode ≠ `EXECUTE`. |
 | `/lang [en|id]` | Bahasa UI; tanpa argumen = tampilkan aktif |
 | `/init` | Buat `AGENTS.md` proyek ini |
 | `/copy [n]` | Salin `n` turn terakhir (default `1`, maksimal `10`) via OSC 52 |
@@ -30,6 +31,7 @@ en. `/lang` tanpa argumen = tampilkan aktif. Semua string lewat kamus i18n
 | `/expand` | Buka isi tool/thinking yang disembunyikan ledger compact (sekali ambil habis) |
 | `/history` | 20 entri prompt terakhir |
 | `/exit` | Keluar (satu-satunya jalan keluar; `/quit` alias) |
+| `/scheduler [status\|run\|stop]` | Kendali Scheduler produksi. **Nonaktif secara bawaan** di setiap sesi (perlu flag `--enable-scheduler`); tanpa flag, perintahnya menjawab "not enabled". Tetap tampil di `/help` supaya operator yang mengaktifkan flag bisa menemukannya. |
 
 Alias (jalan, tidak diiklankan di `/help`): `/models` → `/model`, `/providers` → `/provider`, `/usage` & `/cost` → `/status`, `/resume [id]` → `/sessions [id]`, `/compact`, `/thinking`, `/minimize`, `/quit`.
 

@@ -26,7 +26,10 @@ import { afterEach, expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { createPresentationAdapter, type TaskIdentityProvider } from "../src/presentation/adapter.ts"
+import {
+  createPresentationAdapter,
+  type TaskIdentityProvider,
+} from "../src/presentation/adapter.ts"
 import type { DomainEvent, EventBusLike, PlanUpdatedEvent } from "../src/presentation/events.ts"
 import { decodeCanonicalAssignments } from "../src/task/assignment.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
@@ -62,8 +65,16 @@ const seed = (dir: string, titles: string[], sessionId = S) => {
 }
 /** id -> title, as the durable truth. */
 const idMap = (dir: string, sessionId = S) =>
-  Object.fromEntries(open(dir).listTasks(sessionId).map((t) => [t.id, t.title]))
-const idSet = (dir: string, sessionId = S) => open(dir).listTasks(sessionId).map((t) => t.id).sort()
+  Object.fromEntries(
+    open(dir)
+      .listTasks(sessionId)
+      .map((t) => [t.id, t.title]),
+  )
+const idSet = (dir: string, sessionId = S) =>
+  open(dir)
+    .listTasks(sessionId)
+    .map((t) => t.id)
+    .sort()
 const write = (dir: string, todos: unknown[], sessionId = S) =>
   todoWriteTool.execute({ todos } as never, opCtx(dir, sessionId)) as Promise<string>
 const read = (dir: string, sessionId = S) =>
@@ -72,13 +83,13 @@ const read = (dir: string, sessionId = S) =>
 function fakeBus(): EventBusLike & { emit: (t: string, p: unknown) => void } {
   const h = new Map<string, Set<(e: unknown) => void>>()
   return {
-    on(type, fn) {
+    on(type: string, fn: (e: unknown) => void) {
       const s = h.get(type) ?? new Set<(e: unknown) => void>()
       s.add(fn)
       h.set(type, s)
       return () => s.delete(fn)
     },
-    emit(type, p) {
+    emit(type: string, p: unknown) {
       const s = h.get(type)
       if (s) for (const f of [...s]) f(p)
     },
@@ -141,7 +152,11 @@ test("1. lifecycle: create -> observe -> reorder -> update -> retry keeps identi
   ]
   await write(dir, reorderPayload)
   // Order changed; identity did not.
-  expect(open(dir).listTasks(S).map((t) => t.id)).toEqual(["t3", "t1", "t2"])
+  expect(
+    open(dir)
+      .listTasks(S)
+      .map((t) => t.id),
+  ).toEqual(["t3", "t1", "t2"])
   expect(idMap(dir)).toEqual({ t1: "A", t2: "B", t3: "C" })
   expect(idSet(dir)).toEqual(afterCreate)
   expect(open(dir).listTasks(S)).toHaveLength(3)
@@ -193,7 +208,9 @@ test("6. a payload with an unknown id mutates nothing, and the corrected retry i
   const dir = await ownedDir()
   seed(dir, ["A", "B", "C"])
   const before = idMap(dir)
-  const rowsBefore = open(dir).listTasks(S).map((t) => `${t.id}:${t.revision}`)
+  const rowsBefore = open(dir)
+    .listTasks(S)
+    .map((t) => `${t.id}:${t.revision}`)
 
   // valid t1, unknown t404, valid t3 - resolve-before-mutate must hold.
   await expect(
@@ -206,7 +223,11 @@ test("6. a payload with an unknown id mutates nothing, and the corrected retry i
 
   // Zero partial mutation: not even t1 took the completion.
   expect(idMap(dir)).toEqual(before)
-  expect(open(dir).listTasks(S).map((t) => `${t.id}:${t.revision}`)).toEqual(rowsBefore)
+  expect(
+    open(dir)
+      .listTasks(S)
+      .map((t) => `${t.id}:${t.revision}`),
+  ).toEqual(rowsBefore)
   // No orphan, no duplicate allocation.
   expect(open(dir).listTasks(S)).toHaveLength(3)
   expect(open(dir).nextId(S)).toBe("t4")
@@ -242,7 +263,9 @@ test("7. restart: closing every handle and re-opening preserves ids, content, st
   resetTaskStoreHandles()
 
   // Re-open the same durable database with the same logical session namespace.
-  const after = open(dir).listTasks(S).map((t) => `${t.id}|${t.title}|${t.status}|${t.order}|${t.revision}`)
+  const after = open(dir)
+    .listTasks(S)
+    .map((t) => `${t.id}|${t.title}|${t.status}|${t.order}|${t.revision}`)
   expect(after).toEqual(before)
   expect(idSet(dir)).toEqual(beforeIds)
   // No id regeneration.
@@ -301,7 +324,11 @@ test("8. resume: the same logical session namespace still addresses the same ids
     ],
     RESUMED,
   )
-  expect(open(dir).listTasks(RESUMED).map((t) => t.id)).toEqual(["t3", "t1", "t2"])
+  expect(
+    open(dir)
+      .listTasks(RESUMED)
+      .map((t) => t.id),
+  ).toEqual(["t3", "t1", "t2"])
   expect(open(dir).getTask(RESUMED, "t3")?.status).toBe("COMPLETED")
   // Same ids throughout - the resumed session did not mint anything.
   expect(idSet(dir, RESUMED)).toEqual(["t1", "t2", "t3"])
@@ -383,7 +410,9 @@ test("11. all-id-less reorder of a canonical list is rejected and changes nothin
   const dir = await ownedDir()
   seed(dir, ["A", "B", "C"])
   const before = idMap(dir)
-  const rowsBefore = open(dir).listTasks(S).map((t) => `${t.id}:${t.revision}`)
+  const rowsBefore = open(dir)
+    .listTasks(S)
+    .map((t) => `${t.id}:${t.revision}`)
 
   await expect(
     write(dir, [
@@ -394,7 +423,11 @@ test("11. all-id-less reorder of a canonical list is rejected and changes nothin
   ).rejects.toThrow()
 
   expect(idMap(dir)).toEqual(before)
-  expect(open(dir).listTasks(S).map((t) => `${t.id}:${t.revision}`)).toEqual(rowsBefore)
+  expect(
+    open(dir)
+      .listTasks(S)
+      .map((t) => `${t.id}:${t.revision}`),
+  ).toEqual(rowsBefore)
   expect(open(dir).listTasks(S)).toHaveLength(3)
   expect(open(dir).nextId(S)).toBe("t4")
   // And no plan is published for it.
@@ -457,21 +490,30 @@ test("16. invariant: id set is preserved by every non-CREATE operation", async (
   seed(dir, ["A", "B", "C"])
   const baseline = idSet(dir)
   const ops: Array<[string, unknown[]]> = [
-    ["reorder", [
-      { taskId: "t3", content: "C", status: "pending" },
-      { taskId: "t1", content: "A", status: "pending" },
-      { taskId: "t2", content: "pending" } && { taskId: "t2", content: "B", status: "pending" },
-    ]],
-    ["update", [
-      { taskId: "t2", content: "B renamed", status: "completed" },
-      { taskId: "t1", content: "A", status: "pending" },
-      { taskId: "t3", content: "C", status: "pending" },
-    ]],
-    ["exact retry", [
-      { taskId: "t2", content: "B renamed", status: "completed" },
-      { taskId: "t1", content: "A", status: "pending" },
-      { taskId: "t3", content: "C", status: "pending" },
-    ]],
+    [
+      "reorder",
+      [
+        { taskId: "t3", content: "C", status: "pending" },
+        { taskId: "t1", content: "A", status: "pending" },
+        { taskId: "t2", content: "B", status: "pending" },
+      ],
+    ],
+    [
+      "update",
+      [
+        { taskId: "t2", content: "B renamed", status: "completed" },
+        { taskId: "t1", content: "A", status: "pending" },
+        { taskId: "t3", content: "C", status: "pending" },
+      ],
+    ],
+    [
+      "exact retry",
+      [
+        { taskId: "t2", content: "B renamed", status: "completed" },
+        { taskId: "t1", content: "A", status: "pending" },
+        { taskId: "t3", content: "C", status: "pending" },
+      ],
+    ],
     ["subset (D7)", [{ taskId: "t1", content: "A", status: "pending" }]],
   ]
   for (const [name, payload] of ops) {
@@ -498,14 +540,23 @@ test("17. failure matrix: every failure is non-mutating, id-stable and visible",
   const dir = await ownedDir()
   seed(dir, ["A", "B", "C"])
   const baseline = idMap(dir)
-  const revs = () => open(dir).listTasks(S).map((t) => `${t.id}:${t.revision}`).sort()
+  const revs = () =>
+    open(dir)
+      .listTasks(S)
+      .map((t) => `${t.id}:${t.revision}`)
+      .sort()
   const before = revs()
 
   // `coded` is asserted PER CASE, not universally: a malformed id is rejected by
   // protocol validation (Phase 4A.1) and is deliberately a plain Error, not a
   // TaskError. Recording that distinction is more useful than flattening it.
   const cases: Array<[string, unknown[], RegExp, string | undefined]> = [
-    ["unknown taskId", [{ taskId: "t404", content: "x", status: "pending" }], /unknown task/i, "TASK_NOT_FOUND"],
+    [
+      "unknown taskId",
+      [{ taskId: "t404", content: "x", status: "pending" }],
+      /unknown task/i,
+      "TASK_NOT_FOUND",
+    ],
     [
       "duplicate taskId",
       [
@@ -516,7 +567,12 @@ test("17. failure matrix: every failure is non-mutating, id-stable and visible",
       "TASK_DUPLICATE_ID",
     ],
     // Protocol boundary: visible, but intentionally NOT a TaskError code.
-    ["malformed taskId", [{ taskId: "nope", content: "x", status: "pending" }], /nope|taskId/i, undefined],
+    [
+      "malformed taskId",
+      [{ taskId: "nope", content: "x", status: "pending" }],
+      /nope|taskId/i,
+      undefined,
+    ],
     [
       "all-id-less with canonical state",
       [{ content: "C", status: "pending" }],

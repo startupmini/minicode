@@ -76,7 +76,7 @@ function build(provider?: TaskIdentityProvider) {
 }
 
 /** A provider backed by the REAL TaskStore: the authority under test. */
-function storeProvider(store: TaskStore, sessionId: string): TaskIdentityProvider {
+function storeProvider(store: TaskStore): TaskIdentityProvider {
   return ({ sessionId: sid, declared }) => {
     const list = store.listTasks(sid)
     return declared.map((_step, i) => list[i]?.id ?? null)
@@ -97,7 +97,7 @@ test("1. taskId is supplied by the TaskStore-backed provider, never minted by th
   }
   expect(store.listTasks(SESSION).map((x) => x.id)).toEqual(["t1", "t2", "t3"])
 
-  const { adapter, plans } = build(storeProvider(store, SESSION))
+  const { adapter, plans } = build(storeProvider(store))
   adapter.notePlanReconciled({ todos: todos3, sessionId: SESSION })
   const ev = plans()[0]!
   expect(ev.steps.map((s) => s.taskId)).toEqual(["t1", "t2", "t3"])
@@ -132,7 +132,7 @@ test("3. taskId is stable across repeated plan publication", async () => {
       provenance: { origin: "runtime", source: "test" },
     })
   }
-  const { adapter, plans } = build(storeProvider(store, SESSION))
+  const { adapter, plans } = build(storeProvider(store))
   adapter.notePlanReconciled({ todos: todos3, sessionId: SESSION })
   adapter.notePlanReconciled({ todos: todos3, sessionId: SESSION })
   adapter.notePlanReconciled({ todos: todos3, sessionId: SESSION })
@@ -155,7 +155,7 @@ test("4. reordering changes ordinal and stepId but never taskId", async () => {
       provenance: { origin: "runtime", source: "test" },
     })
   }
-  const { adapter, plans } = build(storeProvider(store, SESSION))
+  const { adapter, plans } = build(storeProvider(store))
   // declared in store order: alpha=t1, beta=t2, gamma=t3
   adapter.notePlanReconciled({ todos: todos3, sessionId: SESSION })
   const first = plans()[0]!
@@ -218,7 +218,7 @@ test("6. legacy stepId is never mirrored from taskId", async () => {
       provenance: { origin: "runtime", source: "test" },
     })
   }
-  const { adapter, plans } = build(storeProvider(store, SESSION))
+  const { adapter, plans } = build(storeProvider(store))
   adapter.notePlanReconciled({ todos: todos3, sessionId: SESSION })
   const ev = plans()[0]!
   // taskId IS canonical...
@@ -280,7 +280,7 @@ test("9. plan status derivation and step status mapping are untouched", async ()
     provenance: { origin: "runtime", source: "test" },
   })
 
-  const { adapter, plans } = build(storeProvider(store, SESSION))
+  const { adapter, plans } = build(storeProvider(store))
   adapter.notePlanReconciled({
     todos: [
       { content: "a", status: "completed" },
@@ -320,7 +320,7 @@ test("10. the todo_write emission path applies the identical canonical contract"
       provenance: { origin: "runtime", source: "test" },
     })
   }
-  const { bus, plans } = build(storeProvider(store, SESSION))
+  const { bus, plans } = build(storeProvider(store))
   const call = { id: "call-1", name: "todo_write", args: { todos: todos3 } }
 
   bus.emit("execution:started", { execution: { call: { id: call.id, name: call.name } } })

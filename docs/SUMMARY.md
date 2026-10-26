@@ -13,7 +13,7 @@
 
 * [CLI — Mode & Flags](cli.md)
 * [Memilih Mode](choosing-mode.md)
-* [REPL — Slash & Keyboard](repl.md)
+* [TUI — Slash & Keyboard](repl.md)
 * [Otomasi & CI](exec.md)
 * [Config — File & Lokasi Data](config.md)
 * [Config & Provider](config-providers.md)
@@ -45,7 +45,7 @@
 
 ## Internal & Arsitektur (untuk kontributor)
 
-* [Terminal Contract (FROZEN) — 30 invariant](TERMINAL_CONTRACT.md)
+* [Terminal Contract (FROZEN) — 35 invariant, v7.4](TERMINAL_CONTRACT.md)
 * [Output Architecture Audit](OUTPUT_ARCHITECTURE_AUDIT.md)
 * [Output Event Model — taksonomi dan lifecycle](OUTPUT_EVENT_MODEL.md)
 * [Output Protocol Spec — stream dan machine contract](OUTPUT_PROTOCOL_SPEC.md)
@@ -56,3 +56,4 @@
 * [UI Render Pipeline — jalur stream ke terminal](UI_RENDER_PIPELINE.md)
 * [Harness Agent — riset fondasi](HARNESS.md)
 * [Plan UI/UX V6 — arsip hasil](PLAN_UIUX_V6.md)
+* [Audit Dokumentasi Repo — snapshot, bukan roadmap](REPOSITORY_DOCUMENTATION_AUDIT_2026-10-21.md)

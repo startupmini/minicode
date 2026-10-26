@@ -172,7 +172,9 @@ function isRootLike(p: string): boolean {
 
 /** `a/b/c` -> 3. Dipakai untuk syarat "target harus benar-benar anak". */
 function depthOf(p: string): number {
-  return resolve(p).split(/[\\/]/).filter((s) => s.length > 0).length
+  return resolve(p)
+    .split(/[\\/]/)
+    .filter((s) => s.length > 0).length
 }
 
 /**

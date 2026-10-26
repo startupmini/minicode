@@ -605,6 +605,12 @@ describe("§27 randomised state machine over the composition", () => {
 // ═══ §28 LONG-RUN STABILITY ═════════════════════════════════════════════════
 
 describe("§28 long-run stability", () => {
+  // Batas runner (argumen ketiga `test`) disamakan dengan anggaran yang
+  // DIKLAIMKAN tes itu sendiri (`ms < 60_000` di bawah). Tanpa ini, default
+  // Bun 5.000 ms memotong tes yang sah-butuh ~4,5-5,1 dtk (500 siklus
+  // scheduler) → timeout INTERMITEN di bawah beban mesin, padahal klaim
+  // tes (drift/growth/wedge) sama sekali belum dievaluasi. Assertion-nya
+  // tidak dilonggarkan.
   test("§28.1 500 trigger/cycle iterations: no drift, no growth, no wedge", async () => {
     const tasks = Array.from({ length: 10 }, (_, i) => addTask(i + 1))
     const h = await createProductionScheduler(GATE_ENABLED, deps())
@@ -617,7 +623,7 @@ describe("§28 long-run stability", () => {
       allOnce: drift.every((d) => d.g === 1 && d.a === 1),
       allInProgress: tasks.every((t) => store.getTask(S, t.id)!.status === "IN_PROGRESS"),
       watched: watchedSessions().length,
-      // A finished cycle leaves the instance IDLE (6C), not RUNNING — asserted
+      // A finished cycle leaves the instance IDLE (6C), not RUNNING - asserted
       // as observed rather than assumed.
       lifecycle: h.getScheduler()!.getLifecycle(),
     }).toEqual({
@@ -631,7 +637,7 @@ describe("§28 long-run stability", () => {
       watched: 0,
       ms: true,
     })
-  })
+  }, 60_000)
 })
 
 // ═══ §21/§22 CWD and TOOL FAILURES ══════════════════════════════════════════

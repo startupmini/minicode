@@ -143,8 +143,7 @@ test("G3: tiap prefix identity dicetak di tepat satu berkas", () => {
     for (const f of runtimeFiles) {
       if (f === owner) continue
       const src = runtimeSource(f)
-      if (new RegExp("`" + prefix + "\\$\\{|`" + prefix + "<|`" + prefix + '"').test(src))
-        others.push(f)
+      if (new RegExp(`\`${prefix}\\$\\{|\`${prefix}<|\`${prefix}"`).test(src)) others.push(f)
     }
     expect({ prefix, others }).toEqual({ prefix, others: [] })
   }
@@ -257,7 +256,7 @@ test("G9: hanya composition root yang merakit runtime produksi", () => {
       }
       if (!entry.name.endsWith(".ts")) continue
       if (p.startsWith(runtimeDir)) continue
-      const rel = p.replace(repoRoot + "\\", "").replace(repoRoot + "/", "")
+      const rel = p.replace(`${repoRoot}\\`, "").replace(`${repoRoot}/`, "")
       if (rel.startsWith("test/")) continue
       const src = readFileSync(p, "utf8")
       for (const ctor of [

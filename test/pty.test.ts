@@ -95,7 +95,7 @@ function ptyExitCodeTest(name: string, fn: () => Promise<void>) {
   if (skip !== null) {
     // Reporter standar Bun tak mencetak baris skip -> cetak sendiri, supaya
     // "verifikasi exit code dilewati" TERLIHAT di output pengujian.
-    console.warn("[pty] SKIP: " + name + " - " + skip)
+    console.warn(`[pty] SKIP: ${name} - ${skip}`)
   }
   test.skipIf(skip !== null)(skip === null ? name : skipped(name, skip), fn)
 }

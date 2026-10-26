@@ -54,13 +54,17 @@ nested + release idempoten). Pemegangnya: `askLine`/`askSecret`/`runPicker`
 tick `\r\x1b[2K` spinner menghapus baris prompt wizard (laporan "macet di
 Menyiapkan sesi…").
 
-## Invariant I1–I30
+## Invariant I1–I35
 
-Peta lengkap 30 invariant + test proteksinya (mis. `tui-app`, `screen-buffer`,
+Peta lengkap 35 invariant + test proteksinya (mis. `tui-app`, `screen-buffer`,
 `tui-popup`, `transient-arbitration`, `input-resize`, `exit-codes`, `acp`) ada di
 [Terminal Contract](TERMINAL_CONTRACT.md). Setiap fitur terminal baru tunduk
 pada invariant itu — mis. tak boleh menulis cursor-control ke stdout non-TTY,
 tak boleh mengandalkan alternate screen di jalur non-interaktif.
+
+Kontrak versi **v7.4** (2026-10-20) juga mencantumkan **peta gap proteksi**:
+klaim yang implementasinya benar tetapi belum punya assertion penjaga. Baca
+saga itu sebelum menyatakan "sudah dijaga".
 
 ## Aksesibilitas & konsol lawas
 

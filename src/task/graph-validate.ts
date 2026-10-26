@@ -15,7 +15,7 @@
 // recursive DFS would overflow the call stack on the 10 000-deep parent-chain
 // fixture, which is an explicit requirement of this phase.
 
-import { isTaskId, type TaskStatus } from "./model"
+import { isTaskId, type TaskStatus } from "./model.ts"
 
 /**
  * The projected node (design lock S4).
@@ -180,8 +180,7 @@ export function analyseRelations(nodes: readonly GraphNode[]): RelationAnalysis 
   // the graph INVALID, a dependency cycle leaves it VALID and merely
   // unsatisfiable (design lock S11).
   const { members: parentCycleMembers, groups: parentCycles } = findParentCycles(byId)
-  const { members: dependencyCycleMembers, groups: dependencyCycles } =
-    findDependencyCycles(byId)
+  const { members: dependencyCycleMembers, groups: dependencyCycles } = findDependencyCycles(byId)
 
   for (const cycle of parentCycles) {
     diagnostics.push({

@@ -89,8 +89,17 @@ function getArg(name: string, fallback: number): number {
 // tidak diambil. Ambang funcs 86 memberi margin 1,20 pp terhadap baseline
 // terendah 87,05, sejalan dengan preseden "Audit menyeluruh 2026-09-23" yang
 // mengunci 83 dengan margin 1,2 pp. Ambang TIDAK PERNAH diturunkan.
+//
+// P13.4 + P13.5 (multi-consumer daemon + E2E runtime hosted; 5 test baru di
+// test/p13-e2e-runtime.test.ts): 88,00 funcs / 88,94 lines — satu run penuh
+// (5023 pass / 19 skip / 0 fail, 340 berkas) di atas baseline P13.3 87,83/88,83.
+// Kenaikan funcs +0,17 pp melewati preseden P12 (+0,15 pp → naik), sehingga
+// minimum FUNCS dinaikkan 86 → 87 (margin 1,00 pp terhadap hasil terukur —
+// kelas margin yang sama dengan preseden 2026-09-23 dan P12). Lines +0,11 pp
+// identik dengan kelas "noise" yang dipertahankan P12 (+0,11 pp tidak dikunci);
+// minimum LINES tetap 86. Ambang tetap TIDAK PERNAH diturunkan.
 const MIN_LINES = getArg("--lines", 86)
-const MIN_FUNCS = getArg("--funcs", 86)
+const MIN_FUNCS = getArg("--funcs", 87)
 
 // ── lantai per-berkas modul kritis (audit F5) ──
 // Gate agregat BUTA terhadap modul tunggal yang jatuh: policy/jail 97% → 5%

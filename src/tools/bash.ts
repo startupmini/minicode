@@ -112,6 +112,21 @@ function reapFinishedJobs(): void {
 }
 
 /**
+ * Sinyal ke SELURUH grup proses (POSIX). Butuh spawn `detached:true` agar
+ * shell jadi group leader — tanpa itu `-pid` bukan grup yang valid dan
+ * group-kill jadi tak mungkin (cucu selamat). true = sinyal sampai ke grup.
+ */
+function signalProcessGroup(p: ReturnType<typeof spawn>, signal: NodeJS.Signals): boolean {
+  if (process.platform === "win32" || p.pid === undefined) return false
+  try {
+    process.kill(-p.pid, signal)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * Bunuh proses + seluruh subtree-nya. Di Windows `p.kill()` hanya membunuh
  * wrapper `cmd.exe` — cucu seperti `node -e "while(true){}"` tetap hidup,
  * menahan pipe stdio sehingga event `close` tidak pernah datang (hang
@@ -132,14 +147,10 @@ function killTree(p: ReturnType<typeof spawn>): void {
         },
       )
       if (r.status === 0) return
-    } else if (p.pid !== undefined) {
+    } else if (signalProcessGroup(p, "SIGKILL")) {
       // POSIX: bunuh seluruh grup proses (shell wrapper + cucu seperti
-      // `node -e`). Spawn foreground memakai detached:true agar shell jadi
-      // group leader; kill(-pid) menutup tree-nya.
-      try {
-        process.kill(-p.pid, "SIGKILL")
-        return
-      } catch {}
+      // `node -e`). Spawn memakai detached:true agar shell jadi group leader.
+      return
     }
   } catch {}
   try {
@@ -147,11 +158,20 @@ function killTree(p: ReturnType<typeof spawn>): void {
   } catch {}
 }
 
-/** Hentikan semua job — dipanggil saat CLI keluar agar tidak ada proses yatim. */
+/**
+ * Hentikan semua job — dipanggil saat CLI keluar agar tidak ada proses yatim.
+ *
+ * WAJIB tree-kill, bukan `proc.kill()`: yang dibunuh cuma wrapper shell,
+ * sedangkan cucu (dev server, watcher, `node -e`) tetap hidup, menahan pipe
+ * stdio, dan jadi proses yatim yang tak pernah dibersihkan. Modul ini sudah
+ * punya killTree() untuk itu — jalur shutdown sebelumnya tak memakainya.
+ */
 export function killAllBackgroundJobs(): void {
   for (const [id, j] of jobs) {
     try {
-      if (!j.done) j.proc.kill("SIGKILL")
+      // `!j.done` = jangan sentuh pid yang sudah mati (risiko pid dipakai
+      // ulang proses lain → taskkill /pid membunuh proses tak berkaitan).
+      if (!j.done) killTree(j.proc)
     } catch {}
     jobs.delete(id)
   }
@@ -175,6 +195,10 @@ function startBackground(cmd: string, cwd: string | undefined, ownerSid: string 
     cwd,
     env: sanitizeSpawnEnv(process.env),
     stdio: ["ignore", "pipe", "pipe"],
+    // detached agar shell jadi group leader → killTree bisa menutup SELURUH
+    // grup (POSIX kill(-pid)). Tanpa ini yang bisa dibunuh cuma wrapper shell
+    // dan cucu (dev server, watcher) jadi yatim saat bash_kill/shutdown.
+    detached: process.platform !== "win32",
   })
   const job: BackgroundJob = {
     id,
@@ -430,12 +454,21 @@ function makeBashKillTool(ownerSid: string | null): Tool {
       const job = ownedJob(String(id), ownerSid)
       if (!job) throw new Error(`job "${id}" not found`)
       if (job.done) return `[${job.id}] already finished (exit ${job.exitCode ?? "?"})`
-      try {
-        job.proc.kill("SIGTERM")
-      } catch {}
+      // Bunuh TREE, bukan cuma wrapper shell: `proc.kill()` di Windows hanya
+      // menebas cmd.exe — cucu (watcher, `node -e`) tetap hidup, menahan pipe
+      // stdio sehingga job tak pernah selesai dan prosesnya yatim.
+      // POSIX diberi jeda SIGTERM ke grup dulu (graceful); Windows langsung
+      // tree-kill, karena proc.kill hanya menebas cmd.exe sedangkan
+      // taskkill /T butuh akar yang masih hidup.
+      if (process.platform === "win32") killTree(job.proc)
+      else if (!signalProcessGroup(job.proc, "SIGTERM")) {
+        try {
+          job.proc.kill("SIGTERM")
+        } catch {}
+      }
       setTimeout(() => {
         try {
-          if (!job.done) job.proc.kill("SIGKILL")
+          if (!job.done) killTree(job.proc)
         } catch {}
       }, 1000)
       return `[${job.id}] stopped`

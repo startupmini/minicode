@@ -55,7 +55,25 @@ const SECRET_PATTERNS: RegExp[] = [
   // tak diawali `/` (sumber regex `PATTERN = /.../` ikut tersamarkan),
   // tanpa kurung (listing `TOKENS = {` selamat), dan total ≥4 char
   // (`NAME = new RegExp(` di kode sendiri ikut tersamarkan sebelumnya).
-  /\b[A-Z0-9_]*(?:SECRET|TOKEN|PASSWD|PASSWORD|PRIVATE_KEY|API_KEY|CREDENTIALS|CLIENT_SECRET|REFRESH_TOKEN|ACCESS_KEY)[A-Z0-9_]*\s*=\s*(?!\/)["']?[A-Za-z0-9._~+/$-]*[A-Za-z][A-Za-z0-9._~+/$-]{3,}["']?/g,
+  //
+  // PENTING — batas kerja (bukti: benchmark di test/scrub-bounded.test.ts):
+  // bentuk "nama = nilai" ini butuh tahu bahwa NAMA itu MEMPUNYAI kata
+  // penanda. Kalau ditulis sebagai dua kuantifier bebas yang berurutan
+  // (`[A-Z0-9_]*` + kata + `[A-Z0-9_]*`), mesin regex mencoba SEMUA cara
+  // membagi satu token panjang antara keduanya — O(N) titik potong × O(N)
+  // titik potong = kuadratik. Pada satu token 128 KB uppercase berisi
+  // "SECRET" berulang, itu ~5 detik; di batas 2 MB `read_file` jadi menit.
+  //
+  // Bentuk di bawah memindahkan pemeriksaan "kata penanda ada di dalam token"
+  // ke LOOKAHEAD (nol-lebar): assertion-nya linear (satu kali pemindaian token),
+  // sedangkan bagian yang mengonsumsi hanya satu `[A-Z0-9_]*`. Hasil redaksi
+  // identik (span match sama: dari batas kata sampai nilai), tapi kerja total
+  // O(N).
+  //
+  // Catatan: ledakan terjadi saat match GAGAL — mesin harus menjelajah semua
+  // cara membagi token. Kalau match berhasil pada percobaan pertama, jalurnya
+  // linear.
+  /\b(?=[A-Z0-9_]*(?:SECRET|TOKEN|PASSWD|PASSWORD|PRIVATE_KEY|API_KEY|CREDENTIALS|CLIENT_SECRET|REFRESH_TOKEN|ACCESS_KEY))[A-Z0-9_]*\s*=\s*(?!\/)["']?[A-Za-z0-9._~+/$-]*[A-Za-z][A-Za-z0-9._~+/$-]{3,}["']?/g,
   // Slack tokens
   /\b(xox[baprs]-[A-Za-z0-9-]{10,})\b/g,
   // NPM tokens
@@ -104,7 +122,18 @@ const LLM_VENDOR =
 export const SECRET_ENV_RE = new RegExp(
   [
     CREDENTIAL_WORD, // mengandung kata kredensial di mana pun
-    `^${LLM_VENDOR}_`, // kunci provider LLM
+    // Kunci provider LLM: WAJIB ada penanda rahasia setelah prefix vendor
+    // (API_KEY, TOKEN, SECRET, ... — kosakata CREDENTIAL_WORD yang sama).
+    //
+    // Prefix polos dulu membuang SEMUA `OPENAI_*`/`HF_*`/`GROQ_*`, termasuk
+    // konfigurasi yang jelas bukan secret: `OPENAI_BASE_URL` (gateway
+    // kustom), `OPENAI_ORG_ID`, `OPENAI_PROJECT`, `HF_HOME`,
+    // `HUGGINGFACE_HUB_CACHE`. Itu mematikan child process yang butuh
+    // gateway/konteks tersebut — termasuk env yang OTORIS diubah pengguna
+    // untuk MCP/LSP server, karena `sanitizeSpawnEnv` men-strip hasil akhir
+    // merge. Bentuknya sama dengan aturan vendor lain di bawah: vendor +
+    // penanda rahasia, bukan vendor polos.
+    `^${LLM_VENDOR}_[A-Z0-9_]*${CREDENTIAL_WORD}`,
     "^(?:AWS|GCP|AZURE|GITHUB|GITLAB|SUPABASE|STRIPE|TWILIO|SENDGRID|SLACK|NPM|DOCKER)_[A-Z0-9_]*" +
       `${CREDENTIAL_WORD}`, // vendor + penanda rahasia, bukan vendor telanjang
     "^(?:DATABASE|POSTGRES|POSTGRESQL|MYSQL|MONGO|MONGODB|REDIS)_(?:URL|URI|PASSWORD|DSN)$",

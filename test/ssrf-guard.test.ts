@@ -52,6 +52,54 @@ test("isPrivateHost covers loopback/private/ULA/link-local/CGNAT/metadata", () =
   }
 })
 
+test("isPrivateHost menutup IPv4-mapped IPv6 bentuk HEKSADESIMAL (bypass IMDS)", () => {
+  // Parser WHATWG menuliskan IPv4-mapped IPv6 sebagai heksadesimal, BUKAN
+  // dotted: "http://[::ffff:169.254.169.254]/" -> hostname "[::ffff:a9fe:a9fe]".
+  // Guard yang hanya mengecek bentuk dotted TIDAK menangkap ini, sehingga
+  // request ke metadata endpoint lolos sebagai "host publik".
+  for (const h of [
+    "::ffff:a9fe:a9fe", // 169.254.169.254 (IMDS)
+    "::ffff:7f00:1", // 127.0.0.1
+    "::ffff:a00:1", // 10.0.0.1
+    "::ffff:c0a8:1", // 192.168.0.1
+    "::ffff:0:a9fe:a9fe", // IPv4-translated -> 169.254.169.254
+    "::a9fe:a9fe", // IPv4-compatible -> 169.254.169.254
+  ]) {
+    expect(isPrivateHost(h)).toBe(true)
+  }
+  // Bentuk dengan kurung siku (hasil new URL().hostname) harus sama-sama kena.
+  for (const h of ["[::ffff:a9fe:a9fe]", "[::ffff:7f00:1]", "[::ffff:a00:1]"]) {
+    expect(isPrivateHost(h)).toBe(true)
+  }
+  // IPv4 publik yang di-embed TIDAK boleh ikut diblokir.
+  for (const h of ["::ffff:808:808", "[::ffff:808:808]"]) {
+    expect(isPrivateHost(h)).toBe(false)
+  }
+})
+
+test("isPrivateHost menutup host IMDS dalam bentuk yang DIPRODUKSI parser URL", () => {
+  // Uji pada batas nyata: nama host dari parser, bukan string buatan.
+  for (const url of [
+    "http://[::ffff:169.254.169.254]/latest/meta-data/",
+    "http://[::ffff:127.0.0.1]/",
+    "http://[::ffff:10.0.0.1]/",
+  ]) {
+    expect(isPrivateHost(new URL(url).hostname)).toBe(true)
+  }
+})
+
+test("web_fetch memblokir host IMDS dalam bentuk IPv4-mapped heksadesimal", async () => {
+  let called = false
+  globalThis.fetch = (async () => {
+    called = true
+    throw new Error("should not fetch")
+  }) as unknown as typeof fetch
+  await expect(
+    webFetchTool.execute({ url: "http://[::ffff:169.254.169.254]/latest/meta-data/" }, ctx),
+  ).rejects.toThrow(/blocked private host/)
+  expect(called).toBe(false)
+})
+
 test("blocks direct private host without fetching", async () => {
   let called = false
   globalThis.fetch = (async () => {

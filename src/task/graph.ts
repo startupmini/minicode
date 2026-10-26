@@ -23,18 +23,18 @@ import {
   type Diagnostic,
   type GraphNode,
   type RelationAnalysis,
-} from "./graph-validate"
-import type { TaskSnapshot, TaskStatus } from "./model"
+} from "./graph-validate.ts"
+import type { TaskSnapshot, TaskStatus } from "./model.ts"
 import {
   type Blocker,
   computeBlockers,
   isReady as computeIsReady,
   eligibleForReadiness,
   type NotReady,
-} from "./readiness"
+} from "./readiness.ts"
 
-export type { Diagnostic, GraphNode } from "./graph-validate"
-export type { Blocker, BlockerKind, NotReady } from "./readiness"
+export type { Diagnostic, GraphNode } from "./graph-validate.ts"
+export type { Blocker, BlockerKind, NotReady } from "./readiness.ts"
 
 const EMPTY_IDS: readonly string[] = Object.freeze([])
 

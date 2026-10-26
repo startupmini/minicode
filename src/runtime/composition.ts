@@ -89,6 +89,11 @@ import {
   type TransitionRequestSource,
 } from "./execution-kernel.ts"
 import {
+  createProcessSupervision,
+  type ProcessSupervision,
+  type ProcessSupervisionStatus,
+} from "./process-supervision.ts"
+import {
   createRecoveryEngine,
   type RecoveryContext,
   type RecoveryEngine,
@@ -100,6 +105,18 @@ import {
   type RuntimeHost,
   type RuntimeHostOptions,
 } from "./runtime-host.ts"
+import {
+  type RuntimeFacts,
+  type RuntimeFlushReport,
+  runtimeFactsFrom,
+  type TaskLayerFacts,
+} from "./runtime-status-facts.ts"
+
+// Bentuk hasil drain milik modul netral (runtime-status-facts.ts) supaya
+// `runtime-status.ts` tak perlu mengimpor composition.ts — graf src/runtime/**
+// bebas siklus (guard m16 G1). Re-export supaya pemanggil lama tak berubah.
+export type { RuntimeFlushReport } from "./runtime-status-facts.ts"
+
 import { createSupervisor, type SupervisionPolicy, type Supervisor } from "./supervisor.ts"
 
 export interface RuntimeCompositionOptions {
@@ -127,6 +144,27 @@ export interface RuntimeCompositionOptions {
   /** Batas drain (ms; default 5000). Drain tak tuntas = "uncertain", bukan hijau. */
   readonly drainTimeoutMs?: number
   readonly supervisorPolicy?: SupervisionPolicy
+  /**
+   * Policy supervision proses (P13.2). Memakai policy M9 yang sama — tak ada
+   * ambang baru yang mengendap diam-diam.
+   */
+  readonly processSupervisionPolicy?: SupervisionPolicy
+  /**
+   * Seam (P13.2): fabrikasi instance supervision proses. Default = instance
+   * standar. Disuntik HANYA untuk menguji kegagalan establishment — runtime
+   * harus degrade (bukan mengklaim sehat), bukan crash.
+   */
+  readonly processSupervisionFactory?: () => ProcessSupervision
+  /**
+   * Fakta lapisan task (P13.3): scheduler terpasang? TaskStore otoritas task
+   * terbuka?
+   *
+   * Diberikan sebagai THUNK, bukan nilai: scheduler dibuat SESUDAH runtime, jadi
+   * faktanya baru diketahui saat dispatch. Thunk dibaca saat fakta dibutuhkan,
+   * bukan saat komposisi dibangun — nilai basi akan menyesatkan gerbang
+   * admission dengan alasan yang tak pernah benar.
+   */
+  readonly taskLayerFacts?: () => TaskLayerFacts
   readonly now?: () => number
   /**
    * Seam/test hook milik M3 (onShutdown/onClose). Composition tetap memanggil
@@ -143,19 +181,12 @@ export interface RuntimeCompositionOptions {
   readonly journalCheckpoint?: () => CheckpointResult
 }
 
-export interface RuntimeFlushReport {
-  readonly journal: FlushResult["status"] | "disabled"
-  /** Append yang sudah selesai pada drain ini. */
-  readonly drained: number
-  /** Append yang MASIH jalan saat batas drain tercapai (dilaporkan, bukan didiamkan). */
-  readonly unfinished: number
-}
-
 /** Fase shutdown berurutan. Urutan = urutan eksekusi. */
 export type RuntimeShutdownPhase =
   | "admission-latch"
   | "host-shutdown"
   | "execution-drain"
+  | "process-cleanup"
   | "event-drain"
   | "journal-flush"
   | "journal-close"
@@ -237,6 +268,24 @@ export interface RuntimeComposition {
   readonly plane: EventPlane
   readonly journal: ExecutionJournal | null
   readonly supervisor: Supervisor
+  /**
+   * Jalur ownership proses (P13.2). `null` = establishment GAGAL — runtime
+   * lalu degraded, bukan mengklaim sehat. Bukan "supervisi opsional diam-diam":
+   * kegagalan establishment terlihat di status runtime.
+   */
+  readonly supervision: ProcessSupervision | null
+  /** Status supervision jujur (null = tak ada instance). */
+  supervisionStatus(): ProcessSupervisionStatus | null
+  /**
+   * [P13.3] Fakta kontrak runtime dari komposisi ini — SATU sumber untuk
+   * status surface DAN untuk gerbang admission.
+   *
+   * `taskLayer` menimpa fakta lapisan task bila pemanggil punya yang lebih
+   * baru (layer task tak bisa dibaca dari dalam komposisi).
+   */
+  statusFacts(
+    taskLayer?: Partial<TaskLayerFacts> & { lastFlush?: RuntimeFlushReport | null },
+  ): RuntimeFacts
   readonly bridge: DispatchBridge
   readonly recovery: RecoveryEngine
   readonly backend: ExecutionBackend
@@ -347,6 +396,27 @@ export function createRuntimeComposition(opts: RuntimeCompositionOptions): Runti
   const recovery = createRecoveryEngine()
   const host = createRuntimeHost(opts.hostOptions ?? {})
   host.start()
+
+  // ── P13.2: jalur ownership proses ──────────────────────────────────────────
+  // Satu registry anak milik runtime ini. Kegagalan establishment TIDAK
+  // mematikan runtime (runtime tanpa supervisi masih berguna), TAPI ia
+  // menurunkan status runtime ke DEGRADED — jadi tak ada klaim "sehat" atau
+  // "disupervisi" yang tak benar.
+  let supervision: ProcessSupervision | null = null
+  let supervisionEstablishmentFailed = false
+  try {
+    const supervisionFactory =
+      opts.processSupervisionFactory ??
+      (() =>
+        createProcessSupervision({
+          ...(opts.processSupervisionPolicy ? { policy: opts.processSupervisionPolicy } : {}),
+          now,
+        }))
+    supervision = supervisionFactory()
+  } catch {
+    supervision = null
+    supervisionEstablishmentFailed = true
+  }
 
   // ── journal (fail-closed) ──────────────────────────────────────────────────
   let journal: ExecutionJournal | null = null
@@ -613,6 +683,33 @@ export function createRuntimeComposition(opts: RuntimeCompositionOptions): Runti
     }
     const outstandingAfter = outstanding()
 
+    // ── 3b. process cleanup (P13.2): anak yang dikelola DIHENTIKAN dan
+    // ditunggu. Posisi: SESUDAH drain kerja terlacak (kerja in-flight tak
+    // diganggu) dan SEBELUM flush jurnal (kematian anak tercatat di history).
+    // "Tidak ada child yang terlepas" hanya bisa diklaim bila shutdown
+    // MENUNGGU anak berhenti — bukan hanya drop record.
+    if (supervision) {
+      try {
+        const cleaned = await supervision.shutdown()
+        phase(
+          "process-cleanup",
+          cleaned.failed > 0 ? "uncertain" : "succeeded",
+          `stopped=${cleaned.stopped} failed=${cleaned.failed}`,
+        )
+      } catch (e) {
+        phase("process-cleanup", "failed", (e as Error).message.slice(0, 160))
+        errors.push({ phase: "process-cleanup", error: e })
+      }
+    } else {
+      phase(
+        "process-cleanup",
+        "skipped",
+        supervisionEstablishmentFailed
+          ? "supervisi tak established (runtime degraded, bukan klaim sehat)"
+          : "tak ada supervisi terpasang",
+      )
+    }
+
     // ── 4. event delivery drain (M10 sinkron; M11 append async) ──────────────
     const events = await drainAppends(drainTimeoutMs)
     phase(
@@ -726,9 +823,39 @@ export function createRuntimeComposition(opts: RuntimeCompositionOptions): Runti
     plane,
     journal,
     supervisor,
+    supervision,
     bridge,
     recovery,
     backend,
+
+    supervisionStatus(): ProcessSupervisionStatus | null {
+      return supervision ? supervision.status() : null
+    },
+
+    statusFacts(
+      taskLayer?: Partial<TaskLayerFacts> & { lastFlush?: RuntimeFlushReport | null },
+    ): RuntimeFacts {
+      const metrics = api.metrics()
+      const supervisionStatus = supervision ? supervision.status() : null
+      // Fakta lapisan task: argumen pemanggil menang (lebih baru), kalau tak ada
+      // argumen, thunk komposisi dibaca (nilai paling dekat ke saat dispatch).
+      const base = opts.taskLayerFacts?.() ?? null
+      return runtimeFactsFrom({
+        enabled: true,
+        constructed: true,
+        closed,
+        admissionOpen: admissionOpen,
+        durable: journal !== null,
+        journalAppendFailures: metrics.journalAppendFailures,
+        pendingJournalAppends: metrics.pendingAppends,
+        supervisionEstablished: supervisionStatus !== null,
+        supervisorAttached: supervisionStatus?.operational === true,
+        supervisedChildren: supervisionStatus?.managed ?? 0,
+        schedulerAttached: taskLayer?.schedulerAttached ?? base?.schedulerAttached ?? null,
+        storeOpen: taskLayer?.storeOpen ?? base?.storeOpen ?? null,
+        ...(taskLayer?.lastFlush !== undefined ? { lastFlush: taskLayer.lastFlush } : {}),
+      })
+    },
 
     dispatch(request, refresh) {
       if (!admissionOpen)

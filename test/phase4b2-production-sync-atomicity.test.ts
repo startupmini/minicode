@@ -59,7 +59,8 @@ afterEach(async () => {
 
 const prov = { origin: "runtime", source: "test" } as const
 const S = "atomic-session"
-const opCtx = (dir: string) => ({ signal: new AbortController().signal, cwd: dir, sessionId: S }) as never
+const opCtx = (dir: string) =>
+  ({ signal: new AbortController().signal, cwd: dir, sessionId: S }) as never
 
 const seed = (dir: string, titles: string[]) => {
   const s = new TaskStore(dir)
@@ -70,9 +71,13 @@ const seed = (dir: string, titles: string[]) => {
 
 /** The FULL durable snapshot. Every atomicity assertion compares against this. */
 const snapshot = (dir: string) =>
-  new TaskStore(dir)
-    .listTasks(S)
-    .map((t) => ({ id: t.id, title: t.title, status: t.status, order: t.order, revision: t.revision }))
+  new TaskStore(dir).listTasks(S).map((t) => ({
+    id: t.id,
+    title: t.title,
+    status: t.status,
+    order: t.order,
+    revision: t.revision,
+  }))
 
 /** The payload whose SECOND entry fails validation after the first has mutated. */
 const poison = (): CanonicalTaskInput[] => [
@@ -240,7 +245,9 @@ test("H. the assertion detects ONE mutation applied after the transaction", asyn
   // `order` also moves t1 to the end of the listTasks ordering, so rows must be
   // compared BY ID rather than by list position.
   const beforeById = new Map(rolledBack.map((t) => [t.id, t]))
-  const diff = withDeferred.filter((t) => JSON.stringify(t) !== JSON.stringify(beforeById.get(t.id)))
+  const diff = withDeferred.filter(
+    (t) => JSON.stringify(t) !== JSON.stringify(beforeById.get(t.id)),
+  )
   expect(diff).toHaveLength(1)
   expect(diff[0]!.id).toBe("t1")
   expect(diff[0]!.order).toBe(42)

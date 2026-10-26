@@ -20,7 +20,6 @@ import {
 } from "../render/collapse.ts"
 import { detail } from "../render/detail.ts"
 import { renderDiffCard } from "../render/diff.ts"
-import { formatFriendly, friendlyError, friendlyFromCategory } from "../render/errors.ts"
 import { formatArgsPreview, formatProviderError, formatUsage } from "../render/format.ts"
 import { highlightCode } from "../render/highlight.ts"
 import { decorateMarkdown, type FenceMatch, parseFence, renderInline } from "../render/markdown.ts"
@@ -825,19 +824,8 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
 /**
  * Error apa pun → satu pesan siap tampil.
  *
- * Sebelumnya mengembalikan `${kind}: ${message}` mentah, sehingga baris terakhir
- * yang dilihat user setelah run gagal adalah dump JSON provider — pada uji live
- * OpenRouter: `provider: rate limited (429): {"error":{...400 karakter...}}`.
- * Kini kategori dipetakan lewat src/ui/render/errors.ts, sama seperti event error.
+ * CATATAN: implementasi pindah ke `src/ui/render/errors.ts` (lapisan render)
+ * supaya TUI fullscreen, wizard, dan one-shot memakai SATU formatter kanonik
+ * yang sama — TUI tak lagi menarik renderer linier hanya demi format error.
  */
-export function formatError(e: unknown): string {
-  const obj = e as { kind?: string; category?: string; message?: string } | undefined
-  // ProviderError punya `category`; AgentError punya `kind`.
-  if (obj?.category) return formatFriendly(friendlyFromCategory(obj.category, obj.message ?? ""))
-  if (obj?.kind) {
-    const friendly = friendlyError(`${obj.kind}: ${obj.message ?? ""}`)
-    return formatFriendly(friendly)
-  }
-  if (e instanceof Error) return formatFriendly(friendlyError(e.message))
-  return String(e)
-}
+export { formatError } from "../render/errors.ts"

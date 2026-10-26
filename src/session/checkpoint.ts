@@ -70,6 +70,62 @@ function getManifestPath(sessionId: string, cwd: string = process.cwd()): string
   return join(getCheckpointDir(sessionId, cwd), "manifest.json")
 }
 
+/**
+ * [P14.0] Ringkasan manifest checkpoint, SYNC dan NON-MENULIS.
+ *
+ * `loadCheckpointManifest` yang async menulis backup `.corrupt.*` saat JSON
+ * rusak — itu benar untuk jalur pemulihan sesi, tapi PROYEKSI read-only tidak
+ * boleh meninggalkan jejak tulis. Pembaca ini hanya melaporkan: manifest
+ * hilang = `exists: false` (kondisi normal sesi tanpa checkpoint), JSON rusak
+ * = `corrupt: true` (dilabel jujur, tidak dibackup, tidak dihapus).
+ */
+export interface CheckpointInventoryEntry {
+  readonly sessionId: string
+  readonly exists: boolean
+  readonly corrupt: boolean
+  readonly checkpointCount: number
+  readonly currentIndex: number
+  readonly latestTurn: number | null
+  readonly latestTimestamp: string | null
+}
+
+export function readCheckpointInventorySync(
+  sessionId: string,
+  cwd?: string,
+): CheckpointInventoryEntry {
+  const empty: CheckpointInventoryEntry = {
+    sessionId,
+    exists: false,
+    corrupt: false,
+    checkpointCount: 0,
+    currentIndex: -1,
+    latestTurn: null,
+    latestTimestamp: null,
+  }
+  let raw: string
+  try {
+    raw = require("node:fs").readFileSync(getManifestPath(sessionId, cwd ?? process.cwd()), "utf8")
+  } catch {
+    return empty
+  }
+  try {
+    const parsed = JSON.parse(raw) as CheckpointManifest
+    const checkpoints = Array.isArray(parsed.checkpoints) ? parsed.checkpoints : []
+    const latest = checkpoints.length > 0 ? checkpoints[checkpoints.length - 1] : undefined
+    return {
+      sessionId,
+      exists: true,
+      corrupt: false,
+      checkpointCount: checkpoints.length,
+      currentIndex: typeof parsed.currentIndex === "number" ? parsed.currentIndex : -1,
+      latestTurn: typeof latest?.turn === "number" ? latest.turn : null,
+      latestTimestamp: typeof latest?.timestamp === "string" ? latest.timestamp : null,
+    }
+  } catch {
+    return { ...empty, exists: true, corrupt: true }
+  }
+}
+
 export async function loadCheckpointManifest(
   sessionId: string,
   cwd?: string,

@@ -28,7 +28,7 @@ minicode (coding-agent — self-contained, tanpa sibling clone)
   │                   approval prompt, screens (picker/wizard/managers) — tanpa impor core/#minicore
   ├─ experiments/   → harness adversarial (fuzz bash, stress shadow-git, server MCP jahat)
   ├─ docs/          → ARCHITECTURE.html (peta struktur hidup) · USAGE.md
-  └─ cli/           → REPL (tab completion, multiline, history, slash commands) + controller tipis
+  └─ cli/           → TUI fullscreen (tab completion, multiline, history, slash commands) + controller tipis
                       wizard/model-manager/provider-manager (logic config tetap di src/)
 ```
 
@@ -52,12 +52,12 @@ minicode models --match gemini  # cari model lintas provider
 minicode sync           # refresh model baru dari semua provider
 ```
 
-Kernel MiniCore di-vendor ke `vendor/minicore` (20 file, ~81 KB) sehingga repo ini self-contained. Sumber kebenaran tetap repo `minicore`; kontributor yang punya clone sibling `../minicore` menyinkronkan dengan `bun run vendor:minicore`, dan CI menjaga kesinkronan lewat `bun run vendor:check`.
+Kernel MiniCore di-vendor ke `vendor/minicore` (isi, jumlah file, dan hash dicatat di `vendor/minicore/VENDOR.md`) sehingga repo ini self-contained. Sumber kebenaran tetap repo `minicore`; kontributor yang punya clone sibling `../minicore` menyinkronkan dengan `bun run vendor:minicore`, dan CI menjaga kesinkronan lewat `bun run vendor:check`.
 
 Wizard & `/provider` (add: `[0] OpenAI` … `[14] Custom URL` — hanya label, tanpa URL) + `/model` (Enter = pilih `provider::model` + picker `default/low/medium/high` untuk thinking effort, tersimpan di provider dan berlaku sesi berikutnya; Esc = batal total) menyajikan preset gateway (OpenAI, Anthropic, OpenRouter, DeepSeek, OpenCode Zen, Google, Ollama, Qwen, Groq, dll), API Key ter-masking, auto-detect models, dan provider otomatis pindah saat pilih model beda provider (tanpa restart).
 
 ```bash
-minicode --interactive                  # REPL linier (agentic Unix shell, output di scrollback)
+minicode --interactive                  # TUI fullscreen (alternate screen; default bila tanpa prompt di TTY)
 minicode --ask "deploy script"          # human-in-loop confirmation card
 minicode --verify "fix bugs lalu typecheck"  # auto-verify + self-heal setelah run
 minicode --sandbox docker "task"        # eksekusi bash dalam container ephemeral
@@ -197,4 +197,4 @@ Catatan lingkungan:
 
 **MIT License.** Bebas pakai, modifikasi, distribusi — lihat [LICENSE](LICENSE). Copyright (c) 2026 startupmini.
 
-Lihat `docs/ARCHITECTURE.html` + `docs/HARNESS.md` + `PLAN.md`.
+Lihat `docs/ARCHITECTURE.html` + `docs/HARNESS.md` + `ROADMAP.md` (roadmap arsitektur aktif) + `PLAN.md` (ledger legacy).

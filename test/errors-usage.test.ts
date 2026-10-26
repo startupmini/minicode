@@ -4,6 +4,7 @@ import { costFor, createUsageCollector } from "../src/policy/usage.ts"
 import { resetLocaleState, setSessionLocale } from "../src/ui/i18n/locale.ts"
 import {
   extractProviderDetail,
+  formatError,
   friendlyError,
   friendlyFromCategory,
 } from "../src/ui/render/errors.ts"
@@ -273,4 +274,87 @@ test("pricing: exact and versioned model names match", () => {
   expect(costFor("deepseek/deepseek-chat:free", 1_000_000, 0, 0, 0, false)).toBe(0)
   // longest-key menang: claude-sonnet-4-5, bukan claude-sonnet-4
   expect(costFor("claude-sonnet-4-5", 1_000_000, 0, 0, 0, false)).toBeCloseTo(3, 6)
+})
+
+// ── P0 UI Security: formatError = satu-satunya gerbang pesan error UI ───────
+//
+// Jalur TUI fullscreen (src/ui/tui/app.ts) DULU memakai `e.message` mentah:
+// bearer token, body JSON provider, dan credential Echo bisa tampil utuh di
+// layar. Sekarang semua permukaan lewat formatError → redaksi + sanitasi.
+//
+// Sentinel di bawah adalah nilai PALSU (bukan credential nyata) — hanya
+// membuktikan polanya tertangkap redaksi.
+const SENTINEL_BEARER = "SENTINEL-BEARER-abcdef123456"
+const SENTINEL_PROVIDER_KEY = "sk-testsentinel0123456789abcdef"
+const SENTINEL_QUERY = "SENTINELQUERY987654321"
+
+test("formatError: error biasa tetap informatif (diagnostik tak hilang)", () => {
+  const msg = formatError(new Error("koneksi refused di 127.0.0.1:8080"))
+  expect(msg).toContain("koneksi refused")
+  expect(msg).toContain("127.0.0.1:8080")
+})
+
+test("formatError: bearer token tak pernah tampil (Authorization header)", () => {
+  const msg = formatError(new Error(`proxy menolak: Authorization: Bearer ${SENTINEL_BEARER}`))
+  expect(msg).not.toContain(SENTINEL_BEARER)
+  expect(msg).toContain("[redacted]")
+  // Bagian yang tak sensitif tetap tampil — pesan tak jadi generik.
+  expect(msg).toContain("proxy menolak")
+})
+
+test("formatError: kunci provider + query string di body error mentah", () => {
+  const msg = formatError(
+    new Error(`gagal auth: ${SENTINEL_PROVIDER_KEY} / https://h.test/?api_key=${SENTINEL_QUERY}`),
+  )
+  expect(msg).not.toContain(SENTINEL_PROVIDER_KEY)
+  expect(msg).not.toContain(SENTINEL_QUERY)
+  expect(msg).toContain("gagal auth")
+})
+
+test("formatError: body JSON provider mentah tak membocorkan credential", () => {
+  const raw =
+    'rate limited (429): {"error":{"message":"Provider returned error","metadata":{"raw":' +
+    `"${SENTINEL_PROVIDER_KEY} dipakai untuk model X"}},"code":429}}`
+  const msg = formatError(new Error(raw))
+  expect(msg).not.toContain(SENTINEL_PROVIDER_KEY)
+  expect(msg).toContain("[redacted]")
+})
+
+test("formatError: credential yang dipotong batas 150 kolom tetap teredaksi", () => {
+  // Token tepat di batas potong `firstSentence` → urutan redact→extract
+  // (bukan extract→redact) yang membuatnya tak bocor.
+  const filler = "x".repeat(140)
+  const msg = formatError(new Error(`${filler} ${SENTINEL_PROVIDER_KEY}`))
+  expect(msg).not.toContain(SENTINEL_PROVIDER_KEY)
+})
+
+test("formatError: objek non-Error (string dilempar) juga lewat redaksi", () => {
+  const msg = formatError(`boom Authorization: Bearer ${SENTINEL_BEARER}`)
+  expect(msg).not.toContain(SENTINEL_BEARER)
+  expect(msg).toContain("[redacted]")
+})
+
+test("formatError: objek non-Error dengan `message` tetap informatif", () => {
+  const msg = formatError({ message: "rate limited, coba lagi" } as unknown)
+  expect(msg).toContain("rate limited")
+})
+
+test("formatError: error tanpa pesan tetap punya jejak (bukan baris kosong)", () => {
+  const msg = formatError(new Error(""))
+  expect(msg.trim().length).toBeGreaterThan(0)
+  expect(msg).toContain("Error")
+})
+
+test("formatError: escape ANSI di pesan error dibuang (satu baris)", () => {
+  const msg = formatError(new Error("boom\x1b[2J\x1b[?1049h"))
+  expect(msg).not.toContain("\x1b[2J")
+  expect(msg).not.toContain("1049")
+  expect(msg).toContain("boom")
+})
+
+test("formatError: ProviderError (category) & AgentError (kind) tetap dipetakan", () => {
+  const provider = formatError({ category: "rate_limit", message: "429 exploded" } as unknown)
+  expect(provider.toLowerCase()).toContain("rate")
+  const agent = formatError({ kind: "timeout", message: "run exceeded" } as unknown)
+  expect(agent.toLowerCase()).toContain("timeout")
 })

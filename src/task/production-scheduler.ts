@@ -38,6 +38,7 @@ import {
   type AutonomousExecutionBinding,
   buildAutonomousRunTurn,
 } from "./autonomous-adapter.ts"
+import type { ContinuityGate } from "./continuity.ts"
 import { type CancelReason, Scheduler, type SchedulerEvent } from "./scheduler.ts"
 import { onSessionInvalidated, releaseSessionOwnershipFor } from "./session-ownership.ts"
 import type { TaskStore } from "./store.ts"
@@ -143,6 +144,13 @@ export interface ProductionSchedulerDeps {
    * Diteruskan ke Scheduler agar sesi + scheduler-nya memakai lease yang
    * sama; absen = perilaku lama (Scheduler mint sendiri). */
   readonly authorityToken?: string
+  /**
+   * [P13.3 Stage C] Retry-safety evidence for automatic reconciliation.
+   *
+   * ABSENT means HOLD, not legacy recovery: the composition root must prove
+   * that a fresh attempt cannot repeat unsafe external effects.
+   */
+  readonly continuity?: ContinuityGate
   readonly onSchedulerEvent?: (e: SchedulerEvent) => void
   readonly onTriggerEvent?: (e: TriggerEvent) => void
 }
@@ -216,6 +224,7 @@ export async function createProductionScheduler(
     ...(d.model ? { model: d.model } : {}),
     // P2.2: teruskan token komposisi (bila ada) — satu penulis per boot.
     ...(d.authorityToken ? { authorityToken: d.authorityToken } : {}),
+    ...(d.continuity ? { continuity: d.continuity } : {}),
     ...(d.onSchedulerEvent ? { onEvent: d.onSchedulerEvent } : {}),
   })
 

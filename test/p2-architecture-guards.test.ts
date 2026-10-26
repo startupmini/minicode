@@ -167,13 +167,20 @@ test("[ARCHITECTURE-GUARD] P2.4: tanpa lease Thread, tanpa fork, tanpa traversal
 
 test("[ARCHITECTURE-GUARD] P2.3: tasks.db tak tersentuh fase sesi", () => {
   // Tak ada DDL tasks baru dari fase P2 (TaskGraphRef milik P2.9): tidak ada
-  // tabel baru di store SELAIN tiga yang sudah ada (tasks/task_meta/
-  // session_authority — diverifikasi eksplisit di bawah), dan tak ada kolom
-  // P2.3 (epoch/thread/run/proyeksi/taskgraph) bocor ke DDL task.
+  // tabel baru di store SELAIN lima yang sudah ada (tasks/task_meta/
+  // session_authority/task_transfers/task_merges — diverifikasi eksplisit di
+  // bawah), dan tak ada kolom P2.3 (epoch/thread/run/proyeksi/taskgraph)
+  // bocor ke DDL task.
+  //
+  // [P14] `task_transfers` dan `task_merges` ditambahkan oleh P14, bukan oleh
+  // fase sesi. Keduanya ledger APPEND-ONLY (transfer lintas sesi + deklarasi
+  // dedup operator) dan TIDAK menyimpan status atau otoritas kedua; kolom
+  // `writer_epoch`/thread/run/proyeksi yang dilarang di sini tetap tidak
+  // boleh muncul.
   const bad = tracked(/^src\/task\/.*\.ts$/).filter((f) => {
     const src = readFileSync(f, "utf8")
     if (
-      /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+(?!tasks\b|task_meta\b|session_authority\b)\w+/i.test(
+      /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+(?!tasks\b|task_meta\b|session_authority\b|task_transfers\b|task_merges\b)\w+/i.test(
         src,
       )
     ) {
@@ -721,6 +728,80 @@ test("[ARCHITECTURE-GUARD] P2.10: one invocation writes one canonical intent", (
   expect(countOccurrences(task, "persistEffectReceipt({")).toBe(1)
 })
 
+test("[ARCHITECTURE-GUARD] P14: adopsi lintas sesi bukan TaskStore/scheduler kedua", () => {
+  // P14 boleh memindahkan BARIS task, tetapi tidak boleh memperkenalkan
+  // otoritas status kedua, antrean durable, atau trigger otomatis. Guard ini
+  // membaca KODE (komentar dibuang) supaya penjelasan panjang tidak menyamarkan
+  // pelanggaran sebenarnya.
+  const adopt = codeOnly(readProd("src/session/cross-session-adoption.ts"))
+  // Status tidak pernah ditulis langsung dari lapis orkestrasi: satu-satunya
+  // mutasi adalah transferTaskAuthority milik TaskStore.
+  expect(adopt).not.toContain("patchTask(")
+  expect(adopt).not.toContain("CREATE TABLE")
+  expect(adopt).not.toContain("new Database")
+  expect(adopt).not.toContain("setInterval")
+  // Tidak ada dispatch: adopsi tidak memicu Scheduler, trigger atau siklus.
+  expect(adopt).not.toContain("new Scheduler(")
+  expect(adopt).not.toContain(".cycle(")
+  expect(adopt).not.toContain(".fire(")
+  // Bukan pintu belakang untuk memindahkan pekerjaan selesai.
+  expect(adopt).toContain("transferTaskAuthority")
+
+  // TaskStore tetap satu-satunya penulis tabel tasks.
+  const writers = tracked(/^src\/.*\.ts$/)
+    .filter((f) => f !== "src/task/store.ts")
+    .filter((f) => /INSERT\s+INTO\s+tasks\b|UPDATE\s+tasks\b/i.test(readFileSync(f, "utf8")))
+  expect(writers).toEqual([])
+
+  // Ledger hanya ditulis di dalam transfer (append-only), tidak dari tempat lain.
+  const ledgerWriters = tracked(/^src\/.*\.ts$/)
+    .filter((f) => f !== "src/task/store.ts")
+    .filter((f) => /INSERT\s+INTO\s+task_transfers\b/i.test(readFileSync(f, "utf8")))
+  expect(ledgerWriters).toEqual([])
+  const store = codeOnly(readProd("src/task/store.ts"))
+  expect(countOccurrences(store, "INSERT INTO task_transfers")).toBe(1)
+
+  // [P14.3] Ledger dedup juga append-only dan hanya ditulis TaskStore, di
+  // transaksi yang sama dengan status CANCELLED duplikat.
+  const mergeWriters = tracked(/^src\/.*\.ts$/)
+    .filter((f) => f !== "src/task/store.ts")
+    .filter((f) => /INSERT\s+INTO\s+task_merges\b/i.test(readFileSync(f, "utf8")))
+  expect(mergeWriters).toEqual([])
+  expect(countOccurrences(store, "INSERT INTO task_merges")).toBe(1)
+  expect(store).toContain("declareTaskDuplicate")
+})
+
+test("[ARCHITECTURE-GUARD] P14.2/P14.6: proyeksi open-work read-only murni", () => {
+  // Proyeksi adalah INDEKS, bukan otoritas. Ia tidak boleh menulis apa pun,
+  // tidak boleh memicu mutasi lifecycle, dan tidak boleh memanggil jalur
+  // tulis TaskStore. Semua data masuk lewat API baca yang sudah ada.
+  const proj = codeOnly(readProd("src/session/open-work.ts"))
+  for (const forbidden of [
+    "patchTask(",
+    "declareTaskDuplicate(",
+    "transferTaskAuthority(",
+    "claimTask(",
+    "INSERT INTO",
+    "UPDATE ",
+    "DELETE FROM",
+    "CREATE TABLE",
+    "DROP ",
+    "new Database",
+    "setInterval",
+    "new Scheduler(",
+    "acquireSessionAuthority",
+  ]) {
+    expect(proj.includes(forbidden), `open-work.ts memuat ${forbidden}`).toBe(false)
+  }
+  // Sumber baca kanonik eksplisit + tidak ada jalur tulis sessions.db.
+  expect(proj).toContain("listUnfinishedWork")
+  expect(proj).toContain("listTaskTransfers")
+  expect(proj).toContain("listTaskMerges")
+  expect(proj).toContain("readSessionMetaRows")
+  // Kemiripan judul hanya PENANDA — guard kata kunci menandakan itu eksplisit.
+  expect(proj).toContain("UNPROVEN")
+})
+
 test("[ARCHITECTURE-GUARD] P2.10: terminal cannot exist without durable intent", () => {
   const verification = codeOnly(readProd("src/session/verification.ts"))
   expect(verification).toContain("verification: refusing execution without durable EffectIntent")
@@ -1070,7 +1151,7 @@ test("[ARCHITECTURE-GUARD] P2.11: child presentation cannot leak child context",
   const reducer = codeOnly(readProd("src/presentation/reducer.ts"))
   const caseStart = reducer.indexOf('case "verification.observed"')
   expect(caseStart).toBeGreaterThan(-1)
-  const caseEnd = reducer.indexOf("case \"approval.requested\"", caseStart)
+  const caseEnd = reducer.indexOf('case "approval.requested"', caseStart)
   expect(caseEnd).toBeGreaterThan(caseStart)
   expect(reducer.slice(caseStart, caseEnd).includes("finalText")).toBe(false)
 })
@@ -1106,12 +1187,17 @@ test("[ARCHITECTURE-GUARD] P2.11: reconstructed terminal cannot appear observed"
   const bridgeStart = setup.indexOf("export function toPresentationEvent")
   expect(bridgeStart).toBeGreaterThan(-1)
   const rest = setup.slice(bridgeStart)
-  const nextExport = rest.slice(30).search(/\nexport (function|const|async function|interface|type) /)
+  const nextExport = rest
+    .slice(30)
+    .search(/\nexport (function|const|async function|interface|type) /)
   const bridge = nextExport === -1 ? rest : rest.slice(0, 30 + nextExport)
   expect(bridge.includes("provenance")).toBe(false)
   for (const file of ["src/ui/tui/transcript.ts", "src/ui/assistant/simple.ts"]) {
     const code = codeOnly(readProd(file))
-    expect(code.includes("[reconstructed]") || code.includes('provenance === "reconstructed"'), file).toBe(true)
+    expect(
+      code.includes("[reconstructed]") || code.includes('provenance === "reconstructed"'),
+      file,
+    ).toBe(true)
     expect(code.includes("[replay]") || code.includes('provenance === "replay"'), file).toBe(true)
   }
 })
@@ -1119,11 +1205,7 @@ test("[ARCHITECTURE-GUARD] P2.11: reconstructed terminal cannot appear observed"
 test("[ARCHITECTURE-GUARD] P2.11: no second canonical presentation persistence", () => {
   // Satu-satunya writer durable observasi = appendPresentationEvents.
   // Tak ada CREATE TABLE / INSERT / bun:sqlite di permukaan display/machine.
-  for (const file of [
-    ...presentationFiles(),
-    ...uiFiles(),
-    ...machineProjectors(),
-  ]) {
+  for (const file of [...presentationFiles(), ...uiFiles(), ...machineProjectors()]) {
     const code = codeOnly(readProd(file))
     for (const forbidden of [
       /CREATE\s+TABLE/i,

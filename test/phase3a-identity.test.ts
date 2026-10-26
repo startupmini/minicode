@@ -242,9 +242,9 @@ test("G. identity is session-scoped: the same id can exist in two sessions", asy
   expect(store.getTask(S2, "t1")?.title).toBe("A")
 
   // an id valid in S1 must not resolve in S2 if absent there
-  expect(() => synchronizeIdentities(store, S2, [{ taskId: "t9", title: "x", status: "pending" }])).toThrow(
-    TaskError,
-  )
+  expect(() =>
+    synchronizeIdentities(store, S2, [{ taskId: "t9", title: "x", status: "pending" }]),
+  ).toThrow(TaskError)
   // mutating S1 leaves S2 alone
   synchronizeIdentities(store, S1, [{ taskId: "t1", title: "A berubah", status: "pending" }])
   expect(store.getTask(S1, "t1")?.title).toBe("A berubah")
@@ -273,15 +273,15 @@ test("H. an item without an id creates a NEW task and never renumbers an existin
   expect(store.listTasks(S1)).toHaveLength(4)
 
   // re-running with an explicit id addresses the new task instead of adding one
-  const again = synchronizeIdentities(store, S1, [{ taskId: "t4", title: "tanpa id", status: "completed" }])
+  const again = synchronizeIdentities(store, S1, [
+    { taskId: "t4", title: "tanpa id", status: "completed" },
+  ])
   expect(again.created).toHaveLength(0)
   expect(store.listTasks(S1)).toHaveLength(4)
   expect(store.getTask(S1, "t4")?.status).toBe("COMPLETED")
 })
 
 test("H2. blockedReason survives only for BLOCKED", async () => {
-  const dir = await ownedDir()
-  const store = new TaskStore(dir)
   // a non-blocked item carrying a stray reason drops it
   const plan = planTaskIdentities([{ title: "x", status: "pending", blockedReason: "alas" }])
   expect(plan.entries[0]?.blockedReason).toBeNull()

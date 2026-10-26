@@ -30,9 +30,7 @@ terbukti.
   canonical state; raw ledger TUI and the rollback flag were removed in Phase 8.
 - `rebuildFromDurable()` is production-wired from the durable presentation event
   table, with child-session event persistence and interrupted-state recovery.
-- The pack size guard is 2.25 MiB: six required audit artifacts add about 80 KB;
-  the guard still rejects forbidden runtime/test content and accidental dependency
-  inclusion.
+- The pack size guard is 3.5 MiB (re-baselined from 2.25 MiB with owner approval in Quality Remediation Stage 8.1, because the runtime payload itself grew past the old 2.25 MiB line — see `scripts/pack-budget.ts` for the measurement basis): six required audit artifacts add about 80 KB; the guard still rejects forbidden runtime/test content and accidental dependency inclusion.
 - OAP-001, OAP-002, OAP-004–OAP-010, OAP-012, and OAP-013 remain carried forward;
   Phase 2 closes the state/receipt/replay slice, not renderer migration.
 

@@ -95,7 +95,10 @@ if (role === "cycle") {
   let release
   const held = new Promise((res) => { release = res })
   const cap = setTimeout(() => release(), 4000)
-  const sc = new Scheduler(SESS, { store, runTurn: async () => { await held; return OK }, instruction: "x" })
+  // [P13.3 Stage C] Kontensi lease, bukan kebijakan retry: gate "terbukti
+  // read-only" menjaga winner benar-benar reconcile + dispatch turn yang ditahan,
+  // sehingga lease tetap hidup selama jendela pembuktian.
+  const sc = new Scheduler(SESS, { store, runTurn: async () => { await held; return OK }, instruction: "x", continuity: { evidence: () => ({ resume: true, missing: [], admission: "ALLOW", retrySafety: "READ_ONLY_TOOL_SCOPE" }) } })
   let started = "ok"
   try { sc.start() } catch (e) { started = String(e && e.message) }
   if (started !== "ok") {
@@ -376,7 +379,10 @@ describe("§4 renewal vs acquisition across processes", () => {
     expect(ra.finalHeld).toBe(true)
 
     // A clean release is an immediate handover - no expiry wait.
-    expect({ row: a.getSessionAuthority(S), after: parse((await collect(spawn("acquire", "-", "-", "tok-C"))).out).result }).toEqual({
+    expect({
+      row: a.getSessionAuthority(S),
+      after: parse((await collect(spawn("acquire", "-", "-", "tok-C"))).out).result,
+    }).toEqual({
       row: null,
       after: "ACQUIRED",
     })

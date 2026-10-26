@@ -88,7 +88,7 @@ export class ChildSupervisor {
    */
   markUnknown(childId: string): ChildRecord | null {
     const rec = this.#children.get(childId)
-    if (!rec || rec.status !== "running") return null
+    if (rec?.status !== "running") return null
     rec.status = "lost"
     rec.endedAt = this.#deps.now?.() ?? Date.now()
     return rec

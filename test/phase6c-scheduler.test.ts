@@ -28,6 +28,7 @@ import {
   resetSessionOwnershipForTests,
 } from "../src/task/session-ownership.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
+import { PROVEN_READ_ONLY_CONTINUITY } from "./helpers/continuity.ts"
 
 let dir: string
 let store: TaskStore
@@ -110,6 +111,7 @@ function makeScheduler(opts: { ok?: boolean; onEvent?: (e: SchedulerEvent) => vo
     store,
     runTurn: bridge.runTurn,
     instruction: "do the work",
+    continuity: PROVEN_READ_ONLY_CONTINUITY,
     onEvent: (e) => {
       events.push(e)
       opts.onEvent?.(e)
@@ -324,6 +326,7 @@ describe("selection", () => {
     // [PHASE 6I] An ActiveClaim now carries the execution generation the claim
     // created. The test pokes the field directly, so it must supply a real one.
     // [PHASE 6Q] and the session incarnation the claim was made under.
+    // biome-ignore lint/complexity/useLiteralKeys: `claim` private di Scheduler - di-poke via computed key (sengaja, bukan titik akses)
     sc["claim"] = {
       taskId: t.id,
       claimRevision: t.revision,
@@ -886,6 +889,9 @@ describe("reconciliation", () => {
       store: race,
       runTurn: () => ({ kind: "returned", ok: true }),
       instruction: "x",
+      // Gate aktif supaya jalur yang diuji benar-benar predikat revision
+      // TaskStore (REJECTED_STALE), bukan berhenti lebih awal di HOLD.
+      continuity: PROVEN_READ_ONLY_CONTINUITY,
     })
     sc.start()
     expect(sc.reconcile()).toEqual([])

@@ -27,7 +27,7 @@ const mode = process.argv[2] ?? ""
 const WS = process.argv[3] ?? process.cwd()
 
 const report = (o: Record<string, unknown>): void => {
-  process.stdout.write("__REPORT__" + JSON.stringify(o) + "\n")
+  process.stdout.write(`__REPORT__${JSON.stringify(o)}\n`)
 }
 
 // ─── durable readers ────────────────────────────────────────────────────────
@@ -48,11 +48,11 @@ if (mode === "lease") {
   // an empty string made `JSON.parse("")` throw in the parent, which then
   // reported "no lease row" - indistinguishable from a probe crash.
   const row = store().getSessionAuthority(process.argv[4]!)
-  process.stdout.write(JSON.stringify(row ?? null) + "\n")
+  process.stdout.write(`${JSON.stringify(row ?? null)}\n`)
   process.exit(0)
 }
 if (mode === "incarnation") {
-  process.stdout.write(String(store().getSessionIncarnation(process.argv[4]!)) + "\n")
+  process.stdout.write(`${String(store().getSessionIncarnation(process.argv[4]!))}\n`)
   process.exit(0)
 }
 if (mode === "files") {
@@ -68,14 +68,14 @@ if (mode === "files") {
     }
     return out
   }
-  process.stdout.write(String(walk(WS).length) + "\n")
+  process.stdout.write(`${String(walk(WS).length)}\n`)
   process.exit(0)
 }
 
 // ─── the operation ──────────────────────────────────────────────────────────
 
 if (mode !== "op") {
-  process.stderr.write("unknown probe mode: " + mode + "\n")
+  process.stderr.write(`unknown probe mode: ${mode}\n`)
   process.exit(2)
 }
 
@@ -703,7 +703,7 @@ async function main(): Promise<void> {
     return
   }
 
-  report({ ok: false, error: "unknown op: " + op })
+  report({ ok: false, error: `unknown op: ${op}` })
   process.exit(3)
 }
 

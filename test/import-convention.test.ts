@@ -31,6 +31,44 @@ function trackedFiles(pattern: RegExp): string[] {
 const tsFiles = trackedFiles(/\.ts$/)
 const textFiles = trackedFiles(/\.(ts|md|json|yml|yaml)$/)
 
+// ── Konvensi import RELATIF: ekstensi wajib eksplisit ──────────────────────
+//
+// Gate distribusi (`scripts/pack-check.ts`) menelusuri graf import dari
+// entry point dan setiap target harus ADA di tarball. Resolver gate (dan
+// `bun`) menerima `./x` tanpa ekstensi, jadi runtime tetap jalan; tapi graf
+// paket jadi tak bisa di-resolve → gate gagal dengan "graf import lengkap".
+//
+// Aturan repo: import relatif SELALU menulis ekstensi (778 dari 786 tmpat
+// sebelum perbaikan ini). Tanpa penjaga, kelas kesalahan ini bisa masuk lagi
+// diam-diam — dan ia baru terasa saat gate packaging, jauh dari sumbernya.
+describe("konvensi import relatif", () => {
+  const codeFiles = trackedFiles(/^(src|cli)\/.*\.ts$/)
+
+  test("ada file untuk diperiksa (sanity)", () => {
+    expect(codeFiles.length).toBeGreaterThan(50)
+  })
+
+  test("setiap import relatif di src/ + cli/ membawa ekstensi eksplisit", () => {
+    const offenders: string[] = []
+    // Cakup import statis, re-export, dan import dinamis.
+    const SPEC =
+      /(?:^|\n)\s*(?:import|export)[\s\S]*?from\s+["'](\.[^"']+)["']|import\(\s*["'](\.[^"']+)["']\s*\)/g
+    for (const f of codeFiles) {
+      const src = readFileSync(join(repoRoot, f), "utf8")
+      SPEC.lastIndex = 0
+      let m: RegExpExecArray | null = SPEC.exec(src)
+      while (m !== null) {
+        const spec = m[1] ?? m[2]!
+        if (!/\.(ts|tsx|json|css|js|md)$/.test(spec)) {
+          offenders.push(`${f}: "${spec}"`)
+        }
+        m = SPEC.exec(src)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+})
+
 describe("konvensi import kernel", () => {
   test("ada file untuk diperiksa (sanity)", () => {
     expect(tsFiles.length).toBeGreaterThan(50)

@@ -65,7 +65,9 @@ describe("§1 enablement contract", () => {
     expect(src).not.toMatch(/process\.env\.[A-Za-z_]*SCHEDULER/)
     expect(src).not.toMatch(/MINICODE_SCHEDULER/)
     // The generic matcher is untouched.
-    expect(readSrc("cli/args.ts")).toContain("token.startsWith(`${name}=`)")
+    // String ini memuat TEKS template literal dari sumber yang diuji —
+    // placeholder-nya di-escape supaya matcher-nya tetap sama.
+    expect(readSrc("cli/args.ts")).toContain(`token.startsWith(\`\${name}=\`)`)
   })
 
   test("the four canonical forms resolve exactly as the contract requires", () => {

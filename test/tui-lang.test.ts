@@ -254,9 +254,7 @@ describe("P03-B: TUI stale refusal", () => {
       await tty.send(KEY.enter)
       await tty.waitForOutput((o) => o.includes("jawaban-satu"), 20_000)
       expect(provider.requestCount()).toBe(1)
-      await waitForState("turn 1 durable", () =>
-        contents(cwd, sid).includes("jawaban-satu"),
-      )
+      await waitForState("turn 1 durable", () => contents(cwd, sid).includes("jawaban-satu"))
       // Pesaing take-over di antara turn (epoch 0→1; baris pesan tak tersentuh).
       const other = acquireSessionWriter({
         sessionId: sid,

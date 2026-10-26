@@ -26,6 +26,7 @@ import type { Task } from "../src/task/model.ts"
 import { Scheduler } from "../src/task/scheduler.ts"
 import { resetSessionOwnershipForTests } from "../src/task/session-ownership.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
+import { PROVEN_READ_ONLY_CONTINUITY } from "./helpers/continuity.ts"
 
 let dir: string
 let store: TaskStore
@@ -582,7 +583,12 @@ describe("F. the adapter preserves 6P ownership and 6Q lifetime", () => {
       }),
       baseConfig(async () => f.session),
     )
-    const sc = new Scheduler(S, { store, runTurn, instruction: "DO IT" })
+    const sc = new Scheduler(S, {
+      store,
+      runTurn,
+      instruction: "DO IT",
+      continuity: PROVEN_READ_ONLY_CONTINUITY,
+    })
     sc.start()
     const res = await sc.cycle()
     // no wedge

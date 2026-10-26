@@ -32,6 +32,7 @@ import {
   resetSessionOwnershipForTests,
 } from "../src/task/session-ownership.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
+import { PROVEN_READ_ONLY_CONTINUITY } from "./helpers/continuity.ts"
 
 const P = { origin: "model", source: "6k" } as const
 const S = "6k"
@@ -81,7 +82,7 @@ function insertLegacyRow(
        blocked_reason, verification_json, evidence_json, acceptance_json, provenance_json,
        created_at, updated_at, revision)
      VALUES (?, ?, ?, ?, ?, NULL, '[]', NULL, NULL, '[]', NULL, NULL, '2026-01-01', '2026-01-01', ?)`,
-  ).run(sessionId, taskId, "legacy " + taskId, status, order, revision)
+  ).run(sessionId, taskId, `legacy ${taskId}`, status, order, revision)
   db.close()
 }
 
@@ -563,6 +564,7 @@ describe("D5. active-claim reconciliation exemption", () => {
     expect(store.getExecutionLineage(S, t.id)).toEqual({ execGeneration: 2, attemptGeneration: 1 })
 
     // (A) OWNER, holding the claim -> protected.
+    // biome-ignore lint/complexity/useLiteralKeys: `claim` private di Scheduler - di-poke via computed key (sengaja, bukan titik akses)
     sc["claim"] = {
       taskId: t.id,
       claimRevision: store.getTask(S, t.id)!.revision,
@@ -572,12 +574,18 @@ describe("D5. active-claim reconciliation exemption", () => {
     }
     expect(sc.reconcile()).toEqual([])
     expect(store.getTask(S, t.id)!.status).toBe("IN_PROGRESS")
+    // biome-ignore lint/complexity/useLiteralKeys: `claim` private di Scheduler - di-poke via computed key (sengaja, bukan titik akses)
     sc["claim"] = null
 
     // (B) FRESH instance -> the claim is genuinely stranded, so recovery is correct.
     await sc.stop()
     resetSessionOwnershipForTests()
-    const fresh = new Scheduler(S, { store, runTurn: () => OK, instruction: "x" })
+    const fresh = new Scheduler(S, {
+      store,
+      runTurn: () => OK,
+      instruction: "x",
+      continuity: PROVEN_READ_ONLY_CONTINUITY,
+    })
     fresh.start()
     expect(fresh.reconcile()).toEqual([t.id])
     expect(store.getTask(S, t.id)!.status).toBe("PENDING")
@@ -605,7 +613,13 @@ describe("D5. active-claim reconciliation exemption", () => {
     // With the exemption present the OWNER is protected...
     const sc = new Scheduler(S, { store, runTurn: () => OK, instruction: "x" })
     sc.start()
-    sc["claim"] = { taskId: t.id, claimRevision: rev, execGeneration: 1, sessionIncarnation: store.getSessionIncarnation(S) }
+    // biome-ignore lint/complexity/useLiteralKeys: `claim` private di Scheduler - di-poke via computed key (sengaja, bukan titik akses)
+    sc["claim"] = {
+      taskId: t.id,
+      claimRevision: rev,
+      execGeneration: 1,
+      sessionIncarnation: store.getSessionIncarnation(S),
+    }
     expect(sc.reconcile()).toEqual([])
     expect(store.getTask(S, t.id)!.status).toBe("IN_PROGRESS")
     await sc.stop()

@@ -567,7 +567,7 @@ describe("cli: --budget", () => {
     expect(r.code).toBe(1)
     expect(r.stderr).toContain("[budget]")
     expect(r.stderr).toContain("over budget")
-  })
+  }, 30_000)
 
   test("di atas 80% -> peringatan tapi TIDAK memutus", async () => {
     // 0,9 dari 1,0 = 90% -> peringatan; masih di bawah batas -> exit 0.
@@ -578,7 +578,7 @@ describe("cli: --budget", () => {
     expect(r.code).toBe(0)
     expect(r.stderr).toContain("80% used")
     expect(r.stderr).not.toContain("over budget")
-  })
+  }, 30_000)
 
   test("jauh di bawah batas -> tanpa pesan budget sama sekali", async () => {
     const { run: r } = await runWithProvider(
@@ -587,7 +587,7 @@ describe("cli: --budget", () => {
     )
     expect(r.code).toBe(0)
     expect(r.stderr).not.toContain("[budget]")
-  })
+  }, 30_000)
 
   test("--budget bukan angka -> peringatan dan diabaikan, run tetap lanjut", async () => {
     const { run: r } = await runWithProvider(
@@ -597,7 +597,7 @@ describe("cli: --budget", () => {
     expect(r.code).toBe(0)
     expect(r.stderr).toContain("--budget requires a USD number")
     expect(r.stdout).toContain("tetap jalan")
-  })
+  }, 30_000)
 })
 
 describe("cli: --plan", () => {

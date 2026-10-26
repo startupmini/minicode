@@ -16,6 +16,7 @@ import type { Task } from "../src/task/model.ts"
 import { type ExecutionObservation, Scheduler, type SchedulerEvent } from "../src/task/scheduler.ts"
 import { resetSessionOwnershipForTests } from "../src/task/session-ownership.ts"
 import { type AttemptRecordOutcome, resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
+import { PROVEN_READ_ONLY_CONTINUITY } from "./helpers/continuity.ts"
 
 let dir: string
 let store: TaskStore
@@ -46,7 +47,7 @@ const claim = (t: Task, session = S) => {
 }
 const mk = (
   runTurn: (w: { taskId: string }) => Promise<ExecutionObservation> | ExecutionObservation,
-) => new Scheduler(S, { store, runTurn, instruction: "x" })
+) => new Scheduler(S, { store, runTurn, instruction: "x", continuity: PROVEN_READ_ONLY_CONTINUITY })
 
 // ═══ A. F2 CORE: the wedge ══════════════════════════════════════════════════
 

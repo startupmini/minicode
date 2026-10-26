@@ -250,7 +250,7 @@ export function friendlyError(raw: string): FriendlyError {
   if (lower.includes("budget")) return { message: t("err.budget"), fix: t("err.budgetFix") }
   if (lower.includes("busy")) return { message: t("err.busy"), fix: t("err.busyFix") }
   if (lower.includes("aborted")) return { message: t("err.aborted") }
-  const { detail } = extractProviderDetail(raw)
+  const { detail } = extractProviderDetail(redactSecrets(raw))
   // detail sudah sanitize via firstSentence; redact tak menambah ANSI, tapi
   // bungkus lagi agar idempoten bila pemanggil mengirim mentah di masa depan.
   if (detail) return { message: sanitizeAnsiLine(redactSecrets(detail)) }
@@ -261,4 +261,42 @@ export function friendlyError(raw: string): FriendlyError {
 /** Satu baris siap tampil: pesan + saran. Dipakai renderer TUI & one-shot. */
 export function formatFriendly(e: FriendlyError): string {
   return e.fix ? `${e.message}\n  → ${e.fix}` : e.message
+}
+
+/**
+ * Error apa pun → satu pesan siap tampil. KANONIK untuk seluruh UI
+ * (TUI fullscreen, wizard, one-shot).
+ *
+ * Semua permukaan harus lewat sini: pesan error adalah TEKS TAK
+ * DIPERCAYA (body provider, proxy, header Authorization) — `e.message` mentah
+ * pernah menampilkan bearer token dan dump JSON mentah ke layar.
+ *
+ * Bentuk yang dikenali:
+ * - ProviderError → punya `category` (peta formal → pesan actionable).
+ * - AgentError    → punya `kind` (timeout/aborted/budget/dst).
+ * - Error biasa   → pesannya (meredaksi + mensanitasi + memotong).
+ * - Non-Error     → tetap LEWAT jalur redaksi; `String(e)` mentah bisa
+ *   memuat credential. Informasi yang aman tetap dipertahankan — error tak
+ *   diganti jadi teks generik.
+ */
+export function formatError(e: unknown): string {
+  const obj = e as { kind?: string; category?: string; message?: string } | undefined
+  // ProviderError punya `category`; AgentError punya `kind`.
+  if (obj?.category) return formatFriendly(friendlyFromCategory(obj.category, obj.message ?? ""))
+  if (obj?.kind) {
+    const friendly = friendlyError(`${obj.kind}: ${obj.message ?? ""}`)
+    return formatFriendly(friendly)
+  }
+  if (e instanceof Error) {
+    // Error tanpa pesan → pakai nama kelasnya ("Error"/"TypeError") supaya
+    // tetap ada jejak di layar, bukan baris kosong tanpa konteks.
+    return formatFriendly(friendlyError(e.message.trim() ? e.message : String(e)))
+  }
+  // Objek non-Error yang tetap punya `message` (bentuk yang dipakai sebagian
+  // lib pihak ketiga): pakai pesannya, bukan "[object Object]".
+  if (typeof obj?.message === "string" && obj.message.trim()) {
+    return formatFriendly(friendlyError(obj.message))
+  }
+  // Sisanya (string yang dilempar, objek tanpa message): TETAP lewat redaksi.
+  return formatFriendly(friendlyError(String(e)))
 }

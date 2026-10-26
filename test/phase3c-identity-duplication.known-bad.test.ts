@@ -73,7 +73,8 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { synchronizeIdentities } from "../src/task/identity.ts"
-import { resetTaskStoreHandles, type Task, TaskStore } from "../src/task/store.ts"
+import type { Task } from "../src/task/model.ts"
+import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 
 const owned: string[] = []
 
@@ -130,7 +131,10 @@ test.skipIf(!process.env.MINICODE_KNOWN_BAD_EVIDENCE)(
     // `listTasks` returns `(task_order, task_id)` order - see the exact observed
     // list asserted below.
     const byTitle = (title: string) => after.filter((t) => t.title === title)
-    const idsOf = (title: string) => byTitle(title).map((t) => t.id).sort()
+    const idsOf = (title: string) =>
+      byTitle(title)
+        .map((t) => t.id)
+        .sort()
     expect(idsOf("A")).toEqual(["t1", "t5"])
     expect(idsOf("B")).toEqual(["t2", "t6"])
     expect(idsOf("C")).toEqual(["t3", "t4"])

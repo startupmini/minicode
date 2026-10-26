@@ -92,7 +92,7 @@ terminal, sedangkan linear/TUI me-render semantic block yang sama pada TTY dan
 mempertahankan source sanitized pada non-TTY. `exec --json`/ACP tidak melewati
 renderer ini.
 Tahap I — view murni vs controller: `src/ui/screens/` (props + callback,
-tanpa IO) digerakkan `cli/` (`repl.ts`, `commands.ts`, `wizard.ts`,
+tanpa IO) digerakkan `cli/` (`tui.ts`, `commands.ts`, `wizard.ts`,
 `provider/model-manager.ts`, `approval/prompt.ts` via DI `ask`,
 `setupWhenEmpty`, `setSubAgentSessionFactory`).
 
@@ -135,7 +135,7 @@ tetap footer memakai `contextTokens` (estimasi jendela), sedangkan `/status`
 memisahkan Context/Input/Output/Total/Cost/Budget di
 `docs/CONTROL-PLANE-MAP.md`.
 
-## 3. State machine REPL (tidak eksplisit)
+## 3. State machine TUI (tidak eksplisit)
 
 Tidak ada `enum` state; fase disimpulkan: `abort !== null` (busy),
 `turnOn/textOn` (painter), `regionOn/detached` (chrome), plus ~14 flag

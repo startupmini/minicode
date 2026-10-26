@@ -8,6 +8,7 @@ import { createRateLimiter } from "../src/policy/ratelimit.ts"
 import { resolveSandbox, sandboxRefusalReason } from "../src/policy/sandbox-policy.ts"
 import { budgetStatus } from "../src/policy/usage.ts"
 import { resolveRuntimeMode } from "../src/runtime/production-execution.ts"
+import { AdoptionRefusedError, parseAdoptTaskArg } from "../src/session/cross-session-adoption.ts"
 import { mintSessionId } from "../src/session/identity.ts"
 import { attachMutationJournal } from "../src/session/journal.ts"
 import { findSkill, renderSkill } from "../src/skills/loader.ts"
@@ -49,6 +50,7 @@ Usage:
   minicode daemon <cmd>         # daemon host / status / stop / issue / sessions
   echo "prompt" | minicode        # via pipe
   minicode sync                   # refresh models from all providers
+  minicode openwork               # cross-session unfinished work (P14, read-only)
 Options:
   -h, --help          show help
   -v, --version       show version
@@ -56,6 +58,9 @@ Options:
   --cwd <dir>         workspace root (default .)
   --allow-local-config trust .minicode/config.json in workspace (default: ignore)
   --resume <id>       resume session id
+  --adopt-task <source>/<taskId>
+                      P14: adopt one unfinished task from another session into this
+                      session (explicit authority; scheduler is NOT started)
   --model <name>      override model (provider::model)
   --provider <id>     force provider id
   --session <id>      session id (default random)
@@ -197,6 +202,7 @@ if (args.includes("-h") || args.includes("--help")) {
           "minicode acp",
           "minicode daemon <start|status|stop|issue|sessions>",
           "minicode providers|models|sync|config|mcp|skills|sessions|stats|memory",
+          "minicode openwork — cross-session unfinished work portfolio (P14)",
         ],
         options: [
           { flag: "--version", desc: "show version" },
@@ -207,6 +213,13 @@ if (args.includes("-h") || args.includes("--help")) {
             desc: "trust .minicode/config.json in workspace (default: ignore)",
           },
           { flag: "--resume <id>", desc: "resume session id" },
+          {
+            flag: "--adopt-task <source>/<taskId>",
+            desc:
+              "P14: explicitly adopt ONE unfinished task from another session into this " +
+              "session (workspace-local; requires both sessions' writer authority; " +
+              "does not start the scheduler)",
+          },
           {
             flag: "--enable-scheduler",
             // [PHASE 6AB] REWRITTEN. 6AA recorded this text as the single most
@@ -310,6 +323,17 @@ const resumeId = getArg("--resume")
 // tunggal milik resolveSessionIdentity (SATU aturan sanitizer, tak ada drift
 // 64-vs-60 di call-site). bootId volatil hanya untuk korelasi diagnostik.
 const sessionFlag = getArg("--session")
+// [P14] Adopsi task eksplisit. Format salah = tolak SEBELUM sesi/lease dibuat;
+// jangan biarkan operator mengira adopsi berjalan padahal argumennya diabaikan.
+const adoptTaskRaw = getArg("--adopt-task")
+const adoptTaskParsed = adoptTaskRaw === undefined ? null : parseAdoptTaskArg(adoptTaskRaw)
+if (adoptTaskRaw !== undefined && adoptTaskParsed === null) {
+  console.error(
+    `[adopt] invalid --adopt-task value: "${adoptTaskRaw}" (expected <source-session>/<taskId>, task id like t1)`,
+  )
+  process.exit(1)
+}
+const adoptTask = adoptTaskParsed ?? undefined
 const bootId = mintSessionId()
 const modelOverride = getArg("--model")
 const providerOverride = getArg("--provider")
@@ -472,6 +496,7 @@ try {
     sessionId: sessionFlag ?? "",
     resumeId,
     bootId,
+    ...(adoptTask ? { adoptTask } : {}),
     modelOverride,
     providerOverride,
     prompt,
@@ -504,6 +529,16 @@ try {
   // persis seperti dulu (provider-layer tak lagi exit sendiri agar
   // exec --json bisa memasang envelope mesinnya — lihat exec.ts).
   if (e instanceof NoProviderError) {
+    console.error(e.message)
+    process.exit(1)
+  }
+  // [P14] Refusal adopsi adalah keputusan kebijakan, bukan crash: tampilkan
+  // satu baris, bukan stack trace. Detail sudah memuat alasan yang bisa
+  // ditindaklanjuti operator (stale, busy, conflict, unresolved relation).
+  // DIGABUNG ke cabang NoProvider di atas (satu writer untuk kelas
+  // "setup menolak, bukan gagal"): menambah penulis kedua hanya untuk satu
+  // format pesan menaikkan inventaris writer tanpa menambah informasi.
+  if (e instanceof AdoptionRefusedError) {
     console.error(e.message)
     process.exit(1)
   }

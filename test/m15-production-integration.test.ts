@@ -63,6 +63,11 @@ function compose(dir: string, over: Record<string, unknown> = {}): RuntimeCompos
     sessionId: "m15",
     workspaceCwd: dir,
     journalPath: join(dir, "journal.db"),
+    // [P13.3] Gerbang admission per jenis kerja fakta lapisan task: di skenario
+    // tes ini scheduler + TaskStore dianggap terpasang (skenario "scheduler
+    // dispatch"), jadi fakta-nya dinyatakan. Tanpa ini, kerja "background"
+    // ditolak admission — dan itu memang perilaku yang benar (fail-closed).
+    taskLayerFacts: () => ({ schedulerAttached: true, storeOpen: true }),
     ...(over as Record<string, never>),
   })
 }
@@ -205,9 +210,7 @@ test("P3-negatif: matcher planValidator menolak penggunaan tak-terverifikasi", (
   ].join("\n")
   expect(isVerifiedPlanValidatorUse(good)).toBe(true)
   // Method stateful pada instance yang sama → tolak.
-  expect(
-    isVerifiedPlanValidatorUse(`${good}\nplanValidator.recover("e", {}, {}, 0);`),
-  ).toBe(false)
+  expect(isVerifiedPlanValidatorUse(`${good}\nplanValidator.recover("e", {}, {}, 0);`)).toBe(false)
   // Konstruksi kedua (nama lain) → tolak.
   expect(isVerifiedPlanValidatorUse(`${good}\nconst e2 = createRecoveryEngine();`)).toBe(false)
   // Konstruksi dengan argumen (bentuk tak dikenal) → tolak.
@@ -220,9 +223,7 @@ test("P3-negatif: matcher planValidator menolak penggunaan tak-terverifikasi", (
     ),
   ).toBe(false)
   // Konstruksi tanpa pemanggilan (dead instance) → tolak.
-  expect(
-    isVerifiedPlanValidatorUse("const planValidator = createRecoveryEngine()\n"),
-  ).toBe(false)
+  expect(isVerifiedPlanValidatorUse("const planValidator = createRecoveryEngine()\n")).toBe(false)
 })
 
 // ── P4/P5: setiap pekerjaan runtime-owned DIDAFTARKAN untuk drain ────────────
@@ -616,9 +617,7 @@ test("P4-M10-B: maxSteps production turn → RESOURCE_EXCEEDED terminal", async 
     // Kernel benar-benar meng-commit transisi RUNNING→RESOURCE_EXCEEDED
     // (hook onTransition hanya dipanggil pada commit — bukan klaim counter
     // semata).
-    expect(
-      seen.some((e) => e.from === "RUNNING" && e.to === "RESOURCE_EXCEEDED"),
-    ).toBe(true)
+    expect(seen.some((e) => e.from === "RUNNING" && e.to === "RESOURCE_EXCEEDED")).toBe(true)
     // Batas dihormati: 1 sampling + 1 eksekusi tool, tanpa iterasi lanjutan.
     expect(p.requests.length).toBe(1)
     expect(toolRuns).toBe(1)

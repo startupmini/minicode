@@ -53,6 +53,20 @@ function showHelp(text: string, asked: boolean, unknown?: string): never {
   process.exit(asked ? 0 : 2)
 }
 
+/**
+ * Cetak pesan "usage:" ke stderr lalu keluar 2 (salah pakai = exit 2).
+ *
+ * SATU writer untuk semua cabang usage — sebelumnya tiap cabang punya
+ * panggilan stderr sendiri sehingga tiap cabang menambah writer baru dan
+ * menyentuh batas inventaris OAP-008. Pola yang sama dipakai perintah lain
+ * ("kumpulkan, tulis sekali"): output ke stderr tetap persis sama, dan
+ * `never` menjaga alur kontrol (setelahnya unreachable) seperti `process.exit`.
+ */
+function usageError(message: string): never {
+  console.error(message)
+  process.exit(2)
+}
+
 const isHelpFlag = (s: string | undefined): boolean =>
   s === undefined || s === "--help" || s === "-h"
 
@@ -82,8 +96,7 @@ export async function handleConfig(
     const apiKey = getArg("--apiKey")
     const id = getArg("--id")
     if (!baseUrl || !apiKey) {
-      console.error("usage: minicode config add --baseUrl <url> --apiKey <key> [--id <id>]")
-      process.exit(2)
+      usageError("usage: minicode config add --baseUrl <url> --apiKey <key> [--id <id>]")
     }
     const entry = await detectAndSave(baseUrl, apiKey, id, {
       // Default GLOBAL seperti remove/set-key: menulis provider+key ke
@@ -131,8 +144,7 @@ export async function handleConfig(
   } else if (sub === "remove") {
     const id = positionalArg(args, 2)
     if (!id) {
-      console.error("usage: minicode config remove <id> [--global|--local] [--cwd <dir>]")
-      process.exit(2)
+      usageError("usage: minicode config remove <id> [--global|--local] [--cwd <dir>]")
     }
     await removeProvider(id, { global: !args.includes("--local"), cwd: getArg("--cwd") })
     console.log(
@@ -145,13 +157,21 @@ export async function handleConfig(
     // jujur). Config hanya menyimpan referensi `keystore:provider:<id>`.
     const id = positionalArg(args, 2)
     if (!id) {
-      console.error("usage: minicode config set-key <id> [--global|--local] [--cwd <dir>]")
-      process.exit(2)
+      usageError("usage: minicode config set-key <id> [--global|--local] [--cwd <dir>]")
     }
     const { deleteSecret, setSecret } = await import("../../src/lib/keystore.ts")
     const key = `provider:${id}`
     if (sub === "delete-key") {
-      await deleteSecret(key)
+      // deleteSecret fail-closed: false = store tak bisa dibaca/di-parse atau
+      // tak bisa ditulis, jadi key MASIH ADA di berkas. Jangan klaim "Removed"
+      // dalam kasus itu.
+      const removed = await deleteSecret(key)
+      if (!removed) {
+        console.error(
+          "could not remove stored key (keystore unreadable or unwritable — no change made)",
+        )
+        process.exit(1)
+      }
       console.log(
         `${c.green(glyphs.check)} Removed stored key for ${c.bold(sanitizeAnsiLine(id))} — update config apiKey manually (provider stays disabled until re-set)`,
       )
@@ -173,7 +193,7 @@ export async function handleConfig(
     }
     const backend = await setSecret(key, secret)
     if (!backend) {
-      console.error("could not store secret (keystore unavailable and file unwritable)")
+      console.error("could not store secret (keystore unavailable, locked, corrupt, or unwritable)")
       process.exit(1)
     }
     const { loadConfig } = await import("../../src/config.ts")
@@ -200,8 +220,7 @@ export async function handleConfig(
     const baseUrl = getArg("--baseUrl")
     const apiKey = getArg("--apiKey")
     if (!baseUrl || !apiKey) {
-      console.error("usage: minicode config detect --baseUrl <url> --apiKey <key>")
-      process.exit(2)
+      usageError("usage: minicode config detect --baseUrl <url> --apiKey <key]")
     }
     const { detectModels } = await import("../../src/providers/detect.ts")
     const res = await detectModels(baseUrl, apiKey).catch((e) => {
@@ -225,12 +244,11 @@ export async function handleConfig(
       const url = getArg("--url")
       // Dua bentuk transport: stdio (--command) atau Streamable HTTP (--url).
       if (!id || (!command && !url)) {
-        console.error(
+        usageError(
           'usage: minicode config mcp add <id> --command <cmd> --args "<a1,a2>" [--env K=V]\n' +
             "       minicode config mcp add <id> --url <https://…> [--header K=V] [--allow-private]\n" +
             "       [--global|--local]",
         )
-        process.exit(2)
       }
       const env: Record<string, string> = {}
       for (const kv of (getArg("--env") ?? "").split(",")) {
@@ -312,8 +330,7 @@ export async function handleConfig(
     } else if (mcpSub === "remove") {
       const id = positionalArg(args, 3)
       if (!id) {
-        console.error("usage: minicode config mcp remove <id> [--global|--local]")
-        process.exit(2)
+        usageError("usage: minicode config mcp remove <id> [--global|--local]")
       }
       await removeMcpServer(id, { global: !args.includes("--local"), cwd: getArg("--cwd") })
       console.log(
@@ -330,10 +347,9 @@ export async function handleConfig(
       const command = getArg("--command")
       const cmdArgsRaw = getArg("--args") ?? ""
       if (!ext || !command) {
-        console.error(
+        usageError(
           'usage: minicode config lsp add <ext> --command <cmd> [--args "<arg1,arg2>"] [--env K=V] [--global|--local]',
         )
-        process.exit(2)
       }
       const cmdArgs = cmdArgsRaw
         .split(",")
@@ -379,8 +395,7 @@ export async function handleConfig(
     } else if (lspSub === "remove") {
       const ext = positionalArg(args, 3)
       if (!ext) {
-        console.error("usage: minicode config lsp remove <ext> [--global|--local]")
-        process.exit(2)
+        usageError("usage: minicode config lsp remove <ext> [--global|--local]")
       }
       await removeLspServer(ext, { global: !args.includes("--local"), cwd: getArg("--cwd") })
       console.log(

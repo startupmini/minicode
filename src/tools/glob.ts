@@ -46,11 +46,20 @@ export function globToRegExp(glob: string): RegExp {
   esc = esc.replace(/\0BRACE_END\0/g, ")")
   esc = esc.replace(/\*\*/g, "§§")
   // **/ di awal/pola rekursif harus cocok file root juga: **/* sekarang jadi
-  // (.*/)?[^/]*, bukan .*/[^/]* yang butuh slash dan membuat root kosong.
-  esc = esc.replace(/§§\//g, "(.*/)?")
+  // (?:.*/)?[^/]*, bukan .*/[^/]* yang butuh slash dan membuat root kosong.
+  //
+  // Penting: fragmen rekursif HARUS dipasang SESUDAH substitusi `*`→`[^/]*`
+  // dan `?`→`.` di bawah. Kalau dipasang lebih awal, `*` di dalamnya ikut
+  // ditulis ulang jadi `[^/]*` dan `?` (quantifier) jadi `.` — hasilnya
+  // `(.[^/]*\/)`: grup WAJIB yang butuh satu karakter tambahan. Akibatnya
+  // `**/*.ts` tak lagi cocok file di root maupun direktori depth >= 2, dan
+  // `src/**/*.ts` tak lagi cocok file langsung di `src/`. Placeholder yang
+  // sama seperti brace expansion di atas.
+  esc = esc.replace(/§§\//g, "\0REC\0")
   esc = esc.replace(/\*/g, "[^/]*")
   esc = esc.replace(/§§/g, ".*")
   esc = esc.replace(/\?/g, ".")
+  esc = esc.replace(/\0REC\0/g, "(?:.*/)?")
   return new RegExp(`^${esc}$`)
 }
 

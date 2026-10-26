@@ -15,8 +15,8 @@
 // only to those. `READY` is not one of them either — it is a derived answer,
 // not a status.
 
-import type { Diagnostic, GraphNode, RelationAnalysis } from "./graph-validate"
-import type { TaskStatus } from "./model"
+import type { Diagnostic, GraphNode, RelationAnalysis } from "./graph-validate.ts"
+import type { TaskStatus } from "./model.ts"
 
 export type BlockerKind =
   | "DEPENDENCY_UNSATISFIED"
@@ -68,16 +68,10 @@ export type NotReady =
   | { readonly kind: "graph-invalid"; readonly diagnostics: readonly Diagnostic[] }
 
 /** Statuses that can never satisfy a dependency (design lock S7). */
-const TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
-  "CANCELLED",
-  "FAILED",
-])
+const TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>(["CANCELLED", "FAILED"])
 
 /** Statuses from which a task is *eligible* for readiness (design lock S8). */
-const ELIGIBLE_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
-  "PENDING",
-  "BLOCKED",
-])
+const ELIGIBLE_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>(["PENDING", "BLOCKED"])
 
 /**
  * A dependency is satisfied by completion and by nothing else (design lock S7).

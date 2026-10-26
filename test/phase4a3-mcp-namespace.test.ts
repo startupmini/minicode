@@ -36,6 +36,15 @@ async function ownedDir(): Promise<string> {
 }
 const prevId = todoSession.id
 const prevCwd = todoSession.cwd
+/**
+ * Baca `todoSession.cwd` tanpa membawa penyempitan TS: assignment
+ * `todoSession.cwd = undefined` menyempitkan tipe properti menjadi
+ * `undefined` untuk pembacaan berikutnya, padahal nilai runtime-nya sudah
+ * berubah. Accessor ini mengembalikan tipe lebarnya.
+ */
+function readTodoCwd(): string | undefined {
+  return todoSession.cwd
+}
 afterEach(async () => {
   todoSession.id = prevId
   todoSession.cwd = prevCwd
@@ -57,7 +66,7 @@ test("B. a context is created ONCE and reused - the id is a value, not a getter"
   const one = newMcpContextId()
   // serving re-uses the same captured value for every request
   for (let request = 0; request < 50; request++) {
-    expect(one).toBe(new Set([one]).values().next().value)
+    expect(new Set([one]).values().next().value).toBe(one)
   }
   expect(one).toMatch(/^mcp:[0-9a-f-]{36}$/)
 })
@@ -182,7 +191,10 @@ test("J. applyMcpContext installs the namespace on the globals and restores them
   expect(saved.prevId).toBe("prior-session-id")
   expect(saved.prevCwd).toBeUndefined()
   expect(todoSession.id).toBe(ctx)
-  expect(todoSession.cwd).toBe(dir)
+  // `todoSession.cwd` dinarrow ke `undefined` oleh penugasan di atas (TS
+  // menyempitkan properti), padahal nilainya kini `dir`. Baca lewat accessor
+  // bertipe lebar supaya assertion tetap tepat.
+  expect(readTodoCwd()).toBe(dir)
 
   // a second, independent context over the same root replaces it, and the two
   // never both appear

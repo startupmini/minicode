@@ -298,10 +298,14 @@ describe("PLAN — ceiling plan vs read-only", () => {
       return "allow"
     })
     for (const name of OUTSIDE_PLAN) {
-      expect(await h.check(call(`plan-out-${name}`, name, ARGS[name] ?? {}), {} as never)).toBe("deny")
+      expect(await h.check(call(`plan-out-${name}`, name, ARGS[name] ?? {}), {} as never)).toBe(
+        "deny",
+      )
     }
     expect(prompts).toBe(0)
-    expect(await h.check(call("plan-in-read", "read_file", { path: "probe.txt" }), {} as never)).toBe("allow")
+    expect(
+      await h.check(call("plan-in-read", "read_file", { path: "probe.txt" }), {} as never),
+    ).toBe("allow")
   })
 
   test("PLAN × plan & allow-all: ekstra plan tetap ada; bash di luar ceiling", async () => {
@@ -315,9 +319,9 @@ describe("PLAN — ceiling plan vs read-only", () => {
         return "allow"
       })
       for (const name of ["read_file", "todo_write", "submit_result", "delegate_task"]) {
-        expect(await h.check(call(`plan-native-${mode}-${name}`, name, ARGS[name]!), {} as never)).toBe(
-          "allow",
-        )
+        expect(
+          await h.check(call(`plan-native-${mode}-${name}`, name, ARGS[name]!), {} as never),
+        ).toBe("allow")
       }
       expect(prompts).toBe(0)
       // Bash tetap di luar ceiling plan (tidak sampai ke base).
@@ -342,12 +346,22 @@ describe("PLAN — ceiling plan vs read-only", () => {
       const root = tmpRoot(`plan-strict-${mode}`)
       const h = wrap(mode, "PLAN", root)
       // Dalam ceiling read-only: tetap allow walau base allowlist/readonly.
-      expect(await h.check(call(`plan-strict-${mode}-r`, "read_file", { path: "probe.txt" }), {} as never)).toBe(
-        "allow",
-      )
+      expect(
+        await h.check(
+          call(`plan-strict-${mode}-r`, "read_file", { path: "probe.txt" }),
+          {} as never,
+        ),
+      ).toBe("allow")
       // Di luar ceiling: base allowlist akan allow (write_file/write_memory/
       // bash echo) — ceiling read-only menahannya lebih dulu.
-      for (const name of ["write_file", "write_memory", "bash", "todo_write", "submit_result", "delegate_task"]) {
+      for (const name of [
+        "write_file",
+        "write_memory",
+        "bash",
+        "todo_write",
+        "submit_result",
+        "delegate_task",
+      ]) {
         const c = call(`plan-strict-${mode}-${name}`, name, ARGS[name] ?? {})
         expect(await h.check(c, {} as never)).toBe("deny")
         expect(h.describeDenial(c)).toBe("read-only mode")
@@ -433,22 +447,30 @@ describe("runtime mode — WorkMode tidak bocor; ceiling tak bisa dicabut", () =
   test("DISCUSS: ganti PM ke allow-all tetap tidak membuka tulis", async () => {
     const root = tmpRoot("rt-discuss")
     const h = wrap("auto", "DISCUSS", root)
-    expect(await h.check(call("rt-d1", "write_file", { path: "p.txt", content: "x" }), {} as never)).toBe("deny")
+    expect(
+      await h.check(call("rt-d1", "write_file", { path: "p.txt", content: "x" }), {} as never),
+    ).toBe("deny")
     h.__setMode("allow-all")
     expect(h.__getMode()).toBe("allow-all")
-    expect(await h.check(call("rt-d2", "write_file", { path: "p.txt", content: "x" }), {} as never)).toBe("deny")
+    expect(
+      await h.check(call("rt-d2", "write_file", { path: "p.txt", content: "x" }), {} as never),
+    ).toBe("deny")
     expect(await h.check(call("rt-d3", "read_file", { path: "p.txt" }), {} as never)).toBe("allow")
   })
 
   test("PLAN × allowlist → __setMode(auto): seleksi ceiling ikut mode saat ini", async () => {
     const root = tmpRoot("rt-plan")
     const h = wrap("allowlist", "PLAN", root)
-    expect(await h.check(call("rt-p1", "write_file", { path: "p.txt", content: "x" }), {} as never)).toBe("deny")
+    expect(
+      await h.check(call("rt-p1", "write_file", { path: "p.txt", content: "x" }), {} as never),
+    ).toBe("deny")
     expect(await h.check(call("rt-p2", "todo_write", { todos: [] }), {} as never)).toBe("deny")
     h.__setMode("auto")
     // Ceiling plan bertahan (write tetap ditolak), ekstra plan kembali terbuka,
     // dan gerbang base auto tetap berlaku (delegate headless deny).
-    expect(await h.check(call("rt-p3", "write_file", { path: "p.txt", content: "x" }), {} as never)).toBe("deny")
+    expect(
+      await h.check(call("rt-p3", "write_file", { path: "p.txt", content: "x" }), {} as never),
+    ).toBe("deny")
     expect(await h.check(call("rt-p4", "todo_write", { todos: [] }), {} as never)).toBe("allow")
     expect(await h.check(call("rt-p5", "delegate_task", { prompt: "x" }), {} as never)).toBe("deny")
   })
@@ -548,9 +570,9 @@ describe("K-1 always — persistensi repo-lokal tetap utuh melalui wrapper", () 
 describe("createMinicodeSession — wiring S2.1 (handler-layer saja)", () => {
   test("workMode non-EXECUTE + permissionHandler terinjeksi → fail-closed", async () => {
     const base = createPermissionHandler({ mode: "auto", root: tmpRoot("inj") })
-    await expect(createMinicodeSession({ permissionHandler: base, workMode: "PLAN" })).rejects.toThrow(
-      /workMode/,
-    )
+    await expect(
+      createMinicodeSession({ permissionHandler: base, workMode: "PLAN" }),
+    ).rejects.toThrow(/workMode/)
   })
 
   test("workMode PLAN × PM auto: onPermissions melaporkan 'auto', bukan WorkMode", async () => {

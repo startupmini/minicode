@@ -235,16 +235,16 @@ test("D2: skrip sama → stdout dan request provider ekuivalen di kedua mode", a
     { mode: string; stdout: string; requests: Record<string, unknown>[]; code: number },
     { mode: string; stdout: string; requests: Record<string, unknown>[]; code: number },
   ]
-// Perilaku user-visible sama: teks model, exit code, dan prompt user yang
+  // Perilaku user-visible sama: teks model, exit code, dan prompt user yang
   // dikirim. Blok system pertama BOLEH berbeda (memuat working directory tiap
   // ws) — yang dibandingkan adalah pesan user TERAKHIR (prompt itu sendiri).
   expect(owned!.code).toBe(legacy!.code)
   expect(owned!.stdout).toContain("jawaban pasti")
   expect(legacy!.stdout).toContain("jawaban pasti")
   const lastUserMsg = (rs: Record<string, unknown>[]) => {
-    const users = (((rs[0]?.messages as { role: string; content: unknown }[]) ?? []).filter(
-      (m) => m.role === "user",
-    ).map((m) => String(m.content)))
+    const users = ((rs[0]?.messages as { role: string; content: unknown }[]) ?? [])
+      .filter((m) => m.role === "user")
+      .map((m) => String(m.content))
     return users[users.length - 1]
   }
   expect(lastUserMsg(owned!.requests)).toBe("berapa 2+2")
@@ -718,6 +718,11 @@ test("D14: autonomous turn lewat M13 yang sama (admission, bukan bypass)", async
     sessionId: "d14",
     workspaceCwd: dir,
     journalPath: join(dir, "journal.db"),
+    // [P13.3] Admission `background` menuntut TaskStore + scheduler (bukan
+    // kapabilitas yang boleh diandaikan). Fixture ini menguji jalur M13 dengan
+    // store tiruan, jadi lapisan task dinyatakan hadir secara eksplisit —
+    // tanpa ini yang teruji adalah penolakan admission, bukan jalur otonom.
+    taskLayerFacts: () => ({ schedulerAttached: true, storeOpen: true }),
   })
   const runner = createProductionExecutionRunner({ mode: "owned", runtime })
   let runs = 0

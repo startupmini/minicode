@@ -156,7 +156,11 @@ describe("B/C. ordering and reorder", () => {
 // ---------------------------------------------------------------------------
 describe("D/E. relations", () => {
   test("parent: child -> parent, and children are the reverse edge", () => {
-    const g = graphOf([mkTask("t1"), mkTask("t2", { parentId: "t1" }), mkTask("t3", { parentId: "t1" })])
+    const g = graphOf([
+      mkTask("t1"),
+      mkTask("t2", { parentId: "t1" }),
+      mkTask("t3", { parentId: "t1" }),
+    ])
     expect(g.parent("t2")).toBe("t1")
     expect(g.parent("t1")).toBeNull()
     expect(g.children("t1")).toEqual(["t2", "t3"])
@@ -242,14 +246,20 @@ describe("F/G/H/I. invalid references", () => {
   })
 
   test("defensive: duplicate dependency -> INVALID, blocker not duplicated", () => {
-    const g = graphOf([mkTask("t1", { status: "COMPLETED" }), mkTask("t2", { dependsOn: ["t1", "t1"] })])
+    const g = graphOf([
+      mkTask("t1", { status: "COMPLETED" }),
+      mkTask("t2", { dependsOn: ["t1", "t1"] }),
+    ])
     expect(g.validity().valid).toBe(false)
     expect(g.validity().diagnostics.map((d) => d.kind)).toContain("DUPLICATE_DEPENDENCY")
     expect(g.blockers("t2")).toEqual([])
   })
 
   test("defensive: malformed relation -> INVALID MALFORMED_RELATION", () => {
-    const g = graphOf([mkTask("t1", { parentId: "not-an-id" }), mkTask("t2", { dependsOn: ["t0"] })])
+    const g = graphOf([
+      mkTask("t1", { parentId: "not-an-id" }),
+      mkTask("t2", { dependsOn: ["t0"] }),
+    ])
     const kinds = g.validity().diagnostics.map((d) => d.kind)
     expect(kinds).toContain("MALFORMED_RELATION")
     expect(g.validity().valid).toBe(false)
@@ -279,10 +289,7 @@ describe("J/K. cycles", () => {
   })
 
   test("K. dependency cycle -> VALID graph, members permanently blocked", () => {
-    const g = graphOf([
-      mkTask("t1", { dependsOn: ["t2"] }),
-      mkTask("t2", { dependsOn: ["t1"] }),
-    ])
+    const g = graphOf([mkTask("t1", { dependsOn: ["t2"] }), mkTask("t2", { dependsOn: ["t1"] })])
     // The deliberate asymmetry: well-formed but unsatisfiable.
     expect(g.validity().valid).toBe(true)
     expect(g.validity().diagnostics).toEqual([])
@@ -407,11 +414,17 @@ describe("M. readiness matrix", () => {
 
   test("readiness appears only on the NEXT build, never in place", () => {
     // t1 is itself PENDING with no blockers, so it is ready; t2 waits on it.
-    const first = graphOf([mkTask("t1", { status: "PENDING" }), mkTask("t2", { dependsOn: ["t1"] })])
+    const first = graphOf([
+      mkTask("t1", { status: "PENDING" }),
+      mkTask("t2", { dependsOn: ["t1"] }),
+    ])
     expect(first.readyTasks()).toEqual(["t1"])
     expect(first.isReady("t2")).toBe(false)
     // A new snapshot with t1 completed promotes t2 — in the NEW graph only.
-    const second = graphOf([mkTask("t1", { status: "COMPLETED" }), mkTask("t2", { dependsOn: ["t1"] })])
+    const second = graphOf([
+      mkTask("t1", { status: "COMPLETED" }),
+      mkTask("t2", { dependsOn: ["t1"] }),
+    ])
     expect(second.readyTasks()).toEqual(["t2"])
     // The first graph is untouched by anything that happened afterwards.
     expect(first.readyTasks()).toEqual(["t1"])
@@ -477,7 +490,9 @@ describe("N. blocker classification", () => {
 
   test("durable status is never itself a blocker", () => {
     for (const status of ALL_STATUSES) {
-      const g = graphOf([mkTask("t1", { status, blockedReason: status === "BLOCKED" ? "x" : null })])
+      const g = graphOf([
+        mkTask("t1", { status, blockedReason: status === "BLOCKED" ? "x" : null }),
+      ])
       expect(g.blockers("t1")).toEqual([])
     }
   })
@@ -497,7 +512,9 @@ describe("O. NotReady union — FIVE states (Phase 5C.1 amendment)", () => {
     expect(graphOf([mkTask("t1")]).notReadyReason("t1")).toEqual({ kind: "ready" })
     // eligible-not-ready  <- the 5C.1 correction
     expect(
-      graphOf([mkTask("t1", { status: "BLOCKED", blockedReason: "waiting on review" })]).notReadyReason("t1"),
+      graphOf([
+        mkTask("t1", { status: "BLOCKED", blockedReason: "waiting on review" }),
+      ]).notReadyReason("t1"),
     ).toEqual({ kind: "eligible-not-ready", status: "BLOCKED" })
     // not-eligible
     expect(graphOf([mkTask("t1", { status: "COMPLETED" })]).notReadyReason("t1")).toEqual({
@@ -505,8 +522,10 @@ describe("O. NotReady union — FIVE states (Phase 5C.1 amendment)", () => {
       status: "COMPLETED",
     })
     // blocked
-    const blocked = graphOf([mkTask("t1", { status: "PENDING" }), mkTask("t2", { dependsOn: ["t1"] })])
-      .notReadyReason("t2")
+    const blocked = graphOf([
+      mkTask("t1", { status: "PENDING" }),
+      mkTask("t2", { dependsOn: ["t1"] }),
+    ]).notReadyReason("t2")
     expect(blocked?.kind).toBe("blocked")
     // graph-invalid
     const invalid = graphOf([mkTask("t1", { parentId: "t99" })]).notReadyReason("t1")
@@ -550,7 +569,14 @@ describe("O. NotReady union — FIVE states (Phase 5C.1 amendment)", () => {
   })
 
   test("E. every non-eligible, non-READY status is not-eligible", () => {
-    for (const status of ["IN_PROGRESS", "VERIFYING", "RETRYING", "COMPLETED", "CANCELLED", "FAILED"] as const) {
+    for (const status of [
+      "IN_PROGRESS",
+      "VERIFYING",
+      "RETRYING",
+      "COMPLETED",
+      "CANCELLED",
+      "FAILED",
+    ] as const) {
       const g = graphOf([mkTask("t1", { status })])
       expect(g.notReadyReason("t1")).toEqual({ kind: "not-eligible", status })
       expect(g.eligibleTasks()).toEqual([])
@@ -558,7 +584,9 @@ describe("O. NotReady union — FIVE states (Phase 5C.1 amendment)", () => {
   })
 
   test("F. an invalid graph reports graph-invalid, even for a BLOCKED task", () => {
-    const g = graphOf([mkTask("t1", { status: "BLOCKED", blockedReason: "cause", parentId: "t99" })])
+    const g = graphOf([
+      mkTask("t1", { status: "BLOCKED", blockedReason: "cause", parentId: "t99" }),
+    ])
     expect(g.notReadyReason("t1")?.kind).toBe("graph-invalid")
   })
 
@@ -572,11 +600,7 @@ describe("O. NotReady union — FIVE states (Phase 5C.1 amendment)", () => {
       // no blockers
       const clean = graphOf([mkTask("t1", { status, blockedReason })])
       const expectedClean =
-        status === "PENDING"
-          ? "ready"
-          : eligible
-            ? "eligible-not-ready"
-            : "not-eligible"
+        status === "PENDING" ? "ready" : eligible ? "eligible-not-ready" : "not-eligible"
       expect({ status, blockers: 0, kind: clean.notReadyReason("t1")?.kind }).toEqual({
         status,
         blockers: 0,
@@ -615,7 +639,10 @@ describe("O. NotReady union — FIVE states (Phase 5C.1 amendment)", () => {
     expect(present).toBeUndefined()
 
     // a real blocker, and `permanent` is reachable as a boolean
-    const blocked = graphOf([mkTask("t1", { status: "CANCELLED" }), mkTask("t2", { dependsOn: ["t1"] })])
+    const blocked = graphOf([
+      mkTask("t1", { status: "CANCELLED" }),
+      mkTask("t2", { dependsOn: ["t1"] }),
+    ])
     const first = blocked.blockers("t2")[0]
     const kind = first?.kind
     const permanent = first?.permanent
@@ -627,10 +654,13 @@ describe("O. NotReady union — FIVE states (Phase 5C.1 amendment)", () => {
     expect(all.length).toBe(1)
   })
 
-  test("eligible-not-ready is never used for a task that is not eligible", () => {    // The variant must not leak: only BLOCKED can produce it, because only
+  test("eligible-not-ready is never used for a task that is not eligible", () => {
+    // The variant must not leak: only BLOCKED can produce it, because only
     // BLOCKED survives to step 4 of the classification.
     for (const status of ALL_STATUSES) {
-      const g = graphOf([mkTask("t1", { status, blockedReason: status === "BLOCKED" ? "c" : null })])
+      const g = graphOf([
+        mkTask("t1", { status, blockedReason: status === "BLOCKED" ? "c" : null }),
+      ])
       const kind = g.notReadyReason("t1")?.kind
       if (kind === "eligible-not-ready") {
         expect({ status, eligibleListed: g.eligibleTasks() }).toEqual({
@@ -776,7 +806,10 @@ describe("R/S. staleness and immutability", () => {
 describe("T/U/V. omission, cancellation, failure", () => {
   test("T. a retained (D7) task is a normal node that was simply not declared", () => {
     // Omission is not deletion: the task is present and readable.
-    const g = graphOf([mkTask("t1", { status: "PENDING" }), mkTask("t2", { status: "IN_PROGRESS" })])
+    const g = graphOf([
+      mkTask("t1", { status: "PENDING" }),
+      mkTask("t2", { status: "IN_PROGRESS" }),
+    ])
     expect(g.nodeCount).toBe(2)
     expect(g.getNode("t2")?.status).toBe("IN_PROGRESS")
   })
@@ -993,7 +1026,11 @@ describe("INTEGRATION. a real TaskStore snapshot", () => {
     store.patchTask(S, a.id, { title: "a2" })
     const second = graph().sourceMaxRevision
     expect(second).toBeGreaterThan(first)
-    expect(graph().nodes().find((n) => n.id === a.id)?.title).toBe("a2")
+    expect(
+      graph()
+        .nodes()
+        .find((n) => n.id === a.id)?.title,
+    ).toBe("a2")
   })
 
   test("the graph is a pure function of the snapshot it was given", () => {
@@ -1031,10 +1068,25 @@ describe("Z. purity — construction performs no I/O", () => {
 
   test("no filesystem, database, process, randomness or id-allocation references", () => {
     const FORBIDDEN = [
-      "node:fs", "node:path", "node:os", "node:child_process", "node:crypto",
-      "bun:sqlite", "better-sqlite3", "DatabaseSync", "readFileSync", "writeFileSync",
-      "process.", "Math.random", "crypto.", "Date.now", "new Date(",
-      "taskIdFromIndex", "nextId", "fetch(", "require(",
+      "node:fs",
+      "node:path",
+      "node:os",
+      "node:child_process",
+      "node:crypto",
+      "bun:sqlite",
+      "better-sqlite3",
+      "DatabaseSync",
+      "readFileSync",
+      "writeFileSync",
+      "process.",
+      "Math.random",
+      "crypto.",
+      "Date.now",
+      "new Date(",
+      "taskIdFromIndex",
+      "nextId",
+      "fetch(",
+      "require(",
     ]
     for (const name of MODULES) {
       const code = stripComments(readFileSync(join(REPO, "src", "task", name), "utf8"))
@@ -1052,12 +1104,17 @@ describe("Z. purity — construction performs no I/O", () => {
     // Allowed: the model (types + the read-only id validator) and the two
     // sibling modules written in this phase. Anything else — notably
     // ./store, a database, or an execution surface — is a violation.
+    //
+    // Spesifier dinormalisasi tanpa ekstensi: guard ini menjaga IDENTITAS
+    // modul yang boleh diimpor, bukan bentuk penulisan path-nya (konvensi
+    // repo: import relatif selalu eksplisit `.ts`).
     const ALLOWED = new Set(["./model", "./graph-validate", "./readiness"])
+    const moduleOf = (spec: string): string => spec.replace(/\.(ts|tsx|js|mjs)$/, "")
     for (const name of MODULES) {
       const code = stripComments(readFileSync(join(REPO, "src", "task", name), "utf8"))
       const imports = [...code.matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1] as string)
       for (const spec of imports) {
-        expect({ module: name, spec, allowed: ALLOWED.has(spec) }).toEqual({
+        expect({ module: name, spec, allowed: ALLOWED.has(moduleOf(spec)) }).toEqual({
           module: name,
           spec,
           allowed: true,
@@ -1069,8 +1126,19 @@ describe("Z. purity — construction performs no I/O", () => {
   test("the public API exposes no mutation, claim or execution surface", () => {
     const g = graphOf([mkTask("t1")])
     const FORBIDDEN_METHODS = [
-      "addNode", "setParent", "setStatus", "markReady", "claim", "execute",
-      "retry", "cancel", "complete", "delete", "update", "patch", "nextId",
+      "addNode",
+      "setParent",
+      "setStatus",
+      "markReady",
+      "claim",
+      "execute",
+      "retry",
+      "cancel",
+      "complete",
+      "delete",
+      "update",
+      "patch",
+      "nextId",
     ]
     for (const name of FORBIDDEN_METHODS) {
       expect(typeof (g as unknown as Record<string, unknown>)[name]).toBe("undefined")
@@ -1103,7 +1171,9 @@ describe("Z. purity — construction performs no I/O", () => {
     const model = stripComments(readFileSync(join(REPO, "src", "task", "model.ts"), "utf8"))
     const block = /const TASK_STATUSES[^=]*=\s*\[([^\]]*)\]/.exec(model)
     expect(block).not.toBeNull()
-    const declared = [...(block?.[1] ?? "").matchAll(/"([A-Z_]+)"/g)].map((m) => m[1] as string).sort()
+    const declared = [...(block?.[1] ?? "").matchAll(/"([A-Z_]+)"/g)]
+      .map((m) => m[1] as string)
+      .sort()
     expect(declared).toEqual([...ALL_STATUSES].sort())
     expect(declared).toHaveLength(8)
     expect(declared).not.toContain("PAUSED")
@@ -1147,9 +1217,9 @@ describe("Z. purity — construction performs no I/O", () => {
       const code = stripComments(readFileSync(join(REPO, "src", "task", name), "utf8"))
 
       const declared = [...code.matchAll(/function\s+(\w+)\s*\(/g)].map((m) => m[1] as string)
-      const arrows = [...code.matchAll(/const\s+(\w+)\s*=\s*(?:\([^)]*\)|[\w]+)\s*(?::[^=]*?)?=>/g)].map(
-        (m) => m[1] as string,
-      )
+      const arrows = [
+        ...code.matchAll(/const\s+(\w+)\s*=\s*(?:\([^)]*\)|[\w]+)\s*(?::[^=]*?)?=>/g),
+      ].map((m) => m[1] as string)
 
       for (const fn of declared) {
         expect({ module: name, fn, recursive: selfCalls(code, fn) }).toEqual({
@@ -1186,14 +1256,62 @@ describe("status matrix (brief S19) — every real TaskStatus", () => {
     reason: "ready" | "eligible-not-ready" | "not-eligible"
   }
   const EXPECTED: Record<TaskStatus, MatrixRow> = {
-    PENDING:     { eligible: true,  ready: true,  satisfies: false, blocker: "DEPENDENCY_UNSATISFIED", reason: "ready" },
-    BLOCKED:     { eligible: true,  ready: false, satisfies: false, blocker: "DEPENDENCY_UNSATISFIED", reason: "eligible-not-ready" },
-    IN_PROGRESS: { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_UNSATISFIED", reason: "not-eligible" },
-    VERIFYING:   { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_UNSATISFIED", reason: "not-eligible" },
-    RETRYING:    { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_UNSATISFIED", reason: "not-eligible" },
-    COMPLETED:   { eligible: false, ready: false, satisfies: true,  blocker: "",                        reason: "not-eligible" },
-    CANCELLED:   { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_TERMINAL",     reason: "not-eligible" },
-    FAILED:      { eligible: false, ready: false, satisfies: false, blocker: "DEPENDENCY_TERMINAL",     reason: "not-eligible" },
+    PENDING: {
+      eligible: true,
+      ready: true,
+      satisfies: false,
+      blocker: "DEPENDENCY_UNSATISFIED",
+      reason: "ready",
+    },
+    BLOCKED: {
+      eligible: true,
+      ready: false,
+      satisfies: false,
+      blocker: "DEPENDENCY_UNSATISFIED",
+      reason: "eligible-not-ready",
+    },
+    IN_PROGRESS: {
+      eligible: false,
+      ready: false,
+      satisfies: false,
+      blocker: "DEPENDENCY_UNSATISFIED",
+      reason: "not-eligible",
+    },
+    VERIFYING: {
+      eligible: false,
+      ready: false,
+      satisfies: false,
+      blocker: "DEPENDENCY_UNSATISFIED",
+      reason: "not-eligible",
+    },
+    RETRYING: {
+      eligible: false,
+      ready: false,
+      satisfies: false,
+      blocker: "DEPENDENCY_UNSATISFIED",
+      reason: "not-eligible",
+    },
+    COMPLETED: {
+      eligible: false,
+      ready: false,
+      satisfies: true,
+      blocker: "",
+      reason: "not-eligible",
+    },
+    CANCELLED: {
+      eligible: false,
+      ready: false,
+      satisfies: false,
+      blocker: "DEPENDENCY_TERMINAL",
+      reason: "not-eligible",
+    },
+    FAILED: {
+      eligible: false,
+      ready: false,
+      satisfies: false,
+      blocker: "DEPENDENCY_TERMINAL",
+      reason: "not-eligible",
+    },
   }
 
   // Explicit total lookup: `noUncheckedIndexedAccess` makes a `Record` read

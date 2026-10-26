@@ -290,7 +290,11 @@ export function findRedirectTargets(rawCmd: string): string[] {
   let dq = false
   let i = 0
   const n = rawCmd.length
-  const isTerm = (c: string): boolean => /[\s;|&<>()]/.test(c)
+  // `(` dan `)` BUKAN pemisah kata di shell — keduanya karakter sah di
+  // nama berkas, dan `$(` (command substitution) tetap bagian dari kata.
+  // Kalau `(` dipandang pemisah, target `$(pwd)/../x` terpotong jadi `$`
+  // dan yang diperiksa bukan path yang dipakai shell.
+  const isTerm = (c: string): boolean => /[\s;|&<>]/.test(c)
   while (i < n) {
     const c = rawCmd[i]!
     if (c === "\\" && i + 1 < n) {
@@ -329,8 +333,31 @@ export function findRedirectTargets(rawCmd: string): string[] {
       i = k
       continue
     }
+    // Target bisa berupa KATA BERKUTIP: `> "my file.txt"` — spasi di dalam
+    // kutip adalah bagian dari path, bukan pemisah kata. Kalau kata dipotong
+    // di spasi, yang diperiksa bukan path yang dipakai shell: `> "a b/../../x"`
+    // akan diperiksa sebagai `a` (masih di dalam workspace) padahal shell
+    // menulis ke luar. Kutip shell dilepas sebelum path dipakai, jadi kata
+    // efektifnya harus dibaca utuh.
     let e = k
-    while (e < n && !isTerm(rawCmd[e]!)) e++
+    const q = rawCmd[k]
+    if (q === '"' || q === "'") {
+      let c = k + 1
+      while (c < n) {
+        if (rawCmd[c] === "\\" && c + 1 < n) {
+          c += 2
+          continue
+        }
+        if (rawCmd[c] === q) break
+        c++
+      }
+      // Kutip penutup tak ketemu → kata tak tertutup; ambil sisanya apa adanya
+      // (shell akan gagal parse, jadi tak ada tulisan yang terjadi).
+      e = c < n ? c + 1 : n
+      while (e < n && !isTerm(rawCmd[e]!)) e++
+    } else {
+      while (e < n && !isTerm(rawCmd[e]!)) e++
+    }
     if (e > k) out.push(rawCmd.slice(k, e))
     i = e
   }
@@ -552,7 +579,16 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
     // `.env`, jadi target diperiksa dalam bentuk kanoniknya, bukan mentah
     // (temuan F1 audit 2026-09-20). Scan tetap dari `raw` supaya target di
     // dalam kutip tetap tak terhitung sebagai redirect.
-    const t = stripCaretEscapes(tRaw)
+    //
+    // Tanda kutip juga dilepas shell SEBELUM path dipakai: `echo x
+    // >"../evil.txt"` menulis ke `../evil.txt`, bukan ke berkas bernama
+    // `"../evil.txt"`. Kalau kutip ikut terhitung, ".." di dalamnya BUKAN
+    // segmen path (dia bagian satu nama berkas) sehingga jail check lolos
+    // padahal shell menulis ke luar workspace — termasuk untuk path
+    // absolut/UNC yang dibungkus kutip. Jadi bentuk yang diperiksa harus sama
+    // dengan yang dipakai shell: kutip dibuang dulu (tokenisasi yang sudah
+    // dipakai modul ini di `stripQuotes`).
+    const t = stripQuotes(stripCaretEscapes(tRaw))
     if (isNullSink(t)) continue
     // Ekspansi %VAR% terjadi di cmd.exe SETELAH cek statis: `> "%TEMP%\x"`
     // terlihat di dalam cwd secara literal lalu menulis ke luar. Target dengan
@@ -561,6 +597,18 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
     // karena bukan pola ekspansi.
     if (/%[^%\s]+%/.test(t))
       return { denied: true, reason: "redirect target with env expansion (%VAR%)" }
+    // Ekspansi shell POSIX dan tilde: path efektifnya tak bisa ditentukan
+    // dari teks statis, jadi fail-closed — kelas yang sama dengan %VAR% di
+    // atas (kode yang diperiksa harus sama dengan yang dipakai shell).
+    // POSIX: $VAR, ${VAR}, $(...)  ·  backtick: `...`  ·  tilde: ~/ atau ~.
+    // `%` tunggal dan `$` di akhir kata (mis. "100%.txt") bukan pola
+    // ekspansi → tetap lolos.
+    if (/\$(?:[A-Za-z_{]|\()/.test(t))
+      return { denied: true, reason: "redirect target with shell expansion ($VAR)" }
+    if (t.includes("`"))
+      return { denied: true, reason: "redirect target with command substitution" }
+    if (t.startsWith("~"))
+      return { denied: true, reason: "redirect target with home expansion (~)" }
     if (cwd != null) {
       const abs = isAbsolute(t) ? resolve(t) : resolve(cwd, t)
       // Owned-state (.minicode/config dkk) simetris dengan jail file tools:

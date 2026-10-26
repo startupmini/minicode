@@ -349,7 +349,10 @@ function messageContents(cwd: string, sid: string): unknown[] {
 }
 
 /** Baris Run durable (urutan kreasi) untuk satu sesi: id + status + ended_at. */
-function runRows(cwd: string, sid: string): { run_id: string; status: string; ended_at: number | null }[] {
+function runRows(
+  cwd: string,
+  sid: string,
+): { run_id: string; status: string; ended_at: number | null }[] {
   const db = new Database(join(cwd, ".minicode", "sessions.db"), { readonly: true })
   try {
     return db

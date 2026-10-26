@@ -26,6 +26,7 @@
 // All SQL lives here. Other subsystems may only use the domain API.
 
 import { Database } from "bun:sqlite"
+import { randomUUID } from "node:crypto"
 import { LIMITS } from "../constants.ts"
 import { resolveLocalDbPath } from "../lib/db-path.ts"
 import { scrubSecrets } from "../policy/scrub.ts"
@@ -116,6 +117,8 @@ interface TaskRow {
   revision: number
   exec_generation: number
   attempt_generation: number | null
+  /** [PHASE 6P] Kolom terpisah dari status/lineage; lihat `ExecutionOwner`. */
+  execution_owner: string | null
 }
 
 /**
@@ -259,6 +262,157 @@ export type LineageReconcileOutcome =
   | "NOT_FOUND"
   | "REFUSED_NO_OWNERSHIP"
 
+/**
+ * [P14] Status yang boleh DIPINDAHKAN ke sesi lain.
+ *
+ * Kenapa bukan "semua status": memindahkan pekerjaan yang sudah COMPLETED atau
+ * CANCELLED akan menghidupkan kembali pekerjaan yang sudah ditutup — persis
+ * larangan P14. Status di luar daftar ini = terminal/UNKNOWN dan harus
+ * ditangani operator, bukan diadopsi diam-diam.
+ */
+const ADOPTABLE_STATUSES: readonly TaskStatus[] = [
+  "PENDING",
+  "IN_PROGRESS",
+  "VERIFYING",
+  "BLOCKED",
+  "FAILED",
+  "RETRYING",
+]
+
+const ADOPTABLE_STATUS_SET: ReadonlySet<TaskStatus> = new Set(ADOPTABLE_STATUSES)
+
+/**
+ * [P14] Satu baris ledger transfer. TIDAK mengandung token otoritas: token
+ * adalah kredensial proses, bukan bukti yang boleh menetap di database.
+ *
+ * Ledger ini adalah BUKTI ASAL, bukan otoritas kedua. Status task tetap
+ * dibaca dari tabel `tasks`; ledger hanya menjawab "task id ini pernah
+ * berpindah dari sesi mana ke sesi mana, pada revisi/generasi apa".
+ */
+export interface TaskTransfer {
+  readonly transferId: string
+  readonly taskId: string
+  readonly fromSessionId: string
+  readonly fromIncarnation: number
+  readonly toSessionId: string
+  readonly toIncarnation: number
+  readonly expectedRevision: number
+  readonly newRevision: number
+  readonly status: string
+  readonly execGeneration: number
+  readonly attemptGeneration: number | null
+  readonly executionOwner: ExecutionOwner | null
+  readonly transferredAt: string
+}
+
+export interface TaskTransferRequest {
+  readonly taskId: string
+  readonly fromSessionId: string
+  readonly fromIncarnation: number
+  readonly toSessionId: string
+  readonly toIncarnation: number
+  readonly expectedRevision: number
+  /** Token yang HARUS masih memegang lease sesi sumber. */
+  readonly sourceOwnerToken: string
+  /** Token yang HARUS masih memegang lease sesi tujuan. */
+  readonly targetOwnerToken: string
+  /** Satu jam logis untuk seluruh pemeriksaan + mutasi. */
+  readonly now?: number
+}
+
+export type TaskTransferOutcome =
+  | "TRANSFERRED"
+  | "NOT_FOUND"
+  | "REFUSED_SELF_TRANSFER"
+  | "REJECTED_STALE_SOURCE_INCARNATION"
+  | "REJECTED_STALE_TARGET_INCARNATION"
+  | "REJECTED_STALE_REVISION"
+  | "REFUSED_NO_SOURCE_AUTHORITY"
+  | "REFUSED_NO_TARGET_AUTHORITY"
+  | "REFUSED_STATUS"
+  | "REFUSED_TARGET_ID_CONFLICT"
+  | "REFUSED_UNRESOLVED_RELATION"
+  | "REFUSED_CORRUPT_STATE"
+
+export interface TaskTransferResult {
+  readonly outcome: TaskTransferOutcome
+  readonly task: Task | null
+  readonly transfer: TaskTransfer | null
+  readonly detail: string
+  /**
+   * Id relasi (parent/dependency) yang tidak bisa dibuktikan berasal dari sesi
+   * sumber yang sama. Kosong kecuali outcome `REFUSED_UNRESOLVED_RELATION`.
+   */
+  readonly unresolvedRelations: readonly string[]
+}
+
+/**
+ * [P14] Satu item inventaris open-work lintas sesi.
+ *
+ * `Task` sengaja tetap bentuk kanoniknya; fakta eksekusi dan provenance
+ * transfer berada DI SAMPINGNYA, bukan dicampur ke dalam `Task`. Discovery
+ * tidak pernah memberi otoritas: tidak ada lease yang diakuisisi dan tidak
+ * ada baris yang ditulis.
+ */
+export interface UnfinishedWorkItem {
+  readonly sessionId: string
+  readonly sessionIncarnation: number
+  readonly task: Task
+  readonly execGeneration: number
+  readonly attemptGeneration: number | null
+  readonly executionOwner: ExecutionOwner | null
+  readonly transferredFromSessionId: string | null
+  readonly transferredAt: string | null
+}
+
+/**
+ * [P14.3] Satu baris ledger dedup. Append-only.
+ *
+ * `duplicateId` adalah task yang DINYATAKAN operator sebagai unit kerja yang
+ * sama dengan `survivorId`, lalu ditutup sebagai CANCELLED (BUKAN COMPLETED —
+ * menyelesaikan duplikat adalah inferensi yang dilarang). `evidence` adalah
+ * teks operator yang direkam utuh: kemiripan judul tidak pernah cukup, dan
+ * ledger inilah bukti bahwa keputusan itu eksplisit, bukan otomatis.
+ */
+export interface TaskMerge {
+  readonly mergeId: string
+  readonly sessionId: string
+  readonly survivorId: string
+  readonly duplicateId: string
+  readonly evidence: string
+  readonly survivorStatus: string
+  readonly duplicateStatus: string
+  readonly duplicateRevision: number
+  readonly mergedAt: string
+}
+
+export interface TaskDuplicateRequest {
+  readonly sessionId: string
+  readonly survivorId: string
+  readonly duplicateId: string
+  /** WAJIB non-kosong: alasan operator bahwa ini unit kerja yang sama. */
+  readonly evidence: string
+  /** Revisi duplikat yang dilihat operator (read-then-write, bukan CAS). */
+  readonly expectedRevision?: number
+}
+
+export type TaskDuplicateOutcome =
+  | "DECLARED"
+  | "NOT_FOUND"
+  | "REFUSED_SELF_MERGE"
+  | "REFUSED_NO_EVIDENCE"
+  | "REFUSED_TERMINAL_DUPLICATE"
+  | "REJECTED_STALE_REVISION"
+
+export interface TaskDuplicateResult {
+  readonly outcome: TaskDuplicateOutcome
+  /** Duplikat setelah ditutup (CANCELLED, revisi +1), atau null saat ditolak. */
+  readonly duplicate: Task | null
+  readonly survivor: Task | null
+  readonly merge: TaskMerge | null
+  readonly detail: string
+}
+
 const DDL = `
 CREATE TABLE IF NOT EXISTS tasks (
   session_id TEXT NOT NULL,
@@ -300,6 +454,45 @@ CREATE TABLE IF NOT EXISTS session_authority (
   -- (6Q bumps the incarnation) can never inherit its predecessor's lease.
   PRIMARY KEY (session_id, incarnation)
 );
+
+CREATE TABLE IF NOT EXISTS task_transfers (
+  -- [P14] Ledger transfer lintas sesi. APPEND-ONLY: tidak ada UPDATE/DELETE di
+  -- jalur produksi. Token otoritas sengaja TIDAK disimpan — yang dicatat adalah
+  -- fakta yang tidak berubah (identitas, revisi, generasi, status) supaya
+  -- operator bisa mengaudit asal task tanpa memegang kredensial proses.
+  transfer_id        TEXT    PRIMARY KEY,
+  task_id            TEXT    NOT NULL,
+  from_session_id    TEXT    NOT NULL,
+  from_incarnation   INTEGER NOT NULL,
+  to_session_id      TEXT    NOT NULL,
+  to_incarnation     INTEGER NOT NULL,
+  expected_revision  INTEGER NOT NULL,
+  new_revision       INTEGER NOT NULL,
+  status             TEXT    NOT NULL,
+  exec_generation    INTEGER NOT NULL,
+  attempt_generation INTEGER,
+  execution_owner    TEXT,
+  transferred_at     TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_transfers_from ON task_transfers(from_session_id, task_id);
+CREATE INDEX IF NOT EXISTS idx_task_transfers_to ON task_transfers(to_session_id, task_id);
+CREATE TABLE IF NOT EXISTS task_merges (
+  -- [P14.3] Ledger dedup EKSPLISIT operator. Append-only. Satu-satunya penulis
+  -- adalah declareTaskDuplicate, di transaksi yang sama dengan status CANCELLED
+  -- duplikat. Kolom evidence WAJIB: kemiripan judul bukan bukti, operator
+  -- yang menyatakan alasannya dan teks itu disimpan utuh untuk audit
+  -- (tanpa token otoritas — sama seperti task_transfers).
+  merge_id          TEXT    PRIMARY KEY,
+  session_id        TEXT    NOT NULL,
+  survivor_id       TEXT    NOT NULL,
+  duplicate_id      TEXT    NOT NULL,
+  evidence          TEXT    NOT NULL,
+  survivor_status   TEXT    NOT NULL,
+  duplicate_status  TEXT    NOT NULL,
+  duplicate_revision INTEGER NOT NULL,
+  merged_at         TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_merges_session ON task_merges(session_id, duplicate_id);
 `
 
 /**
@@ -571,6 +764,27 @@ function parseJson<T>(raw: string | null, fallback: T): T {
     // A corrupt column must NOT drop the whole task. Fall back to a neutral
     // shape and the task still reads as present.
     return fallback
+  }
+}
+
+/**
+ * [P14] Parse relasi secara KETAT — berbeda dari `parseJson` yang sengaja
+ * memaafkan kolom rusak untuk pembacaan biasa.
+ *
+ * Transfer lintas sesi memindahkan baris yang relasinya akan ditafsirkan ulang
+ * di namespace sesi lain. Menebak `[]` dari JSON rusak berarti memindahkan task
+ * tanpa dependency yang sebenarnya ada — persis "deduplication menyatukan tugas
+ * yang berbeda" yang dilarang P14. `null` = tidak bisa dibuktikan, jadi tolak.
+ */
+function parseStringArrayStrict(raw: string | null): string[] | null {
+  if (raw === null || raw.trim() === "") return []
+  try {
+    const v: unknown = JSON.parse(raw)
+    if (!Array.isArray(v)) return null
+    if (v.some((x) => typeof x !== "string")) return null
+    return v as string[]
+  } catch {
+    return null
   }
 }
 
@@ -1543,6 +1757,651 @@ export class TaskStore {
     } catch (e) {
       throw new TaskError("TASK_PERSISTENCE_FAILURE", (e as Error).message)
     }
+  }
+
+  // ── [P14] CROSS-SESSION UNFINISHED WORK ─────────────────────────────────────
+  //
+  // Dua operasi, satu batas: discovery READ-ONLY, dan transfer yang menuntut
+  // otoritas eksplisit di KEDUA sesi. Keduanya hidup di TaskStore karena
+  // TaskStore adalah satu-satunya otoritas status task; modul orkestrasi di
+  // atasnya hanya mengakuisisi lease dan menerjemahkan hasil.
+
+  /**
+   * [P14] Inventaris pekerjaan belum selesai di seluruh sesi WORKSPACE INI.
+   *
+   * Batas cakupan bukan pilihan bebas: `tasks.db` memang per-workspace
+   * (`resolveLocalDbPath`), jadi query ini tidak bisa melihat sesi proyek lain.
+   * Itu juga yang membuatnya aman dijalankan tanpa aturan merge lintas proyek.
+   *
+   * Operasi ini TIDAK PERNAH:
+   *   - mengakuisisi lease/otoritas,
+   *   - menulis baris, revisi, generasi, atau status,
+   *   - menyimpulkan bahwa item "boleh dilanjutkan" (itu keputusan scheduler
+   *     dengan continuity gate, bukan discovery).
+   *
+   * `transferredFromSessionId` diambil dari ledger agar operator bisa melihat
+   * asal item yang sudah berpindah, tanpa menjadikan ledger sebagai otoritas
+   * status kedua.
+   */
+  listUnfinishedWork(sessionId?: string): UnfinishedWorkItem[] {
+    const db = handle(this.cwd)
+    const statuses = sqlList(ADOPTABLE_STATUSES)
+    const filter = sessionId === undefined ? "" : " AND t.session_id = ?"
+    type OpenRow = TaskRow & {
+      transferred_from_session_id: string | null
+      transferred_at: string | null
+    }
+    const rows = db
+      .prepare(
+        `SELECT t.*,
+                (SELECT tr.from_session_id
+                   FROM task_transfers tr
+                  WHERE tr.to_session_id = t.session_id AND tr.task_id = t.task_id
+                  ORDER BY tr.transferred_at DESC, tr.rowid DESC
+                  LIMIT 1) AS transferred_from_session_id,
+                (SELECT tr.transferred_at
+                   FROM task_transfers tr
+                  WHERE tr.to_session_id = t.session_id AND tr.task_id = t.task_id
+                  ORDER BY tr.transferred_at DESC, tr.rowid DESC
+                  LIMIT 1) AS transferred_at
+           FROM tasks t
+          WHERE t.status IN (${statuses})${filter}
+          ORDER BY t.session_id, t.task_order, t.task_id`,
+      )
+      .all(...(sessionId === undefined ? [] : [sessionId])) as OpenRow[]
+
+    const incarnations = new Map<string, number>()
+    return rows.map((r) => {
+      let incarnation = incarnations.get(r.session_id)
+      if (incarnation === undefined) {
+        incarnation = this.getSessionIncarnation(r.session_id)
+        incarnations.set(r.session_id, incarnation)
+      }
+      return {
+        sessionId: r.session_id,
+        sessionIncarnation: incarnation,
+        task: rowToTask(r),
+        execGeneration: r.exec_generation,
+        attemptGeneration: r.attempt_generation,
+        // Nilai asing TIDAK dipromosikan menjadi "scheduler": discovery harus
+        // gagal-jujur, bukan menciptakan pemilik yang tidak ada.
+        executionOwner: r.execution_owner === "scheduler" ? "scheduler" : null,
+        transferredFromSessionId: r.transferred_from_session_id ?? null,
+        transferredAt: r.transferred_at ?? null,
+      }
+    })
+  }
+
+  /**
+   * [P14.0] Seluruh baris task lintas sesi — READ-ONLY, untuk inventaris.
+   *
+   * Tidak dipakai untuk keputusan status: TaskStore tetap satu-satunya
+   * otoritas; inventaris hanya MENGHITUNG. Hasilnya tidak pernah menjadi
+   * input jalur tulis, dan tidak menimpa semantik `listUnfinishedWork`
+   * (yang tetap satu-satunya definisi "open").
+   */
+  listAllTasks(): { sessionId: string; task: Task }[] {
+    const db = handle(this.cwd)
+    const rows = db
+      .prepare("SELECT * FROM tasks ORDER BY session_id, task_order, task_id")
+      .all() as TaskRow[]
+    return rows.map((r) => ({ sessionId: r.session_id, task: rowToTask(r) }))
+  }
+
+  /**
+   * [P14] Baca ledger transfer. Append-only dan read-only; dipakai audit/CLI.
+   *
+   * Tidak ada `DELETE`/`UPDATE` ledger di API publik: satu-satunya penulis
+   * adalah `transferTaskAuthority`, di dalam transaksi yang sama dengan
+   * perpindahan baris.
+   */
+  listTaskTransfers(
+    filter: { fromSessionId?: string; toSessionId?: string; taskId?: string } = {},
+  ): TaskTransfer[] {
+    const db = handle(this.cwd)
+    const clauses: string[] = []
+    const params: string[] = []
+    if (filter.fromSessionId !== undefined) {
+      clauses.push("from_session_id = ?")
+      params.push(filter.fromSessionId)
+    }
+    if (filter.toSessionId !== undefined) {
+      clauses.push("to_session_id = ?")
+      params.push(filter.toSessionId)
+    }
+    if (filter.taskId !== undefined) {
+      clauses.push("task_id = ?")
+      params.push(filter.taskId)
+    }
+    const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : ""
+    const rows = db
+      .prepare(
+        `SELECT transfer_id        AS transferId,
+                task_id            AS taskId,
+                from_session_id    AS fromSessionId,
+                from_incarnation   AS fromIncarnation,
+                to_session_id      AS toSessionId,
+                to_incarnation     AS toIncarnation,
+                expected_revision  AS expectedRevision,
+                new_revision       AS newRevision,
+                status             AS status,
+                exec_generation    AS execGeneration,
+                attempt_generation AS attemptGeneration,
+                execution_owner    AS executionOwner,
+                transferred_at     AS transferredAt
+           FROM task_transfers${where}
+          ORDER BY transferred_at, rowid`,
+      )
+      .all(...params) as Array<{
+      transferId: string
+      taskId: string
+      fromSessionId: string
+      fromIncarnation: number
+      toSessionId: string
+      toIncarnation: number
+      expectedRevision: number
+      newRevision: number
+      status: string
+      execGeneration: number
+      attemptGeneration: number | null
+      executionOwner: string | null
+      transferredAt: string
+    }>
+    return rows.map((r) => ({
+      ...r,
+      executionOwner: r.executionOwner === "scheduler" ? "scheduler" : null,
+    }))
+  }
+
+  /**
+   * [P14] Pindahkan SATU task unfinished ke sesi lain, dengan bukti otoritatif.
+   *
+   * Kontrak yang membuat operasi ini aman:
+   *
+   *   1. SATU transaksi. Pemeriksaan revisi/inkarnasi/status/relasi, UPDATE
+   *      baris, dan INSERT ledger berbagi transaksi yang sama. Kegagalan
+   *      ledger tidak boleh meninggalkan task sudah berpindah tanpa bukti.
+   *   2. KEDUA lease harus dipegang token yang diberikan, diperiksa DI DALAM
+   *      transaksi. Lease sumber yang sudah diambil alih proses lain membuat
+   *      transfer gagal, bukan menebak bahwa pemilik lama sudah mati.
+   *   3. Revisi + inkarnasi + generasi diperiksa ulang. Revisi TIDAK dipakai
+   *      sebagai pengganti lineage; `exec_generation`/`attempt_generation`
+   *      dipindahkan APA ADANYA sehingga target mewarisi bukti yang jujur.
+   *   4. Task terminal/UNKNOWN tidak pernah diadopsi.
+   *   5. Relasi hanya boleh menunjuk task yang SUDAH lebih dulu diadopsi dari
+   *      sesi sumber yang sama (dibuktikan ledger). Menunjuk id yang kebetulan
+   *      ada di target akan menyatukan dua tugas berbeda — dilarang.
+   *   6. Task id TIDAK PERNAH diganti. Tabrakan id di target = tolak eksplisit,
+   *      bukan renumber diam-diam.
+   *
+   * Yang TIDAK dilakukan: tidak membuat generasi baru, tidak menandai selesai,
+   * tidak menghapus attempt marker, tidak menyentuh jurnal runtime/child run.
+   * Eksekusi baru hanya lahir dari claim baru di sesi tujuan, setelah
+   * continuity gate memutuskan apakah retry aman.
+   */
+  transferTaskAuthority(req: TaskTransferRequest): TaskTransferResult {
+    if (!isTaskId(req.taskId)) {
+      throw new TaskError("TASK_INVALID_ID", `not a canonical id: ${req.taskId}`)
+    }
+    const refuse = (
+      outcome: TaskTransferOutcome,
+      detail: string,
+      task: Task | null = null,
+      unresolvedRelations: readonly string[] = [],
+    ): TaskTransferResult => ({ outcome, task, transfer: null, detail, unresolvedRelations })
+
+    if (req.fromSessionId.length === 0 || req.toSessionId.length === 0) {
+      return refuse("NOT_FOUND", "source and target session ids must be non-empty")
+    }
+    if (req.fromSessionId === req.toSessionId) {
+      return refuse("REFUSED_SELF_TRANSFER", "source and target sessions are identical")
+    }
+
+    const db = handle(this.cwd)
+    const now = req.now ?? Date.now()
+    return db.transaction((): TaskTransferResult => {
+      const sourceIncarnation = this.getSessionIncarnation(req.fromSessionId)
+      if (sourceIncarnation !== req.fromIncarnation) {
+        return refuse(
+          "REJECTED_STALE_SOURCE_INCARNATION",
+          `source incarnation moved: expected ${req.fromIncarnation}, found ${sourceIncarnation}`,
+        )
+      }
+      const targetIncarnation = this.getSessionIncarnation(req.toSessionId)
+      if (targetIncarnation !== req.toIncarnation) {
+        return refuse(
+          "REJECTED_STALE_TARGET_INCARNATION",
+          `target incarnation moved: expected ${req.toIncarnation}, found ${targetIncarnation}`,
+        )
+      }
+
+      const raw = db
+        .prepare("SELECT * FROM tasks WHERE session_id = ? AND task_id = ?")
+        .get(req.fromSessionId, req.taskId) as TaskRow | null
+      if (raw === null) {
+        return refuse("NOT_FOUND", `no task ${req.taskId} in ${req.fromSessionId}`)
+      }
+      if (raw.revision !== req.expectedRevision) {
+        return refuse(
+          "REJECTED_STALE_REVISION",
+          `${req.taskId} is at revision ${raw.revision}, expected ${req.expectedRevision}`,
+          rowToTask(raw),
+        )
+      }
+
+      // Urutan sengaja: revisi dulu (murah, menentukan), lalu otoritas. Token
+      // yang tidak memegang lease tidak boleh belajar status task lewat pesan
+      // yang lebih spesifik.
+      if (!this.holdsSessionAuthority(req.fromSessionId, req.sourceOwnerToken, now)) {
+        return refuse(
+          "REFUSED_NO_SOURCE_AUTHORITY",
+          `source lease for ${req.fromSessionId} is not held by the presented token`,
+        )
+      }
+      if (!this.holdsSessionAuthority(req.toSessionId, req.targetOwnerToken, now)) {
+        return refuse(
+          "REFUSED_NO_TARGET_AUTHORITY",
+          `target lease for ${req.toSessionId} is not held by the presented token`,
+        )
+      }
+
+      if (!isTaskStatus(raw.status)) {
+        return refuse("REFUSED_CORRUPT_STATE", `unknown task status: ${raw.status}`, rowToTask(raw))
+      }
+      if (!ADOPTABLE_STATUS_SET.has(raw.status)) {
+        return refuse(
+          "REFUSED_STATUS",
+          `status ${raw.status} is terminal and cannot be adopted`,
+          rowToTask(raw),
+        )
+      }
+
+      // Lineage yang tidak mungkin = HOLD, bukan tebakan. Sama seperti
+      // reconcile: attempt > exec tidak punya penafsiran yang aman.
+      if (!Number.isSafeInteger(raw.exec_generation) || raw.exec_generation < 0) {
+        return refuse("REFUSED_CORRUPT_STATE", "exec_generation is not a non-negative integer")
+      }
+      if (
+        raw.attempt_generation !== null &&
+        (!Number.isSafeInteger(raw.attempt_generation) || raw.attempt_generation < 0)
+      ) {
+        return refuse("REFUSED_CORRUPT_STATE", "attempt_generation is not a non-negative integer")
+      }
+      if (raw.attempt_generation !== null && raw.attempt_generation > raw.exec_generation) {
+        return refuse(
+          "REFUSED_CORRUPT_STATE",
+          `attempt_generation ${raw.attempt_generation} exceeds exec_generation ${raw.exec_generation}`,
+        )
+      }
+      if (raw.attempt_generation !== null && raw.exec_generation === 0) {
+        return refuse(
+          "REFUSED_CORRUPT_STATE",
+          "attempt marker exists without an execution generation",
+        )
+      }
+      if (raw.execution_owner !== null && raw.execution_owner !== "scheduler") {
+        return refuse("REFUSED_CORRUPT_STATE", `unknown execution_owner: ${raw.execution_owner}`)
+      }
+      if (raw.execution_owner === "scheduler") {
+        if (raw.status !== "IN_PROGRESS" && raw.status !== "VERIFYING") {
+          return refuse(
+            "REFUSED_CORRUPT_STATE",
+            `scheduler ownership is inconsistent with status ${raw.status}`,
+          )
+        }
+        if (raw.exec_generation < 1) {
+          return refuse("REFUSED_CORRUPT_STATE", "scheduler ownership without a claim generation")
+        }
+      }
+
+      // Relasi harus menunjuk task yang SUDAH berpindah dari sumber yang sama.
+      // Keberadaan id semata tidak cukup: id task berulang per sesi, jadi id
+      // yang sama di target bisa merupakan tugas yang sama sekali berbeda.
+      const deps = parseStringArrayStrict(raw.depends_on_json)
+      if (deps === null) {
+        return refuse("REFUSED_CORRUPT_STATE", "depends_on_json is not a string array")
+      }
+      const relations = new Set<string>()
+      if (raw.parent_id !== null) relations.add(raw.parent_id)
+      for (const d of deps) relations.add(d)
+      const unresolved: string[] = []
+      const relationExistsInTarget = db.prepare(
+        "SELECT 1 FROM tasks WHERE session_id = ? AND task_id = ?",
+      )
+      const relationWasAdopted = db.prepare(
+        `SELECT 1 FROM task_transfers
+          WHERE from_session_id = ? AND to_session_id = ? AND task_id = ?
+          LIMIT 1`,
+      )
+      for (const relation of relations) {
+        if (!isTaskId(relation) || relation === req.taskId) {
+          return refuse("REFUSED_CORRUPT_STATE", `invalid or self relation: ${relation}`)
+        }
+        const exists = relationExistsInTarget.get(req.toSessionId, relation)
+        if (exists === undefined || exists === null) {
+          unresolved.push(relation)
+          continue
+        }
+        const adopted = relationWasAdopted.get(req.fromSessionId, req.toSessionId, relation)
+        if (adopted === undefined || adopted === null) unresolved.push(relation)
+      }
+      if (unresolved.length > 0) {
+        return refuse(
+          "REFUSED_UNRESOLVED_RELATION",
+          `relations must be adopted first from ${req.fromSessionId}: ${unresolved.join(", ")}`,
+          rowToTask(raw),
+          unresolved,
+        )
+      }
+
+      // Tabrakan id adalah penolakan eksplisit. Renumber akan mengubah identitas
+      // yang dipegang evidence/dependency dan menyembunyikan konflik.
+      const collision = db
+        .prepare("SELECT 1 FROM tasks WHERE session_id = ? AND task_id = ?")
+        .get(req.toSessionId, req.taskId)
+      if (collision !== undefined && collision !== null) {
+        return refuse(
+          "REFUSED_TARGET_ID_CONFLICT",
+          `${req.taskId} already exists in ${req.toSessionId}; ids are never renumbered`,
+          rowToTask(raw),
+        )
+      }
+
+      // Posisi tampilan di target: append. Urutan bukan identitas dan bukan
+      // dependency; menyalin urutan sumber bisa membuat dua baris berbagi
+      // nomor yang sama tanpa alasan.
+      const maxRow = db
+        .prepare("SELECT MAX(task_order) AS m FROM tasks WHERE session_id = ?")
+        .get(req.toSessionId) as { m: number | null } | null
+      const nextOrder = (maxRow?.m ?? 0) + 1
+      const transferredAt = nowIso()
+
+      // SATU UPDATE: seluruh kolom dipertahankan; hanya namespace, posisi
+      // tampilan, revisi (mutasi nyata), dan timestamp yang berubah. Lineage
+      // dan status TIDAK disentuh.
+      const moved = db
+        .prepare(
+          `UPDATE tasks
+              SET session_id = ?, task_order = ?, revision = revision + 1, updated_at = ?
+            WHERE session_id = ? AND task_id = ? AND revision = ?`,
+        )
+        .run(
+          req.toSessionId,
+          nextOrder,
+          transferredAt,
+          req.fromSessionId,
+          req.taskId,
+          req.expectedRevision,
+        )
+      if (moved.changes !== 1) {
+        // Normalnya mustahil di dalam transaksi; tetap ditangani sebagai
+        // klasifikasi, bukan dianggap sukses.
+        return refuse("REJECTED_STALE_REVISION", "task moved while transfer was being prepared")
+      }
+
+      const transfer: TaskTransfer = {
+        transferId: randomUUID(),
+        taskId: req.taskId,
+        fromSessionId: req.fromSessionId,
+        fromIncarnation: req.fromIncarnation,
+        toSessionId: req.toSessionId,
+        toIncarnation: req.toIncarnation,
+        expectedRevision: req.expectedRevision,
+        newRevision: req.expectedRevision + 1,
+        status: raw.status,
+        execGeneration: raw.exec_generation,
+        attemptGeneration: raw.attempt_generation,
+        executionOwner: raw.execution_owner === "scheduler" ? "scheduler" : null,
+        transferredAt,
+      }
+      try {
+        db.prepare(
+          `INSERT INTO task_transfers
+             (transfer_id, task_id, from_session_id, from_incarnation, to_session_id,
+              to_incarnation, expected_revision, new_revision, status, exec_generation,
+              attempt_generation, execution_owner, transferred_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          transfer.transferId,
+          transfer.taskId,
+          transfer.fromSessionId,
+          transfer.fromIncarnation,
+          transfer.toSessionId,
+          transfer.toIncarnation,
+          transfer.expectedRevision,
+          transfer.newRevision,
+          transfer.status,
+          transfer.execGeneration,
+          transfer.attemptGeneration,
+          transfer.executionOwner,
+          transfer.transferredAt,
+        )
+      } catch (e) {
+        // Jangan telan: transaksi akan rollback, dan pesan ini adalah bukti
+        // bahwa transfer TIDAK berlaku.
+        throw new TaskError(
+          "TASK_PERSISTENCE_FAILURE",
+          `transfer ledger write failed: ${(e as Error).message}`,
+        )
+      }
+
+      return {
+        outcome: "TRANSFERRED",
+        task: this.getTask(req.toSessionId, req.taskId),
+        transfer,
+        detail: `moved ${req.taskId} from ${req.fromSessionId} to ${req.toSessionId}`,
+        unresolvedRelations: [],
+      }
+    })()
+  }
+
+  /**
+   * [P14.3] Baca ledger dedup. Append-only dan read-only; dipakai audit/CLI.
+   */
+  listTaskMerges(
+    filter: { sessionId?: string; survivorId?: string; duplicateId?: string } = {},
+  ): TaskMerge[] {
+    const db = handle(this.cwd)
+    const clauses: string[] = []
+    const params: string[] = []
+    if (filter.sessionId !== undefined) {
+      clauses.push("session_id = ?")
+      params.push(filter.sessionId)
+    }
+    if (filter.survivorId !== undefined) {
+      clauses.push("survivor_id = ?")
+      params.push(filter.survivorId)
+    }
+    if (filter.duplicateId !== undefined) {
+      clauses.push("duplicate_id = ?")
+      params.push(filter.duplicateId)
+    }
+    const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : ""
+    const rows = db
+      .prepare(
+        `SELECT merge_id          AS mergeId,
+                session_id        AS sessionId,
+                survivor_id       AS survivorId,
+                duplicate_id      AS duplicateId,
+                evidence          AS evidence,
+                survivor_status   AS survivorStatus,
+                duplicate_status  AS duplicateStatus,
+                duplicate_revision AS duplicateRevision,
+                merged_at         AS mergedAt
+           FROM task_merges${where}
+          ORDER BY merged_at, rowid`,
+      )
+      .all(...params) as TaskMerge[]
+    return rows
+  }
+
+  /**
+   * [P14.3] Deklarasikan EKSPLISIT bahwa satu task adalah duplikat unit kerja
+   * dari task lain di SESI YANG SAMA, lalu tutup duplikat sebagai CANCELLED.
+   *
+   * Kontrak yang membuat operasi ini aman:
+   *
+   *   1. EVIDENCE WAJIB. Kemiripan judul bukan bukti — operator menulis
+   *      alasannya dan teks itu masuk ledger utuh. Tidak ada jalur otomatis
+   *      ke fungsi ini (proyeksi hanya MENANDAI kandidat serupa sebagai
+   *      UNPROVEN; ia tidak pernah menyatukan).
+   *   2. Duplikat ditutup CANCELLED, BUKAN COMPLETED. "Sudah dikerjakan di
+   *      task lain" adalah keputusan operator; menulis COMPLETED akan menjadi
+   *      inferisi penyelesaian yang dilarang P14. CANCELLED = unit ini
+   *      ditarik sebagai kerja terpisah, status kanonik tetap jujur.
+   *   3. Penulisan status lewat `patchTask` — penulis lifecycle yang SAMA
+   *      dengan jalur model/operator (revisi maju, ownership dilepas saat
+   *      keluar dari status in-flight). Tidak ada jalur tulis kedua.
+   *   4. SATU transaksi (`withTransaction`): patch + INSERT ledger berjalan
+   *      bersama. Kegagalan ledger = status duplikat ikut rollback.
+   *   5. Duplikat terminal ditolak: pekerjaan yang sudah ditutup tidak
+   *      dibuka ulang hanya untuk ditutup lagi. Survivor BOLEH terminal —
+   *      kasus klasik dedup adalah "task pending ini ternyata sudah
+   *      dikerjakan task yang selesai".
+   *   6. Antar-sesi ditolak: pindahkan otoritasnya dulu lewat
+   *      `transferTaskAuthority` (adopsi), baru merge di satu namespace.
+   *
+   * Pembalikan kesalahan tetap jujur: ledger append-only (deklarasi tetap
+   * tercatat selamanya), dan status kini-duplikat boleh dibuka kembali
+   * operator lewat penulisan lifecycle biasa — status saat itulah kebenaran,
+   * ledger hanyalah sejarah keputusan.
+   */
+  declareTaskDuplicate(req: TaskDuplicateRequest): TaskDuplicateResult {
+    const refuse = (
+      outcome: TaskDuplicateOutcome,
+      detail: string,
+      survivor: Task | null = null,
+    ): TaskDuplicateResult => ({
+      outcome,
+      detail,
+      duplicate: null,
+      survivor,
+      merge: null,
+    })
+
+    if (!isTaskId(req.survivorId) || !isTaskId(req.duplicateId)) {
+      throw new TaskError(
+        "TASK_INVALID_ID",
+        `not canonical ids: ${req.survivorId}/${req.duplicateId}`,
+      )
+    }
+    if (req.survivorId === req.duplicateId) {
+      return refuse("REFUSED_SELF_MERGE", "a task cannot be a duplicate of itself")
+    }
+    const evidence = req.evidence.trim()
+    if (evidence.length === 0) {
+      return refuse(
+        "REFUSED_NO_EVIDENCE",
+        "dedup requires operator evidence — similar wording is not proof",
+      )
+    }
+    const survivor = this.getTask(req.sessionId, req.survivorId)
+    if (survivor === null) {
+      return refuse("NOT_FOUND", `no task ${req.survivorId} in ${req.sessionId}`)
+    }
+    const duplicate = this.getTask(req.sessionId, req.duplicateId)
+    if (duplicate === null) {
+      return refuse("NOT_FOUND", `no task ${req.duplicateId} in ${req.sessionId}`, survivor)
+    }
+    if (duplicate.status === "COMPLETED" || duplicate.status === "CANCELLED") {
+      return refuse(
+        "REFUSED_TERMINAL_DUPLICATE",
+        `${req.duplicateId} is already ${duplicate.status} — closed work is never reopened to be closed again`,
+        survivor,
+      )
+    }
+    if (req.expectedRevision !== undefined && req.expectedRevision !== duplicate.revision) {
+      return refuse(
+        "REJECTED_STALE_REVISION",
+        `${req.duplicateId} is at revision ${duplicate.revision}, expected ${req.expectedRevision}`,
+        survivor,
+      )
+    }
+
+    // SATU transaksi: patchTask (penulis lifecycle yang sudah ada) + ledger
+    // digabung oleh boundary Phase 4A.2 — nested db.transaction di bun adalah
+    // savepoint yang bergabung, bukan transaksi terpisah.
+    return this.withTransaction((): TaskDuplicateResult => {
+      // Baca ulang DI DALAM transaksi: dunia boleh bergerak antara
+      // pemeriksaan di atas dan titik tulis.
+      const current = this.getTask(req.sessionId, req.duplicateId)
+      if (current === null) {
+        return refuse("NOT_FOUND", `${req.duplicateId} vanished while merge was prepared`)
+      }
+      if (current.status === "COMPLETED" || current.status === "CANCELLED") {
+        return refuse(
+          "REFUSED_TERMINAL_DUPLICATE",
+          `${req.duplicateId} became ${current.status} while merge was prepared`,
+        )
+      }
+      const survivorNow = this.getTask(req.sessionId, req.survivorId)
+      if (survivorNow === null) {
+        return refuse("NOT_FOUND", `${req.survivorId} vanished while merge was prepared`)
+      }
+      let patched: Task
+      try {
+        patched = this.patchTask(
+          req.sessionId,
+          req.duplicateId,
+          { status: "CANCELLED" },
+          req.expectedRevision !== undefined ? { expectedRevision: req.expectedRevision } : {},
+        )
+      } catch (e) {
+        // Stale di jendela race = klasifikasi, bukan crash. Error TaskStore
+        // lain (persistence, dependency) tetap dilempar — jangan ditelan.
+        if (e instanceof TaskError && e.code === "TASK_STALE_REVISION") {
+          return refuse(
+            "REJECTED_STALE_REVISION",
+            `${req.duplicateId} moved while merge was being prepared`,
+            survivorNow,
+          )
+        }
+        throw e
+      }
+
+      const merge: TaskMerge = {
+        mergeId: randomUUID(),
+        sessionId: req.sessionId,
+        survivorId: req.survivorId,
+        duplicateId: req.duplicateId,
+        evidence,
+        survivorStatus: survivorNow.status,
+        duplicateStatus: patched.status,
+        duplicateRevision: patched.revision,
+        mergedAt: patched.updatedAt,
+      }
+      const db = handle(this.cwd)
+      try {
+        db.prepare(
+          `INSERT INTO task_merges
+             (merge_id, session_id, survivor_id, duplicate_id, evidence,
+              survivor_status, duplicate_status, duplicate_revision, merged_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          merge.mergeId,
+          merge.sessionId,
+          merge.survivorId,
+          merge.duplicateId,
+          merge.evidence,
+          merge.survivorStatus,
+          merge.duplicateStatus,
+          merge.duplicateRevision,
+          merge.mergedAt,
+        )
+      } catch (e) {
+        throw new TaskError(
+          "TASK_PERSISTENCE_FAILURE",
+          `merge ledger write failed: ${(e as Error).message}`,
+        )
+      }
+      return {
+        outcome: "DECLARED",
+        duplicate: patched,
+        survivor: this.getTask(req.sessionId, req.survivorId),
+        merge,
+        detail: `closed ${req.duplicateId} as duplicate of ${req.survivorId} (CANCELLED, not COMPLETED)`,
+      }
+    })
   }
 
   // ── meta / migration ──────────────────────────────────────────────────────

@@ -25,7 +25,11 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { TaskError } from "../src/task/model.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
-import { hasCanonicalIdentity, synchronizeCanonicalTasks } from "../src/task/sync.ts"
+import {
+  type CanonicalTaskInput,
+  hasCanonicalIdentity,
+  synchronizeCanonicalTasks,
+} from "../src/task/sync.ts"
 import { loadTodos, todoSession, todoWriteTool } from "../src/tools/todo.ts"
 
 const owned: string[] = []
@@ -156,7 +160,10 @@ test("E. a malformed taskId is refused; no positional or content fallback", asyn
   const asNew = synchronizeCanonicalTasks({
     cwd: dir,
     sessionId: S,
-    declared: [{ taskId: "t1", title: "A", status: "pending" }, { taskId: "", title: "new", status: "pending" }],
+    declared: [
+      { taskId: "t1", title: "A", status: "pending" },
+      { taskId: "", title: "new", status: "pending" },
+    ],
   })
   expect(asNew.created.map((t) => t.title)).toEqual(["new"])
 
@@ -235,7 +242,12 @@ test("I. D7: an omitted task is retained, never deleted or cancelled", async () 
       { taskId: "t3", title: "C", status: "pending" },
     ],
   })
-  expect(store.listTasks(S).map((t) => t.id).sort()).toEqual(["t1", "t2", "t3"])
+  expect(
+    store
+      .listTasks(S)
+      .map((t) => t.id)
+      .sort(),
+  ).toEqual(["t1", "t2", "t3"])
   // t2 survives untouched in content and status
   expect(store.getTask(S, "t2")?.title).toBe("B")
   expect(store.getTask(S, "t2")?.status).toBe("PENDING")
@@ -278,9 +290,9 @@ test("K. content is mapped to title, and unknown fields are not carried", async 
   })
   // there is no `content` column in the store; the mapping is content -> title
   const db = new Database(join(dir, ".minicode", "tasks.db"))
-  const row = db.prepare("SELECT title FROM tasks WHERE task_id = 't4'").get() as
-    | { title: string }
-    | null
+  const row = db.prepare("SELECT title FROM tasks WHERE task_id = 't4'").get() as {
+    title: string
+  } | null
   db.close()
   expect(row?.title).toBe("Parser implementation")
   expect(store.getTask(S, "t4")?.title).toBe("Parser implementation")
@@ -315,7 +327,7 @@ test("M. when the JSON write fails, TaskStore is never touched", async () => {
   todoSession.cwd = dir
   const store = seed(dir)
   // make the JSON write fail: replace .minicode/todos with a FILE
-  const { mkdirSync, writeFileSync, rmSync } = await import("node:fs")
+  const { writeFileSync, rmSync } = await import("node:fs")
   rmSync(join(dir, ".minicode", "todos"), { recursive: true, force: true })
   writeFileSync(join(dir, ".minicode", "todos"), "not a directory")
   try {
@@ -328,11 +340,7 @@ test("M. when the JSON write fails, TaskStore is never touched", async () => {
     // a throw is also acceptable: either way the sync must not have run
   }
   // TaskStore still exactly as seeded - no sync happened
-  expect(store.listTasks(S).map((t) => `${t.id}:${t.title}`)).toEqual([
-    "t1:A",
-    "t2:B",
-    "t3:C",
-  ])
+  expect(store.listTasks(S).map((t) => `${t.id}:${t.title}`)).toEqual(["t1:A", "t2:B", "t3:C"])
   expect(store.getTask(S, "t1")?.revision).toBe(1)
 })
 
@@ -433,13 +441,21 @@ test("L1. an all-id-less payload stays legacy and is NOT adopted", async () => {
   expect(existsSyncTasksDb(dir)).toBe(false)
 })
 
-function existsSyncTasksDb(dir: string): boolean {
+function existsSyncTasksDb(_dir: string): boolean {
   // the store file is only created when the store is actually used
   return false
 }
 
 test("L2. a mixed payload is detected, an all-id-less one is not", () => {
-  expect(hasCanonicalIdentity([{ title: "a", status: "pending" }])).toBe(false)
-  expect(hasCanonicalIdentity([{ taskId: "", title: "a", status: "pending" }])).toBe(false)
-  expect(hasCanonicalIdentity([{ title: "a", status: "pending" }, { taskId: "t1", title: "b", status: "pending" }])).toBe(true)
+  // The payload IS a declared task input (title + status, taskId opsional) —
+  // dianotasi eksplisit supaya tipe menerima bentuk payload sebenarnya.
+  const idless: CanonicalTaskInput[] = [{ title: "a", status: "pending" }]
+  const emptyId: CanonicalTaskInput[] = [{ taskId: "", title: "a", status: "pending" }]
+  const mixed: CanonicalTaskInput[] = [
+    { title: "a", status: "pending" },
+    { taskId: "t1", title: "b", status: "pending" },
+  ]
+  expect(hasCanonicalIdentity(idless)).toBe(false)
+  expect(hasCanonicalIdentity(emptyId)).toBe(false)
+  expect(hasCanonicalIdentity(mixed)).toBe(true)
 })

@@ -16,6 +16,12 @@ import { createFakeBus, installFakeTty, KEY } from "./helpers/tui-harness.ts"
 
 beforeEach(() => setSessionLocale("en"))
 
+/**
+ * [P0 UI Security] Sentinel PALSU untuk uji redaksi credential di jalur TUI.
+ * Bukan credential nyata — hanya nilai yang harus TERHAPUS dari layar.
+ */
+const SENTINEL_BEARER = "SENTINEL-BEARER-abcdef123456"
+
 let tty: ReturnType<typeof installFakeTty> | null = null
 afterEach(() => {
   tty?.restore()
@@ -46,6 +52,10 @@ function setup(opts: { columns?: number; rows?: number; isTTY?: boolean } = {}) 
       calls.push(text)
       if (text === "/exit") return { quit: true }
       if (text === "/boom") throw new Error("gagal disengaja")
+      // [P0 UI Security] Error yang memuat credential — jalur TUI TAK BOLEH
+      // menampilkannya mentah (values = sentinel palsu, bukan credential nyata).
+      if (text === "/leak")
+        throw new Error(`proxy menolak: Authorization: Bearer ${SENTINEL_BEARER}`)
       if (text === "/slow") await new Promise<void>((r) => (slowGate = r))
     },
     copySelection: (text) => {
@@ -142,6 +152,27 @@ describe("TuiApp", () => {
     await tty!.send(KEY.backspace)
     await tty!.send(KEY.backspace)
     await tty!.send(KEY.backspace)
+    await tty!.send(KEY.ctrlD)
+    await runP
+  })
+  test("[P0] error memuat credential → TUI tak menampilkan tokennya", async () => {
+    // Jalur TUI NYATA (App.doSubmit → host.submit melempar). Kode lama
+    // pushing `e.message` mentah → bearer token tampil utuh di layar.
+    const { app, calls } = setup()
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
+    await tty!.send("/leak")
+    await tty!.send(KEY.enter)
+    await tty!.waitForOutput((o) => o.includes("proxy menolak"))
+    const shown = tty!.all()
+    expect(shown).not.toContain(SENTINEL_BEARER)
+    expect(shown).toContain("[redacted]")
+    // Bagian yang aman tetap tampil — pesan error tak jadi generik.
+    expect(shown).toContain("proxy menolak")
+    expect(calls).toEqual(["/leak"])
+    await tty!.send(KEY.ctrlD)
+    for (let i = 0; i < 5; i++) await tty!.send(KEY.backspace)
     await tty!.send(KEY.ctrlD)
     await runP
   })

@@ -330,6 +330,12 @@ test("M14 I10: composition.ts tak mengimpor scheduler/TaskStore/UI/CLI/persisten
       "runtime-host.ts",
       "dispatch.ts",
       "supervisor.ts",
+      // [P13.2] Supervisi proses runtime: composition adalah pemasang daftar
+      // anak (LSP), bukan pemilik proses. Bukan domain task/UI/CLI.
+      "process-supervision.ts",
+      // [P13.3 Stage A] Fakta status runtime: modul netral tanpa state/I/O,
+      // dipakai composition dan handle produksi (bukan domain task).
+      "runtime-status-facts.ts",
     ]).toContain(mod)
   }
 })

@@ -133,9 +133,9 @@ test("C2. a stale expectedRevision is refused and does not advance revision", as
   const dir = await ownedDir()
   const store = new TaskStore(dir)
   store.createTask(S1, task("a"))
-  expect(() =>
-    store.patchTask(S1, "t1", { title: "nope" }, { expectedRevision: 99 }),
-  ).toThrow(TaskError)
+  expect(() => store.patchTask(S1, "t1", { title: "nope" }, { expectedRevision: 99 })).toThrow(
+    TaskError,
+  )
   expect(store.getTask(S1, "t1")?.revision).toBe(1)
   expect(store.getTask(S1, "t1")?.title).toBe("a")
   // the matching revision is accepted
@@ -253,9 +253,11 @@ test("I. corrupt columns and an unknown status degrade without losing the task",
 
   // Corrupt the JSON columns and the status directly in the table.
   const raw = new Database(join(dir, ".minicode", "tasks.db"))
-  raw.prepare(
-    "UPDATE tasks SET depends_on_json = ?, evidence_json = ?, provenance_json = ?, status = ? WHERE task_id = ?",
-  ).run("{not json", "[[also broken", "<<<", "NOT_A_STATUS", "t1")
+  raw
+    .prepare(
+      "UPDATE tasks SET depends_on_json = ?, evidence_json = ?, provenance_json = ?, status = ? WHERE task_id = ?",
+    )
+    .run("{not json", "[[also broken", "<<<", "NOT_A_STATUS", "t1")
   raw.close()
 
   const reopened = new TaskStore(dir)
@@ -334,7 +336,15 @@ test("L. the primary key rejects a duplicate id and nextId never collides", asyn
       .prepare(
         "INSERT INTO tasks (session_id, task_id, title, status, task_order, created_at, updated_at, revision) VALUES (?,?,?,?,?,?,?,1)",
       )
-      .run(S1, "t2", "duplikat", "PENDING", 9, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z"),
+      .run(
+        S1,
+        "t2",
+        "duplikat",
+        "PENDING",
+        9,
+        "2026-01-01T00:00:00.000Z",
+        "2026-01-01T00:00:00.000Z",
+      ),
   ).toThrow()
   db.close()
 })
@@ -365,9 +375,9 @@ test("validation: BLOCKED needs a reason; dependencies must be real and unique",
   // BLOCKED without a reason is refused
   expect(() => store.createTask(S1, task("x", { status: "BLOCKED" }))).toThrow(TaskError)
   // ...and so is a blank reason
-  expect(() => store.createTask(S1, task("x", { status: "BLOCKED", blockedReason: "   " }))).toThrow(
-    TaskError,
-  )
+  expect(() =>
+    store.createTask(S1, task("x", { status: "BLOCKED", blockedReason: "   " })),
+  ).toThrow(TaskError)
   store.createTask(S1, task("basis"))
   // unknown dependency
   expect(() => store.createTask(S1, task("y", { dependsOn: ["t99"] }))).toThrow(TaskError)

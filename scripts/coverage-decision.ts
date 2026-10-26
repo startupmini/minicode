@@ -62,7 +62,9 @@ export function fileCoverage(
   path: string,
 ): { funcs: number; lines: number } | null {
   const esc = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\//g, "[\\\\/]")
-  const m = new RegExp(`^\\s*${esc}\\s*\\|\\s*([\\d.]+)\\s*\\|\\s*([\\d.]+)\\s*\\|`, "m").exec(output)
+  const m = new RegExp(`^\\s*${esc}\\s*\\|\\s*([\\d.]+)\\s*\\|\\s*([\\d.]+)\\s*\\|`, "m").exec(
+    output,
+  )
   if (!m) return null
   const funcs = Number(m[1])
   const lines = Number(m[2])
@@ -105,14 +107,10 @@ export function evaluateGate(
       continue
     }
     if (f.funcs < minF) {
-      criticalFailures.push(
-        `[coverage-gate] FAIL ${path}: funcs ${f.funcs.toFixed(2)}% < ${minF}%`,
-      )
+      criticalFailures.push(`[coverage-gate] FAIL ${path}: funcs ${f.funcs.toFixed(2)}% < ${minF}%`)
     }
     if (f.lines < minL) {
-      criticalFailures.push(
-        `[coverage-gate] FAIL ${path}: lines ${f.lines.toFixed(2)}% < ${minL}%`,
-      )
+      criticalFailures.push(`[coverage-gate] FAIL ${path}: lines ${f.lines.toFixed(2)}% < ${minL}%`)
     }
   }
   return {

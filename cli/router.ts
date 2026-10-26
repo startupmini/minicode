@@ -80,6 +80,13 @@ export async function dispatch(
     await handleSessions(args, subGetArg)
     return true
   }
+  if (cmd === "openwork") {
+    // [P14.4] Portofolio open-work lintas sesi (read-only) + merge dedup
+    // eksplisit (P14.3). Handler process.exit sendiri (kontrak I28).
+    const { handleOpenwork } = await import("./commands/openwork.ts")
+    await handleOpenwork(args, subGetArg)
+    return true
+  }
   if (cmd === "mcp") {
     const { handleMcp } = await import("./commands/mcp.ts")
     await handleMcp(args, subGetArg, HELP)

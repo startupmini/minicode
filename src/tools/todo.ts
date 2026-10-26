@@ -235,7 +235,12 @@ export function normalizeTodos(input: unknown, evidence?: CompletionEvidence): T
   const out: TodoItem[] = []
   for (const raw of input.slice(0, LIMITS.TODO_MAX_ITEMS)) {
     if (!raw || typeof raw !== "object") continue
-    const r = raw as { content?: unknown; status?: unknown; blockedReason?: unknown; taskId?: unknown }
+    const r = raw as {
+      content?: unknown
+      status?: unknown
+      blockedReason?: unknown
+      taskId?: unknown
+    }
     const content = String(r.content ?? "")
       .trim()
       .slice(0, LIMITS.TODO_CONTENT_MAX_CHARS)

@@ -216,7 +216,9 @@ const MUTATIONS: Mut[] = [
     id: "M20",
     target: "a restarted process reuses a predictable owner token",
     file: "src/task/session-authority.ts",
-    anchor: "  return `own-${Date.now().toString(36)}-${counter.toString(36)}-${rand}`",
+    // Anchor ini berisi TEKS template literal (bukan template literal) —
+    // placeholder-nya di-escape supaya nilainya tetap persis sama.
+    anchor: `  return \`own-\${Date.now().toString(36)}-\${counter.toString(36)}-\${rand}\``,
     replacement: '  return "own-fixed-token"',
     tests: LEASE,
   },
@@ -471,4 +473,4 @@ console.log(
   `\n  planned=${summary.totals.planned} executed=${summary.totals.executed} killed=${summary.totals.killed} survived=${summary.totals.survived} unexecuted=${summary.totals.unexecuted}`,
 )
 console.log(`  campaign_failure: ${campaignFailure ?? "none"}`)
-console.log(`  summary: ${SUMMARY.replace(REPO + "\\", "")}`)
+console.log(`  summary: ${SUMMARY.replace(`${REPO}\\`, "")}`)

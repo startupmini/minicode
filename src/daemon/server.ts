@@ -15,6 +15,7 @@
 
 import type { Server } from "node:net"
 import { createServer, type Socket } from "node:net"
+import type { RuntimeView } from "../runtime/runtime-status.ts"
 import type { ApprovalBroker } from "./approvals.ts"
 import { type CapabilityPayload, verifyCapability } from "./capability.ts"
 import {
@@ -60,8 +61,17 @@ export interface DaemonServerDeps {
     telemetry: Telemetry
     storageOk: () => boolean
     shuttingDown: () => boolean
+    /** Status runtime kanonik (P13.1) — opsional; tanpa itu daemon menyajikan view ABSENT. */
+    runtimeStatus?: () => RuntimeView
   }
   telemetry: Telemetry
+  /**
+   * Batas antrean per langganan. Seam uji untuk membuktikan backpressure satu
+   * konsumen tidak menyentuh konsumen lain; produksi memakai MAX_QUEUE_PER_CONN.
+   */
+  maxQueuePerSubscription?: number
+  /** Seam uji: batas antrean per identitas konsumen logis (lihat host). */
+  maxQueuePerConsumer?: (consumerId: string) => number | undefined
   /** Dipanggil saat daemon menerima koneksi (diagnostik). */
   onConnection?: (info: { remote: string; consumer: string }) => void
 }
@@ -71,7 +81,17 @@ interface Conn {
   socket: Socket
   decoder: FrameDecoder
   state: "new" | "ready"
+  /**
+   * Identitas logis (dari capability `who`) untuk offset durable, idempotensi,
+   * dan label wire. Stabil lintas reconnect.
+   */
   consumerId: string | null
+  /**
+   * Identitas LIVE ber-scope koneksi. Dua koneksi dengan `consumerId` yang sama
+   * tetap punya langganan sendiri; tanpa pemisahan ini, koneksi kedua menutup
+   * langganan koneksi pertama dan teardown salah satunya mencabut keduanya.
+   */
+  subscriptionScope: string | null
   scopes: DaemonScope[]
   subs: Map<string, Subscription>
   paused: boolean
@@ -79,6 +99,11 @@ interface Conn {
 }
 
 let connSeq = 0
+
+// Pemisah yang tak mungkin muncul di label konsumen (sanitizeLabel membuang
+// kendali). Scope live = identitas logis + id koneksi, sehingga dua koneksi
+// konsumen yang sama tidak pernah berbagi kunci langganan.
+const CONSUMER_SCOPE_SEP = String.fromCharCode(1)
 
 export class DaemonServer {
   readonly #deps: DaemonServerDeps
@@ -134,6 +159,7 @@ export class DaemonServer {
       decoder: new FrameDecoder(),
       state: "new",
       consumerId: null,
+      subscriptionScope: null,
       scopes: [],
       subs: new Map(),
       paused: false,
@@ -163,8 +189,11 @@ export class DaemonServer {
     if (conn.closed) return
     conn.closed = true
     this.#deps.telemetry.inc("connections.closed")
-    if (conn.consumerId) {
-      this.#subs.dropConsumer(conn.consumerId)
+    // Tutup HANYA langganan milik koneksi ini. Memakai consumerId logis di sini
+    // akan ikut memutus koneksi lain yang memakai identitas konsumen sama.
+    const scope = conn.subscriptionScope ?? conn.consumerId
+    if (scope) {
+      this.#subs.dropConsumer(scope)
       this.#pruneLive()
     }
     this.#conns.delete(conn.id)
@@ -175,18 +204,18 @@ export class DaemonServer {
       // membuangnya, lalu pemanggil CLI gagal padahal perintah sukses.
       // `end()` mengosongkan buffer ke peer lebih dulu; paksa tutup sesudahnya.
       conn.socket.end()
-      const sock = conn.socket
-      const timer = setTimeout(() => {
-        try {
-          sock.destroy()
-        } catch {
-          /* sudah tertutup */
-        }
-      }, 150)
-      timer.unref?.()
     } catch {
       // Socket sudah mati — bukan kegagalan yang perlu ditangani.
     }
+    const sock = conn.socket
+    const timer = setTimeout(() => {
+      try {
+        sock.destroy()
+      } catch {
+        /* sudah tertutup */
+      }
+    }, 150)
+    timer.unref?.()
   }
 
   #send(conn: Conn, msg: ServerMessage): boolean {
@@ -212,8 +241,12 @@ export class DaemonServer {
     try {
       conn.socket.end()
     } catch {
-      this.#teardown(conn)
+      /* jatuh ke teardown di bawah */
     }
+    // Halte adalah keputusan, bukan negosiasi. Tanpa paksa-tutup, peer yang
+    // berhenti membaca bisa menggantung `end()` tanpa batas dan koneksi itu
+    // tetap terhitung hidup setelah overflow. `#teardown` sendiri menjadwalkan
+    // `destroy()` setelah 150 ms, jadi cukup satu timer di sana.
     setTimeout(() => this.#teardown(conn), 50).unref?.()
   }
 
@@ -291,6 +324,7 @@ export class DaemonServer {
     conn.state = "ready"
     conn.scopes = payload.scopes
     conn.consumerId = sanitizeLabel(payload.who, 120) || `consumer-${conn.id}`
+    conn.subscriptionScope = `${conn.consumerId}${CONSUMER_SCOPE_SEP}conn-${conn.id}`
     this.#send(conn, {
       t: "welcome",
       protocol: DAEMON_PROTOCOL,
@@ -336,9 +370,26 @@ export class DaemonServer {
             // konsumen dengan replay penuh, dan tak kehilangan progres ack).
             "resume"
     const consumer = conn.consumerId ?? `consumer-${conn.id}`
+    // Scope live ber-scope koneksi; offset tetap memakai identitas logis agar
+    // reconnect dengan konsumen yang sama melanjutkan dari ack terakhir.
+    const scope = conn.subscriptionScope ?? consumer
+    const consumerQueue = this.#deps.maxQueuePerConsumer?.(consumer)
 
     const { sub, fromSeq } = this.#subs.attach(
-      { consumerId: consumer, sid, from, head, fromSeq: 0, cwd: this.#deps.cwd },
+      {
+        consumerId: scope,
+        offsetConsumerId: consumer,
+        sid,
+        from,
+        head,
+        fromSeq: 0,
+        ...(consumerQueue !== undefined
+          ? { maxQueue: consumerQueue }
+          : this.#deps.maxQueuePerSubscription !== undefined
+            ? { maxQueue: this.#deps.maxQueuePerSubscription }
+            : {}),
+        ...(this.#deps.cwd !== undefined ? { cwd: this.#deps.cwd } : {}),
+      },
       (c, s) => readConsumerOffset(c, s, this.#deps.cwd),
     )
     conn.subs.set(sid, sub)
@@ -437,6 +488,9 @@ export class DaemonServer {
         telemetry: this.#deps.control.telemetry,
         storageOk: this.#deps.control.storageOk,
         shuttingDown: this.#deps.control.shuttingDown,
+        ...(this.#deps.control.runtimeStatus
+          ? { runtimeStatus: this.#deps.control.runtimeStatus }
+          : {}),
       } satisfies ControlDeps,
       this.#deps.control.idem,
     )
@@ -469,6 +523,9 @@ export class DaemonServer {
   #fanout(sid: string, event: { eventSeq?: number }): void {
     const seq = numberOr(event.eventSeq, -1)
     if (seq < 0) return
+
+    // Snapshot daftar target SEBELUM menyentuh antrean: `#halt` memanggil
+    // `#teardown` yang memutasi daftar koneksi saat iterasi berlangsung.
     for (const conn of [...this.#conns.values()]) {
       if (conn.closed) continue
       const sub = conn.subs.get(sid)
@@ -479,7 +536,10 @@ export class DaemonServer {
         this.#deps.telemetry.inc("events.dropped.overflow")
         sub.close()
         this.#halt(conn, "QUEUE_OVERFLOW")
-        return
+        // Hentikan HANYA konsumen ini. `return` di sini akan melewati konsumen
+        // berikutnya pada event yang sama — satu klien lambat membuat klien
+        // lain kehilangan seq durable yang tak akan pernah dikirim ulang.
+        continue
       }
       this.#pump(conn)
     }

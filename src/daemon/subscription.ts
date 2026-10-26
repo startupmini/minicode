@@ -25,7 +25,10 @@ export class BoundedQueue<T> {
   readonly max: number
 
   constructor(max: number = MAX_QUEUE_PER_CONN) {
-    this.max = Math.max(1, max)
+    // `0` sengaja dipertahankan: hanya seam uji yang memakainya untuk meniru
+    // socket yang sudah tertahan sejak awal, sehingga overflow deterministik
+    // tanpa bergantung pada buffer kernel. Produksi selalu >= 1.
+    this.max = Math.max(0, max)
   }
 
   push(item: T): boolean {
@@ -51,7 +54,19 @@ export class BoundedQueue<T> {
 }
 
 export interface SubscriptionInit {
+  /**
+   * Identitas LIVE langganan. Server memakai identitas ber-scope koneksi agar
+   * dua koneksi dengan identitas logis yang sama tidak saling menutup
+   * langganan. Untuk pemakai langsung, nilai ini juga menjadi identitas offset
+   * bila `offsetConsumerId` tidak diberikan.
+   */
   consumerId: string
+  /**
+   * Identitas LOGIS yang dipakai untuk offset durable. Dipisah dari
+   * `consumerId` supaya reconnect tetap bisa `resume` dari offset konsumen yang
+   * sama, sementara dua koneksi bersamaan tetap punya stream live sendiri.
+   */
+  offsetConsumerId?: string
   sid: string
   /** Seq pertama yang AKAN dikirim. Lebih besar dari head = tak ada yang dikirim. */
   fromSeq: number
@@ -72,7 +87,10 @@ export interface SubscriptionInit {
  * "sudah terkirim" tak lagi bisa diverifikasi oleh pihak manapun.
  */
 export class Subscription {
+  /** Identitas live (bisa ber-scope koneksi) — bukan kunci offset durable. */
   readonly consumerId: string
+  /** Identitas logis untuk offset durable; default = consumerId. */
+  readonly offsetConsumerId: string
   readonly sid: string
   readonly startSeq: number
   cursor: number
@@ -84,6 +102,7 @@ export class Subscription {
 
   constructor(init: SubscriptionInit) {
     this.consumerId = init.consumerId
+    this.offsetConsumerId = init.offsetConsumerId ?? init.consumerId
     this.sid = init.sid
     this.startSeq = init.fromSeq
     this.cwd = init.cwd
@@ -136,7 +155,7 @@ export class Subscription {
     if (this.closed) return { ok: false, reason: "CLOSED" }
     if (!Number.isInteger(seq) || seq < 0 || seq > this.cursor)
       return { ok: false, reason: "OUT_OF_RANGE" }
-    const persisted = writeConsumerOffset(this.consumerId, this.sid, seq, this.cwd)
+    const persisted = writeConsumerOffset(this.offsetConsumerId, this.sid, seq, this.cwd)
     return { ok: true, persisted }
   }
 
@@ -166,6 +185,11 @@ export class SubscriptionRegistry {
    *  - "resume" -> lanjut dari offset ack terakhir; belum pernah = tail
    *  - angka    -> mulai dari sana (replay eksplisit; 0 = dari awal)
    *
+   * Bila `offsetConsumerId` diberikan, offset durable memakai identitas logis itu
+   * (reconnect melanjutkan dari ack konsumen yang sama), sementara kunci
+   * langganan live tetap `consumerId` — bisa ber-scope koneksi agar dua koneksi
+   * konsumen yang sama tidak saling menutup.
+   *
    * Mengganti langganan lama untuk kunci yang sama: dua pump pada sesi yang
    * sama mengirim ganda dan membuat kursor saling melompat.
    */
@@ -175,11 +199,12 @@ export class SubscriptionRegistry {
   ): { sub: Subscription; fromSeq: number } {
     const key = SubscriptionRegistry.key(init.consumerId, init.sid)
     this.#byKey.get(key)?.close()
+    const offsetId = init.offsetConsumerId ?? init.consumerId
     let fromSeq: number
     if (init.from === "tail") {
       fromSeq = init.head + 1
     } else if (init.from === "resume") {
-      const offset = resolveResume(init.consumerId, init.sid)
+      const offset = resolveResume(offsetId, init.sid)
       fromSeq = offset < 0 ? init.head + 1 : offset + 1
     } else {
       // Angka = permintaan replay eksplisit. `0` berarti "dari awal", bukan
@@ -189,10 +214,11 @@ export class SubscriptionRegistry {
     }
     const sub = new Subscription({
       consumerId: init.consumerId,
+      ...(init.offsetConsumerId !== undefined ? { offsetConsumerId: init.offsetConsumerId } : {}),
       sid: init.sid,
       fromSeq,
-      maxQueue: init.maxQueue,
-      cwd: init.cwd,
+      ...(init.maxQueue !== undefined ? { maxQueue: init.maxQueue } : {}),
+      ...(init.cwd !== undefined ? { cwd: init.cwd } : {}),
     })
     this.#byKey.set(key, sub)
     return { sub, fromSeq }

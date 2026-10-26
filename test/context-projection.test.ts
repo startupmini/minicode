@@ -39,8 +39,8 @@ function ws(): string {
 function history(turns: number): unknown[] {
   const msgs: unknown[] = []
   for (let i = 0; i < turns; i++) {
-    msgs.push({ role: "user", content: `t${i} ` + "x".repeat(40) })
-    msgs.push({ role: "assistant", content: `a${i} ` + "y".repeat(40) })
+    msgs.push({ role: "user", content: `t${i} ${"x".repeat(40)}` })
+    msgs.push({ role: "assistant", content: `a${i} ${"y".repeat(40)}` })
   }
   return msgs
 }

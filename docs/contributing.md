@@ -33,7 +33,7 @@ Catatan instalasi dev:
 bun x tsc --noEmit && bun run lint && bun test && bun run gate:coverage && bun run gate:pack
 ```
 
-Coverage naik → naikkan minimum di `scripts/coverage-gate.ts` (saat ini **82 funcs / 84,5 lines** + 15 lantai per-berkas modul kritis). Ambang coverage dikunci ke suite CEPAT (`bun test` di CI); gerbang lambat/stokastik tak boleh menaikkan ambang.
+Coverage naik → naikkan minimum di `scripts/coverage-gate.ts` (per 2026-10-25: **87 funcs / 86 lines** + 19 lantai per-berkas modul kritis; funcs dinaikkan 86 → 87 pada P13.5). Ambang coverage dikunci ke suite CEPAT (`bun test` di CI); gerbang lambat/stokastik tak boleh menaikkan ambang.
 
 ## Gate cepat vs lambat (F4.2)
 
@@ -43,6 +43,12 @@ bun run gate:slow   # extreme fuzz + shadow-git stress + MCP adversarial (nightl
 ```
 
 Lambat/stokastik (fuzz multi-seed, stress, docker) tinggal di `slow.yml` — kegagalannya sinyal investigasi, bukan penolakan PR. CI per-commit (`ci.yml`) hanya menjalankan yang deterministik.
+
+### Budget ukuran paket (3,5 MiB)
+
+`bun run gate:pack` mengukur ukuran tarball (`npm pack --dry-run`, KiB) dan menolak bila **melebihi 3.584 KiB (3,5 MiB)**. Angka tunggalnya ada di `scripts/pack-budget.ts` — satu sumber untuk gate dan tes, jadi keduanya tak bisa menyimpang. Batas ini **alarm regresi** (menangkap `node_modules`/`test` ikut terbawa), bukan target ukuran yang perlu dikejar.
+
+Re-baseline dari 2,25 MiB disetujui owner (Quality Remediation Stage 8.1) karena batas lama ditetapkan saat payload runtime repo ±1.605 KiB, sedangkan sekarang runtime saja ±2.788 KiB — pertumbuhan itu fitur sah, bukan modul tak terjangkau (modul yang dipack tapi tak terjangkau dari entry point = 0). Saat runtime tumbuh melewati batas, **jangan** menaikkan lagi tanpa bukti baru + persetujuan owner: hitung dulu payload runtime (`git ls-tree -r -l HEAD -- src cli vendor`) dan bandwidth non-runtime yang bisa dipangkas (dokumen di luar closure tautan, `PLAN.md`/`AGENTS.md`), lalu usulkan angka barunya ke owner.
 
 Gerbang lain:
 
@@ -73,7 +79,8 @@ bun run vendor:check   # vendor/minicore sinkron dengan ../minicore
 - Lebar terminal = kolom, bukan karakter: pakai `displayWidth` dkk. dari `src/ui/render/width.ts` (CJK/emoji = 2 kolom).
 - Teks model/tool/berkas = input tak tepercaya: `sanitizeAnsi` dulu.
 - `cwd` tool dari `ToolContext.cwd`, bukan `process.cwd()`.
-- Line ending LF, encoding UTF-8 tanpa BOM, format `biome` (2 spasi, 100 kolom, double quotes). `bun run lint:fix` sebelum commit.
+- Line ending LF, encoding UTF-8 tanpa BOM, format `biome` (2 spasi, 100 kolom, double quotes). `bun run format` lalu `bun run lint` sebelum commit.
+- **Line ending = LF di seluruh lapisan**: blob yang di-commit selalu LF (`.gitattributes`: `*.ts text eol=lf`), formatter meminta LF (`biome.json`: `lineEnding: "lf"`), dan editor menulis LF (`.editorconfig`: `end_of_line = lf`). Working tree pun harus LF: di Windows dengan `core.autocrlf=true`, checkout lama bisa meninggalkan CRLF yang **tidak terlihat oleh `git diff`** (perbandingan git menormalisasi) tapi **terlihat oleh `biome check`** sebagai hundreds of diagnostic format. `git checkout-index -f`/`git clone` baru mengembalikan working tree LF. `test/helpers/source-eol.ts` menormalkan EOL untuk assertion semantik, bukan untuk menutupi masalah git.
 - Angka mesin jangan ditulis di markdown (biarkan CI/perintah yang menghasilkannya). Bila temukan angka usang, koreksi + sebutkan koreksinya.
 - Test: tiap fix security/correctness bawa regression test yang **gagal di kode lama**. Tool dua jalur (mis. `grep`) diuji kedua jalurnya. Fuzz `prompt-engine` via `test/fuzz-prompt.test.ts`.
 - Jangan commit kecuali diminta; jangan pernah commit rahasia. Sebelum commit: `git status`, `git diff`, `git log --oneline -10`; stage hanya yang dimaksud.

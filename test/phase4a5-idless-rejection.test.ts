@@ -19,7 +19,7 @@ import { afterEach, expect, test } from "bun:test"
 import { existsSync } from "node:fs"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { join } from "node:path"
 import { applyMcpContext, newMcpContextId } from "../src/mcp/server.ts"
 import { createPresentationAdapter } from "../src/presentation/adapter.ts"
 import type { DomainEvent, EventBusLike, PlanUpdatedEvent } from "../src/presentation/events.ts"
@@ -59,7 +59,8 @@ const seed = (dir: string, sessionId = S, titles = ["A", "B", "C"]) => {
   return store
 }
 const rows = (dir: string, sessionId = S) => new TaskStore(dir).listTasks(sessionId)
-const todoFile = (dir: string, sessionId = S) => join(dir, ".minicode", "todos", `${sessionId}.json`)
+const todoFile = (dir: string, sessionId = S) =>
+  join(dir, ".minicode", "todos", `${sessionId}.json`)
 
 const write = (dir: string, todos: unknown[], sessionId = S) =>
   todoWriteTool.execute({ todos } as never, opCtx(sessionId, dir)) as Promise<string>
@@ -74,13 +75,13 @@ const REORDER_IDLESS = [
 function fakeBus(): EventBusLike & { emit: (t: string, p: unknown) => void } {
   const handlers = new Map<string, Set<(e: unknown) => void>>()
   return {
-    on(type, handler) {
+    on(type: string, handler: (e: unknown) => void) {
       const set = handlers.get(type) ?? new Set<(e: unknown) => void>()
       set.add(handler)
       handlers.set(type, set)
       return () => set.delete(handler)
     },
-    emit(type, payload) {
+    emit(type: string, payload: unknown) {
       const set = handlers.get(type)
       if (set) for (const h of [...set]) h(payload)
     },
@@ -117,9 +118,7 @@ test("A. all-id-less with NO canonical identity stays legacy and creates nothing
 test("B. all-id-less with canonical identity present is rejected", async () => {
   const dir = await ownedDir()
   seed(dir)
-  await expect(write(dir, [{ content: "x", status: "pending" }])).rejects.toThrow(
-    /canonical task/i,
-  )
+  await expect(write(dir, [{ content: "x", status: "pending" }])).rejects.toThrow(/canonical task/i)
   expect(rows(dir).map((t) => t.id)).toEqual(["t1", "t2", "t3"])
 })
 
@@ -265,7 +264,10 @@ test("L. a rejected write publishes no plan, and certainly no v2", async () => {
   // A rejected tool produces an isError result, exactly as the kernel would.
   const result = await write(dir, REORDER_IDLESS).catch((e: Error) => e.message)
   bus.emit("execution:completed", {
-    execution: { call: { id: "c1", name: "todo_write", args }, result: { isError: true, content: String(result) } },
+    execution: {
+      call: { id: "c1", name: "todo_write", args },
+      result: { isError: true, content: String(result) },
+    },
   })
   expect(plans()).toHaveLength(0)
 })
@@ -292,7 +294,7 @@ test("M. the rule is per MCP context: A rejects, B stays legacy", async () => {
     expect(outB).not.toContain("canonical-tasks")
     expect(rows(dir, ctxB)).toEqual([])
     expect(rows(dir, ctxA).map((t) => t.id)).toEqual(["t1", "t2", "t3"])
-    expect(existsSync(todoFile(dir, ctxA.replace(/:/g, "-") + ".json"))).toBe(false)
+    expect(existsSync(todoFile(dir, `${ctxA.replace(/:/g, "-")}.json`))).toBe(false)
   } finally {
     todoSession.id = saved.prevId
     todoSession.cwd = saved.prevCwd

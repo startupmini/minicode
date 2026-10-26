@@ -6,7 +6,7 @@ Minicode itu apa, kenapa dibangun begitu, dan kenapa beberapa hal sengaja tidak 
 
 | Nama | Apa |
 |---|---|
-| **MiniCore** | Kernel runtime `STATE / MODEL / ACTION / LOOP`. Inti di-freeze, zero-dependency, di-vendor ke `vendor/minicore` (19 file, ~72 KB). Bukan dependency — di-resolve lewat subpath imports `#minicore` |
+| **MiniCore** | Kernel runtime `STATE / MODEL / ACTION / LOOP`. Inti di-freeze, zero-dependency, di-vendor ke `vendor/minicore` (isi, jumlah file, dan hash dicatat di `vendor/minicore/VENDOR.md`). Bukan dependency — di-resolve lewat subpath imports `#minicore` |
 | **Minicode** | Layer agencode di atasnya: tools, sub-agents, skills, hooks, policy/sandbox, providers, MCP/LSP, memory, sessions, repo-map, verifier, CLI shell-first |
 
 

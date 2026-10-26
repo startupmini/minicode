@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite"
 import { createHash, randomUUID } from "node:crypto"
+import { existsSync } from "node:fs"
 import { LIMITS } from "../constants.ts"
 import { resolveDbPath, resolveLocalDbPath } from "../lib/db-path.ts"
 import { scrubSecrets } from "../policy/scrub.ts"
@@ -1186,7 +1187,7 @@ function sessionCwdOf(db: Database, rows: { id: string }[]): string | undefined 
       | { cwd: string | null }
       | null
       | undefined
-    if (row && row.cwd) return row.cwd
+    if (row?.cwd) return row.cwd
   }
   return undefined
 }
@@ -1328,6 +1329,146 @@ export function listSessions(
       )
       .all() as { id: string; created_at: number; updated_at: number | null; cwd: string }[]
     return rows.map((r) => ({ ...r, updated_at: r.updated_at ?? r.created_at }))
+  } finally {
+    db.close()
+  }
+}
+
+/**
+ * [P14.2] Baca meta baris sesi (id + timestamps) TANPA membuat berkas DB.
+ *
+ * `open()` membuat sessions.db saat belum ada — itu benar untuk jalur tulis,
+ * tetapi PROYEKSI read-only tidak boleh meninggalkan berkas hanya karena
+ * dibaca. `existsSync` dipakai sebagai pagar: berkas tak ada = semua sesi
+ * dianggap "meta tidak diketahui" (provenance UNKNOWN), bukan error.
+ *
+ * `resolveDbPath` (bukan local-only) dipakai dengan sengaja: sama dengan
+ * resolusi yang dipakai `saveSession`, jadi meta yang dibaca proyeksi
+ * dan meta yang ditulis lifecycle tak bisa berbeda domain.
+ */
+export function readSessionMetaRows(
+  cwd?: string,
+): { id: string; created_at: number; updated_at: number }[] {
+  const p = dbPath(cwd)
+  if (!existsSync(p)) return []
+  const db = new Database(p)
+  try {
+    const rows = db
+      .prepare(
+        "SELECT id, created_at, COALESCE(updated_at, created_at) AS updated_at FROM sessions",
+      )
+      .all() as { id: string; created_at: number; updated_at: number }[]
+    return rows
+  } catch {
+    // DB rusak/tak terbaca = meta tidak diketahui; gagal-jujur tanpa crash.
+    return []
+  } finally {
+    db.close()
+  }
+}
+
+// ── P14.0/P14.2 — pembaca READ-ONLY untuk inventaris & ekstraksi intent ──────
+//
+// Kontrak yang sama dengan `readSessionMetaRows` di atas: gerbang existsSync
+// (proyeksi tidak pernah meninggalkan berkas), gagal-jujur ([]) bila DB
+// rusak/tak terbaca, handle selalu ditutup. Pembacaan memakai jalur resolve
+// yang sama dengan penulisnya, jadi domain data tidak bisa berbeda dua arah.
+
+export interface SessionInventoryRow {
+  readonly id: string
+  readonly created_at: number
+  readonly updated_at: number
+  readonly cwd: string | null
+  readonly parent_session_id: string | null
+}
+
+export function readSessionInventoryRows(cwd?: string): SessionInventoryRow[] {
+  const p = dbPath(cwd)
+  if (!existsSync(p)) return []
+  const db = new Database(p)
+  try {
+    const rows = db
+      .prepare(
+        "SELECT id, created_at, COALESCE(updated_at, created_at) AS updated_at, cwd, parent_session_id FROM sessions",
+      )
+      .all() as {
+      id: string
+      created_at: number
+      updated_at: number
+      cwd?: string | null
+      parent_session_id?: string | null
+    }[]
+    // NULL/undefined (baris legacy pra-binding) dinormalkan ke null supaya
+    // pemanggil tidak pernah menghadapi undefined dari SQLite.
+    return rows.map((r) => ({
+      id: r.id,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      cwd: r.cwd ?? null,
+      parent_session_id: r.parent_session_id ?? null,
+    }))
+  } catch {
+    return []
+  } finally {
+    db.close()
+  }
+}
+
+export interface ReadOnlyEventLoad {
+  events: DomainEvent[]
+  /** Baris yang dibuang decoder — dilaporkan, tidak disembunyikan. */
+  rejected: number
+}
+
+/**
+ * [P14.2] Seluruh event presentasi lintas sesi, read-only, SUDAH didekode.
+ *
+ * Dipakai ekstraksi intent; tidak pernah dipakai jalur tulis. `rejected`
+ * wajib dilaporkan pemanggil supaya bukti yang tak terbaca tidak berubah
+ * jadi "seolah tidak pernah ada".
+ */
+export function readAllPresentationEventsReadOnly(cwd?: string): ReadOnlyEventLoad {
+  const p = dbPath(cwd)
+  if (!existsSync(p)) return { events: [], rejected: 0 }
+  const db = new Database(p)
+  try {
+    const rows = db
+      .prepare("SELECT payload FROM presentation_events ORDER BY session_id, event_seq")
+      .all() as { payload: string }[]
+    const events: DomainEvent[] = []
+    let rejected = 0
+    for (const row of rows) {
+      const ev = decodePresentationEvent(row.payload)
+      if (ev !== null) events.push(ev)
+      else rejected++
+    }
+    return { events, rejected }
+  } catch {
+    return { events: [], rejected: 0 }
+  } finally {
+    db.close()
+  }
+}
+
+export interface RunInventoryRow {
+  readonly run_id: string
+  readonly session_id: string
+  readonly status: string
+  readonly started_at: number
+  readonly ended_at: number | null
+  readonly recovery_status: string | null
+}
+
+export function readRunRowsReadOnly(cwd?: string): RunInventoryRow[] {
+  const p = dbPath(cwd)
+  if (!existsSync(p)) return []
+  const db = new Database(p)
+  try {
+    return db
+      .prepare("SELECT run_id, session_id, status, started_at, ended_at, recovery_status FROM runs")
+      .all() as RunInventoryRow[]
+  } catch {
+    return []
   } finally {
     db.close()
   }

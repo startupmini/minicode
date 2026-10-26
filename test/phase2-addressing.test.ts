@@ -105,9 +105,7 @@ test("C. canonical takes precedence when both addresses exist", async () => {
   // ...and when the canonical file is missing, legacy answers instead
   const dir2 = await ownedDir()
   plant(dir2, "du_al.json", payload("hanya legacy"))
-  expect(await loadTodos("du/al", dir2)).toEqual([
-    { content: "hanya legacy", status: "pending" },
-  ])
+  expect(await loadTodos("du/al", dir2)).toEqual([{ content: "hanya legacy", status: "pending" }])
 })
 
 // D. duplicate address — DEFERRED to Phase 3 (no taskId in evidence). The

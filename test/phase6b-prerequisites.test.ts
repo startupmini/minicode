@@ -258,8 +258,13 @@ describe("P2. authority mode", () => {
   })
 
   test("15. other statuses remain writable under authority (scope is narrow)", () => {
-    const t = add(authority)
+    // [Fase 1 / LOOP-INV-02] Satu task PER status: masuk ke status X selalu
+    // dari PENDING (edge legal). Sebelumnya test ini memakai SATU task berulang
+    // dan mengandalkan terminal bisa ditimpa status lain — persis perilaku yang
+    // kini digerbang. Yang diuji tetap sama: otoritas SCHEDULER hanya mengunci
+    // IN_PROGRESS, bukan status lain.
     for (const status of ["VERIFYING", "BLOCKED", "CANCELLED", "COMPLETED", "FAILED"] as const) {
+      const t = add(authority)
       const updated = authority.patchTask(S, t.id, {
         status,
         blockedReason: status === "BLOCKED" ? "r" : null,

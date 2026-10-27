@@ -418,7 +418,9 @@ describe("P14.3 — declareTaskDuplicate", () => {
 
     // Operator salah: buka kembali lewat lifecycle yang sudah ada. Tidak ada
     // "unmerge" khusus — itu JUSTRU bukti bahwa merge tidak mengunci lifecycle.
-    store.patchTask(S, duplicate.id, { status: "PENDING" })
+    // [Fase 1] Reopen kini butuh permit eksplisit: terminal tidak bisa hidup
+    // lagi sebagai efek samping tulisan status biasa.
+    store.patchTask(S, duplicate.id, { status: "PENDING" }, { allowReopen: true })
     expect(store.getTask(S, duplicate.id)?.status).toBe("PENDING")
 
     // Proyeksi open mencantumkannya lagi; closure feedback TIDAK menyimpulkan

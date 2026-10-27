@@ -31,6 +31,14 @@ function trackedFiles(pattern: RegExp): string[] {
 const tsFiles = trackedFiles(/\.ts$/)
 const textFiles = trackedFiles(/\.(ts|md|json|yml|yaml)$/)
 
+/**
+ * [Fase 1] Berkas konfigurasi root TANPA ekstensi. Regex `textFiles` di atas
+ * tidak menjangkau keduanya, sehingga BOM di sini lolos dari guard dan baru
+ * ketahuan lewat audit manual (keduanya memang ber-BOM sampai Fase 1).
+ * Didaftarkan eksplisit supaya kelas kesalahan yang sama tidak kembali.
+ */
+const ROOT_CONFIG_FILES = [".gitattributes", ".gitignore"] as const
+
 // ── Konvensi import RELATIF: ekstensi wajib eksplisit ──────────────────────
 //
 // Gate distribusi (`scripts/pack-check.ts`) menelusuri graf import dari
@@ -217,7 +225,9 @@ describe("integritas encoding berkas", () => {
     // filter menormalkan). Bun/Node toleran BOM di .ts, tapi konvensi repo
     // (AGENTS.md) melarangnya di semua berkas.
     const withBom: string[] = []
-    for (const f of textFiles) {
+    // [Fase 1] `textFiles` (berekstensi) + dotfile konfigurasi root. Keduanya
+    // wajib UTF-8 tanpa BOM; sebelumnya dotfile tak pernah diperiksa.
+    for (const f of [...textFiles, ...ROOT_CONFIG_FILES]) {
       const buf = readFileSync(join(repoRoot, f))
       if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) withBom.push(f)
     }

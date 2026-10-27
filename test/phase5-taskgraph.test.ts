@@ -995,7 +995,11 @@ describe("INTEGRATION. a real TaskStore snapshot", () => {
     expect(after.readyTasks()).toEqual([b.id])
     expect(after.blockers(b.id)).toEqual([])
 
-    store.patchTask(S, a.id, { status: "FAILED" })
+    // [Fase 1 / LOOP-INV-02] Koreksi terminal (COMPLETED→FAILED) adalah keluar
+    // dari status terminal, jadi butuh permit eksplisit. Test ini menguji
+    // readiness graph, bukan kebijakan transisi; permit ditulis agar niatnya
+    // terlihat (bukan efek samping "tulis status apa saja").
+    store.patchTask(S, a.id, { status: "FAILED" }, { allowReopen: true })
     const failed = graph()
     expect(failed.blockers(b.id)[0]?.kind).toBe("DEPENDENCY_TERMINAL")
     expect(failed.blockers(b.id)[0]?.permanent).toBe(true)

@@ -107,6 +107,21 @@ export async function createMinicodeSession(
      * `onPermissions` is not wired — there is no mode to control.
      */
     permissionHandler?: PermissionHandler
+    /**
+     * [Fase 1 / LOOP-INV-03] Barrier yang dijalankan kernel SEBELUM
+     * `tool.execute` untuk setiap panggilan yang diizinkan policy.
+     *
+     * Dipanggil dari dalam `permissions.check` (setelah keputusan "allow",
+     * sebelum kembali ke kernel), jadi:
+     * - hanya tool yang benar-benar akan dieksekusi yang menulis bukti;
+     * - kegagalan barrier menggagalkan panggilan (kernel mengubahnya menjadi
+     *   hasil tool error), bukan menjalankan efek tanpa jejak.
+     *
+     * Composition root memakainya untuk menulis intent jurnal secara AWAITED
+     * dan menandai operasi in-flight sebelum efek samping terjadi. Tanpa opsi
+     * ini perilaku identik seperti sebelumnya.
+     */
+    beforeToolEffect?: (call: { id: string; name: string; args: unknown }) => Promise<void>
   },
 ): Promise<Session> {
   // Fail-closed lebih awal (sebelum provider/system prompt): WorkMode non-
@@ -189,6 +204,29 @@ export async function createMinicodeSession(
       }),
       root: cwd,
     })
+  // [Fase 1 / LOOP-INV-03] Barrier "durability before effect".
+  //
+  // Kenapa dibungkus di sini: `permissions.check` adalah satu-satunya titik
+  // yang di-await kernel untuk SETIAP tool call, tepat sebelum
+  // `execution:started` dan `tool.execute`. Membungkusnya membuat barrier
+  // benar-benar berurutan (await), tanpa menyentuh kernel beku dan tanpa
+  // menambah jalur eksekusi kedua.
+  //
+  // Fail-closed: bila barrier melempar, `permissions.check` melempar juga;
+  // kernel menangkapnya sebagai error hasil tool dan TIDAK menjalankan efek.
+  // Itu perilaku yang benar ketika bukti durable tidak bisa ditulis.
+  const withEffectBarrier: PermissionHandler =
+    opts.beforeToolEffect === undefined
+      ? permissions
+      : {
+          ...permissions,
+          check: async (call, deps) => {
+            const decision = await permissions.check(call, deps)
+            if (decision !== "allow") return decision
+            await opts.beforeToolEffect!(call)
+            return "allow"
+          },
+        }
   // [PHASE 6U] An INJECTED handler is not a mode, and has no mode control.
   //
   // [DESIGN DECISION] `onPermissions` and `livePermissionMode` are deliberately NOT
@@ -228,7 +266,7 @@ export async function createMinicodeSession(
     ...rest,
     provider,
     system,
-    permissions,
+    permissions: withEffectBarrier,
     permissionMode: livePermissionMode,
     estimator: minicodeEstimator,
     recovery: cappedRecovery,

@@ -1324,6 +1324,21 @@ interface ExecutionEvent {
  * Pasang jurnal pada sesi apa pun (parent maupun anak). Total: kegagalan
  * I/O jurnal tak pernah melempar ke bus turn (degraded-loud).
  */
+export interface MutationJournalHandle {
+  /**
+   * [Fase 1] Tulis record intent dan tunggu sampai durable. Dipanggil
+   * SEBELUM tool dieksekusi. No-op untuk tool yang tak dijurnal (read-only,
+   * NO_AUTO_JOURNAL, atau sudah dicakup jalur canonical).
+   */
+  preflightIntent(call: { id: string; name: string; args: unknown }): Promise<void>
+  /**
+   * [Fase 1] Tunggu seluruh penulisan terminal yang masih berjalan selesai.
+   * Dipanggil composition root sebelum turn dinyatakan selesai, sehingga
+   * "selesai" tidak pernah mendahului bukti.
+   */
+  flushPending(): Promise<void>
+}
+
 export function attachMutationJournal(
   session: SessionLike,
   opts: {
@@ -1349,7 +1364,7 @@ export function attachMutationJournal(
      */
     evidenceMode?: "events" | "canonical"
   },
-): void {
+): MutationJournalHandle {
   const root = resolve(opts.cwd ?? process.cwd())
   // Eager creation (AUDIT #01E §1): file jurnal dibuat saat wiring dipasang
   // — SEBELUM mutasi pertama — agar ABSENT vs EMPTY dapat dibedakan saat
@@ -1380,6 +1395,14 @@ export function attachMutationJournal(
   // tak boleh saling menimpa: completed mengambil pasangan TERTUA yang belum
   // berpasangan. Map-overwrite = terminal salah pasangan = pending hantu.
   const inflight = new Map<string, Promise<JournalRecord>[]>()
+  // [Fase 1 / LOOP-INV-03] toolCallId yang intent-nya sudah ditulis oleh
+  // PRE-FLIGHT (jalur awaited sebelum efek). Listener `execution:started`
+  // melewatkannya supaya satu efek tidak menghasilkan dua record intent.
+  const preflighted = new Set<string>()
+  // [Fase 1 / LOOP-INV-03] Terminal yang masih menulis. `execution:completed`
+  // adalah event SINKRON, sedangkan append terminal async; tanpa daftar ini
+  // turn bisa dinyatakan selesai saat bukti terminal masih di jalan.
+  const pendingTerminals = new Set<Promise<void>>()
   const turnOf = (): number | null => {
     try {
       const n = session.state?.turnCount
@@ -1388,21 +1411,14 @@ export function attachMutationJournal(
       return null
     }
   }
-  session.events.on("execution:started", (e) => {
-    const ev = e as unknown as ExecutionEvent
-    // Forward dari child: ground truth ada di jurnal anak (bus asal).
-    // Mencatatnya juga di sini = bukti ganda (satu efek, dua id/sesi).
-    if (ev.forwardedChild != null) return
-    const name = typeof ev.execution?.call?.name === "string" ? ev.execution.call.name : ""
-    if (!name || NO_AUTO_JOURNAL.has(name) || !isMutationTool(name)) return
-    if (opts.evidenceMode === "canonical" && isCanonicalEvidenceCovered(name)) return
-    const callId =
-      typeof ev.execution?.call?.id === "string" ? (ev.execution.call.id as string) : ""
-    const base = isMcpToolName(name) ? "mcp_call" : name
-    const args = (ev.execution?.call?.args ?? {}) as Record<string, unknown>
-    // Daftarkan promise SEBELUM await: completed dijamin datang sesudah
-    // started, dan kini pasti menunggu intent selesai dulu.
-    const intentP = appendMutationIntent({
+  /**
+   * [Fase 1] Satu-satunya tempat membangun input intent, dipakai bersama oleh
+   * listener event (fallback) dan pre-flight (jalur utama). Duplikasi di sini
+   * akan membuat dua jalur menulis bentuk record yang berbeda.
+   */
+  const intentInputFor = (name: string, args: Record<string, unknown>) => {
+    const base = base_of(name)
+    return {
       session: opts.sessionId,
       ...(opts.childOf ? { childOf: opts.childOf } : {}),
       turn: turnOf(),
@@ -1412,7 +1428,30 @@ export function attachMutationJournal(
       cwd: root,
       paths: verifyPaths(base, args, root),
       argsHash: hashArgs(args),
-    })
+    }
+  }
+  const shouldJournal = (name: string): boolean =>
+    name !== "" &&
+    !NO_AUTO_JOURNAL.has(name) &&
+    isMutationTool(name) &&
+    !(opts.evidenceMode === "canonical" && isCanonicalEvidenceCovered(name))
+  session.events.on("execution:started", (e) => {
+    const ev = e as unknown as ExecutionEvent
+    // Forward dari child: ground truth ada di jurnal anak (bus asal).
+    // Mencatatnya juga di sini = bukti ganda (satu efek, dua id/sesi).
+    if (ev.forwardedChild != null) return
+    const name = typeof ev.execution?.call?.name === "string" ? ev.execution.call.name : ""
+    if (!shouldJournal(name)) return
+    const callId =
+      typeof ev.execution?.call?.id === "string" ? (ev.execution.call.id as string) : ""
+    // [Fase 1 / LOOP-INV-03] Pre-flight sudah menulis intent untuk call ini
+    // SEBELUM tool dieksekusi. Menulis lagi di sini = dua record untuk satu
+    // efek, dan recovery akan melihat satu intent menggantung selamanya.
+    if (callId !== "" && preflighted.has(callId)) return
+    const args = (ev.execution?.call?.args ?? {}) as Record<string, unknown>
+    // Daftarkan promise SEBELUM await: completed dijamin datang sesudah
+    // started, dan kini pasti menunggu intent selesai dulu.
+    const intentP = appendMutationIntent(intentInputFor(name, args))
     if (callId) {
       const q = inflight.get(callId) ?? []
       q.push(
@@ -1428,13 +1467,12 @@ export function attachMutationJournal(
     })
   })
   session.events.on("execution:completed", (e) => {
-    void (async () => {
+    const task = (async () => {
       try {
         const ev = e as unknown as ExecutionEvent
         if (ev.forwardedChild != null) return
         const name = typeof ev.execution?.call?.name === "string" ? ev.execution.call.name : ""
-        if (!name || NO_AUTO_JOURNAL.has(name) || !isMutationTool(name)) return
-        if (opts.evidenceMode === "canonical" && isCanonicalEvidenceCovered(name)) return
+        if (!shouldJournal(name)) return
         const callId =
           typeof ev.execution?.call?.id === "string" ? (ev.execution.call.id as string) : ""
         const q = callId ? (inflight.get(callId) ?? []) : []
@@ -1482,7 +1520,61 @@ export function attachMutationJournal(
         process.stderr.write(`[warn] journal: terminal failed: ${(err as Error).message}\n`)
       }
     })()
+    // [Fase 1] Daftarkan supaya composition root bisa MENUNGGU terminal selesai
+    // sebelum turn dinyatakan selesai. Body di atas menangkap semua error, jadi
+    // promise ini tidak pernah reject; `finally` hanya membersihkan daftar.
+    pendingTerminals.add(task)
+    void task.finally(() => pendingTerminals.delete(task)).catch(() => {})
   })
+
+  /**
+   * [Fase 1 / LOOP-INV-03, LOOP-INV-04] Handle untuk composition root.
+   *
+   * `preflightIntent` menulis record intent dan MENUNGGU-nya sampai durable.
+   * Pemanggil (`src/app/session.ts` lewat `beforeToolEffect`, dipasang
+   * `cli/setup.ts`) menjalankannya SEBELUM tool dieksekusi, sehingga
+   * "durability-before-effect" menjadi urutan yang benar-benar di-await, bukan
+   * harapan pada scheduling microtask.
+   *
+   * Idempoten per `toolCallId`: panggilan kedua (mis. retry hook) tidak
+   * menulis record kedua, dan listener `execution:started` melewatkan id yang
+   * sudah di-preflight.
+   */
+  return {
+    async flushPending(): Promise<void> {
+      // Tunggu sampai TIDAK ADA terminal tertunda. Loop karena penulisan baru
+      // bisa lahir selama await (batch berurutan); sekali kosong, selesai.
+      while (pendingTerminals.size > 0) {
+        await Promise.allSettled([...pendingTerminals])
+      }
+    },
+    async preflightIntent(call: { id: string; name: string; args: unknown }): Promise<void> {
+      const name = typeof call.name === "string" ? call.name : ""
+      if (!shouldJournal(name)) return
+      const callId = typeof call.id === "string" ? call.id : ""
+      if (callId === "" || preflighted.has(callId)) return
+      // Tandai SEBELUM await: dua preflight paralel untuk id yang sama tidak
+      // boleh sama-sama menulis.
+      preflighted.add(callId)
+      const args = (call.args ?? {}) as Record<string, unknown>
+      const p = appendMutationIntent(intentInputFor(name, args))
+      const q = inflight.get(callId) ?? []
+      q.push(p)
+      inflight.set(callId, q)
+      try {
+        await p
+      } catch (err) {
+        // Durabilitas gagal: jangan biarkan efek berjalan (pemanggil akan
+        // menolak tool). Bersihkan state supaya tidak ada intent hantu yang
+        // ditunggu terminal yang tak akan pernah datang.
+        preflighted.delete(callId)
+        const idx = q.indexOf(p)
+        if (idx !== -1) q.splice(idx, 1)
+        if (q.length === 0) inflight.delete(callId)
+        throw err
+      }
+    },
+  }
 }
 
 function base_of(name: string): string {

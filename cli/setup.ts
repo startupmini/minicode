@@ -127,6 +127,12 @@ import {
   planRecoveryForSession,
 } from "../src/session/journal.ts"
 import {
+  beginToolInFlight,
+  clearPendingTools,
+  endToolInFlight,
+  setPendingToolsRun,
+} from "../src/session/pending-tools.ts"
+import {
   appendPresentationEvents,
   backfillHistoryEventIds,
   completeRun,
@@ -884,6 +890,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // baris RUNNING → kuburan resume (tombstone) menandainya INTERRUPTED/UNKNOWN.
   let currentRunId: string | null = null
   let lastTurnOutcome: "completed" | "failed" | "interrupted" | null = null
+  // [Fase 1 / LOOP-INV-03] Handle jurnal yang dipakai barrier pre-efek.
+  // Deklarasi SEBELUM session dibuat agar closure `beforeToolEffect` di bawah
+  // menangkap binding yang sudah ada (tanpa TDZ), dan diisi tepat setelah
+  // `attachMutationJournal` (masih sebelum turn pertama).
+  let journalHandle: import("../src/session/journal.ts").MutationJournalHandle | null = null
 
   function markPreviousRunTerminal(): void {
     if (currentRunId === null || lastTurnOutcome === null) return
@@ -891,6 +902,12 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     const outcome = lastTurnOutcome
     currentRunId = null
     lastTurnOutcome = null
+    // [Fase 1 / LOOP-INV-06, LOOP-INV-10] Hanya run yang berakhir NORMAL yang
+    // membersihkan `pending_tool_ids`. Untuk INTERRUPTED/FAILED daftar sengaja
+    // DIBIARKAN: ia bukti forensik bahwa operasi masih terbuka, dan recovery
+    // tidak boleh menyimpulkan "selesai" dari ketiadaan bukti.
+    if (outcome === "completed") clearPendingTools()
+    setPendingToolsRun(null, cwd)
     if (outcome === "completed") completeRun(runId, cwd, { expectedEpoch })
     else if (outcome === "interrupted") interruptRun(runId, cwd, { expectedEpoch })
     else failRun(runId, cwd, { expectedEpoch })
@@ -1579,6 +1596,12 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       onApprovalEvent: (e) => {
         presentation?.publishApproval(e)
       },
+      // [Fase 1 / LOOP-INV-03] Durability-before-effect: intent jurnal ditulis
+      // dan DI-AWAIT sebelum tool dijalankan. Tanpa ini, `execution:started`
+      // memicu penulisan fire-and-forget sehingga efek bisa terjadi lebih dulu.
+      beforeToolEffect: async (call) => {
+        if (journalHandle !== null) await journalHandle.preflightIntent(call)
+      },
       onPermissions: (ctl) => {
         permissions = ctl
       },
@@ -1670,7 +1693,21 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // terminal di execution:completed — keduanya post-gate kernel. Total:
   // kegagalan tulis jurnal tak pernah menggagalkan turn (degraded-loud).
   // Fase 4: onCommitted → file.changed (receipt paths+journalSeq) ke adapter.
-  attachMutationJournal(session, {
+  // [Fase 1] Simpan handle pre-flight (dipakai barrier di atas) dan pasang
+  // pelacakan operasi in-flight untuk `runs.pending_tool_ids`.
+  //
+  // Penanda in-flight dipasang dari bus event KERNEL, bukan dari barrier:
+  // `execution:started` di-emit secara SINKRON tepat sebelum `tool.execute`
+  // (vendor/minicore/src/core/executor.ts:86 vs :89), sehingga `beginToolInFlight`
+  // (tulis SQLite sinkron) sudah durable saat `tool.execute` mulai. Tool yang
+  // ditolak policy tidak pernah sampai ke event ini, jadi daftar hanya berisi
+  // operasi yang benar-benar akan berjalan.
+  //
+  // Catatan kontrak (revisi Fase 1): jalur UTAMA intent sekarang ditulis oleh
+  // barrier pre-efek yang DI-AWAIT; listener `execution:started` tinggal
+  // fallback untuk tool yang tidak lewat barrier. Konsekuensinya disengaja:
+  // gagal menulis intent = tool DITOLAK (fail-closed), bukan jalan tanpa bukti.
+  journalHandle = attachMutationJournal(session, {
     sessionId,
     cwd,
     evidenceMode,
@@ -1679,6 +1716,16 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         presentation?.noteFileChanged(info)
       } catch {}
     },
+  })
+  session.events.on("execution:started", (e) => {
+    const ev = e as unknown as { execution?: { call?: { id?: unknown } } }
+    const id = typeof ev.execution?.call?.id === "string" ? ev.execution.call.id : ""
+    if (id !== "") beginToolInFlight(id)
+  })
+  session.events.on("execution:completed", (e) => {
+    const ev = e as unknown as { execution?: { call?: { id?: unknown } } }
+    const id = typeof ev.execution?.call?.id === "string" ? ev.execution.call.id : ""
+    if (id !== "") endToolInFlight(id)
   })
 
   // ── Shadow checkpoint ──
@@ -2073,6 +2120,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     const created = createRun(sessionId, thread.thread_id, cwd, { expectedEpoch })
     transitionRun(created.run_id, "RUNNING", cwd, { expectedEpoch })
     currentRunId = created.run_id
+    // [Fase 1 / LOOP-INV-10] Ikat pelacakan in-flight ke run yang baru hidup.
+    // Sejak titik ini setiap tool yang dieksekusi dicatat durable ke
+    // `runs.pending_tool_ids` sebelum efeknya, lalu dilepas saat selesai.
+    setPendingToolsRun(created.run_id, cwd)
     lastTurnOutcome = null
     // Listener UI segar tiap turn (pagar turn yatim — lihat attachUI).
     attachUI()
@@ -2095,6 +2146,13 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       lastTurnOutcome = classifyTurnError(e, signal?.aborted === true)
       throw e
     } finally {
+      // [Fase 1 / LOOP-INV-03] Bukti terminal jurnal harus TUNTAS sebelum turn
+      // dinyatakan selesai (return/throw). Tanpa await ini, turn bisa berakhir
+      // saat append terminal masih di jalan — konsumen melihat "selesai" tanpa
+      // bukti. Best-effort: kegagalan sudah dicatat degraded oleh jurnal.
+      if (journalHandle !== null) {
+        await journalHandle.flushPending().catch(() => {})
+      }
       detachUI()
       try {
         ;(clearTurnActive as ((cwd?: string, id?: string) => void) | undefined)?.(cwd, sessionId)

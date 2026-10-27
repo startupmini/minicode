@@ -3,15 +3,25 @@
 // File ini mengunci pembagian tanggung jawab, BUKAN menambahi pagar:
 // - TaskStore menegakkan: validitas struktural/identitas, alasan BLOCKED,
 //   otoritas IN_PROGRESS (mode SCHEDULER), dan predikat atomik primitif
-//   eksklusi (claim/reconcile). Tidak ada gerbang from-state/to-state.
+//   eksklusi (claim/reconcile).
 // - Penulis terotorisasi menegakkan aturan alur kerja (model: normalizeTodos
 //   + gerbang bukti; scheduler: protokol claim; recovery: revert berpagar).
 // - Konsumen menurunkan kesiapan dari status yang dideklarasikan apa adanya;
 //   penerimaan store TIDAK membuktikan prasyarat terpenuhi.
 //
+// [Fase 1 / LOOP-INV-02] REVISI KONTRAK — read before changing:
+// Store kini PUNYA from-state gate (`TASK_EDGES`). Status non-terminal tetap
+// permisif (FAILED→PENDING retry, BLOCKED→PENDING unblock, VERIFYING→PENDING
+// revert semuanya sah), tetapi status TERMINAL (`COMPLETED`/`CANCELLED`) tidak
+// bisa keluar tanpa permit eksplisit `allowReopen: true`. Reopen tetap
+// MUNGKIN — yang berubah adalah ia tidak lagi bisa terjadi sebagai efek
+// samping tulisan status biasa, dan setiap pemanggilnya bisa diaudit dengan
+// `grep allowReopen`.
+//
 // Setiap test menyatakan kontrak yang dibuktikannya dan GAGAL bila perilaku
 // menyimpang. Status di luar kosakata model (VERIFYING/FAILED/RETRYING —
-// tanpa produsen) sengaja tidak diuji sebagai transisi.
+// tanpa produsen di jalur legacy) diuji sebatas wiring VERIFYING yang kini
+// eksplisit.
 import { afterEach, expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -56,26 +66,31 @@ test("kontrak: store menerima pending→completed (tak ada gerbang transisi)", a
   expect(next.revision).toBe(t.revision + 1)
 })
 
-// Kontrak 2: reopen adalah alur yang sah di tingkat store (completed→
-// in_progress/pending). Terminalitas ditegakkan lapisan turunan (claim
-// hanya-PENDING, reconcile tak pernah menarget terminal), bukan patch.
-test("kontrak: store mengizinkan reopen completed→pending", async () => {
+// Kontrak 2: reopen adalah alur yang SAH tetapi kini butuh permit eksplisit
+// (`allowReopen`). Ini yang mengubah "terminal bisa hidup lagi" dari efek
+// samping menjadi keputusan yang tertulis di pemanggil.
+test("kontrak: reopen completed→pending butuh permit eksplisit allowReopen", async () => {
   const s = new TaskStore(await ownedDir())
   const t = s.createTask(S, baru("kerja"))
   s.patchTask(S, t.id, { status: "COMPLETED" })
-  const next = s.patchTask(S, t.id, { status: "PENDING" })
+  // Tanpa permit: fail-closed, bukan diam-diam hidup lagi.
+  expect(() => s.patchTask(S, t.id, { status: "PENDING" })).toThrow()
+  expect(s.getTask(S, t.id)?.status).toBe("COMPLETED")
+  const next = s.patchTask(S, t.id, { status: "PENDING" }, { allowReopen: true })
   expect(next.status).toBe("PENDING")
 })
 
-// Kontrak 3: tulis ulang status terminal diizinkan di tingkat store
-// (cancelled→in_progress). Yang "terminal" adalah perlakuan primitif
-// scheduler terhadapnya (tak bisa di-claim, tak bisa di-reconcile),
-// bukan larangan tulis.
-test("kontrak: store mengizinkan tulis ulang cancelled→in_progress", async () => {
+// Kontrak 3: penulisan ulang status terminal juga butuh permit eksplisit.
+// Yang "terminal" adalah perlakuan primitif scheduler (tak bisa di-claim, tak
+// bisa di-reconcile) PLUS gerbang from-state di store; keluar darinya hanya
+// lewat permit operator yang tertulis.
+test("kontrak: tulis ulang cancelled→in_progress butuh permit eksplisit allowReopen", async () => {
   const s = new TaskStore(await ownedDir())
   const t = s.createTask(S, baru("kerja"))
   s.patchTask(S, t.id, { status: "CANCELLED" })
-  const next = s.patchTask(S, t.id, { status: "IN_PROGRESS" })
+  expect(() => s.patchTask(S, t.id, { status: "IN_PROGRESS" })).toThrow()
+  expect(s.getTask(S, t.id)?.status).toBe("CANCELLED")
+  const next = s.patchTask(S, t.id, { status: "IN_PROGRESS" }, { allowReopen: true })
   expect(next.status).toBe("IN_PROGRESS")
 })
 

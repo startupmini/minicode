@@ -69,6 +69,111 @@ export function isTaskStatus(value: unknown): value is TaskStatus {
 }
 
 /**
+ * [Fase 1 / LOOP-INV-02] Status yang mengakhiri siklus hidup task.
+ *
+ * Keduanya TIDAK punya transisi keluar di `TASK_EDGES`. Keluar dari status ini
+ * hanya mungkin lewat permit eksplisit `allowReopen` pada `patchTask` — jadi
+ * "hidup lagi" selalu keputusan operator yang tercatat di kode pemanggil,
+ * bukan efek samping tulisan status biasa.
+ */
+export const TERMINAL_TASK_STATUSES: ReadonlySet<TaskStatus> = new Set(["COMPLETED", "CANCELLED"])
+
+export function isTerminalTaskStatus(status: TaskStatus): boolean {
+  return TERMINAL_TASK_STATUSES.has(status)
+}
+
+/**
+ * [Fase 1 / LOOP-INV-02] Tabel transisi status task.
+ *
+ * BENTUK KEPUTUSAN — baca sebelum mengubah:
+ *
+ * 1. Terminal bersifat ABSOLUT: `COMPLETED`/`CANCELLED` hanya boleh ke dirinya
+ *    sendiri. Itu inti invariant "terminal tidak bisa hidup kembali".
+ * 2. Status non-terminal sengaja PERMISIF (semua status non-terminal boleh
+ *    saling menuju). Alasannya bukan kemalasan: alur nyata hari ini memakai
+ *    FAILED→PENDING (retry), BLOCKED→PENDING (unblock), IN_PROGRESS→PENDING
+ *    (requeue/reconcile), dan VERIFYING→PENDING (revert). Memperketat edge
+ *    tanpa bukti pemanggil akan memutus jalur yang sah; guard baru di sini
+ *    adalah terminalitas + wiring VERIFYING yang eksplisit, persis yang
+ *    dituntut invariant. Pengetatan lebih lanjut harus datang dari bukti.
+ * 3. `VERIFYING` terhubung dua arah dengan produsen/penilai yang sah:
+ *    PENDING/IN_PROGRESS→VERIFYING (masuk verifikasi), lalu
+ *    VERIFYING→COMPLETED (lulus), →IN_PROGRESS (perbaikan), →BLOCKED,
+ *    →FAILED, →CANCELLED, dan →PENDING (revert oleh reconciliation).
+ * 4. Self-loop selalu sah: `patchTask` yang hanya mengubah judul/urutan tidak
+ *    boleh dipaksa berpindah status.
+ */
+export const TASK_EDGES: Readonly<Record<TaskStatus, ReadonlySet<TaskStatus>>> = {
+  PENDING: new Set<TaskStatus>([
+    "PENDING",
+    "IN_PROGRESS",
+    "VERIFYING",
+    "BLOCKED",
+    "FAILED",
+    "RETRYING",
+    "COMPLETED",
+    "CANCELLED",
+  ]),
+  IN_PROGRESS: new Set<TaskStatus>([
+    "IN_PROGRESS",
+    "PENDING",
+    "VERIFYING",
+    "BLOCKED",
+    "FAILED",
+    "RETRYING",
+    "COMPLETED",
+    "CANCELLED",
+  ]),
+  VERIFYING: new Set<TaskStatus>([
+    "VERIFYING",
+    "PENDING",
+    "IN_PROGRESS",
+    "BLOCKED",
+    "FAILED",
+    "RETRYING",
+    "COMPLETED",
+    "CANCELLED",
+  ]),
+  BLOCKED: new Set<TaskStatus>([
+    "BLOCKED",
+    "PENDING",
+    "IN_PROGRESS",
+    "VERIFYING",
+    "FAILED",
+    "RETRYING",
+    "COMPLETED",
+    "CANCELLED",
+  ]),
+  FAILED: new Set<TaskStatus>([
+    "FAILED",
+    "PENDING",
+    "IN_PROGRESS",
+    "VERIFYING",
+    "BLOCKED",
+    "RETRYING",
+    "COMPLETED",
+    "CANCELLED",
+  ]),
+  RETRYING: new Set<TaskStatus>([
+    "RETRYING",
+    "PENDING",
+    "IN_PROGRESS",
+    "VERIFYING",
+    "BLOCKED",
+    "FAILED",
+    "COMPLETED",
+    "CANCELLED",
+  ]),
+  COMPLETED: new Set<TaskStatus>(["COMPLETED"]),
+  CANCELLED: new Set<TaskStatus>(["CANCELLED"]),
+}
+
+/** [Fase 1 / LOOP-INV-02] Apakah `from → to` legal menurut `TASK_EDGES`. */
+export function isLegalTaskTransition(from: TaskStatus, to: TaskStatus): boolean {
+  return TASK_EDGES[from]?.has(to) === true
+}
+
+/**
  * Canonical task id = `t<n>`, `<n>` monotonic from 1, per session.
  *
  * `taskIdFromIndex` is the inverse of what `nextId()` needs. `nextId()` starts
@@ -212,6 +317,15 @@ export type TaskErrorCode =
   // This is the fail-closed boundary that stops model-facing todo_write from
   // creating an authoritative claim (6B P2).
   | "TASK_AUTHORITY_VIOLATION"
+  // [Fase 1 / LOOP-INV-02] From-state gate: transisi yang tidak ada di
+  // `TASK_EDGES` (termasuk keluar dari terminal) ditolak. Dipisah dari
+  // TASK_INVALID_TRANSITION (yang berarti payload tidak lengkap, mis. BLOCKED
+  // tanpa alasan) supaya operator bisa membedakan "salah bentuk" dari "salah
+  // urutan status".
+  | "TASK_ILLEGAL_TRANSITION"
+  // [Fase 1 / LOOP-INV-13] Pemanggil menyertakan token lease yang sudah tidak
+  // memegang `session_authority` (diambil alih worker lain atau kedaluwarsa).
+  | "TASK_AUTHORITY_LOST"
 
 /**
  * PHASE 6B: outcome of `TaskStore.claimTask`.
@@ -262,5 +376,42 @@ export class TaskError extends Error {
     super(message)
     this.name = "TaskError"
     this.code = code
+  }
+}
+
+/**
+ * [Fase 1 / LOOP-INV-02] Transisi status yang tidak diizinkan `TASK_EDGES`.
+ *
+ * Subclass `TaskError` supaya seluruh `catch (e) { e instanceof TaskError }`
+ * yang sudah ada tetap menangkapnya; `from`/`to` diekspos agar pemanggil bisa
+ * membedakan "terminal resurrection" dari pelanggaran edge lain tanpa
+ * mem-parsing pesan.
+ */
+export class IllegalTaskTransitionError extends TaskError {
+  readonly from: TaskStatus
+  readonly to: TaskStatus
+  constructor(from: TaskStatus, to: TaskStatus) {
+    const terminal = isTerminalTaskStatus(from)
+      ? " (terminal state; requires explicit allowReopen)"
+      : ""
+    super("TASK_ILLEGAL_TRANSITION", `illegal task transition ${from} -> ${to}${terminal}`)
+    this.name = "IllegalTaskTransitionError"
+    this.from = from
+    this.to = to
+  }
+}
+
+/**
+ * [Fase 1 / LOOP-INV-13] Penulis menyertakan token lease yang tidak lagi
+ * memegang otoritas sesi. Fail-closed: lebih baik menolak tulisan daripada
+ * mengizinkan worker yang sudah tersingkir menimpa state.
+ */
+export class TaskAuthorityLostError extends TaskError {
+  constructor(sessionId: string) {
+    super(
+      "TASK_AUTHORITY_LOST",
+      `session authority lost for ${sessionId}: the presented lease token is no longer current`,
+    )
+    this.name = "TaskAuthorityLostError"
   }
 }

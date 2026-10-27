@@ -33,11 +33,15 @@ import { scrubSecrets } from "../policy/scrub.ts"
 import type { CompletionEvidence } from "../tools/todo.ts"
 import {
   type ClaimOutcome,
+  IllegalTaskTransitionError,
+  isLegalTaskTransition,
   isTaskId,
   isTaskStatus,
+  isTerminalTaskStatus,
   type ReconcileOutcome,
   type Task,
   type TaskAcceptance,
+  TaskAuthorityLostError,
   TaskError,
   type TaskEvidence,
   type TaskProvenance,
@@ -855,11 +859,39 @@ export interface UpsertOptions {
   evidence?: CompletionEvidence
   /** Revision that MUST match (optimistic). `undefined` = no check.
    *
-   *  PHASE 6B NOTE: this is a READ-THEN-WRITE check performed OUTSIDE the write
-   *  transaction (see `patchTask`). It catches sequential staleness only and is
-   *  NOT a compare-and-swap. Code that needs real mutual exclusion must use
-   *  `claimTask`, whose revision predicate lives inside the SQL mutation. */
+   *  [Fase 1 / LOOP-INV-01] The check now runs INSIDE the write transaction and
+   *  the UPDATE carries `AND revision = ?`, so it is a real compare-and-swap
+   *  (one writer wins, the loser gets `TASK_STALE_REVISION` and changes
+   *  nothing). Previously it was a read-then-write outside the transaction and
+   *  two concurrent writers could both pass it. */
   expectedRevision?: number
+}
+
+/**
+ * [Fase 1] Opsi khusus `patchTask` untuk dua jaminan baru.
+ */
+export interface PatchOptions extends UpsertOptions {
+  /**
+   * [LOOP-INV-02] Permit EKSPLISIT untuk keluar dari status terminal
+   * (`COMPLETED`/`CANCELLED`). Tanpa ini, transisi tersebut ditolak dengan
+   * `IllegalTaskTransitionError`.
+   *
+   * Ini bukan pelonggaran diam-diam: reopen tetap mungkin (operator yang salah
+   * merge harus bisa membatalkannya), tetapi setiap pemanggil yang
+   * melakukannya menyatakannya di kode dan bisa diaudit lewat grep, bukan
+   * tersembunyi sebagai efek samping "tulis status apa saja".
+   */
+  allowReopen?: boolean
+  /**
+   * [LOOP-INV-13] Token lease milik pemanggil. Bila diberikan, `patchTask`
+   * memverifikasi token itu masih memegang `session_authority` untuk sesi ini.
+   * Token basi/tersingkir = `TaskAuthorityLostError`, tanpa menulis apa pun.
+   *
+   * `undefined` = pemanggil tanpa identitas lease (CLI interaktif / operator).
+   * Mode itu sengaja tetap diizinkan supaya sesi tunggal tanpa kontensi tidak
+   * berubah perilakunya.
+   */
+  authorityToken?: string
 }
 
 /**
@@ -1078,21 +1110,26 @@ export class TaskStore {
    * Apply a patch to one task. Optimistic: if `expectedRevision` is supplied and
    * does not match, the mutation is REFUSED and the revision does not advance.
    *
-   * This is the Phase 1 revision substrate. It deliberately contains no
-   * scheduler claim/CAS logic — a later phase may add that on top, but the
-   * substrate itself is what makes such a check possible at all.
+   * [Fase 1 / LOOP-INV-01] `expectedRevision` is now a REAL compare-and-swap:
+   * the read, the validation and the write share one transaction, and the
+   * UPDATE carries `AND revision = ?`. Two concurrent writers can no longer
+   * both pass it — the loser gets TASK_STALE_REVISION and writes nothing.
+   * (The previous PHASE 6B note above described the old read-then-write shape;
+   * that shape no longer exists.)
    *
-   * PHASE 6B: `expectedRevision` is a READ-THEN-WRITE check performed OUTSIDE
-   * the write transaction, and the UPDATE carries no `AND revision = ?`
-   * predicate. It therefore detects sequential staleness but is NOT a
-   * compare-and-swap; two concurrent writers can both pass it. Use
-   * `claimTask` when mutual exclusion is required.
+   * [Fase 1 / LOOP-INV-02] From-state gate: `TASK_EDGES` rejects illegal
+   * transitions, and terminal states (COMPLETED/CANCELLED) can only be left
+   * with the explicit permit `allowReopen`.
+   *
+   * [Fase 1 / LOOP-INV-13] Lease fencing: when `authorityToken` is supplied and
+   * no longer holds `session_authority`, the write is refused without touching
+   * the row. Callers without a token (interactive operator) behave as before.
    *
    * PHASE 6B authority guard: when `authorityMode === "SCHEDULER"`, a patch may
    * not author `IN_PROGRESS` — only `claimTask` may. This is the fail-closed
    * door that stops model-facing `todo_write` from creating a claim.
    */
-  patchTask(sessionId: string, taskId: string, patch: TaskPatch, opts: UpsertOptions = {}): Task {
+  patchTask(sessionId: string, taskId: string, patch: TaskPatch, opts: PatchOptions = {}): Task {
     if (this.authorityMode === "SCHEDULER" && patch.status === "IN_PROGRESS") {
       throw new TaskError(
         "TASK_AUTHORITY_VIOLATION",
@@ -1101,84 +1138,124 @@ export class TaskStore {
     }
     if (!isTaskId(taskId)) throw new TaskError("TASK_INVALID_ID", `not a canonical id: ${taskId}`)
     const db = handle(this.cwd)
-    const current = this.getTask(sessionId, taskId)
-    if (!current) throw new TaskError("TASK_NOT_FOUND", `no task ${taskId} in ${sessionId}`)
-    if (opts.expectedRevision !== undefined && opts.expectedRevision !== current.revision) {
-      throw new TaskError(
-        "TASK_STALE_REVISION",
-        `${taskId} is at revision ${current.revision}, got ${opts.expectedRevision}`,
-      )
-    }
-    const next: NewTaskInput = {
-      title: patch.title ?? current.title,
-      status: patch.status ?? current.status,
-      order: patch.order ?? current.order,
-      parentId: patch.parentId === undefined ? current.parentId : patch.parentId,
-      dependsOn: patch.dependsOn ?? current.dependsOn,
-      blockedReason:
-        patch.blockedReason === undefined ? current.blockedReason : patch.blockedReason,
-      verification: patch.verification === undefined ? current.verification : patch.verification,
-      evidence: patch.evidence ?? current.evidence,
-      acceptance: patch.acceptance === undefined ? current.acceptance : patch.acceptance,
-      provenance: current.provenance,
-    }
-    // [PHASE 6P] EXECUTION OWNERSHIP IS RELEASED ONLY WHEN THE TASK LEAVES THE
-    // SCHEDULER-OWNED IN-FLIGHT STATES.
-    //
-    // `patchTask` is every non-claim status writer: the model-facing
-    // `synchronizeCanonicalTasks` path and any operator edit. Two rules, and the
-    // difference between them is the whole point of the 6O history table:
-    //
-    //   status STAYS inside RECONCILABLE_STATUSES -> ownership is KEPT.
-    //     A user writing IN_PROGRESS is the agent's plan cursor (todo.ts:15-19)
-    //     laid on top of a live claim. It does not end the stranded execution
-    //     (6O H3/H6), and only a legitimate authority may end a Scheduler
-    //     execution. Releasing here would strand the generation forever.
-    //
-    //   status LEAVES RECONCILABLE_STATUSES       -> ownership is CLEARED.
-    //     The row is no longer a Scheduler execution in flight, so leaving
-    //     `scheduler` on it would be STALE ownership that a later reconcile
-    //     could still match. This is what stops an interactive completion,
-    //     failure, cancellation, block or requeue from being reverted later.
-    //
-    // Non-status writes (title, order, dependsOn, evidence, …) never touch the
-    // column: editing a title must not end an execution claim.
-    //
-    // The release is computed in SQL (a CASE over the RESULTING status) so it
-    // stays inside the write transaction and needs no extra read - a read here
-    // would be a read-then-write outside the mutation, which is exactly the
-    // hazard `expectedRevision` is documented not to be.
+    // [Fase 1 / LOOP-INV-01] READ -> VALIDATE -> WRITE is ONE transaction, and
+    // the UPDATE carries `AND revision = ?`. That makes it a true CAS: a caller
+    // passing `expectedRevision` that loses the race gets TASK_STALE_REVISION
+    // and writes nothing, and even a caller that passes no revision cannot
+    // silently overwrite a row whose revision moved underneath the read.
     return db.transaction(() => {
-      this.validate(sessionId, next, taskId)
-      try {
-        db.prepare(
-          `UPDATE tasks SET title = ?, status = ?, task_order = ?, parent_id = ?, depends_on_json = ?, blocked_reason = ?,
-            verification_json = ?, evidence_json = ?, acceptance_json = ?, updated_at = ?, revision = revision + 1,
-            execution_owner = CASE WHEN ? IN (${sqlList(RECONCILABLE_STATUSES)}) THEN execution_owner ELSE NULL END
-           WHERE session_id = ? AND task_id = ?`,
-        ).run(
-          next.title,
-          next.status,
-          next.order,
-          next.parentId ?? null,
-          j(next.dependsOn ?? []),
-          next.blockedReason ?? null,
-          j(next.verification ?? null),
-          j((next.evidence ?? []).slice(0, MAX_EVIDENCE)),
-          j(next.acceptance ?? null),
-          nowIso(),
-          next.status,
-          sessionId,
-          taskId,
+      const current = this.getTask(sessionId, taskId)
+      if (!current) throw new TaskError("TASK_NOT_FOUND", `no task ${taskId} in ${sessionId}`)
+      if (opts.expectedRevision !== undefined && opts.expectedRevision !== current.revision) {
+        throw new TaskError(
+          "TASK_STALE_REVISION",
+          `${taskId} is at revision ${current.revision}, got ${opts.expectedRevision}`,
         )
+      }
+      // [Fase 1 / LOOP-INV-13] Lease fencing for callers that present an
+      // identity. No token = interactive/operator path (unchanged behaviour);
+      // a token that is no longer current = fail-closed, because a displaced
+      // worker must not write after losing authority.
+      if (
+        opts.authorityToken !== undefined &&
+        !this.holdsSessionAuthority(sessionId, opts.authorityToken)
+      ) {
+        throw new TaskAuthorityLostError(sessionId)
+      }
+      const nextStatus: TaskStatus = patch.status ?? current.status
+      // [Fase 1 / LOOP-INV-02] From-state gate. A self-write (title/order edit)
+      // keeps the same status and therefore always passes. Leaving a terminal
+      // state requires the explicit permit `allowReopen`.
+      if (
+        nextStatus !== current.status &&
+        !isLegalTaskTransition(current.status, nextStatus) &&
+        !(opts.allowReopen === true && isTerminalTaskStatus(current.status))
+      ) {
+        throw new IllegalTaskTransitionError(current.status, nextStatus)
+      }
+      const next: NewTaskInput = {
+        title: patch.title ?? current.title,
+        status: nextStatus,
+        order: patch.order ?? current.order,
+        parentId: patch.parentId === undefined ? current.parentId : patch.parentId,
+        dependsOn: patch.dependsOn ?? current.dependsOn,
+        blockedReason:
+          patch.blockedReason === undefined ? current.blockedReason : patch.blockedReason,
+        verification: patch.verification === undefined ? current.verification : patch.verification,
+        evidence: patch.evidence ?? current.evidence,
+        acceptance: patch.acceptance === undefined ? current.acceptance : patch.acceptance,
+        provenance: current.provenance,
+      }
+      // [PHASE 6P] EXECUTION OWNERSHIP IS RELEASED ONLY WHEN THE TASK LEAVES THE
+      // SCHEDULER-OWNED IN-FLIGHT STATES.
+      //
+      // `patchTask` is every non-claim status writer: the model-facing
+      // `synchronizeCanonicalTasks` path and any operator edit. Two rules, and the
+      // difference between them is the whole point of the 6O history table:
+      //
+      //   status STAYS inside RECONCILABLE_STATUSES -> ownership is KEPT.
+      //     A user writing IN_PROGRESS is the agent's plan cursor (todo.ts:15-19)
+      //     laid on top of a live claim. It does not end the stranded execution
+      //     (6O H3/H6), and only a legitimate authority may end a Scheduler
+      //     execution. Releasing here would strand the generation forever.
+      //
+      //   status LEAVES RECONCILABLE_STATUSES       -> ownership is CLEARED.
+      //     The row is no longer a Scheduler execution in flight, so leaving
+      //     `scheduler` on it would be STALE ownership that a later reconcile
+      //     could still match. This is what stops an interactive completion,
+      //     failure, cancellation, block or requeue from being reverted later.
+      //
+      // Non-status writes (title, order, dependsOn, evidence, …) never touch the
+      // column: editing a title must not end an execution claim.
+      //
+      // The release is computed in SQL (a CASE over the RESULTING status), so it
+      // needs no extra read and stays inside the same transaction as the write.
+      // [Fase 1] The whole read-validate-write now lives inside that transaction
+      // and the UPDATE is revision-guarded (CAS), so the ownership CASE, the
+      // status gate and the mutation observe one consistent snapshot.
+      this.validate(sessionId, next, taskId)
+      let changes = 0
+      try {
+        changes = db
+          .prepare(
+            `UPDATE tasks SET title = ?, status = ?, task_order = ?, parent_id = ?, depends_on_json = ?, blocked_reason = ?,
+              verification_json = ?, evidence_json = ?, acceptance_json = ?, updated_at = ?, revision = revision + 1,
+              execution_owner = CASE WHEN ? IN (${sqlList(RECONCILABLE_STATUSES)}) THEN execution_owner ELSE NULL END
+             WHERE session_id = ? AND task_id = ? AND revision = ?`,
+          )
+          .run(
+            next.title,
+            next.status,
+            next.order,
+            next.parentId ?? null,
+            j(next.dependsOn ?? []),
+            next.blockedReason ?? null,
+            j(next.verification ?? null),
+            j((next.evidence ?? []).slice(0, MAX_EVIDENCE)),
+            j(next.acceptance ?? null),
+            nowIso(),
+            next.status,
+            sessionId,
+            taskId,
+            current.revision,
+          ).changes
       } catch (e) {
         throw new TaskError("TASK_PERSISTENCE_FAILURE", (e as Error).message)
+      }
+      if (changes !== 1) {
+        // The predicate matched a revision read in this same transaction, so a
+        // zero here means the row vanished under us (session deleted). Never a
+        // silent success, and never a second write attempt.
+        throw new TaskError(
+          "TASK_STALE_REVISION",
+          `${taskId} changed while the patch was being applied (expected revision ${current.revision})`,
+        )
       }
       return this.getTask(sessionId, taskId)!
     })()
   }
   /** Readable alias for the layer above. */
-  updateTask(sessionId: string, taskId: string, patch: TaskPatch, opts: UpsertOptions = {}): Task {
+  updateTask(sessionId: string, taskId: string, patch: TaskPatch, opts: PatchOptions = {}): Task {
     return this.patchTask(sessionId, taskId, patch, opts)
   }
 

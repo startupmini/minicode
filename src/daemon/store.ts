@@ -133,6 +133,14 @@ export interface ApprovalRow {
   decidedAt: number | null
   decision: string | null
   incarnation: string
+  /**
+   * [Fase 2 / LOOP-INV-08] SHA-256 argumen kanonis saat approval DIMINTA.
+   * `null` = baris legacy/pemanggil tanpa argumen; validasi memperlakukannya
+   * sebagai tidak cocok bila eksekusi membawa hash (fail-closed).
+   */
+  argsHash?: string | null
+  /** Identitas pemanggilan (tool call id) yang di-approve. */
+  invocationId?: string | null
 }
 
 /** Transisi yang sah. UNKNOWN = terminal (hasil tak pernah diketahui). */
@@ -175,6 +183,9 @@ function toRow(r: Record<string, unknown>): ApprovalRow {
     decidedAt: r.decided_at === null || r.decided_at === undefined ? null : Number(r.decided_at),
     decision: r.decision === null || r.decision === undefined ? null : String(r.decision),
     incarnation: String(r.incarnation),
+    argsHash: r.args_hash === null || r.args_hash === undefined ? null : String(r.args_hash),
+    invocationId:
+      r.invocation_id === null || r.invocation_id === undefined ? null : String(r.invocation_id),
   }
 }
 
@@ -187,8 +198,8 @@ export function createApproval(
   try {
     db.prepare(
       `INSERT INTO daemon_approvals
-        (approval_id, session_id, run_id, tool, summary, state, requested_at, expires_at, decided_at, decision, incarnation)
-       VALUES (?,?,?,?,?,?,?,?,NULL,NULL,?)`,
+        (approval_id, session_id, run_id, tool, summary, state, requested_at, expires_at, decided_at, decision, incarnation, args_hash, invocation_id)
+       VALUES (?,?,?,?,?,?,?,?,NULL,NULL,?,?,?)`,
     ).run(
       row.approvalId,
       row.sid,
@@ -199,8 +210,17 @@ export function createApproval(
       row.requestedAt,
       row.expiresAt,
       row.incarnation,
+      row.argsHash ?? null,
+      row.invocationId ?? null,
     )
-    return { ...row, state, decidedAt: null, decision: null }
+    return {
+      ...row,
+      state,
+      decidedAt: null,
+      decision: null,
+      argsHash: row.argsHash ?? null,
+      invocationId: row.invocationId ?? null,
+    }
   } finally {
     db.close()
   }

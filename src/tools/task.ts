@@ -40,20 +40,11 @@ const pool = new Pool(LIMITS.SUB_AGENT_POOL_SIZE)
 // (--tool-scope explore). Satu daftar, satu makna: scoping per fase (pelajaran
 // Vercel: tool minimum per fase, bukan semua 36 sekaligus). Diuji oleh
 // test/harness-p2 + audit invariant bench/harness-audit.
-export const EXPLORE_TOOL_NAMES: readonly string[] = [
-  "read_file",
-  "glob",
-  "grep",
-  "read_memory",
-  "todo_read",
-  "git_status",
-  "git_log",
-  "lsp_diagnostics",
-  "lsp_definition",
-  "lsp_hover",
-  "lsp_workspace_symbols",
-  "mcp_list",
-]
+// [Fase 2 / TOOL-01] Diimpor dari registry kontrak tool — dulu daftar manual
+// di sini yang harus disinkronkan dengan tool-layer.
+import { EXPLORE_TOOL_NAMES } from "../policy/tool-contract.ts"
+
+export { EXPLORE_TOOL_NAMES }
 
 // Factory sesi sub-agen di-inject dari composition root (cli/index.ts memakai
 // createMinicodeSession). Lapisan tool tidak lagi mengimpor lapisan sesi/app

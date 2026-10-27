@@ -16,6 +16,14 @@ export interface RedispatchSafety {
   readonly dedupeCheckPass: boolean
   readonly verifierConfirmedNotExecuted: boolean
   readonly evidenceRecorded: boolean
+  /**
+   * [Fase 2 / LOOP-INV-07] Tool berakhir UNKNOWN (mis. timeout): efek mungkin
+   * sudah terjadi dan tidak ada bukti yang membatalkannya. Predicate menolak
+   * redispatch otomatis APA PUN sebelum verifikasi, termasuk saat
+   * `effectDefinitelyNotStarted` diklaim benar — dua sinyal yang bertentangan
+   * tidak boleh diselesaikan demi izin.
+   */
+  readonly unknownToolOutcome?: boolean
 }
 
 /**
@@ -39,6 +47,10 @@ export function isRedispatchAllowed(safety: RedispatchSafety): boolean {
     (!Number.isFinite(safety.deadlineRemainingMs) || safety.deadlineRemainingMs <= 0)
   )
     return false
+  // UNKNOWN mengalahkan seluruh disjunct izin di bawah: hasil tool yang ambigu
+  // bukan bukti "belum terjadi", dan retry buta pada efek yang mungkin sudah
+  // berjalan adalah persis kelas bug yang ditutup Fase 2.
+  if (safety.unknownToolOutcome === true) return false
   if (safety.effectDefinitelyNotStarted) return true
   if (hasDedupeProof(safety)) return true
   if (safety.verifierConfirmedNotExecuted && safety.evidenceRecorded) return true

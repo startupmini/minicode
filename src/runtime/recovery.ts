@@ -132,6 +132,12 @@ export interface RecoveryContext {
   readonly detachedChild?: boolean
   /** Korupsi jurnal dilaporkan M11. */
   readonly journalCorrupt?: boolean
+  /**
+   * [Fase 2 / LOOP-INV-07] Bukti bahwa hasil tool berstatus UNKNOWN
+   * (tag `[TOOL_OUTCOME state=UNKNOWN …]` di terminal). Menolak redispatch
+   * otomatis sampai verifier memberi jawaban.
+   */
+  readonly toolOutcomeUnknown?: boolean
   /** Record warisan tanpa provenance memadai. */
   readonly uncorrelated?: boolean
   /** attempt/generation saat ini (untuk rencana redispatch). */
@@ -205,6 +211,7 @@ function buildSafety(ctx: RecoveryContext, notStarted: boolean): RedispatchSafet
     dedupeCheckPass: ctx.dedupeCheckPass,
     verifierConfirmedNotExecuted: ctx.verifierResult === "CONFIRMED_NOT_EXECUTED",
     evidenceRecorded: ctx.verifierResult !== undefined && ctx.verifierResult !== null,
+    unknownToolOutcome: ctx.toolOutcomeUnknown === true,
   }
 }
 

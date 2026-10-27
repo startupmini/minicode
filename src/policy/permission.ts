@@ -26,6 +26,8 @@ export type PermissionMode = "auto" | "readonly" | "plan" | "allow-all" | "ask" 
 export type PermissionAsk = (call: {
   name: string
   args?: unknown
+  /** [Fase 2 / LOOP-INV-08] Identitas pemanggilan untuk pengikatan approval. */
+  id?: string
 }) => Promise<"allow" | "deny" | "always">
 
 const READONLY_TOOLS = new Set([
@@ -82,14 +84,8 @@ const NO_PROMPT_TOOLS = new Set(["todo_write", "submit_result", "bash_output", "
 // `ask_user` di-gate: model yang bisa bertanya tanpa batas bisa membanjiri
 // user (atau memancing jawaban kredensial) — persetujuan sekali per sesi
 // via `[a] Always` tetap tersedia.
-const GATED_TOOLS = new Set([
-  "delegate_task",
-  "mcp_call",
-  "mcp_read",
-  "mcp_prompt",
-  "git_commit",
-  "ask_user",
-])
+// [Fase 2 / TOOL-01] Diimpor dari registry kontrak tool (satu sumber).
+import { GATED_TOOLS } from "./tool-contract.ts"
 
 // Denylist bash kini di src/policy/bash-guard.ts — pemeriksaan dilakukan pada
 // bentuk TERNORMALISASI (quote dibuang, variabel sederhana disubstitusi), bukan

@@ -4,17 +4,9 @@ import { runCall } from "#minicore/core/executor.ts"
 import type { ExecutorDeps, ToolExecutor } from "#minicore/core/index.ts"
 import type { ToolCall, ToolResult } from "#minicore/core/types.ts"
 import { LIMITS } from "../constants.ts"
-
-// Tool yang mengubah file workspace — butuh write-slot DAN file-lock per path.
-const WRITE_TOOLS = new Set(["write_file", "edit", "apply_patch", "move_file", "delete_file"])
-
-// Tool yang harus eksklusif tapi tidak punya path tunggal untuk di-lock.
-// `bash` bisa menulis apa pun, jadi tidak boleh paralel dengan write lain;
-// tapi memasukkannya ke WRITE_TOOLS membuat dua bash read-only
-// (`bun test` + `git log`) ikut terserialisasi tanpa alasan karena
-// getLockPath() selalu null untuk bash. Dipisah supaya klasifikasinya jelas —
-// F-01 (P5 §C1) memperlakukannya sebagai "write tanpa kunci" (lihat di bawah).
-const EXCLUSIVE_TOOLS = new Set(["bash", "write_memory", "forget_memory", "todo_write"])
+// [Fase 2 / TOOL-01] Klasifikasi konkurensi diturunkan dari SATU registry
+// kontrak tool — dulu dua Set manual di file ini yang bisa menyimpang.
+import { EXCLUSIVE_TOOLS, WRITE_TOOLS } from "./tool-contract.ts"
 
 function isWrite(call: ToolCall): boolean {
   return WRITE_TOOLS.has(call.name) || EXCLUSIVE_TOOLS.has(call.name)

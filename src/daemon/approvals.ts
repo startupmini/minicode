@@ -14,6 +14,7 @@
 
 import { randomUUID } from "node:crypto"
 import type { PermissionAsk } from "../policy/permission.ts"
+import { hashArgs } from "../session/journal.ts"
 import type { ApprovalView, RefusalBody } from "./protocol.ts"
 import { sanitizeLabel } from "./sanitize.ts"
 import {
@@ -33,6 +34,13 @@ export interface ApprovalRequestInput {
   tool: string
   summary?: string
   ttlMs?: number
+  /**
+   * [Fase 2 / LOOP-INV-08] Hash argumen kanonis. Bila diberikan, keputusan
+   * "allow" hanya berlaku untuk argumen yang hash-nya sama persis.
+   */
+  argsHash?: string | null
+  /** Identitas pemanggilan (tool call id) yang di-approve. */
+  invocationId?: string | null
 }
 
 interface Waiter {
@@ -41,6 +49,30 @@ interface Waiter {
 }
 
 const DEFAULT_TTL_MS = 60_000
+
+/**
+ * [Fase 2 / LOOP-INV-08] Validasi pengikatan approval terhadap pemanggilan
+ * AKTUAL. Satu definisi, dipakai broker sebelum mengembalikan "allow" dan
+ * tersedia bagi konsumen yang mengonsumsi baris approval secara terpisah.
+ *
+ * Fail-closed: ketiadaan pengikat (`null`) TIDAK berarti "cocok dengan apa
+ * pun". Baris legacy hanya cocok bila sisi eksekusi juga tidak membawa hash/id.
+ */
+export function verifyApprovalBinding(
+  row: Pick<ApprovalRow, "tool" | "argsHash" | "invocationId">,
+  actual: { tool: string; argsHash?: string | null; invocationId?: string | null },
+):
+  | { ok: true }
+  | { ok: false; reason: "tool-mismatch" | "args-hash-mismatch" | "invocation-mismatch" } {
+  if (row.tool !== actual.tool) return { ok: false, reason: "tool-mismatch" }
+  if ((row.argsHash ?? null) !== (actual.argsHash ?? null)) {
+    return { ok: false, reason: "args-hash-mismatch" }
+  }
+  if ((row.invocationId ?? null) !== (actual.invocationId ?? null)) {
+    return { ok: false, reason: "invocation-mismatch" }
+  }
+  return { ok: true }
+}
 
 function toView(row: ApprovalRow): ApprovalView {
   return {
@@ -84,6 +116,9 @@ export class ApprovalBroker {
     const ttl = Math.max(1_000, input.ttlMs ?? DEFAULT_TTL_MS)
     const approvalId = `apr_${randomUUID()}`
     const now = Date.now()
+    const tool = sanitizeLabel(input.tool, 64)
+    const argsHash = input.argsHash ?? null
+    const invocationId = input.invocationId ?? null
     let view: ApprovalView
     try {
       const row = createApproval(
@@ -91,12 +126,14 @@ export class ApprovalBroker {
           approvalId,
           sid: input.sid,
           runId: input.runId ?? null,
-          tool: sanitizeLabel(input.tool, 64),
+          tool,
           summary: sanitizeLabel(input.summary ?? "", 500),
           state: "requested",
           requestedAt: now,
           expiresAt: now + ttl,
           incarnation: this.#deps.incarnation,
+          argsHash,
+          invocationId,
         },
         this.#deps.cwd,
       )
@@ -130,6 +167,22 @@ export class ApprovalBroker {
     })
 
     // Konsumen mengirim "accept"; kita laporkan sebagai "allow" ke kernel.
+    if (decision === "allow") {
+      // [Fase 2 / LOOP-INV-08] Verifikasi pengikatan SEBELUM mengizinkan efek.
+      // Baris yang di-approve harus cocok pada tool + hash argumen + identitas
+      // pemanggilan. Baris hilang / legacy tanpa hash = tolak (fail-closed):
+      // keputusan yang tak dapat dicocokkan bukan izin untuk argumen apa pun.
+      const approved = getApproval(approvalId, this.#deps.cwd)
+      const binding = approved
+        ? verifyApprovalBinding(approved, { tool, argsHash, invocationId })
+        : { ok: false as const, reason: "approval-row-missing" }
+      if (!binding.ok) {
+        this.#deps.warn?.(
+          `[daemon] approval binding rejected (${binding.reason}) for ${tool}; denying`,
+        )
+        return "deny"
+      }
+    }
     return decision
   }
 
@@ -266,11 +319,15 @@ export class ApprovalBroker {
     return async (call) => {
       const sid = opts.sid()
       if (!sid) return "deny"
+      const tool = String(call?.name ?? "unknown")
       const decision = await this.request({
         sid,
         runId: opts.runId ? opts.runId() : null,
-        tool: String(call?.name ?? "unknown"),
+        tool,
         summary: summarizeArgs(call?.args),
+        // [Fase 2 / LOOP-INV-08] Ikat keputusan ke argumen kanonis + id call.
+        argsHash: hashArgs(call?.args ?? {}),
+        invocationId: typeof call?.id === "string" && call.id !== "" ? call.id : null,
       })
       return decision === "allow" ? "allow" : "deny"
     }

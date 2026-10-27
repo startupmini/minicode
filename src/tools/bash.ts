@@ -127,6 +127,45 @@ function signalProcessGroup(p: ReturnType<typeof spawn>, signal: NodeJS.Signals)
 }
 
 /**
+ * [Fase 2 / LOOP-INV-10] Eskalasi AWAL yang sopan: SIGTERM ke seluruh process
+ * group, bukan hanya shell induk.
+ *
+ * Kenapa penting: `p.kill("SIGTERM")` hanya menyentuh shell wrapper. Cucu
+ * (`node -e`, dev server) tetap hidup, menahan pipe, dan baru mati 2 detik
+ * kemudian oleh SIGKILL grup — padahal banyak proses menangani SIGTERM dengan
+ * flush/cleanup yang benar bila sinyalnya sampai. Helper ini dipakai sebelum
+ * timer eskalasi `killTree` (SIGKILL), di jalur timeout DAN abort.
+ *
+ * `opts` adalah seam deterministik untuk test: perilaku POSIX dapat diuji di
+ * Windows tanpa benar-benar mengirim sinyal ke proses nyata.
+ */
+export function signalProcessGroupGraceful(
+  pid: number | undefined,
+  fallback: { kill: (signal?: NodeJS.Signals | number) => boolean },
+  opts: {
+    platform?: NodeJS.Platform
+    killGroup?: (pid: number, signal: NodeJS.Signals) => boolean
+  } = {},
+): "group" | "fallback" {
+  const platform = opts.platform ?? process.platform
+  if (platform !== "win32" && typeof pid === "number" && pid > 0) {
+    const killGroup =
+      opts.killGroup ??
+      ((target: number, signal: NodeJS.Signals): boolean => process.kill(target, signal))
+    try {
+      // Negatif = process group id (shell adalah group leader karena detached).
+      if (killGroup(-pid, "SIGTERM")) return "group"
+    } catch {
+      // Grup sudah hilang / ESRCH: jatuh ke sinyal proses tunggal di bawah.
+    }
+  }
+  try {
+    fallback.kill("SIGTERM")
+  } catch {}
+  return "fallback"
+}
+
+/**
  * Bunuh proses + seluruh subtree-nya. Di Windows `p.kill()` hanya membunuh
  * wrapper `cmd.exe` — cucu seperti `node -e "while(true){}"` tetap hidup,
  * menahan pipe stdio sehingga event `close` tidak pernah datang (hang
@@ -339,6 +378,13 @@ function makeBashTool(ownerSid: string | null): Tool {
       }
 
       return await new Promise((resolveOut, reject) => {
+        const startedAt = Date.now()
+        // [Fase 2 / LOOP-INV-07] Dua sebab penghentian yang HARUS dibedakan:
+        // timeout internal (efek samping = UNKNOWN) vs abort turn (dibatalkan
+        // pemanggil). Sebelumnya keduanya hanya terlihat sebagai `exit null`
+        // sehingga model tak punya sinyal untuk berhenti mengulang perintah
+        // destruktif yang mungkin sudah setengah berjalan.
+        let timedOut = false
         const p = spawn(cmd as string, {
           shell: true,
           // F-24: selalu effectiveCwd (sessionRoot bila arg cwd absen), bukan
@@ -369,17 +415,40 @@ function makeBashTool(ownerSid: string | null): Tool {
         p.on("error", reject)
         p.on("close", (code) => {
           const text = buf.text()
+          if (timedOut) {
+            // Prefix deterministik (parsing oleh jurnal/recovery) + instruksi
+            // eksplisit. `isError: true` dicapai dengan reject: kernel
+            // mengubah message menjadi ToolResult{isError:true}.
+            const elapsed = Date.now() - startedAt
+            const partial = text.length > 4000 ? `…${text.slice(-4000)}` : text
+            reject(
+              new Error(
+                `[TOOL_OUTCOME state=UNKNOWN reason=TIMEOUT side_effect_tier=LOCAL_ENV_MUTATION ` +
+                  `duration_ms=${elapsed} timeout_ms=${timeout}]\n` +
+                  `Command was cut off by the ${timeout} ms timeout. Its side effects are UNKNOWN ` +
+                  `(the command may have partially run). Do NOT re-run a side-effecting command ` +
+                  `before inspecting workspace/process state.\n` +
+                  (partial
+                    ? `--- partial output ---\n${partial}`
+                    : "--- partial output ---\n(none)"),
+              ),
+            )
+            return
+          }
           if (code !== 0) resolveOut(`exit ${code}\n${text}`)
           else resolveOut(text)
         })
         let killTimer: ReturnType<typeof setTimeout> | undefined
         const t = setTimeout(() => {
+          timedOut = true
           // Windows: SIGTERM hanya membunuh cmd.exe wrapper — cucu (node -e)
           // bisa belum lahir (spawn lambat) atau yatim sambil menahan pipe.
           // Eskalasi taskkill /pid-shell-yang-sudah-mati lalu gagal total.
           // Jadi di win32 langsung tree-kill saat timeout, tanpa jeda.
+          // POSIX: SIGTERM ke SELURUH grup dulu (LOOP-INV-10) supaya cucu
+          // sempat cleanup; SIGKILL grup menyusul bila 2 detik tak cukup.
           if (process.platform === "win32") killTree(p)
-          else p.kill("SIGTERM")
+          else signalProcessGroupGraceful(p.pid, p)
           killTimer = setTimeout(() => {
             killTree(p)
           }, 2000)
@@ -388,7 +457,7 @@ function makeBashTool(ownerSid: string | null): Tool {
           clearTimeout(t)
           if (killTimer) clearTimeout(killTimer)
           if (process.platform === "win32") killTree(p)
-          else p.kill("SIGTERM")
+          else signalProcessGroupGraceful(p.pid, p)
           killTimer = setTimeout(() => {
             killTree(p)
           }, 1000)

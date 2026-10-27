@@ -38,6 +38,11 @@
 // accidentally-permitted.
 
 import type { ToolCall } from "#minicore"
+// [Fase 2 / TOOL-01] Allow-list otonom kini DITURUNKAN dari registry kontrak
+// tool, bukan dari matriks kapabilitas di bawah. Matriks tetap otoritas BUKTI
+// (capability + evidence); kolom `autonomous`-nya menjadi cermin yang wajib
+// sama dengan registry dan dijaga test kontrak Fase 2.
+import { AUTONOMOUS_TOOL_NAMES as CONTRACT_AUTONOMOUS_TOOL_NAMES } from "../policy/tool-contract.ts"
 
 // ── capability classification ────────────────────────────────────────────────
 
@@ -345,17 +350,19 @@ export function isAutonomousTool(name: string): boolean {
 }
 
 /**
- * [PHASE 6S] The allow-list, derived FROM the matrix rather than written
- * separately.
+ * [PHASE 6S -> Fase 2] The allow-list, now derived from the tool CONTRACT
+ * registry (`src/policy/tool-contract.ts`).
  *
  * [DESIGN DECISION] 6R carried its own hand-written list, which meant the
  * creation-time gate and the classification could drift apart - two sources of
- * truth for one policy. Deriving it removes the possibility: a tool is autonomous
- * if and only if the matrix says so.
+ * truth for one policy. 6S derived it from this file's matrix; Fase 2 moved the
+ * authority to the single contract registry so the executor, permission gate,
+ * journal and autonomous gate all read the same declaration. The matrix's
+ * `autonomous` column is kept as evidence and cross-checked by
+ * `test/p15-phase2-contracts-approval-recovery.test.ts` - if the two ever
+ * disagree the test fails instead of the policy silently widening.
  */
-export const AUTONOMOUS_TOOL_NAMES: readonly string[] = TOOL_CAPABILITIES.filter(
-  (t) => t.autonomous,
-).map((t) => t.name)
+export const AUTONOMOUS_TOOL_NAMES: readonly string[] = CONTRACT_AUTONOMOUS_TOOL_NAMES
 
 // ── the ledger ───────────────────────────────────────────────────────────────
 

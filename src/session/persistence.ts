@@ -315,12 +315,35 @@ function open(cwd?: string, local = false): Database {
       expires_at INTEGER NULL,
       decided_at INTEGER NULL,
       decision TEXT NULL,
-      incarnation TEXT NOT NULL
+      incarnation TEXT NOT NULL,
+      args_hash TEXT NULL,
+      invocation_id TEXT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_daemon_approvals_session ON daemon_approvals(session_id, requested_at);
     CREATE INDEX IF NOT EXISTS idx_daemon_approvals_state ON daemon_approvals(state);
   `)
   })
+  // [Fase 2 / LOOP-INV-08] Migrasi aditif untuk DB lama: kolom pengikat
+  // approval. `PRAGMA table_info` + `ALTER TABLE` idempoten, tanpa
+  // user_version (konvensi yang sama dengan migrasi lain di file ini).
+  // Baris lama mendapat NULL = "tanpa pengikat" dan tetap terbaca; validasi
+  // pengikatan memperlakukan NULL sebagai tidak cocok bila sisi eksekusi
+  // membawa hash (fail-closed), bukan sebagai izin.
+  try {
+    const approvalCols = db.prepare("PRAGMA table_info(daemon_approvals)").all() as {
+      name: string
+    }[]
+    if (!approvalCols.some((c) => c.name === "args_hash")) {
+      db.exec("ALTER TABLE daemon_approvals ADD COLUMN args_hash TEXT NULL")
+    }
+    if (!approvalCols.some((c) => c.name === "invocation_id")) {
+      db.exec("ALTER TABLE daemon_approvals ADD COLUMN invocation_id TEXT NULL")
+    }
+  } catch (e) {
+    process.stderr.write(
+      `[warn] persistence: daemon_approvals migration skipped: ${(e as Error).message}\n`,
+    )
+  }
   return db
 }
 

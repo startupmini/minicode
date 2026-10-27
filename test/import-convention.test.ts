@@ -191,7 +191,11 @@ describe("integritas encoding berkas", () => {
       if (n > 0) broken.push(`${f} (${n})`)
     }
     expect(broken).toEqual([])
-  })
+    // [Fase 0] Pemindaian ini membaca SELURUH berkas teks terlacak (±860) dan
+    // terbukti melewati batas default 5.000 ms saat suite penuh (345 berkas
+    // test) berebut CPU/disk — bukan karena isi berkas berubah. Timeout
+    // eksplisit menjaga asersi tetap utuh tanpa bergantung pada beban mesin.
+  }, 20_000)
 
   test("berkas konfigurasi tidak memakai BOM", () => {
     // BOM membuat JSON.parse gagal ("Unrecognized token") — ditemukan saat
@@ -218,7 +222,9 @@ describe("integritas encoding berkas", () => {
       if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) withBom.push(f)
     }
     expect(withBom).toEqual([])
-  })
+    // [Fase 0] Alasan sama dengan test U+FFFD di atas: ±860 berkas dibaca
+    // sinkron; batas 20 dtk mencegah flake beban tanpa melonggarkan cek BOM.
+  }, 20_000)
 
   test("sumber web (web/ + content/) tanpa BOM dan tanpa CRLF", () => {
     // Cleanup 2026-09-16: `content/logo-user.svg` ber-BOM dan 8 berkas

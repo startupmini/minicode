@@ -1,4 +1,4 @@
-﻿// P13.2 â€” Integrasi akhir: lifecycle daemon yang di-supervisi.
+// P13.2 â€” Integrasi akhir: lifecycle daemon yang di-supervisi.
 //
 // Milik P13.2 (bab closing P13.2). Suite P13.1 (kontrak) dan P13.2 (supervisi
 // proses) terpisah dan tak disentuh; integrasi P13.3 (kontinuitas task durable)

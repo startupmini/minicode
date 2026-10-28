@@ -1,7 +1,7 @@
 import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { isPrivateHostWithDns } from "../lib/net.ts"
-import { scrubSecrets } from "../policy/scrub.ts"
+import { fenceUntrustedToolOutput, isAlreadyFenced, scrubSecrets } from "../policy/scrub.ts"
 
 const MAX_REDIRECTS = LIMITS.WEB_FETCH_MAX_REDIRECTS
 // Hard-cap pembacaan body SEBELUM slicing — cegah OOM dari response raksasa.
@@ -161,7 +161,9 @@ export const webFetchTool: Tool = {
       shown.username = ""
       shown.password = ""
       const header = `[${scrubSecrets(shown.toString())} ${res.status} ${contentType}]\n`
-      return (header + sliced + truncated).slice(0, limit + 500)
+      const content = (header + sliced + truncated).slice(0, limit + 500)
+      // [Fase 4 / TOOL-05] Pagar data tak-terpercaya pada output web_fetch
+      return isAlreadyFenced(content) ? content : fenceUntrustedToolOutput("web_fetch", content)
     } finally {
       clearTimeout(timeout)
       ctx.signal.removeEventListener("abort", onParentAbort)

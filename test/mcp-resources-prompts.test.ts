@@ -55,6 +55,32 @@ afterEach(async () => {
   server = null
 })
 
+/**
+ * [Fase 4 / TOOL-05] Ekstrak payload di DALAM pagar untrusted.
+ *
+ * `mcp_read`/`mcp_prompt` kini membungkus output eksternal dengan pagar
+ * eksplisit (instruksi-injection defense). Test-test di bawah tetap menguji
+ * ISI murni yang dihasilkan server, jadi mereka mengurai pagar lebih dulu
+ * sekaligus MEMBUKTIKAN pagar itu ada (bukan menghapusnya).
+ */
+const FENCE_BODY_RE = /\[UNTRUSTED_TOOL_OUTPUT[^\n]*\n\n([\s\S]*)\n\[END_UNTRUSTED_TOOL_OUTPUT\]$/
+
+function fencedBody(out: string): string {
+  const m = FENCE_BODY_RE.exec(out)
+  expect(m).not.toBeNull() // pagar wajib ada: regresi TOOL-05 ketahuan di sini
+  return m![1]!
+}
+
+/** Baris payload saja (pagar [UNTRUSTED_TOOL_OUTPUT] / [END_...] dibuang). */
+function payloadLines(out: string): string[] {
+  return out
+    .split("\n")
+    .filter((l) => l.startsWith("["))
+    .filter(
+      (l) => !l.startsWith("[UNTRUSTED_TOOL_OUTPUT") && !l.startsWith("[END_UNTRUSTED_TOOL_OUTPUT"),
+    )
+}
+
 /** Server lengkap: tools + resources + prompts. */
 const fullServer: RpcHandler = (method, params) => {
   switch (method) {
@@ -186,7 +212,7 @@ describe("MCP client: mcp_read", () => {
     await connectAll([{ id: "s", url, allowPrivateHost: true }])
     const { mcpReadTool } = await import("../src/tools/mcp_call.ts")
     const out = (await mcpReadTool.execute({ server: "s", uri: "db://users" }, ctx)) as string
-    expect(out).toBe("alice\nbob")
+    expect(fencedBody(out)).toBe("alice\nbob")
   })
 
   test("blob biner TIDAK ditumpahkan sebagai base64 ke konteks", async () => {
@@ -195,10 +221,12 @@ describe("MCP client: mcp_read", () => {
     await connectAll([{ id: "s", url, allowPrivateHost: true }])
     const { mcpReadTool } = await import("../src/tools/mcp_call.ts")
     const out = (await mcpReadTool.execute({ server: "s", uri: "bin://blob" }, ctx)) as string
-    expect(out).toContain("[binary image/png")
-    expect(out).toContain("skipped")
-    expect(out).not.toContain("QUJDQUJD")
-    expect(out.length).toBeLessThan(200)
+    // Payload di DALAM pagar — pagar (TOOL-05) sudah terbukti ada lewat fencedBody.
+    const body = fencedBody(out)
+    expect(body).toContain("[binary image/png")
+    expect(body).toContain("skipped")
+    expect(body).not.toContain("QUJDQUJD")
+    expect(body.length).toBeLessThan(200)
   })
 
   test("contents kosong memberi pesan, bukan string kosong", async () => {
@@ -253,8 +281,9 @@ describe("MCP client: mcp_prompt", () => {
     await connectAll([{ id: "s", url, allowPrivateHost: true }])
     const { mcpPromptTool } = await import("../src/tools/mcp_call.ts")
     const out = (await mcpPromptTool.execute({ server: "s", name: "review" }, ctx)) as string
-    // system pakai objek tunggal, user pakai array — dua-duanya harus muncul
-    expect(out.split("\n").filter((l) => l.startsWith("["))).toHaveLength(2)
+    // system pakai objek tunggal, user pakai array — dua-duanya harus muncul.
+    // (Baris pagar TOOL-05 dibuang: yang dihitung adalah BARIS PAYLOAD server.)
+    expect(payloadLines(out)).toHaveLength(2)
   })
 
   test("prompt tak dikenal → pesan error server", async () => {

@@ -8,7 +8,7 @@ import {
   mcpInventory,
   readMcpResource,
 } from "../mcp/client.ts"
-import { scrubSecrets } from "../policy/scrub.ts"
+import { fenceUntrustedToolOutput, isAlreadyFenced, scrubSecrets } from "../policy/scrub.ts"
 
 export const mcpListTool: Tool = {
   name: "mcp_list",
@@ -86,7 +86,10 @@ export const mcpCallTool: Tool = {
     try {
       const result = await callMcpTool(sid, tn, a, ctx.signal)
       const content = extractMcpText(result)
-      return capMcpText(content)
+      const capped = capMcpText(content)
+      return isAlreadyFenced(capped)
+        ? capped
+        : fenceUntrustedToolOutput(`mcp_call:${sid}.${tn}`, capped)
     } catch (e) {
       return `[mcp] error: ${scrubSecrets((e as Error).message)}`
     }
@@ -121,7 +124,8 @@ export const mcpReadTool: Tool = {
     try {
       const text = await readMcpResource(sid, u, ctx.signal)
       if (!text) return `[mcp] resource '${u}' is empty or returned no text`
-      return capMcpText(text)
+      const capped = capMcpText(text)
+      return isAlreadyFenced(capped) ? capped : fenceUntrustedToolOutput(`mcp_read:${sid}`, capped)
     } catch (e) {
       return `[mcp] error: ${scrubSecrets((e as Error).message)}`
     }
@@ -155,7 +159,10 @@ export const mcpPromptTool: Tool = {
     try {
       const text = await getMcpPrompt(sid, pn, (args as Record<string, unknown>) ?? {}, ctx.signal)
       if (!text) return `[mcp] prompt '${pn}' returned no message`
-      return capMcpText(text)
+      const capped = capMcpText(text)
+      return isAlreadyFenced(capped)
+        ? capped
+        : fenceUntrustedToolOutput(`mcp_prompt:${sid}`, capped)
     } catch (e) {
       return `[mcp] error: ${scrubSecrets((e as Error).message)}`
     }

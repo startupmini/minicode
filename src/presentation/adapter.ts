@@ -339,14 +339,28 @@ export function createPresentationAdapter(
       }
     }
   }
-  const base = (turnId: number) => ({ eventSeq: ++seq, ts: Date.now(), sessionId, turnId })
+  const base = (turnId: number, rootExecutionId?: string) => ({
+    eventSeq: ++seq,
+    ts: Date.now(),
+    sessionId,
+    turnId,
+    executionId: `exec_${Date.now()}:${rootExecutionId || ""}:${Math.random().toString(36).slice(2, 8)}`,
+    ...(rootExecutionId ? { rootExecutionId } : {}),
+  })
   /** Forward anak: sessionId DomainEvent = anak; parentLink bila sudah dipasangkan. */
-  const childBase = (turnId: number, childId: string, parentLink?: ChildSessionLink) => ({
+  const childBase = (
+    turnId: number,
+    childId: string,
+    parentLink?: ChildSessionLink,
+    rootExecutionId?: string,
+  ) => ({
     eventSeq: ++seq,
     ts: Date.now(),
     sessionId: childId,
     turnId,
     ...(parentLink ? { parentLink } : {}),
+    ...(rootExecutionId ? { rootExecutionId } : {}),
+    parentExecutionId: `exec_${Date.now()}:${rootExecutionId || ""}:${Math.random().toString(36).slice(2, 8)}`, // PSEUDO-UPPER: actual parent will be set by caller
   })
   const reasoningRef = (): { toolCallId: string; idx: number; kind: "reasoning" } => ({
     toolCallId: `reasoning:${sessionId}:${currentTurn}`,

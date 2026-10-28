@@ -30,6 +30,8 @@
 // module-level configuration that another call could mutate.
 
 import type { ProductionExecutionRunner } from "../runtime/production-execution.ts"
+import type { OperationalStateSnapshot } from "../session/runtime-header.ts"
+import { buildRuntimeStateHeader } from "../session/runtime-header.ts"
 import type { TaskStore } from "./store.ts"
 
 // ── identity ─────────────────────────────────────────────────────────────────
@@ -202,6 +204,12 @@ export interface AutonomousContextConfig {
   readonly tools: readonly { name: string }[]
   readonly onEvent?: (event: AutonomousContextEvent) => void
   /**
+   * [Fase 4 / LOOP-13, LOOP-INV-16] Snapshot state operasional deterministik
+   * yang dirender ke header `[RUNTIME_STATE_HEADER ...]` di konteks otonom.
+   * Opsional: absen = perilaku lama persis (tanpa header).
+   */
+  readonly operationalState?: () => OperationalStateSnapshot | null
+  /**
    * [P1 M15] Admission runtime (DI) untuk turn otonom.
    *
    * [DESIGN DECISION] Opsional dan default TIDAK ada: tanpa ini, `execute()`
@@ -358,7 +366,7 @@ export class AutonomousExecutionContext {
    * an empty conversation rather than a shared one.
    */
   private systemExtra(): string {
-    return [
+    const base = [
       "You are an AUTONOMOUS execution context, not an interactive assistant.",
       "No user is watching this turn. There is no one to answer a question, so " +
         "never call ask_user; state what you need in your final message instead.",
@@ -368,6 +376,16 @@ export class AutonomousExecutionContext {
       `Task: ${this.config.taskTitle}`,
       `Task instruction: ${this.config.instruction}`,
     ].join("\n")
+    // [Fase 4 / LOOP-13, LOOP-INV-16] Header operasional deterministik ikut
+    // dikirim ke model otonom bila snapshot tersedia. Absen = perilaku lama.
+    let header = ""
+    try {
+      const state = this.config.operationalState?.()
+      if (state) header = `${buildRuntimeStateHeader(state)}\n\n`
+    } catch {
+      // Observability tak boleh menggagalkan eksekusi otonom.
+    }
+    return `${header}${base}`
   }
 
   /**

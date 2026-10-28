@@ -28,6 +28,7 @@ import {
   type ProjectionState,
   SUMMARY_PROJECTION_ID,
 } from "./persistence.ts"
+import { buildRuntimeStateHeader, type OperationalStateSnapshot } from "./runtime-header.ts"
 
 /** Asal isi view: proyeksi turunan, atau histori kanonik (fallback). */
 export type ContextSource = "projection" | "messages"
@@ -51,6 +52,12 @@ export interface ContextView {
    * pernah menjadi histori kanonik. `undefined` pada fallback.
    */
   contextOnly?: ContextOnlyArtifact
+  /**
+   * [Fase 4 / LOOP-13, LOOP-INV-16] Header operasional deterministik yang
+   * disuntikkan ke `messages[0]` (di depan ringkasan) saat state tersedia.
+   * Disimpan terpisah agar jalur persist bisa membuangnya bersama artifact.
+   */
+  runtimeHeader?: ContextOnlyArtifact
   /** Alasan diagnostik kenapa proyeksi tidak dipakai (kosong bila CURRENT). */
   detail: string
 }
@@ -96,7 +103,7 @@ export function boundaryIsSafe(
 /**
  * Identitas artefak context-only yang HANYA boleh hidup di ContextStore.
  *
- * Mengapa field penanda tak bisa di的和ismegasikan di pesan: vendor
+ * Mengapa field penanda tak bisa di-ekspresikan di pesan: vendor
  * `snapshotMessage` (vendor/minicore/src/core/snapshot.ts:17) untuk
  * role "user" HANYA mempertahankan `{role, content}` — field tambahan
  * DIBUANG sebelum `session.state.history` terlihat aplikasi. Jadi penanda
@@ -130,25 +137,72 @@ export function stripContextOnly<T>(
   return messages.slice(1)
 }
 
+/** Gabungkan artifact header + summary + canonical tail menjadi messages. */
+function assembleViewMessages(
+  messages: Message[],
+  operationalState?: OperationalStateSnapshot | null,
+  summaryArtifact?: ContextOnlyArtifact,
+): { messages: Message[]; contextOnly?: ContextOnlyArtifact; runtimeHeader?: ContextOnlyArtifact } {
+  // Kasus tanpa header: perilaku lama persis.
+  if (!operationalState) {
+    return {
+      messages,
+      ...(summaryArtifact ? { contextOnly: summaryArtifact } : {}),
+    }
+  }
+
+  const headerText = buildRuntimeStateHeader(operationalState)
+  // Bila ada artifact ringkasan (proyeksi), GABUNG header + ringkasan menjadi
+  // SATU pesan context-only di index 0. Ini menjaga invariant stripContextOnly
+  // (yang hanya memeriksa index 0) tetap benar: tidak ada artefak turunan yang
+  // bergeser ke index 1 lalu bocor ke histori kanonik.
+  if (summaryArtifact) {
+    const combinedContent = `${headerText}\n\n${summaryArtifact.content}`
+    const combined: ContextOnlyArtifact = { role: "user", content: combinedContent }
+    const rest = messages.slice(1) // buang synthetic lama (index 0)
+    return {
+      messages: [combined as Message, ...rest],
+      contextOnly: combined,
+      runtimeHeader: { role: "user", content: headerText },
+    }
+  }
+
+  // Fallback (tanpa ringkasan): header berdiri sendiri di index 0.
+  const runtimeHeader: ContextOnlyArtifact = { role: "user", content: headerText }
+  return {
+    messages: [runtimeHeader as Message, ...messages],
+    runtimeHeader,
+  }
+}
+
 /**
  * Rakit view konteks untuk satu thread.
  *
  * Fallback = histori kanonik utuh, tanpa filter/urutan/transformasi — identik
  * dengan replay `loadSession` hari ini.
  */
-export function assembleContext(sessionId: string, threadId: string, cwd?: string): ContextView {
+export function assembleContext(
+  sessionId: string,
+  threadId: string,
+  cwd?: string,
+  operationalState?: OperationalStateSnapshot | null,
+): ContextView {
   const status = getProjectionStatus(sessionId, threadId, SUMMARY_PROJECTION_ID, cwd)
   const rows = loadThreadHistoryWithSeq(sessionId, threadId, cwd)
   const all: Message[] = rows.map((r) => r.message as Message)
 
   // Fallback: tak ada proyeksi yang bisa dipakai. Histori kanonik utuh.
-  const fallback = (detail: string, state: ProjectionState = status.state): ContextView => ({
-    coveredSeq: 0,
-    source: "messages",
-    status: state,
-    messages: all,
-    detail,
-  })
+  const fallback = (detail: string, state: ProjectionState = status.state): ContextView => {
+    const assembled = assembleViewMessages(all, operationalState)
+    return {
+      coveredSeq: 0,
+      source: "messages",
+      status: state,
+      messages: assembled.messages,
+      ...(assembled.runtimeHeader ? { runtimeHeader: assembled.runtimeHeader } : {}),
+      detail,
+    }
+  }
 
   // HANYA CURRENT boleh ikut. State lain → fallback, tanpa blend.
   if (status.state !== "CURRENT") return fallback(`projection ${status.state}: ${status.detail}`)
@@ -174,13 +228,15 @@ export function assembleContext(sessionId: string, threadId: string, cwd?: strin
     role: "user",
     content: synthetic.content as string,
   }
+  const assembled = assembleViewMessages([synthetic, ...tail], operationalState, artifact)
   return {
     summary,
     coveredSeq: baseSeq,
     source: "projection",
     status: "CURRENT",
-    messages: [synthetic, ...tail],
-    contextOnly: artifact,
+    messages: assembled.messages,
+    ...(assembled.contextOnly ? { contextOnly: assembled.contextOnly } : {}),
+    ...(assembled.runtimeHeader ? { runtimeHeader: assembled.runtimeHeader } : {}),
     detail: `summary covers [0,${baseSeq}) + canonical tail`,
   }
 }

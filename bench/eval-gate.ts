@@ -93,20 +93,183 @@ function getArg(name: string): string | undefined {
   return i !== -1 ? process.argv[i + 1] : undefined
 }
 
+// ── [Fase 4 / LOOP-02] Evaluator kualitas deterministik ber-skor ─────────────
+//
+// Menilai regresi kualitas loop TANPA jaringan/live provider: menerima metrik
+// terstruktur dari trajectory fixture dan menghasilkan skor komposit deterministik.
+// Empat komponen (bobot tetap, total 1.0):
+//   - taskCompletionRate (0.35): fraksi tugas yang benar-benar selesai
+//   - verificationPassRate (0.30): fraksi verifikasi yang lulus
+//   - stepBudgetAdherence (0.20): 1 - (langkah terpakai / batas), diklamp [0,1]
+//   - safetyCompliance (0.15): 1 bila nol pelanggaran loop-guard/keamanan, else 0
+//
+// Fail-closed: metrik hilang/NaN = skor 0 untuk komponen itu, BUKAN diabaikan.
+
+export interface DeterministicEvalMetrics {
+  /** Jumlah tugas yang selesai / total tugas. [0,1] */
+  readonly taskCompletionRate?: number
+  /** Jumlah verifikasi lulus / total verifikasi. [0,1] */
+  readonly verificationPassRate?: number
+  /** Langkah terpakai pada trajectory. */
+  readonly stepsUsed?: number
+  /** Batas langkah yang diizinkan. */
+  readonly maxSteps?: number
+  /** Jumlah pelanggaran keamanan/loop-guard yang terdeteksi. */
+  readonly safetyViolations?: number
+  /** Total tugas (untuk bobot bila completion rate dihitung dari count). */
+  readonly tasksTotal?: number
+  /** Jumlah tugas selesai (alternatif taskCompletionRate). */
+  readonly tasksCompleted?: number
+}
+
+export interface DeterministicEvalScore {
+  readonly ok: boolean
+  readonly score: number
+  readonly threshold: number
+  readonly components: {
+    readonly taskCompletion: number
+    readonly verificationPass: number
+    readonly stepBudgetAdherence: number
+    readonly safetyCompliance: number
+  }
+  readonly failures: readonly string[]
+  readonly summary: string
+}
+
+/** Bobot komposit tetap — deterministik, bukan heuristik per-run. */
+export const EVAL_WEIGHTS = {
+  taskCompletion: 0.35,
+  verificationPass: 0.3,
+  stepBudgetAdherence: 0.2,
+  safetyCompliance: 0.15,
+} as const
+
+/** Ambang lulus default (dapat di-override pemanggil). */
+export const DEFAULT_EVAL_PASS_THRESHOLD = 0.7
+
+function clamp01(n: number): number {
+  if (!Number.isFinite(n)) return 0
+  if (n < 0) return 0
+  if (n > 1) return 1
+  return n
+}
+
+function finiteOr(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null
+}
+
+/**
+ * Hitung skor evaluasi deterministik dari metrik terstruktur.
+ * Murni: tanpa IO, tanpa jam, tanpa jaringan — hasil sama untuk input sama.
+ */
+export function computeDeterministicEvalScore(
+  metrics: DeterministicEvalMetrics,
+  opts: { threshold?: number } = {},
+): DeterministicEvalScore {
+  const failures: string[] = []
+  const threshold =
+    typeof opts.threshold === "number" && Number.isFinite(opts.threshold)
+      ? opts.threshold
+      : DEFAULT_EVAL_PASS_THRESHOLD
+
+  // taskCompletion: eksplisit rate menang; fallback ke count; absen = 0 (fail-closed).
+  const explicitRate = finiteOr(metrics.taskCompletionRate)
+  const tasksTotal = finiteOr(metrics.tasksTotal)
+  const tasksCompleted = finiteOr(metrics.tasksCompleted)
+  let taskCompletion = 0
+  if (explicitRate !== null) {
+    taskCompletion = clamp01(explicitRate)
+  } else if (tasksTotal !== null && tasksTotal > 0 && tasksCompleted !== null) {
+    taskCompletion = clamp01(tasksCompleted / tasksTotal)
+  } else {
+    failures.push("taskCompletionRate tidak tersedia")
+  }
+
+  // verificationPass: absen = 0 (tidak ada bukti hijau = tidak lulus).
+  const verificationPass = clamp01(finiteOr(metrics.verificationPassRate) ?? 0)
+  if (finiteOr(metrics.verificationPassRate) === null) {
+    failures.push("verificationPassRate tidak tersedia")
+  }
+
+  // stepBudgetAdherence: 1 - used/max, diklamp [0,1]. Batas absen/0 = 0.
+  const stepsUsed = finiteOr(metrics.stepsUsed)
+  const maxSteps = finiteOr(metrics.maxSteps)
+  let stepBudgetAdherence = 0
+  if (stepsUsed !== null && maxSteps !== null && maxSteps > 0) {
+    stepBudgetAdherence = clamp01(1 - stepsUsed / maxSteps)
+    if (stepsUsed > maxSteps) failures.push(`steps ${stepsUsed} melebihi batas ${maxSteps}`)
+  } else {
+    failures.push("stepsUsed/maxSteps tidak tersedia")
+  }
+
+  // safetyCompliance: biner — nol pelanggaran = 1, selain itu 0. TAPI bila
+  // metrik inti lain hilang (tidak ada bukti sama sekali), safetyCompliance
+  // TIDAK boleh memberi "skor gratis" — perlakukan sebagai 0 (fail-closed).
+  const violations = finiteOr(metrics.safetyViolations) ?? 0
+  const hasCoreEvidence = failures.length === 0
+  const safetyCompliance = violations === 0 && hasCoreEvidence ? 1 : 0
+  if (violations > 0) failures.push(`${violations} pelanggaran keamanan/loop-guard`)
+
+  const score =
+    taskCompletion * EVAL_WEIGHTS.taskCompletion +
+    verificationPass * EVAL_WEIGHTS.verificationPass +
+    stepBudgetAdherence * EVAL_WEIGHTS.stepBudgetAdherence +
+    safetyCompliance * EVAL_WEIGHTS.safetyCompliance
+
+  const ok = score >= threshold && failures.length === 0
+  const summary = ok
+    ? `[eval-score] PASS score=${score.toFixed(4)} >= ${threshold}`
+    : `[eval-score] FAIL score=${score.toFixed(4)} < ${threshold}${failures.length ? ` (${failures.length} issue)` : ""}`
+
+  return {
+    ok,
+    score,
+    threshold,
+    components: { taskCompletion, verificationPass, stepBudgetAdherence, safetyCompliance },
+    failures,
+    summary,
+  }
+}
+
 if (import.meta.main) {
   const path = getArg("--results") ?? "bench/results.json"
   const minRate = Number(getArg("--min-rate") ?? "1")
   const maxMedianTokens = Number(getArg("--max-median-tokens") ?? "0")
   const allowPartial = process.argv.includes("--allow-partial")
   const observeTokens = process.argv.includes("--observe-tokens")
-  let summary: EvalSummary
+  // [Fase 4 / LOOP-02] Mode evaluasi deterministik ber-skor: membaca metrik
+  // terstruktur (bukan rate agregat) dan menilai kualitas loop offline.
+  const deterministic = process.argv.includes("--deterministic-eval")
+  const thresholdArg = Number(getArg("--threshold") ?? String(DEFAULT_EVAL_PASS_THRESHOLD))
+  let summary: EvalSummary & { metrics?: DeterministicEvalMetrics }
   try {
     const { readFileSync } = await import("node:fs")
-    const raw = JSON.parse(readFileSync(path, "utf8")) as { summary?: EvalSummary } & EvalSummary
-    summary = (raw.summary ?? raw) as EvalSummary
+    const raw = JSON.parse(readFileSync(path, "utf8")) as {
+      summary?: EvalSummary
+      metrics?: DeterministicEvalMetrics
+    } & EvalSummary &
+      DeterministicEvalMetrics
+    summary = (raw.summary ?? raw) as EvalSummary & { metrics?: DeterministicEvalMetrics }
+    if (raw.metrics) summary.metrics = raw.metrics
+    // Metrik bisa berada langsung di root (fixture datar) — angkat ke .metrics.
+    if (
+      !summary.metrics &&
+      typeof (raw as DeterministicEvalMetrics).taskCompletionRate !== "undefined"
+    ) {
+      summary.metrics = raw as DeterministicEvalMetrics
+    }
   } catch (e) {
     console.error(`[eval-gate] tak bisa baca ${path}: ${(e as Error).message}`)
     process.exit(1)
+  }
+  if (deterministic) {
+    const metrics = summary.metrics ?? {}
+    const verdict = computeDeterministicEvalScore(metrics, {
+      threshold: Number.isFinite(thresholdArg) ? thresholdArg : DEFAULT_EVAL_PASS_THRESHOLD,
+    })
+    console.log(verdict.summary)
+    for (const f of verdict.failures) console.error(`  - ${f}`)
+    process.exit(verdict.ok ? 0 : 1)
   }
   const verdict = evaluateGate(summary, {
     minRate: Number.isFinite(minRate) ? minRate : 1,

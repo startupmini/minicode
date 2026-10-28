@@ -1,6 +1,6 @@
 import type { Tool } from "#minicore"
 import { isPrivateHost } from "../lib/net.ts"
-import { scrubSecrets } from "../policy/scrub.ts"
+import { fenceUntrustedToolOutput, isAlreadyFenced, scrubSecrets } from "../policy/scrub.ts"
 import { readBodyCapped } from "./web_fetch.ts"
 
 // Penanda truncation (temuan audit #02): snippet/total yang dipotong
@@ -142,12 +142,18 @@ export const webSearchTool: Tool = {
           }
         }
         if (results.length) {
-          return capTotal(
+          const content = capTotal(
             `[duckduckgo ${results.length} results for "${q}"]\n${results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}`).join("\n")}`,
             8000,
           )
+          return isAlreadyFenced(content)
+            ? content
+            : fenceUntrustedToolOutput("web_search", content, `query=${q}`)
         }
-        return `[web_search] no structured results for "${q}" — coba set TAVILY_API_KEY atau BRAVE_API_KEY untuk hasil lebih baik.`
+        const fallback = `[web_search] no structured results for "${q}" — coba set TAVILY_API_KEY atau BRAVE_API_KEY untuk hasil lebih baik.`
+        return isAlreadyFenced(fallback)
+          ? fallback
+          : fenceUntrustedToolOutput("web_search", fallback, `query=${q}`)
       } finally {
         clearTimeout(t)
         ctx.signal.removeEventListener("abort", onAbort)

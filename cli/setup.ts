@@ -159,6 +159,7 @@ import {
   tombstoneOrphanChildRuns,
   transitionRun,
 } from "../src/session/persistence.ts"
+import { collectOperationalState } from "../src/session/runtime-header.ts"
 import { snapshotTree } from "../src/session/shadow-git.ts"
 import {
   checkWorkspaceIntegrity,
@@ -1048,6 +1049,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // artefak turunan SEBELUM menulis ke histori kanonik. Tanpa deklarasi ini
   // ringkasan proyeksi bisa bocor ke `messages`.
   let contextOnlyArtifact: ContextOnlyArtifact | undefined
+  // [Fase 4 / LOOP-13] Header operasional deterministik untuk system prompt
+  // (buffer kedua: selalu dikirim, tak pernah dikompaksi, tak masuk histori).
+  let runtimeStateHeader: string | undefined
   // Baseline kanonik saat resume (isi `messages` yang SUDAH durable). Setelah
   // proyeksi menutupi prefix, buffer konteks TIDAK lagi superset histori
   // kanonik — jadi persist harus menyusun ulang: baseline ++ ekor baru.
@@ -1074,6 +1078,32 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         // kanonik utuh (identik replay sebelum P2.8). Tak pernah menulis apa pun.
         // `view` tetap dipakai untuk diagnostik + kompatibilitas P2.8.
         const view = assembleContext(sessionId, defaultThread.thread_id, cwd)
+
+        // [Fase 4 / LOOP-13, LOOP-INV-16] Kumpulkan snapshot state operasional
+        // deterministik dari sumber durable (TaskStore + usage historis) agar
+        // header [RUNTIME_STATE_HEADER] ikut ke konteks resume — tak hilang
+        // walau riwayat dipangkas kompaksi. Sumber usage = snapshot resume
+        // (collector belum ada di titik ini). Best-effort: absen = perilaku lama.
+        let operationalState:
+          | import("../src/session/runtime-header.ts").OperationalStateSnapshot
+          | null = null
+        try {
+          const snapUsage = {
+            getSession: () => ({
+              inputTokens: resumeUsageSnapshot?.inputTokens ?? 0,
+              outputTokens: resumeUsageSnapshot?.outputTokens ?? 0,
+              totalTokens: resumeUsageSnapshot?.totalTokens ?? 0,
+              cost: resumeUsageSnapshot?.totalCostUsd,
+            }),
+            getTurnCount: () => prev.turnCount ?? 0,
+          }
+          operationalState = collectOperationalState(
+            sessionId,
+            cwd ?? process.cwd(),
+            snapUsage,
+            null,
+          )
+        } catch {}
 
         // P3.3 — selector kanonik menjadi produsen view (derived, murni). Ia
         // MEMBACA data yang sama (rows/revisi/proyeksi) dan menghasilkan
@@ -1124,6 +1154,16 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           canonicalFrontier,
         })
         initialMessages = selection.messages as readonly Message[]
+        // [Fase 4 / LOOP-13, LOOP-INV-16] Simpan snapshot state operasional
+        // deterministik untuk dijadikan header di SYSTEM prompt (buffer kedua):
+        // selalu dikirim ke model, tidak pernah dihapus kompaksi, dan TIDAK
+        // pernah masuk histori kanonik (nol risiko duplikasi).
+        if (operationalState) {
+          try {
+            const { buildRuntimeStateHeader } = await import("../src/session/runtime-header.ts")
+            runtimeStateHeader = buildRuntimeStateHeader(operationalState)
+          } catch {}
+        }
         // P3.5 (N1) — angkut metadata seleksi melewati batas seed runtime.
         // Hanya `messages` yang masuk kernel (initialMessages); identity/frontier/
         // revision/basis/freshness/provenance hidup di carrier host-side ini —
@@ -1602,7 +1642,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       // yang memakai permissionHandler terinjeksi (6S/autonomous) akan
       // di-reject oleh fail-closed di sana (tak pernah melewati ceiling).
       workMode,
-      systemExtra: (systemExtra ?? "") + recoveryAppendix,
+      // [Fase 4 / LOOP-13, LOOP-INV-16] Header operasional deterministik di
+      // system prompt = buffer kedua yang selalu dikirim dan tak pernah
+      // dikompaksi; tidak pernah masuk histori kanonik. Absen = perilaku lama.
+      systemExtra: `${runtimeStateHeader ? `${runtimeStateHeader}\n\n` : ""}${systemExtra ?? ""}${recoveryAppendix}`,
       model: modelRef.current,
       // P13.6 — ask permission: composition root boleh menyuntik jalur headless
       // (daemon → ApprovalBroker). Tanpa injeksi tetap prompt TTY; non-TTY ⇒

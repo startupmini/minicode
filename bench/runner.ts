@@ -290,6 +290,30 @@ async function main(): Promise<void> {
       (r as { passedCount: number }).passedCount > 0 &&
       (r as { passedCount: number }).passedCount < runs,
   ).length
+  // [Fase 4 / LOOP-02] Metrik deterministik ber-skor untuk `--deterministic-eval`.
+  // Diturunkan dari trajectory yang SUDAH dijalankan (tanpa panggilan jaringan
+  // tambahan): completion rate, verification pass rate, step adherence, safety.
+  const tasksTotal = results.length
+  const tasksCompleted = results.filter(
+    (r) => (r as { passedCount: number }).passedCount === runs,
+  ).length
+  const totalRuns = results.reduce((sum, r) => sum + ((r as { runs?: number }).runs ?? runs), 0)
+  const totalPassed = results.reduce(
+    (sum, r) => sum + ((r as { passedCount?: number }).passedCount ?? 0),
+    0,
+  )
+  const totalSafetyViolations = (Object.entries(globalFail) as [BenchFailClass, number][])
+    .filter(([k]) => k === "NO_PROGRESS" || k === "ABORT")
+    .reduce((sum, [, n]) => sum + n, 0)
+  const metrics = {
+    taskCompletionRate: tasksTotal > 0 ? Number((tasksCompleted / tasksTotal).toFixed(4)) : 0,
+    verificationPassRate: totalRuns > 0 ? Number((totalPassed / totalRuns).toFixed(4)) : 0,
+    stepsUsed: benchMaxSteps ?? 0,
+    maxSteps: benchMaxSteps ?? 0,
+    safetyViolations: totalSafetyViolations,
+    tasksTotal,
+    tasksCompleted,
+  }
   const summary = {
     timestamp: new Date().toISOString(),
     fake,
@@ -303,6 +327,8 @@ async function main(): Promise<void> {
     resolved,
     partial,
     resolveRate: results.length ? Number((resolved / results.length).toFixed(3)) : 0,
+    // [Fase 4 / LOOP-02] Metrik untuk evaluator deterministik (`--deterministic-eval`).
+    metrics,
   }
   // Delta vs run sebelumnya
   let deltaLine = ""

@@ -48,7 +48,7 @@ function openAt(p: string): Database {
     initializedPaths.add(p)
   }
   db.exec(`
-    CREATE TABLE IF NOT EXISTS memory (id TEXT PRIMARY KEY, text TEXT, embedding BLOB, created_at INTEGER, category TEXT DEFAULT 'fact', tags TEXT, model TEXT, dim INTEGER, parent TEXT, access_count INTEGER DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS memory(id TEXT PRIMARY KEY, text TEXT, embedding BLOB, created_at INTEGER, category TEXT DEFAULT 'fact', tags TEXT, model TEXT, dim INTEGER, parent TEXT, access_count INTEGER DEFAULT 0);
     CREATE INDEX IF NOT EXISTS idx_memory_created ON memory(created_at);
     CREATE INDEX IF NOT EXISTS idx_memory_text ON memory(text);
   `)
@@ -56,6 +56,7 @@ function openAt(p: string): Database {
   // P2.2: kolom parent untuk chunk entri panjang (chunk berbagi parent id)
   // P13 S2: kategori terstruktur untuk retrieval presisi
   // P13 P1: access_count untuk bukti manfaat (berapa kali row ikut jadi hit)
+  // MEM-01 / Fase 5A: provenance tracking (session/turn/source) untuk revokasi selektif
   try {
     const cols = db.prepare(`PRAGMA table_info(memory)`).all() as { name: string }[]
     if (!cols.some((c) => c.name === "model")) db.exec(`ALTER TABLE memory ADD COLUMN model TEXT`)
@@ -66,6 +67,15 @@ function openAt(p: string): Database {
     if (!cols.some((c) => c.name === "tags")) db.exec(`ALTER TABLE memory ADD COLUMN tags TEXT`)
     if (!cols.some((c) => c.name === "access_count"))
       db.exec(`ALTER TABLE memory ADD COLUMN access_count INTEGER DEFAULT 0`)
+    // MEM-01: provenance columns (idempoten — skip bila sudah ada)
+    if (!cols.some((c) => c.name === "session_id"))
+      db.exec(`ALTER TABLE memory ADD COLUMN session_id TEXT`)
+    if (!cols.some((c) => c.name === "turn_id"))
+      db.exec(`ALTER TABLE memory ADD COLUMN turn_id TEXT`)
+    if (!cols.some((c) => c.name === "source_kind"))
+      db.exec(`ALTER TABLE memory ADD COLUMN source_kind TEXT`)
+    if (!cols.some((c) => c.name === "source_ref"))
+      db.exec(`ALTER TABLE memory ADD COLUMN source_ref TEXT`)
   } catch {}
   // P1.1: expression index + FTS5 untuk keyword pre-filter (10-50× vs instr scan)
   try {
@@ -344,6 +354,11 @@ export async function addMemory(
     embeddingModel?: string
     category?: string
     tags?: string[]
+    // MEM-01 / Fase 5A: provenance tracking untuk revokasi selektif & forensik poison memory
+    sessionId?: string | null
+    turnId?: string | null
+    sourceKind?: "user" | "tool" | "agent" | "compaction" | "manual" | "legacy" | null
+    sourceRef?: string | null
   } = {},
 ) {
   const clean = scrubSecrets(text)
@@ -386,10 +401,11 @@ export async function addMemory(
       const id = i === 0 ? parentId : randomUUID()
       const category = (opts.category as string) ?? "fact"
       const tagsJson = opts.tags ? JSON.stringify(opts.tags) : null
+      // MEM-01: insert provenance columns (nullable; legacy DBs get NULL default)
       await withBusyRetry(() =>
         db
           .prepare(
-            "INSERT INTO memory (id, text, embedding, created_at, model, dim, parent, category, tags, access_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            "INSERT INTO memory (id, text, embedding, created_at, model, dim, parent, category, tags, access_count, session_id, turn_id, source_kind, source_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)",
           )
           .run(
             id,
@@ -401,6 +417,10 @@ export async function addMemory(
             parentId,
             category,
             tagsJson,
+            opts.sessionId ?? null,
+            opts.turnId ?? null,
+            opts.sourceKind ?? null,
+            opts.sourceRef ?? null,
           ),
       )
     }
@@ -460,12 +480,24 @@ type MemoryRow = {
   created_at: number
   category?: string | null
   tags?: string | null
+  // MEM-01 / Fase 5A: provenance fields (nullable for legacy DBs)
+  session_id?: string | null
+  turn_id?: string | null
+  source_kind?: string | null
+  source_ref?: string | null
 }
 
 export interface MemoryHit {
   text: string
   score: number
   createdAt: number
+  // MEM-01 / Fase 5A: provenance metadata untuk forensik & revokasi selektif
+  provenance?: {
+    sessionId?: string | null
+    turnId?: string | null
+    sourceKind?: string | null
+    sourceRef?: string | null
+  }
 }
 
 // Kemiripan teks Jaccard untuk MMR bila pasangan tanpa vektor: cegah 5 hits
@@ -566,7 +598,7 @@ export async function searchHybrid(
     if (keywords.length > 0) {
       const recentRows = db
         .prepare(
-          `SELECT text, embedding, dim, model, created_at, category, tags FROM memory ORDER BY created_at DESC LIMIT ${LIMITS.VECTOR_RECENT_LIMIT}`,
+          `SELECT text, embedding, dim, model, created_at, category, tags, session_id, turn_id, source_kind, source_ref FROM memory ORDER BY created_at DESC LIMIT ${LIMITS.VECTOR_RECENT_LIMIT}`,
         )
         .all() as MemoryRow[]
       let keywordRows: MemoryRow[] = []
@@ -575,7 +607,7 @@ export async function searchHybrid(
         try {
           keywordRows = db
             .prepare(
-              `SELECT m.text as text, m.embedding as embedding, m.dim as dim, m.model as model, m.created_at as created_at, m.category as category, m.tags as tags FROM memory_fts f JOIN memory m ON m.rowid = f.rowid WHERE memory_fts MATCH ? ORDER BY rank LIMIT ${LIMITS.VECTOR_KEYWORD_LIMIT}`,
+              `SELECT m.text as text, m.embedding as embedding, m.dim as dim, m.model as model, m.created_at as created_at, m.category as category, m.tags as tags, m.session_id as session_id, m.turn_id as turn_id, m.source_kind as source_kind, m.source_ref as source_ref FROM memory_fts f JOIN memory m ON m.rowid = f.rowid WHERE memory_fts MATCH ? ORDER BY rank LIMIT ${LIMITS.VECTOR_KEYWORD_LIMIT}`,
             )
             .all(ftsQ) as MemoryRow[]
         } catch {
@@ -588,7 +620,7 @@ export async function searchHybrid(
           .join(" OR ")
         keywordRows = db
           .prepare(
-            `SELECT text, embedding, dim, model, created_at, category, tags FROM memory WHERE ${likeClauses} ORDER BY created_at DESC LIMIT ${LIMITS.VECTOR_KEYWORD_LIMIT}`,
+            `SELECT text, embedding, dim, model, created_at, category, tags, session_id, turn_id, source_kind, source_ref FROM memory WHERE ${likeClauses} ORDER BY created_at DESC LIMIT ${LIMITS.VECTOR_KEYWORD_LIMIT}`,
           )
           .all(...escKeywords) as MemoryRow[]
       }
@@ -599,7 +631,7 @@ export async function searchHybrid(
     } else {
       return db
         .prepare(
-          `SELECT text, embedding, dim, model, created_at, category, tags FROM memory ORDER BY created_at DESC LIMIT ${LIMITS.VECTOR_SEARCH_LIMIT}`,
+          `SELECT text, embedding, dim, model, created_at, category, tags, session_id, turn_id, source_kind, source_ref FROM memory ORDER BY created_at DESC LIMIT ${LIMITS.VECTOR_SEARCH_LIMIT}`,
         )
         .all() as MemoryRow[]
     }
@@ -691,7 +723,22 @@ export async function searchHybrid(
   const pool = filtered.slice(0, LIMITS.MEMORY_MMR_CANDIDATES)
   const ranked = mmrRerank(pool, opts.topK ?? 5)
   const createdByText = new Map(pool.map((p) => [p.text, p.createdAt] as const))
-  const hits = ranked.map((h) => ({ ...h, createdAt: createdByText.get(h.text) ?? Date.now() }))
+  const rowsByText = new Map(rows.map((r) => [r.text, r] as const))
+  const hits = ranked.map((h) => {
+    const row = rowsByText.get(h.text)
+    return {
+      ...h,
+      createdAt: createdByText.get(h.text) ?? Date.now(),
+      provenance: row
+        ? {
+            sessionId: row.session_id,
+            turnId: row.turn_id,
+            sourceKind: row.source_kind,
+            sourceRef: row.source_ref,
+          }
+        : undefined,
+    }
+  })
   // P13 P1 — bukti manfaat per row: hit yang dikembalikan menaikkan
   // access_count (best-effort; gagal diam — jangan rusak retrieval).
   // Hanya DB lokal yang disentuh; row global (scope all) tidak dihitung.
@@ -712,6 +759,266 @@ export async function searchHybrid(
     } catch {}
   }
   return hits
+}
+
+// MEM-03 / Fase 5A: Prune TTL dengan virtual/injectable clock untuk deterministik testing.
+// Returns jumlah baris yang terhapus. `nowMs` default Date.now() bila tidak diinjeksi.
+export async function pruneTTL(cwd?: string, nowMs: number = Date.now()): Promise<number> {
+  const db = open(cwd)
+  try {
+    let deleted = 0
+    const day = 24 * 60 * 60 * 1000
+    // Hierarki TTL: snippet (14d), summary (90d), fact/decision/preference (180d)
+    const cuts = [
+      { cats: ["snippet"], ms: LIMITS.MEMORY_TTL_SNIPPET_DAYS * day },
+      { cats: ["summary"], ms: LIMITS.MEMORY_TTL_SUMMARY_DAYS * day },
+      { cats: ["fact", "decision", "preference"], ms: LIMITS.MEMORY_TTL_FACT_DAYS * day },
+    ]
+    for (const c of cuts) {
+      if (c.ms <= 0) continue
+      const ph = c.cats.map(() => "?").join(",")
+      const nullCatch = c.cats.includes("fact") ? " OR category IS NULL" : ""
+      const result = await withBusyRetry(() =>
+        db
+          .prepare(
+            `DELETE FROM memory WHERE (category IN (${ph})${nullCatch}) AND created_at < ?`,
+          )
+          .run(...c.cats, nowMs - c.ms),
+      )
+      deleted += result.changes ?? 0
+    }
+    // CAP: potong ke MEMORY_MAX_rows bila melebihi batas
+    const cnt =
+      (db.prepare("SELECT count(*) as c FROM memory").get() as { c: number } | null)?.c ?? 0
+    if (cnt > LIMITS.MEMORY_MAX_ROWS) {
+      const result = await withBusyRetry(() =>
+        db
+          .prepare(
+            `DELETE FROM memory WHERE id IN (SELECT id FROM memory ORDER BY created_at DESC LIMIT -1 OFFSET ${LIMITS.MEMORY_MAX_ROWS})`,
+          )
+          .run(),
+      )
+      deleted += result.changes ?? 0
+    }
+    return deleted
+  } finally {
+    db.close()
+  }
+}
+
+// MEM-01 / Fase 5A: Revoke semua memori berdasarkan provenance (selective poisoning).
+// Hapus dari vektor DB + MEMORY.md secara atomik/idempoten. Returns { vectorRows, fileLines }.
+export async function revokeByProvenance(
+  criteria: { sessionId?: string; turnId?: string; sourceKind?: string },
+  cwd?: string,
+): Promise<{ vectorRows: number; fileLines: number }> {
+  const { sessionId, turnId, sourceKind } = criteria
+  let vectorDeleted = 0
+
+  // Dari vektor DB: filter sesuai kriteria provenance yang tersedia
+  const conditions: string[] = []
+  const values: unknown[] = []
+  if (sessionId) {
+    conditions.push(`session_id = ?`)
+    values.push(sessionId)
+  }
+  if (turnId) {
+    conditions.push(`turn_id = ?`)
+    values.push(turnId)
+  }
+  if (sourceKind) {
+    conditions.push(`source_kind = ?`)
+    values.push(sourceKind)
+  }
+
+  if (conditions.length > 0) {
+    const db = open(cwd)
+    try {
+      const before = db
+        .prepare(`SELECT count(*) as c FROM memory WHERE ${conditions.join(" AND ")}`)
+        .get(...(values as [string | null])) as { c: number } | null
+      const n = before?.c ?? 0
+      if (n > 0) {
+        const result = await withBusyRetry(() =>
+          db.prepare(`DELETE FROM memory WHERE ${conditions.join(" AND ")}`).run(...(values as [string | null])),
+        )
+        vectorDeleted = result.changes ?? 0
+      }
+    } finally {
+      db.close()
+    }
+  }
+
+  // Dari MEMORY.md: hapus baris yang memuat metadata provenance (jika tersimpan sebagai tag)
+  // FILE_STORE: tags JSON dalam baris → parse dan match terhadap criteria
+  let fileDeleted = 0
+  try {
+    const { readFile, writeFile } = await import("node:fs/promises")
+    const { resolve } = await import("node:path")
+    const LOCAL_MEM = ".minicode/MEMORY.md"
+    const path = resolve(cwd ?? process.cwd(), LOCAL_MEM)
+
+    let txt: string
+    try {
+      txt = await readFile(path, "utf8")
+    } catch {
+      // File belum ada atau tidak bisa dibaca — ok saja
+      return { vectorRows: vectorDeleted, fileLines: fileDeleted }
+    }
+
+    const lines = txt.split("\n")
+    const kept: string[] = []
+    let del = 0
+
+    for (const line of lines) {
+      // MEMORY.md format: `- YYYY-MM-DDTHH:MM:SS.sssZ text ... [tags: ...]`
+      // Ekstrak tag jika ada, lalu cek match criteria
+      const tagMatch = line.match(/\[tags:\s*([^\]]+)\]/)
+      let matched = false
+
+      if (!tagMatch) {
+        // Tidak ada tag → hanya cocok bila query substring ada
+        matched =
+          !sessionId || line.toLowerCase().includes((sessionId ?? "").toLowerCase()) ||
+          !turnId || line.toLowerCase().includes((turnId ?? "").toLowerCase()) ||
+          !sourceKind || line.toLowerCase().includes((sourceKind ?? "").toLowerCase())
+      } else {
+        // Parse JSON tags dan cek match
+        try {
+          const tags = JSON.parse(tagMatch![1] as string) as string[]
+          const hasSessionId = sessionId ? tags.some((t: string) => t.includes(`session:${sessionId as string}`)) : false
+          const hasTurnId = turnId ? tags.some((t: string) => t.includes(`turn:${turnId as string}`)) : false
+          const hasSource = sourceKind ? tags.some((t: string) => t.includes(`source:${sourceKind as string}`)) : false
+          matched = hasSessionId || hasTurnId || hasSource
+        } catch {
+          // Tag corrupted / bukan JSON → skip
+          kept.push(line)
+          continue
+        }
+      }
+
+      if (matched) {
+        del++
+      } else {
+        kept.push(line)
+      }
+    }
+
+    if (del > 0) {
+      await writeFile(path, kept.join("\n"), "utf8")
+      fileDeleted = del
+    }
+  } catch {}
+
+  return { vectorRows: vectorDeleted, fileLines: fileDeleted }
+}
+
+// MEM-03 / Fase 5A: Helper evaluasi kualitas retrieval — precision@k & recall@k.
+// retrievedIds = ID hasil retrieval, relevantIds = ID ground truth yang relevan.
+export function computePrecisionAtK(retrievedIds: string[], relevantIds: string[], k: number): number {
+  const topK = retrievedIds.slice(0, Math.min(k, retrievedIds.length))
+  let correct = 0
+  const relevantSet = new Set(relevantIds)
+  for (const id of topK) {
+    if (relevantSet.has(id)) correct++
+  }
+  return topK.length > 0 ? correct / topK.length : 0
+}
+
+export function computeRecallAtK(retrievedIds: string[], relevantIds: string[], k: number): number {
+  const topK = retrievedIds.slice(0, Math.min(k, retrievedIds.length))
+  let correct = 0
+  const relevantSet = new Set(relevantIds)
+  for (const id of topK) {
+    if (relevantSet.has(id)) correct++
+  }
+  return relevantIds.length > 0 ? correct / relevantIds.length : 0
+}
+
+// MEM-04 / Fase 5A: Rekonsiliasi split-brain antara vektor DB & file store.
+// Menyelaraskan ketidakcocokan setelah crash: 
+//   - Vector-only rows → hapus jika tidak ada di file (atau sebaliknya sesuai mode)
+//   - File-only rows → tulis ulang ke vektor jika belum ada
+// Returns { reconciled: number; vectorOnlyRemoved: number; fileOnlyAdded: number }
+export async function reconcileMemoryStores(cwd?: string): Promise<{
+  reconciled: number
+  vectorOnlyRemoved: number
+  fileOnlyAdded: number
+}> {
+  const db = open(cwd)
+  try {
+    // Ambil semua text dari vektor
+    const vectorRows = db.prepare("SELECT text FROM memory").all() as { text: string }[]
+    const vectorTexts = new Set(vectorRows.map((r) => r.text))
+
+    // Baca MEMORY.md dan extract unique texts
+    const { readFile } = await import("node:fs/promises")
+    const { resolve } = await import("node:path")
+    const LOCAL_MEM = ".minicode/MEMORY.md"
+    const path = resolve(cwd ?? process.cwd(), LOCAL_MEM)
+
+    let txt: string
+    try {
+      txt = await readFile(path, "utf8")
+    } catch {
+      // No file yet → clean slate, ok
+      return { reconciled: 0, vectorOnlyRemoved: 0, fileOnlyAdded: 0 }
+    }
+
+    const fileLines = txt.split("\n").filter((l) => l.startsWith("- "))
+    const fileTexts = new Set<string>()
+    for (const line of fileLines) {
+      // Extract text after date and strip tags metadata
+      const parts = line.trim().slice(2).split(" ")
+      if (parts.length > 1) {
+        const firstWord = parts[0]!
+        const dateEnd = firstWord.indexOf("T")
+        if (dateEnd >= 0) {
+          const textStart = firstWord.slice(dateEnd + 1) || ""
+          fileTexts.add(textStart + " " + parts.slice(1).join(" "))
+        }
+      }
+    }
+
+    let vectorOnlyRemoved = 0
+    let fileOnlyAdded = 0
+    let reconciled = 0
+
+    // 1. Hapus vector-only rows (exist in DB but not in file)
+    const vectorToKeep: string[] = []
+    for (const text of vectorTexts) {
+      const found = Array.from(fileTexts).some(
+        (ft) => ft.toLowerCase().includes(text.toLowerCase()),
+      )
+      if (found) {
+        vectorToKeep.push(text)
+        reconciled++
+      } else {
+        // Delete from DB
+        await withBusyRetry(() => db.prepare("DELETE FROM memory WHERE text = ?").run(text))
+        vectorOnlyRemoved++
+      }
+    }
+
+    // 2. Tambah file-only rows yang belum ada di vector
+    for (const text of fileTexts) {
+      if (!vectorTexts.has(text)) {
+        // Insert into vector (without embedding, keyword-only fallback)
+        await withBusyRetry(() =>
+          db
+            .prepare(
+              "INSERT OR IGNORE INTO memory (id, text, embedding, created_at, category, session_id, turn_id, source_kind, source_ref) VALUES (?, ?, NULL, ?, 'manual', NULL, NULL, NULL, NULL)",
+            )
+            .run(randomUUID(), text, Date.now()),
+        )
+        fileOnlyAdded++
+      }
+    }
+
+    return { reconciled, vectorOnlyRemoved, fileOnlyAdded }
+  } finally {
+    db.close()
+  }
 }
 
 export interface MemoryStats {

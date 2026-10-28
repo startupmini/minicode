@@ -62,7 +62,12 @@ export const readMemoryTool: Tool = {
     }
     let out = ""
     if (hits.length)
-      out += `vector hits:\n${hits.map((h) => `- ${h.text.slice(0, 300)}${h.text.length > 300 ? "…" : ""} (${h.score.toFixed(2)}, ${fmtDate(h.createdAt)})`).join("\n")}\n`
+      out += `vector hits:\n${hits.map((h: typeof hits[number] & { provenance?: { sessionId?: string | null; turnId?: string | null } }) => {
+        const meta = h.provenance 
+          ? `[session:${(h.provenance.sessionId || "?")}] [turn:${(h.provenance.turnId || "?")}] ` 
+          : ""
+        return `- ${h.text.slice(0, 300)}${h.text.length > 300 ? "…" : ""} (${h.score.toFixed(2)}, ${fmtDate(h.createdAt)}) ${meta}`
+      }).join("\n")}\n`
     if (kw) out += `\nfile hits:\n${kw}`
     return out.trim() || "(no memory)"
   },
@@ -83,11 +88,20 @@ export const writeMemoryTool: Tool = {
           "retrieval category: fact/decision/preference are durable, snippet is short-lived, summary for session summaries",
       },
       tags: { type: "array", items: { type: "string" } },
+      // MEM-01 / Fase 5A: provenance metadata untuk forensik & revokasi selektif
+      sessionId: { type: "string", description: "session ID if this memory originates from a session" },
+      turnId: { type: "string", description: "turn ID if this memory originates from a specific turn" },
+      sourceKind: {
+        type: "string",
+        enum: ["user", "tool", "agent", "compaction", "manual", "legacy"],
+        description: "source category: user/manual input vs tool/agent auto-memory vs compaction",
+      },
+      sourceRef: { type: "string", description: "reference of the source (e.g., tool name, file path)" },
     },
     required: ["text"],
     additionalProperties: false,
   },
-  async execute({ text, category, tags }, ctx) {
+  async execute({ text, category, tags, sessionId, turnId, sourceKind, sourceRef }, ctx) {
     ctx.signal.throwIfAborted()
     const t = text as string
     if (!t.trim()) throw new Error("text empty")
@@ -95,14 +109,21 @@ export const writeMemoryTool: Tool = {
     const path = await appendMemory(t, cwd)
     const cat = (category as string) ?? "fact"
     const tagArr = Array.isArray(tags) ? (tags as string[]) : undefined
-    // also add to vector (hybrid) — pass cwd so local vector.db is used
+    
+    // MEM-01: add provenance tags to MEMORY.md (as metadata comment at end of line)
+    let memTags = tagArr ? [...tagArr] : []
+    if (sessionId) memTags.push(`session:${sessionId}`)
+    if (turnId) memTags.push(`turn:${turnId}`)
+    if (sourceKind) memTags.push(`source:${sourceKind}`)
+    if (sourceRef) memTags.push(`ref:${sourceRef}`)
+    
     const baseUrl = process.env.AGENT_BASE_URL ?? "https://api.openai.com/v1"
     const apiKey =
       process.env.DEEPSEEK_API_KEY ?? process.env.OPENAI_API_KEY ?? process.env.AGENT_API_KEY ?? ""
     let added = false
     if (apiKey) {
       try {
-        await addMemory(t, { baseUrl, apiKey, cwd, category: cat, tags: tagArr })
+        await addMemory(t, { baseUrl, apiKey, cwd, category: cat, tags: tagArr, sessionId, turnId, sourceKind, sourceRef })
         added = true
       } catch (e) {
         process.stderr.write(`[warn] memory vector embedding failed: ${(e as Error).message}\n`)
@@ -110,14 +131,14 @@ export const writeMemoryTool: Tool = {
     }
     if (!added) {
       try {
-        await addMemory(t, { cwd, category: cat, tags: tagArr })
+        await addMemory(t, { cwd, category: cat, tags: tagArr, sessionId, turnId, sourceKind, sourceRef })
       } catch (e2) {
         process.stderr.write(
           `[warn] memory keyword-only fallback failed: ${(e2 as Error).message}\n`,
         )
       }
     }
-    return `saved to ${path}: ${t.slice(0, 100)}`
+    return `saved to ${path}: ${t.slice(0, 100)}${memTags.length ? ` [tags: ${JSON.stringify(memTags)}]` : ""}`
   },
 }
 
@@ -127,19 +148,43 @@ export const forgetMemoryTool: Tool = {
     "Delete memories matching the query from the vector store AND MEMORY.md files, in both project (cwd) and global scopes — search merges both, so forgetting one side would leave rows behind.",
   parameters: {
     type: "object",
-    properties: { query: { type: "string" } },
+    properties: { 
+      query: { type: "string" },
+      // MEM-01 / Fase 5A: selective revocation via provenance (alternative to query-based)
+      sessionId: { type: "string", description: "delete all memory from this session ID" },
+      turnId: { type: "string", description: "delete all memory from this turn ID" },
+      sourceKind: { type: "string", description: "delete all memory from this source category" },
+    },
     required: ["query"],
     additionalProperties: false,
   },
-  async execute({ query }, ctx) {
+  async execute({ query, sessionId, turnId, sourceKind }, ctx) {
     ctx.signal.throwIfAborted()
     const q = query as string
-    if (!q.trim()) throw new Error("query empty")
+    
+    if (!q.trim() && !sessionId && !turnId && !sourceKind) {
+      throw new Error("query or provenance criteria required")
+    }
+    
     const cwd = (ctx as { cwd?: string }).cwd ?? process.cwd()
-    const del = await deleteMemoryByQuery(q, cwd)
-    // Temuan audit #06: vector saja tak cukup — entri file (sumber file
-    // hits) harus ikut terhapus agar "lupa" benar-benar terjadi.
-    const fileDel = await deleteMemoryLines(q, cwd)
-    return `deleted ${del} memories + ${fileDel} file lines matching "${query}"`
+    
+    let resultText = ""
+    
+    // Use provenance-based deletion if specified, otherwise fall back to query-based
+    if (sessionId || turnId || sourceKind) {
+      const { revokeByProvenance } = await import("../memory/vector.ts")
+      const criteria: { sessionId?: string; turnId?: string; sourceKind?: string } = {}
+      if ((sessionId as string)) criteria.sessionId = sessionId as string
+      if ((turnId as string)) criteria.turnId = turnId as string
+      if ((sourceKind as string)) criteria.sourceKind = sourceKind as string
+      const { vectorRows, fileLines } = await revokeByProvenance(criteria, cwd)
+      resultText = `revoked ${vectorRows} vector entries + ${fileLines} file lines by provenance`
+    } else {
+      const del = await deleteMemoryByQuery(q, cwd)
+      const fileDel = await deleteMemoryLines(q, cwd)
+      resultText = `deleted ${del} memories + ${fileDel} file lines matching "${query}"`
+    }
+    
+    return resultText
   },
 }

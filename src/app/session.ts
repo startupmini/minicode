@@ -3,14 +3,27 @@ import { ProviderError } from "#minicore/core/errors.ts"
 import type { PermissionHandler, Session, SessionConfig } from "#minicore/core/index.ts"
 import { createSession as createCoreSession } from "#minicore/core/index.ts"
 import { defaultRecoveryPolicy } from "#minicore/core/recovery.ts"
+import { estimateMessages, estimateSystem, estimateTools } from "#minicore/core/tokens.ts"
 import { LIMITS } from "../constants.ts"
-import { buildSystemPrompt, minicodeEstimator } from "../policy/context.ts"
+import {
+  buildSystemPrompt,
+  createCalibratedEstimator,
+  minicodeEstimator,
+} from "../policy/context.ts"
 import { parallelExecutor } from "../policy/executor.ts"
+import {
+  createNoProgressDetector,
+  type NoProgressDetector,
+  type NoProgressOptions,
+  type NoProgressPosture,
+} from "../policy/no-progress.ts"
 import {
   createPermissionHandler,
   type PermissionAsk,
   type PermissionMode,
 } from "../policy/permission.ts"
+import { contractForTool } from "../policy/tool-contract.ts"
+import { maxTurnsExceededError } from "../policy/usage.ts"
 import { createWorkModePermissionHandler, type WorkMode } from "../policy/work-mode.ts"
 import type { ApprovalEventHook } from "../presentation/events.ts"
 
@@ -77,6 +90,20 @@ export async function createMinicodeSession(
     writeConcurrency?: number
     turnCount?: number
     stepCount?: number
+    /**
+     * [Fase 3 / LOOP-INV-11] Batas keras jumlah turn lintas resume. Bila
+     * `state.turnCount >= maxTurns`, `session.run()` menolak deterministik
+     * dengan `maxTurnsExceededError` (`AgentError` ber-kind `budget_exceeded`).
+     */
+    maxTurns?: number
+    /**
+     * [Fase 3 / LOOP-G19, LOOP-G27] Konfigurasi detektor no-progress &
+     * oscillation. Default aktif; `false` menonaktifkan eksplisit untuk test
+     * khusus.
+     */
+    noProgress?: NoProgressOptions | false
+    /** Hook opsional agar composition root dapat mereset riwayat osilasi saat verify hijau. */
+    onNoProgress?: (detector: NoProgressDetector) => void
     /** Menerima handle kontrol mode permission. Kernel tidak mengekspos
      * `config`, jadi satu-satunya cara mengubah mode saat runtime (mis.
      * Shift+Tab di TUI) adalah menangkap handler di sini. */
@@ -155,8 +182,13 @@ export async function createMinicodeSession(
     onWorkMode,
     ask,
     onApprovalEvent,
+    permissionHandler: _permissionHandler,
+    beforeToolEffect,
     turnCount,
     stepCount,
+    maxTurns,
+    noProgress,
+    onNoProgress,
     ...rest
   } = opts
   if (!provider) throw new Error("createMinicodeSession: provider is required")
@@ -185,6 +217,10 @@ export async function createMinicodeSession(
     writeConcurrency > 0
       ? Math.floor(writeConcurrency)
       : undefined
+  const safeMaxTurns =
+    typeof maxTurns === "number" && Number.isFinite(maxTurns) && maxTurns >= 1
+      ? Math.floor(maxTurns)
+      : undefined
   // P12 S2.2 Slice 5 — handler WorkMode SELALU dibungkus (bukan `compose`,
   // yang mengembalikan base polos untuk EXECUTE). Alasannya runtime upgrade:
   // `compose` EXECUTE = base tanpa __setWorkMode, jadi operator tak bisa
@@ -204,26 +240,59 @@ export async function createMinicodeSession(
       }),
       root: cwd,
     })
-  // [Fase 1 / LOOP-INV-03] Barrier "durability before effect".
-  //
-  // Kenapa dibungkus di sini: `permissions.check` adalah satu-satunya titik
-  // yang di-await kernel untuk SETIAP tool call, tepat sebelum
-  // `execution:started` dan `tool.execute`. Membungkusnya membuat barrier
-  // benar-benar berurutan (await), tanpa menyentuh kernel beku dan tanpa
-  // menambah jalur eksekusi kedua.
-  //
-  // Fail-closed: bila barrier melempar, `permissions.check` melempar juga;
-  // kernel menangkapnya sebagai error hasil tool dan TIDAK menjalankan efek.
-  // Itu perilaku yang benar ketika bukti durable tidak bisa ditulis.
+  const injected = opts.permissionHandler !== undefined
+  const withMode = permissions as typeof permissions & {
+    __setMode(m: PermissionMode): void
+    __getMode(): PermissionMode
+  }
+  const wmCtl = permissions as typeof permissions & {
+    __setWorkMode?(m: WorkMode): void
+    __getWorkMode?(): WorkMode
+  }
+  const registeredTools = rest.tools ?? []
+  const allToolsPureRead =
+    registeredTools.length > 0 &&
+    registeredTools.every((t) => contractForTool(t.name)?.sideEffectTier === "PURE_READ")
+  const livePosture = (): NoProgressPosture => {
+    if (injected) return "readonly"
+    const pm = withMode.__getMode()
+    if (pm === "readonly") return "readonly"
+    if (pm === "plan") return "plan"
+    const wm = wmCtl.__getWorkMode?.() ?? resolvedWorkMode
+    if (wm === "DISCUSS") return "readonly"
+    if (wm === "PLAN") return "plan"
+    if (allToolsPureRead) return "explore"
+    return "active"
+  }
+  const effectiveRoot = cwd ?? process.cwd()
+  const detector: NoProgressDetector | null =
+    noProgress === false
+      ? null
+      : createNoProgressDetector({
+          ...(noProgress ?? {}),
+          getPosture: noProgress?.getPosture ?? livePosture,
+        })
+  if (detector && onNoProgress) onNoProgress(detector)
+
+  // [Fase 1 / LOOP-INV-03 + Fase 3 / LOOP-G19, LOOP-G27] Barrier sebelum efek:
+  //   1. `detector.assertBeforeCall` memblokir panggilan yang terdeteksi
+  //      no-progress / osilasi SEBELUM intent jurnal ditulis & sebelum efek.
+  //   2. `detector.capturePreMutation` merekam hash pra-efek untuk osilasi.
+  //   3. `beforeToolEffect` menulis intent jurnal secara awaited.
   const withEffectBarrier: PermissionHandler =
-    opts.beforeToolEffect === undefined
+    detector === null && beforeToolEffect === undefined
       ? permissions
       : {
           ...permissions,
           check: async (call, deps) => {
             const decision = await permissions.check(call, deps)
             if (decision !== "allow") return decision
-            await opts.beforeToolEffect!(call)
+            if (detector !== null) {
+              await detector.beforeToolEffectCheck(call, effectiveRoot)
+            }
+            if (beforeToolEffect !== undefined) {
+              await beforeToolEffect(call)
+            }
             return "allow"
           },
         }
@@ -235,11 +304,6 @@ export async function createMinicodeSession(
   // ability to revoke read-only on an unattended executor — precisely the hole 6S
   // F1 closed. `permissionMode` stays `"readonly"` purely as kernel metadata
   // (ToolContext's label); the DECISION is the handler's.
-  const injected = opts.permissionHandler !== undefined
-  const withMode = permissions as typeof permissions & {
-    __setMode(m: PermissionMode): void
-    __getMode(): PermissionMode
-  }
   if (onPermissions && !injected) {
     onPermissions({
       setMode: (m) => withMode.__setMode(m),
@@ -262,13 +326,20 @@ export async function createMinicodeSession(
   // Teruskan mode live ke kernel agar ToolContext.permissionMode selalu
   // mencerminkan Shift+Tab saat itu (bukan snapshot saat sesi dibuat).
   const livePermissionMode = (): PermissionMode => (injected ? "readonly" : withMode.__getMode())
-  return createCoreSession({
+  // [Fase 3 / CTX-03] Estimator terkalibrasi terhadap usage aktual provider.
+  const calibration = createCalibratedEstimator()
+  const toolSchemasForEstimate = registeredTools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    parameters: t.parameters,
+  }))
+  const core = createCoreSession({
     ...rest,
     provider,
     system,
     permissions: withEffectBarrier,
     permissionMode: livePermissionMode,
-    estimator: minicodeEstimator,
+    estimator: calibration.estimator,
     recovery: cappedRecovery,
     executor: parallelExecutor({
       concurrency: safeConcurrency ?? LIMITS.EXECUTOR_CONCURRENCY,
@@ -278,4 +349,58 @@ export async function createMinicodeSession(
     ...(turnCount !== undefined ? { turnCount } : {}),
     ...(stepCount !== undefined ? { stepCount } : {}),
   })
+  core.events.on("provider:extension", (e) => {
+    if (e.kind !== "usage") return
+    const d = e.data as { inputTokens?: number; totalTokens?: number } | undefined
+    if (!d) return
+    const baseLocal =
+      estimateSystem(system, minicodeEstimator) +
+      estimateTools(toolSchemasForEstimate, minicodeEstimator) +
+      estimateMessages(core.state.history, minicodeEstimator)
+    calibration.observeProviderUsage({
+      localEstimatedTokens: baseLocal,
+      providerInputTokens: d.inputTokens,
+      providerTotalTokens: d.totalTokens,
+    })
+  })
+  if (detector !== null) {
+    core.events.on("execution:completed", (e) => {
+      if ((e as { forwardedChild?: unknown }).forwardedChild != null) return
+      const call = e.execution?.call as { id?: unknown; name?: unknown; args?: unknown } | undefined
+      const result = e.execution?.result as { isError?: unknown; content?: unknown } | undefined
+      if (!call || typeof call.name !== "string") return
+      const callId = typeof call.id === "string" ? call.id : ""
+      detector.recordOutcome({
+        id: callId,
+        name: call.name,
+        args: call.args,
+        isError: result?.isError === true,
+        content: typeof result?.content === "string" ? result.content : "",
+      })
+      void detector
+        .completePostMutation(
+          {
+            id: callId,
+            name: call.name,
+            args: call.args,
+            isError: result?.isError === true,
+          },
+          effectiveRoot,
+        )
+        .catch(() => {})
+    })
+    core.events.on("turn:completed", () => {
+      detector.noteAssistantResponse()
+    })
+  }
+  if (safeMaxTurns !== undefined) {
+    const origRun = core.run.bind(core)
+    core.run = async (input, runOpts) => {
+      if (core.state.turnCount >= safeMaxTurns) {
+        throw maxTurnsExceededError(safeMaxTurns, core.state.turnCount)
+      }
+      return origRun(input, runOpts)
+    }
+  }
+  return core
 }

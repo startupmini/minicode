@@ -22,6 +22,111 @@ export function estimateImageTokens(bytes: number): number {
   return Math.ceil(b64 / DEFAULT_CHARS_PER_TOKEN)
 }
 
+// ── [Fase 3 / CTX-03] Kalibrasi estimasi token vs usage aktual provider ─────
+//
+// `minicodeEstimator` berbasis `chars / 4` bisa *under-estimate* pada teks CJK,
+// JSON padat, atau kode simbolik (sering 1.5–2.5 karakter/token). Bila estimasi
+// lokal terlalu rendah, ambang kompaksi terlambat terpicu dan request meledak
+// `context_length_exceeded`. Kalibrator ini mencatat drift terhadap angka aktual
+// terakhir yang dilaporkan provider (`inputTokens` / `totalTokens`) dan memakai
+// *conservative max* (`factor >= 1`) agar estimasi kompaksi tak pernah lebih
+// rendah daripada realitas provider.
+
+export interface TokenCalibrationSnapshot {
+  readonly factor: number
+  readonly lastLocalEstimate: number | null
+  readonly lastProviderTokens: number | null
+  readonly driftTokens: number
+  readonly effectiveTokens: number | null
+}
+
+export interface CalibratedEstimator {
+  readonly estimator: TokenEstimator
+  observeProviderUsage(input: {
+    localEstimatedTokens: number
+    providerInputTokens?: number
+    providerTotalTokens?: number
+  }): TokenCalibrationSnapshot
+  effectiveContextTokens(localEstimatedTokens: number): number
+  snapshot(): TokenCalibrationSnapshot
+}
+
+const DEFAULT_MAX_CALIBRATION_FACTOR = 64
+
+export function createCalibratedEstimator(opts: { maxFactor?: number } = {}): CalibratedEstimator {
+  const maxFactor =
+    typeof opts.maxFactor === "number" && Number.isFinite(opts.maxFactor) && opts.maxFactor >= 1
+      ? opts.maxFactor
+      : DEFAULT_MAX_CALIBRATION_FACTOR
+  let factor = 1
+  let lastLocal: number | null = null
+  let lastActual: number | null = null
+  let drift = 0
+
+  const estimator: TokenEstimator = (text: string) => {
+    const base = minicodeEstimator(text)
+    return factor > 1 ? Math.ceil(base * factor) : base
+  }
+
+  return {
+    estimator,
+    observeProviderUsage(input) {
+      const local =
+        Number.isFinite(input.localEstimatedTokens) && input.localEstimatedTokens > 0
+          ? Math.ceil(input.localEstimatedTokens)
+          : 0
+      const pInput =
+        typeof input.providerInputTokens === "number" &&
+        Number.isFinite(input.providerInputTokens) &&
+        input.providerInputTokens > 0
+          ? Math.ceil(input.providerInputTokens)
+          : 0
+      const pTotal =
+        typeof input.providerTotalTokens === "number" &&
+        Number.isFinite(input.providerTotalTokens) &&
+        input.providerTotalTokens > 0
+          ? Math.ceil(input.providerTotalTokens)
+          : 0
+      // Pakai inputTokens bila tersedia (apel-ke-apel dengan prompt konteks);
+      // fallback ke totalTokens bila provider hanya melaporkan total.
+      const actual = pInput > 0 ? pInput : pTotal
+      if (actual > 0) {
+        lastLocal = local
+        lastActual = actual
+        drift = actual - local
+        if (local > 0) {
+          // Conservative max: faktor tidak pernah < 1 (tidak pernah melemahkan
+          // estimasi dasar), namun naik proporsional saat aktual > lokal.
+          const observedRatio = actual / local
+          factor = Math.min(maxFactor, Math.max(1, observedRatio))
+        }
+      }
+      return this.snapshot()
+    },
+    effectiveContextTokens(localEstimatedTokens: number): number {
+      const cleanLocal =
+        Number.isFinite(localEstimatedTokens) && localEstimatedTokens > 0
+          ? Math.ceil(localEstimatedTokens)
+          : 0
+      const scaled = Math.ceil(cleanLocal * factor)
+      return lastActual !== null ? Math.max(scaled, lastActual) : scaled
+    },
+    snapshot(): TokenCalibrationSnapshot {
+      const effective =
+        lastLocal !== null && lastActual !== null
+          ? Math.max(Math.ceil(lastLocal * factor), lastActual)
+          : null
+      return {
+        factor,
+        lastLocalEstimate: lastLocal,
+        lastProviderTokens: lastActual,
+        driftTokens: drift,
+        effectiveTokens: effective,
+      }
+    },
+  }
+}
+
 const MAX_SYSTEM_CHARS = LIMITS.SYSTEM_PROMPT_MAX_CHARS
 
 // Penanda truncation (temuan audit #02): instruksi yang dipotong diam-diam

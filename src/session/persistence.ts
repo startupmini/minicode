@@ -1341,6 +1341,87 @@ export function listPersistedTurns(id: string, cwd?: string): number[] {
   }
 }
 
+export interface SessionUsageSummary {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  /**
+   * Hanya terisi bila seluruh turn ber-token pada sesi memiliki biaya numerik.
+   * Bila ada turn ber-token tanpa harga (`cost == null`), dibiarkan `undefined`
+   * supaya invariant fail-closed F-06 (`unknown-strict`) tetap berlaku lintas resume.
+   */
+  totalCostUsd?: number
+  turnCount: number
+}
+
+/**
+ * [Fase 3 / LOOP-INV-11] Agregasi pemakaian historis sesi dari tabel `turns`.
+ * Dipakai saat `--resume` untuk meng-seed `createUsageCollector` sehingga
+ * budget token/USD dan `turnCount` tidak ter-reset ke nol saat restart.
+ */
+export function loadSessionUsageSummary(id: string, cwd?: string): SessionUsageSummary {
+  const db = open(cwd)
+  try {
+    const rows = db
+      .prepare("SELECT turn_idx, usage FROM turns WHERE session_id = ? ORDER BY turn_idx")
+      .all(id) as { turn_idx: number; usage: string | null }[]
+    let inputTokens = 0
+    let outputTokens = 0
+    let totalTokens = 0
+    let cacheReadTokens = 0
+    let cacheWriteTokens = 0
+    let costSum = 0
+    let sawPricedSegment = false
+    let sawUnpricedTokenSegment = false
+    let maxTurnIdx = -1
+
+    const nonNeg = (v: unknown): number =>
+      typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0
+
+    for (const r of rows) {
+      if (typeof r.turn_idx === "number" && r.turn_idx > maxTurnIdx) maxTurnIdx = r.turn_idx
+      if (!r.usage) continue
+      let parsed: Record<string, unknown> | null = null
+      try {
+        parsed = JSON.parse(r.usage) as Record<string, unknown>
+      } catch {
+        continue
+      }
+      if (!parsed || typeof parsed !== "object") continue
+      const inp = nonNeg(parsed.inputTokens)
+      const out = nonNeg(parsed.outputTokens)
+      const tot = Math.max(inp + out, nonNeg(parsed.totalTokens))
+      inputTokens += inp
+      outputTokens += out
+      totalTokens += tot
+      cacheReadTokens += nonNeg(parsed.cacheReadTokens)
+      cacheWriteTokens += nonNeg(parsed.cacheWriteTokens)
+      if (typeof parsed.cost === "number" && Number.isFinite(parsed.cost) && parsed.cost >= 0) {
+        costSum += parsed.cost
+        sawPricedSegment = true
+      } else if (tot > 0) {
+        sawUnpricedTokenSegment = true
+      }
+    }
+
+    const turnCount = maxTurnIdx >= 0 ? maxTurnIdx + 1 : 0
+    const totalCostUsd = !sawUnpricedTokenSegment && sawPricedSegment ? costSum : undefined
+    return {
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      ...(totalCostUsd !== undefined ? { totalCostUsd } : {}),
+      turnCount,
+    }
+  } finally {
+    db.close()
+  }
+}
+
 export function listSessions(
   cwd?: string,
 ): { id: string; created_at: number; updated_at?: number; cwd: string }[] {

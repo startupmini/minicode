@@ -4,7 +4,11 @@ import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
 import { sanitizeSessionPart } from "../lib/session-id.ts"
-import { isJournalHealthy, mutationsSinceTurn } from "../session/journal.ts"
+import { isJournalHealthy, loadJournal, mutationsSinceTurn } from "../session/journal.ts"
+import {
+  checkWorkspaceIntegrity,
+  collectModifiedFilesFromJournal,
+} from "../session/verification.ts"
 import { type CanonicalAssignmentTable, encodeCanonicalAssignments } from "../task/assignment.ts"
 import { isTaskId, TaskError } from "../task/model.ts"
 import { TaskStore } from "../task/store.ts"
@@ -67,6 +71,16 @@ export interface CompletionEvidence {
    * passed: tak ada ikatan, tak ada klaim kesegaran.
    */
   turn?: number | null
+  /**
+   * [Fase 3 / LOOP-INV-12, LOOP-G20] Mode wajib verifikasi: bila `true` dan
+   * bukti masih `unverified`, klaim `completed` ditahan di `VERIFYING` /
+   * diturunkan — tidak diloloskan ke `COMPLETED` secara fail-open.
+   */
+  requireVerified?: boolean
+  /** Kode keluar proses verifier (0 = lulus). */
+  exitCode?: number | null
+  /** Ringkasan hasil verifier untuk disimpan ke `evidence_json`. */
+  summary?: string
 }
 
 const UNVERIFIED: CompletionEvidence = { verdict: "unverified" }
@@ -110,8 +124,32 @@ export async function resolveFreshEvidence(
   cwd: string,
 ): Promise<CompletionEvidence> {
   const base = currentCompletionEvidence()
-  if (base.verdict !== "passed") return base
-  if (typeof base.turn !== "number") return { verdict: "unverified" }
+  if (base.verdict === "failed" || base.verdict === "stale") return base
+  if (base.verdict === "passed" && typeof base.turn !== "number") {
+    return base.requireVerified
+      ? { verdict: "unverified", requireVerified: true }
+      : { verdict: "unverified" }
+  }
+  if (base.verdict === "unverified") {
+    // [Fase 3 / LOOP-INV-12] Tier 1 integrity check pada file yang benar-benar
+    // telah di-commit ke jurnal sesi ini. Best-effort pada jurnal absent/empty/
+    // corrupt agar kompatibilitas legacy turn-less & sesi tanpa jurnal tetap utuh.
+    const loaded = await loadJournal(sessionId, cwd).catch(() => null)
+    if (loaded?.status === "valid") {
+      const modified = collectModifiedFilesFromJournal(loaded.records)
+      if (modified.length > 0) {
+        const integrity = await checkWorkspaceIntegrity(modified, cwd)
+        if (!integrity.ok) {
+          return {
+            verdict: "failed",
+            detail: integrity.summary,
+            ...(base.requireVerified ? { requireVerified: true } : {}),
+          }
+        }
+      }
+    }
+    return base
+  }
   // P10.1.2: jurnal degraded (kegagalan tulis intent — jalur produksi
   // "intent append gagal" pada tool event-path seperti MCP dotted) berarti
   // riwayat mutasi TAK LENGKAP: kesegaran tak bisa dipercaya → fail-closed
@@ -127,20 +165,38 @@ export async function resolveFreshEvidence(
   }
   let newer: readonly unknown[]
   try {
-    newer = await mutationsSinceTurn(sessionId, cwd, base.turn)
+    newer = await mutationsSinceTurn(sessionId, cwd, base.turn!)
   } catch (e) {
     return {
       verdict: "failed",
       detail: `freshness check failed: ${String((e as Error)?.message ?? e).slice(0, 200)}`,
     }
   }
-  if (newer.length === 0) return base
-  return {
-    verdict: "stale",
-    detail:
-      `verification stale — ${newer.length} mutation(s) since turn ${base.turn}; ` +
-      `re-verify, then re-claim`,
+  if (newer.length > 0) {
+    return {
+      verdict: "stale",
+      detail:
+        `verification stale — ${newer.length} mutation(s) since turn ${base.turn}; ` +
+        `re-verify, then re-claim`,
+    }
   }
+  // [Fase 3 / LOOP-INV-12, LOOP-G21] Tier 1 integrity check sebelum mengizinkan
+  // bukti `passed` mengunci `COMPLETED`.
+  const loaded = await loadJournal(sessionId, cwd).catch(() => null)
+  if (loaded?.status === "valid") {
+    const modified = collectModifiedFilesFromJournal(loaded.records)
+    if (modified.length > 0) {
+      const integrity = await checkWorkspaceIntegrity(modified, cwd)
+      if (!integrity.ok) {
+        return {
+          verdict: "failed",
+          detail: integrity.summary,
+          ...(base.requireVerified ? { requireVerified: true } : {}),
+        }
+      }
+    }
+  }
+  return base
 }
 
 function sanitizeTodoId(id: string): string {
@@ -216,20 +272,39 @@ export async function deleteTodoFiles(sessionId: string, cwd: string): Promise<v
 export function applyCompletionPolicy(
   list: readonly TodoItem[],
   evidence: CompletionEvidence,
+  opts?: { requireVerified?: boolean },
 ): TodoItem[] | null {
+  const requireVerified = opts?.requireVerified === true || evidence.requireVerified === true
   // `failed` DAN `stale` menolak `completed` — tapi labelnya dipertahankan
   // berbeda: gagal uji vs bukti basi. Jangan samakan keduanya.
-  if (evidence.verdict !== "failed" && evidence.verdict !== "stale") return null
-  const reason =
-    evidence.detail?.trim().slice(0, 300) ||
-    (evidence.verdict === "stale" ? "verification stale" : "verification failed")
-  if (!list.some((t) => t.status === "completed")) return null
-  return list.map((t) =>
-    t.status === "completed" ? { ...t, status: "blocked" as const, blockedReason: reason } : t,
-  )
+  // [Fase 3 / LOOP-INV-12, LOOP-G20] Saat `requireVerified` aktif dan bukti
+  // masih `unverified`, klaim `completed` juga ditahan (tidak fail-open).
+  if (evidence.verdict === "failed" || evidence.verdict === "stale") {
+    const reason =
+      evidence.detail?.trim().slice(0, 300) ||
+      (evidence.verdict === "stale" ? "verification stale" : "verification failed")
+    if (!list.some((t) => t.status === "completed")) return null
+    return list.map((t) =>
+      t.status === "completed" ? { ...t, status: "blocked" as const, blockedReason: reason } : t,
+    )
+  }
+  if (requireVerified && evidence.verdict === "unverified") {
+    if (!list.some((t) => t.status === "completed")) return null
+    const reason =
+      evidence.detail?.trim().slice(0, 300) ||
+      "verification required: run verifier before marking completed"
+    return list.map((t) =>
+      t.status === "completed" ? { ...t, status: "blocked" as const, blockedReason: reason } : t,
+    )
+  }
+  return null
 }
 
-export function normalizeTodos(input: unknown, evidence?: CompletionEvidence): TodoItem[] {
+export function normalizeTodos(
+  input: unknown,
+  evidence?: CompletionEvidence,
+  opts?: { requireVerified?: boolean },
+): TodoItem[] {
   if (!Array.isArray(input)) throw new Error("todos must be an array")
   const ev = evidence ?? currentCompletionEvidence()
   const out: TodoItem[] = []
@@ -275,7 +350,7 @@ export function normalizeTodos(input: unknown, evidence?: CompletionEvidence): T
   // Bukti merah MENOLAK `completed`: task turun ke `blocked` beserta alasannya.
   // Ini yang menutup INV-003 - sebelumnya model bisa menandai "selesai" sambil
   // verify merah dan tak ada satu pun jalur kode yang mencegahnya.
-  const gated = applyCompletionPolicy(out, ev)
+  const gated = applyCompletionPolicy(out, ev, opts)
   const final = gated ?? out
   // Satu in_progress saja: kalau model menandai beberapa, sisanya turun ke
   // pending supaya daftar tetap punya satu fokus yang jelas.
@@ -537,6 +612,20 @@ export const todoWriteTool: Tool = {
     // P10.1.1: bukti diselesaikan terhadap kesegaran mutasi (async) SEBELUM
     // gate murni — `normalizeTodos` tetap sync tanpa I/O.
     const evidence = await resolveFreshEvidence(sessionId, cwd)
+    // Indeks item valid (setelah pemangkasan content kosong, persis urutan
+    // `normalizeTodos`) yang diajukan `completed` oleh model. Dipakai saat
+    // `requireVerified && unverified` agar TaskStore menahan baris di VERIFYING.
+    const rawDeclaredCompleted = new Set<number>()
+    if (Array.isArray(todos)) {
+      let validIdx = 0
+      for (const raw of todos.slice(0, LIMITS.TODO_MAX_ITEMS)) {
+        if (!raw || typeof raw !== "object") continue
+        const r = raw as { content?: unknown; status?: unknown }
+        if (!String(r.content ?? "").trim()) continue
+        if (r.status === "completed") rawDeclaredCompleted.add(validIdx)
+        validIdx += 1
+      }
+    }
     const list = normalizeTodos(todos, evidence)
 
     // PHASE 4A.5 — reject an identity-blind full declaration once canonical
@@ -588,17 +677,31 @@ export const todoWriteTool: Tool = {
     // `src/task/assignment.ts`). The legacy all-id-less path appends nothing, so
     // its output is byte-identical to what it was before this phase.
     let assignment: CanonicalAssignmentTable | undefined
+    const holdInVerifying = evidence.verdict === "unverified" && evidence.requireVerified === true
     if (hasCanonicalIdentity(list)) {
       try {
         const sync = synchronizeCanonicalTasks({
           cwd,
           sessionId,
-          declared: list.map((t) => ({
+          declared: list.map((t, idx) => ({
             ...(t.taskId ? { taskId: t.taskId } : {}),
             title: t.content,
             status: t.status,
             ...(t.blockedReason ? { blockedReason: t.blockedReason } : {}),
+            ...(holdInVerifying && rawDeclaredCompleted.has(idx) ? { holdVerifying: true } : {}),
           })),
+          ...(evidence.verdict === "passed"
+            ? {
+                verificationOutcome: {
+                  ok: true,
+                  verdict: "passed",
+                  exitCode: evidence.exitCode ?? 0,
+                  ...(evidence.detail ? { command: evidence.detail } : {}),
+                  summary: evidence.summary ?? evidence.detail ?? "verification passed",
+                  integrityOk: true,
+                },
+              }
+            : {}),
         })
         if (sync.assignment && sync.assignment.length > 0) assignment = sync.assignment
       } catch (e) {
@@ -663,7 +766,9 @@ export const todoWriteTool: Tool = {
       refused.length > 0
         ? evidence.verdict === "stale"
           ? `refused ${refused.length} completion claim(s): verification evidence is stale — code changed since the last green run; re-verify, then re-claim.\n`
-          : `refused ${refused.length} completion claim(s): verification is failing, so they are blocked instead of completed. Fix the failing check first.\n`
+          : holdInVerifying
+            ? `refused ${refused.length} completion claim(s): verification is required before completion — tasks are held in VERIFYING until the verifier runs green.\n`
+            : `refused ${refused.length} completion claim(s): verification is failing, so they are blocked instead of completed. Fix the failing check first.\n`
         : ""
     return (
       notice +

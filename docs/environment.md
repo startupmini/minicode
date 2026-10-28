@@ -62,6 +62,7 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | Variabel | Fungsi |
 |---|---|
 | `MINICODE_BUDGET_STRICT` | `1` → penegasan eksplisit fail-closed (cost tak dikenal + pemakaian = over; kini juga default `--budget`) |
+| `MINICODE_MAX_TURNS` | Batas keras maksimum jumlah turn per sesi (termasuk carry-forward lintas `--resume`; bilangan ≥1) |
 | `MINICODE_ALLOW_LOCAL_CONFIG` | `1` → percayai config lokal workspace (default: diabaikan) |
 
 ## Terminal & aksesibilitas

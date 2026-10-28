@@ -36,8 +36,8 @@
 
 import type { CanonicalAssignment, CanonicalAssignmentTable } from "./assignment.ts"
 import { type DeclaredTask, planTaskIdentities, todoStatusToTask } from "./identity.ts"
-import { isTaskId, type Task, TaskError } from "./model.ts"
-import { TaskStore } from "./store.ts"
+import { isTaskId, isTerminalTaskStatus, type Task, TaskError } from "./model.ts"
+import { TaskStore, type VerificationGateOutcome } from "./store.ts"
 
 /** One declared item, already mapped out of the legacy `TodoItem` shape.
  *  `content` is mapped to `title` by the caller - the store requires `title`,
@@ -47,6 +47,12 @@ export interface CanonicalTaskInput {
   title: string
   status: "pending" | "in_progress" | "completed" | "cancelled" | "blocked"
   blockedReason?: string
+  /**
+   * [Fase 3 / LOOP-INV-12, LOOP-G20] Klaim `completed` saat `requireVerified`
+   * aktif namun hasil verifikasi belum tersedia (`unverified`): task ditahan di
+   * status `VERIFYING` alih-alih diloloskan ke `COMPLETED` palsu.
+   */
+  holdVerifying?: boolean
 }
 
 export interface CanonicalSyncResult {
@@ -116,8 +122,14 @@ export function synchronizeCanonicalTasks(opts: {
   cwd: string
   sessionId: string
   declared: readonly CanonicalTaskInput[]
+  /**
+   * [Fase 3 / LOOP-INV-12] Bukti verifikasi terstruktur bila tersedia. Saat
+   * klaim `completed` didasari verifikasi yang lulus, transisi melalui
+   * `VERIFYING -> COMPLETED` dan menyimpan `evidence_json`.
+   */
+  verificationOutcome?: VerificationGateOutcome
 }): CanonicalSyncResult {
-  const { cwd, sessionId, declared } = opts
+  const { cwd, sessionId, declared, verificationOutcome } = opts
 
   // All-id-less: legacy behaviour, untouched. No adoption, no allocation.
   if (!hasCanonicalIdentity(declared)) {
@@ -158,25 +170,71 @@ export function synchronizeCanonicalTasks(opts: {
     // so index i of this table always describes declared item i.
     const assignment: CanonicalAssignment[] = []
 
-    plan.entries.forEach((entry) => {
+    plan.entries.forEach((entry, index) => {
+      const decl = declared[index]
+      const holdVerifying = decl?.holdVerifying === true
       if (entry.kind === "existing") {
         const id = entry.taskId as string
         seen.add(id)
         assignment.push({ taskId: id, kind: "existing" })
-        changed.push(
-          tx.patchTask(sessionId, id, {
-            title: entry.title,
-            status: entry.status,
-            // `order` is the declared position. It is display/execution order,
-            // never identity.
-            order: entry.order,
-            blockedReason: entry.blockedReason,
-          }),
-        )
+        if (holdVerifying) {
+          changed.push(
+            tx.patchTask(sessionId, id, {
+              title: entry.title,
+              status: "VERIFYING",
+              order: entry.order,
+              blockedReason: null,
+            }),
+          )
+        } else if (entry.status === "COMPLETED" && verificationOutcome?.ok === true) {
+          const cur = tx.getTask(sessionId, id)!
+          if (cur.status !== "COMPLETED") {
+            tx.patchTask(sessionId, id, {
+              title: entry.title,
+              status: "VERIFYING",
+              order: entry.order,
+              blockedReason: null,
+            })
+            changed.push(tx.completeTaskVerification(sessionId, id, verificationOutcome))
+          } else {
+            changed.push(
+              tx.patchTask(sessionId, id, {
+                title: entry.title,
+                status: entry.status,
+                order: entry.order,
+                blockedReason: entry.blockedReason,
+              }),
+            )
+          }
+        } else {
+          changed.push(
+            tx.patchTask(sessionId, id, {
+              title: entry.title,
+              status: entry.status,
+              // `order` is the declared position. It is display/execution order,
+              // never identity.
+              order: entry.order,
+              blockedReason: entry.blockedReason,
+            }),
+          )
+        }
       } else {
         // Only TaskStore allocates. `input` was built by planTaskIdentities with
         // provenance { origin: "model", source: "todo_write" }.
-        const t = tx.createTask(sessionId, entry.input as never)
+        const baseInput = entry.input!
+        const createInput = holdVerifying
+          ? { ...baseInput, status: "VERIFYING" as const, blockedReason: null }
+          : entry.status === "COMPLETED" && verificationOutcome?.ok === true
+            ? {
+                ...baseInput,
+                status: "VERIFYING" as const,
+                blockedReason: null,
+              }
+            : baseInput
+        let t = tx.createTask(sessionId, createInput as never)
+        if (!holdVerifying && entry.status === "COMPLETED" && verificationOutcome?.ok === true) {
+          t = tx.completeTaskVerification(sessionId, t.id, verificationOutcome)
+        }
         seen.add(t.id)
         // The id the allocator actually returned, captured here and now — never
         // re-derived from position, title or content afterwards.
@@ -229,3 +287,48 @@ export function createTaskIdentityResolver(cwd: string) {
 /** Exported for the mapping the caller performs; kept here so the status
  *  vocabulary has a single owner. */
 export { todoStatusToTask }
+
+/**
+ * [Fase 3 / LOOP-INV-12] Pindahkan task kandidat sesi ke status `VERIFYING`
+ * tepat sebelum verifier dieksekusi. Hanya menyentuh task non-terminal yang
+ * diminta eksplisit (`candidateTaskIds`).
+ */
+export function beginSessionTasksVerification(
+  cwd: string,
+  sessionId: string,
+  candidateTaskIds: readonly string[],
+): Task[] {
+  if (candidateTaskIds.length === 0) return []
+  const store = new TaskStore(cwd)
+  return store.withTransaction((tx) => {
+    const out: Task[] = []
+    for (const id of candidateTaskIds) {
+      if (!isTaskId(id)) continue
+      const cur = tx.getTask(sessionId, id)
+      if (!cur || isTerminalTaskStatus(cur.status) || cur.status === "VERIFYING") {
+        if (cur?.status === "VERIFYING") out.push(cur)
+        continue
+      }
+      out.push(tx.beginTaskVerification(sessionId, id))
+    }
+    return out
+  })
+}
+
+/**
+ * [Fase 3 / LOOP-INV-12] Selesaikan seluruh task sesi yang sedang berada di
+ * `VERIFYING` berdasarkan hasil verifikasi aktual (`VERIFYING -> COMPLETED`
+ * bila `outcome.ok === true`, atau `VERIFYING -> BLOCKED` bila gagal).
+ * Task dalam status lain (`PENDING`, `IN_PROGRESS`, `BLOCKED`) tidak disentuh.
+ */
+export function settleSessionVerifyingTasks(
+  cwd: string,
+  sessionId: string,
+  outcome: VerificationGateOutcome,
+): Task[] {
+  const store = new TaskStore(cwd)
+  return store.withTransaction((tx) => {
+    const verifying = tx.listTasks(sessionId).filter((t) => t.status === "VERIFYING")
+    return verifying.map((t) => tx.completeTaskVerification(sessionId, t.id, outcome))
+  })
+}

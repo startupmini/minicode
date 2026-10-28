@@ -895,6 +895,41 @@ export interface PatchOptions extends UpsertOptions {
 }
 
 /**
+ * [Fase 3 / LOOP-INV-12, LOOP-G21] Hasil verifikasi terstruktur untuk mengunci
+ * transisi dari `VERIFYING` ke `COMPLETED` (lulus) atau `BLOCKED` (gagal).
+ */
+export interface VerificationGateOutcome {
+  readonly ok: boolean
+  readonly verdict: "passed" | "failed" | "stale"
+  readonly exitCode?: number | null
+  readonly command?: string
+  readonly summary?: string
+  readonly integrityOk?: boolean
+  readonly timestamp?: string
+}
+
+/** Format satu rekaman `TaskEvidence` berjenis `"verify"` secara deterministik. */
+export function buildVerificationTaskEvidence(outcome: VerificationGateOutcome): TaskEvidence {
+  const at = outcome.timestamp ?? nowIso()
+  const payload = {
+    verdict: outcome.verdict,
+    ok: outcome.ok,
+    exitCode: outcome.exitCode ?? (outcome.ok ? 0 : 1),
+    ...(outcome.command ? { command: scrubSecrets(outcome.command).slice(0, 200) } : {}),
+    summary: scrubSecrets(
+      outcome.summary ?? (outcome.ok ? "verification passed" : "verification failed"),
+    ).slice(0, 500),
+    ...(typeof outcome.integrityOk === "boolean" ? { integrityOk: outcome.integrityOk } : {}),
+    timestamp: at,
+  }
+  return {
+    kind: "verify",
+    detail: JSON.stringify(payload),
+    at,
+  }
+}
+
+/**
  * PHASE 6B: authority mode.
  *
  * `LEGACY` (the default, and the only mode in production today) preserves the
@@ -1257,6 +1292,77 @@ export class TaskStore {
   /** Readable alias for the layer above. */
   updateTask(sessionId: string, taskId: string, patch: TaskPatch, opts: PatchOptions = {}): Task {
     return this.patchTask(sessionId, taskId, patch, opts)
+  }
+
+  // ── [Fase 3 / LOOP-INV-12, LOOP-G20, LOOP-G21] siklus VERIFYING ────────────
+  //
+  // Transisi eksplisit menuju `VERIFYING` dan penyelesaiannya ke `COMPLETED`
+  // (bila bukti terverifikasi) atau `BLOCKED` (bila verifikasi / Tier 1 gagal),
+  // sambil merekam bukti terstruktur pada `evidence_json`.
+
+  /**
+   * Masuk ke status `VERIFYING` sebelum/selama verifikasi berjalan.
+   * Mematuhi `TASK_EDGES`, CAS `expectedRevision`, dan lease `authorityToken`.
+   */
+  beginTaskVerification(sessionId: string, taskId: string, opts: PatchOptions = {}): Task {
+    return this.patchTask(sessionId, taskId, { status: "VERIFYING", blockedReason: null }, opts)
+  }
+
+  /**
+   * Selesaikan verifikasi sebuah task dalam satu transaksi atomik:
+   * - Jika task belum di `VERIFYING` (mis. `IN_PROGRESS`/`PENDING`) dan belum
+   *   terminal, transisikan dulu ke `VERIFYING` agar jalur siklus tetap utuh.
+   * - Jika `outcome.ok === true`: `VERIFYING -> COMPLETED` + bukti `"verify"`.
+   * - Jika `outcome.ok === false`: `VERIFYING -> BLOCKED` + alasan + bukti.
+   */
+  completeTaskVerification(
+    sessionId: string,
+    taskId: string,
+    outcome: VerificationGateOutcome,
+    opts: PatchOptions = {},
+  ): Task {
+    return this.withTransaction(() => {
+      const current = this.getTask(sessionId, taskId)
+      if (!current) throw new TaskError("TASK_NOT_FOUND", `no task ${taskId} in ${sessionId}`)
+      let base = current
+      let nextOpts = opts
+      if (base.status !== "VERIFYING" && !isTerminalTaskStatus(base.status)) {
+        base = this.patchTask(sessionId, taskId, { status: "VERIFYING", blockedReason: null }, opts)
+        // Setelah langkah masuk VERIFYING menggunakan expectedRevision pemanggil,
+        // langkah kedua mengunci revisi baru yang baru saja ditulis dalam txn ini.
+        nextOpts = {
+          ...opts,
+          expectedRevision: base.revision,
+        }
+      }
+      const ev = buildVerificationTaskEvidence(outcome)
+      const mergedEvidence = [...(base.evidence ?? []).slice(-(MAX_EVIDENCE - 1)), ev]
+      if (outcome.ok) {
+        return this.patchTask(
+          sessionId,
+          taskId,
+          {
+            status: "COMPLETED",
+            blockedReason: null,
+            evidence: mergedEvidence,
+          },
+          nextOpts,
+        )
+      }
+      const reason =
+        outcome.summary?.trim().slice(0, 300) ||
+        (outcome.verdict === "stale" ? "verification stale" : "verification failed")
+      return this.patchTask(
+        sessionId,
+        taskId,
+        {
+          status: "BLOCKED",
+          blockedReason: reason,
+          evidence: mergedEvidence,
+        },
+        nextOpts,
+      )
+    })
   }
 
   // ── PHASE 6B: scheduler substrate ──────────────────────────────────────────

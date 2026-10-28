@@ -19,12 +19,15 @@ import { closeAllLsp as lspCloseAll, setLspProcessSupervisor } from "../src/lsp/
 import { closeAll as mcpCloseAll } from "../src/mcp/client.ts"
 import { addMemory } from "../src/memory/vector.ts"
 import { createLlmCompaction } from "../src/policy/compaction.ts"
+import type { NoProgressDetector } from "../src/policy/no-progress.ts"
 import type { PermissionAsk } from "../src/policy/permission.ts"
 import type { RateLimiter } from "../src/policy/ratelimit.ts"
 import {
   budgetExceededError,
   createUsageCollector,
+  maxTurnsExceededError,
   primePricing,
+  type UsageInitialSnapshot,
   watchBudgetLimit,
 } from "../src/policy/usage.ts"
 import {
@@ -144,6 +147,7 @@ import {
   listPersistedTurns,
   loadPresentationEvents,
   loadSession,
+  loadSessionUsageSummary,
   loadThreadHistoryWithSeq,
   type PresentationPersistStats,
   RefusedHistoryRewriteError,
@@ -156,6 +160,10 @@ import {
   transitionRun,
 } from "../src/session/persistence.ts"
 import { snapshotTree } from "../src/session/shadow-git.ts"
+import {
+  checkWorkspaceIntegrity,
+  collectModifiedFilesFromJournal,
+} from "../src/session/verification.ts"
 import type { Skill } from "../src/skills/loader.ts"
 import type { AutonomousSessionSpec } from "../src/task/autonomous-context.ts"
 import {
@@ -165,7 +173,7 @@ import {
 } from "../src/task/production-scheduler.ts"
 import { SchedulerObservability } from "../src/task/scheduler-observability.ts"
 import { SESSION_RENEW_INTERVAL_MS } from "../src/task/session-authority.ts"
-import { createTaskIdentityResolver } from "../src/task/sync.ts"
+import { createTaskIdentityResolver, settleSessionVerifyingTasks } from "../src/task/sync.ts"
 import {
   classifyToolResult,
   denyReasonOf,
@@ -1029,6 +1037,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // tak ada lagi "not found → sesi baru diam-diam".
   let initialMessages: readonly Message[] | undefined
   let resumeTurnCount: number | undefined
+  let resumeUsageSnapshot: UsageInitialSnapshot | undefined
   // P3.5 — carrier metadata runtime hasil seleksi (host-side, RAM, lifecycle-
   // scoped). Diisi HANYA di jalur resume yang membangun ContextSelection; sesi
   // baru tetap undefined (tak ada klaim kesegaran tanpa seleksi).
@@ -1056,6 +1065,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     )
     try {
       const prev = loadSession(sessionId, cwd)
+      if (prev) {
+        resumeUsageSnapshot = loadSessionUsageSummary(sessionId, cwd)
+      }
       if (prev?.messages.length) {
         // P2.8 — perakitan konteks (baca-saja, turunan, RAM): pakai ringkasan
         // proyeksi HANYA bila CURRENT; state lain/absen → fallback histori
@@ -1564,6 +1576,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   setSubAgentWorkMode(() => workModeControl?.getWorkMode() ?? "EXECUTE")
 
   let permissions: PermissionControl | undefined
+  let noProgressDetector: NoProgressDetector | null = null
+  const effectiveMaxTurns = (() => {
+    const raw = (opts as { maxTurns?: number }).maxTurns ?? Number(process.env.MINICODE_MAX_TURNS)
+    return typeof raw === "number" && Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : undefined
+  })()
   // Validasi concurrency: 0, NaN, Infinity → fallback ke default (jangan teruskan 0 ke executor)
   const safeConcurrency = (() => {
     const v = opts.concurrency
@@ -1622,6 +1639,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       },
       ...(initialMessages ? { initialMessages } : {}),
       ...(resumeTurnCount !== undefined ? { turnCount: resumeTurnCount } : {}),
+      ...(effectiveMaxTurns !== undefined ? { maxTurns: effectiveMaxTurns } : {}),
+      onNoProgress: (detector) => {
+        noProgressDetector = detector
+      },
       ...(maxSteps ? { maxSteps } : {}),
       ...(contextWindowTokens ? { contextWindowTokens } : {}),
       ...(keepRecentTurns ? { keepRecentTurns } : {}),
@@ -2030,14 +2051,26 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   //
   // Tanpa `--verify` (opt-in) tidak ada bukti sama sekali → `unverified`:
   // completion tetap diizinkan, tapi tidak diklaim terverifikasi.
-  let lastVerify: { ok: boolean; command: string; output: string; turn: number | null } | null =
-    null
+  let lastVerify: {
+    ok: boolean
+    command: string
+    output: string
+    turn: number | null
+    exitCode: number
+  } | null = null
   setCompletionEvidence(() => {
-    if (!verifyActive || !lastVerify) return { verdict: "unverified" }
+    if (!verifyActive) return { verdict: "unverified" }
+    // [Fase 3 / LOOP-INV-12, LOOP-G20] Saat `--verify` aktif tetapi verifier
+    // belum menghasilkan verdict pertama, tandai `requireVerified: true` agar
+    // klaim `completed` ditahan di `VERIFYING` (bukan diloloskan fail-open).
+    if (!lastVerify) return { verdict: "unverified", requireVerified: true }
     if (lastVerify.ok)
       return {
         verdict: "passed",
         detail: lastVerify.command,
+        exitCode: lastVerify.exitCode,
+        summary: lastVerify.output.slice(0, 300) || lastVerify.command,
+        requireVerified: true,
         // P10.1.1: ikat bukti ke turn yang diobservasinya — dibaca sinkron
         // tepat setelah verify selesai (belum ada turn baru), sehingga cocok
         // dengan cap `turn` intent jurnal (increment-di-awal di loop.ts).
@@ -2047,10 +2080,32 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     return {
       verdict: "failed",
       detail: `last verification failed (${lastVerify.command}): ${lastVerify.output.slice(0, 200)}`,
+      exitCode: lastVerify.exitCode,
+      summary: lastVerify.output.slice(0, 300),
+      requireVerified: true,
     }
   })
   const runVerifyWithPresentation = async (signal?: AbortSignal) => {
-    const result = await runVerify(verifyCommand, cwd ?? process.cwd(), undefined, signal)
+    const effectiveRoot = cwd ?? process.cwd()
+    const result = await runVerify(verifyCommand, effectiveRoot, undefined, signal)
+    // [Fase 3 / LOOP-INV-12] Tier 1 integrity check pada file yang dimutasi di
+    // jurnal sesi ini sebelum mengizinkan status akhir hijau.
+    let integrityOk = true
+    let integrityDetail = ""
+    const loaded = await loadJournal(sessionId, effectiveRoot).catch(() => null)
+    if (loaded?.status === "valid") {
+      const modified = collectModifiedFilesFromJournal(loaded.records)
+      if (modified.length > 0) {
+        const integrity = await checkWorkspaceIntegrity(modified, effectiveRoot)
+        integrityOk = integrity.ok
+        if (!integrity.ok) integrityDetail = integrity.summary
+      }
+    }
+    const effectiveOk = result.ok && integrityOk
+    const effectiveOutput = !integrityOk
+      ? `${integrityDetail}${result.output ? `\n${result.output}` : ""}`
+      : result.output
+    const effectiveExitCode = effectiveOk ? (result.exitCode ?? 0) : result.exitCode || 1
     // Turn state kode ini diverifikasi: turnCount SETELAH turn terakhir
     // selesai = nilai yang dibawa intent mutasi turn itu (turnOf baca live
     // state yang sama). Diambil sinkron di sini — belum ada turn baru yang
@@ -2058,12 +2113,26 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     const verifiedTurn =
       typeof session.state?.turnCount === "number" ? session.state.turnCount : null
     lastVerify = {
-      ok: result.ok,
+      ok: effectiveOk,
       command: verifyCommand,
-      output: result.output,
+      output: effectiveOutput,
       turn: verifiedTurn,
+      exitCode: effectiveExitCode,
     }
-    const evidence = parseVerifyTestEvidence(verifyCommand, result.output)
+    if (effectiveOk) {
+      noProgressDetector?.noteVerificationPassed()
+    }
+    try {
+      settleSessionVerifyingTasks(effectiveRoot, sessionId, {
+        ok: effectiveOk,
+        verdict: effectiveOk ? "passed" : "failed",
+        exitCode: effectiveExitCode,
+        command: verifyCommand,
+        summary: effectiveOutput.slice(0, 300) || verifyCommand,
+        integrityOk,
+      })
+    } catch {}
+    const evidence = parseVerifyTestEvidence(verifyCommand, effectiveOutput)
     if (evidence) {
       presentation?.noteTestCompleted({
         toolCallId: `verify:${sessionId}`,
@@ -2071,7 +2140,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         ...evidence,
       })
     }
-    return result
+    return effectiveOk === result.ok
+      ? result
+      : { ok: false, output: effectiveOutput, command: verifyCommand, exitCode: effectiveExitCode }
   }
   // Audit #10 P2 observability: perintah verify (bisa dari config repo bila
   // opt-in, atau package.json) dieksekusi via shell — tampilkan SEBELUM
@@ -2183,18 +2254,26 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         bus: session.events,
         budget,
         strict: budgetStrict ?? false,
+        maxTurns: effectiveMaxTurns,
         getCost: () => usage.getSession().cost,
         getTokens: () => usage.getSession().totalTokens,
+        getTurns: () => session.state.turnCount,
         onOver: (st, cost) => {
           process.stderr.write(
-            st === "over" && cost != null && budget != null
-              ? `[budget] ${formatUsd(cost)} > ${formatUsd(budget)} - over budget, stopping turn.\n`
-              : `[budget] cost unknown (model without pricing) - over budget, stopping turn.\n`,
+            st === "max-turns"
+              ? `[budget] max turns (${effectiveMaxTurns}) reached - stopping turn.\n`
+              : st === "over" && cost != null && budget != null
+                ? `[budget] ${formatUsd(cost)} > ${formatUsd(budget)} - over budget, stopping turn.\n`
+                : `[budget] cost unknown (model without pricing) - over budget, stopping turn.\n`,
           )
           // F-18: abort dengan identitas kind budget_exceeded (bukan Error
           // polos) agar kernel melaporkannya sebagai budget_exceeded, bukan
           // "aborted" generik yang tak terbedakan dari Ctrl+C user.
-          ctl.abort(budgetExceededError())
+          ctl.abort(
+            st === "max-turns" && effectiveMaxTurns !== undefined
+              ? maxTurnsExceededError(effectiveMaxTurns, session.state.turnCount)
+              : budgetExceededError(),
+          )
         },
       })
       try {
@@ -2342,7 +2421,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // event yatim pun terlihat; tanpa env = tanpa subscribe (zero-cost).
   const { attachBusDebug } = await import("../src/ui/runtime/bus-debug.ts")
   const detachBusDebug = attachBusDebug(session.events)
-  const usage = createUsageCollector(session.events, effectiveInitialModel)
+  const usage = createUsageCollector(session.events, effectiveInitialModel, resumeUsageSnapshot)
   // Statusline kaya = opt-in (default mati, shell tetap bersih). Data biaya
   // disuntik sebagai callback agar UI tak perlu impor lapisan policy.
   const richStatus = process.env.MINICODE_STATUSLINE === "rich"

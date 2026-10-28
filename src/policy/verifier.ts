@@ -11,6 +11,8 @@ export interface VerifyResult {
   ok: boolean
   output: string
   command: string
+  /** [Fase 3 / LOOP-INV-12] Kode keluar proses verifier (0 = lulus). Opsional demi back-compat. */
+  exitCode?: number
 }
 
 /**
@@ -43,15 +45,16 @@ export async function runVerify(
       ...(signal ? { signal } : {}),
     })
     const output = `${stdout}${stderr ? `\n${stderr}` : ""}`.trim()
-    return { ok: true, output, command }
+    return { ok: true, output, command, exitCode: 0 }
   } catch (e) {
     // Exec yang mati karena abort (atau abort datang saat exec jalan) bukan
     // kegagalan verifikasi — lempar agar self-heal/REPL berhenti, bukan
     // memperbaiki.
     if (signal?.aborted) signal.throwIfAborted()
-    const err = e as { stdout?: string; stderr?: string; message?: string }
+    const err = e as { stdout?: string; stderr?: string; message?: string; code?: unknown }
     const output = `${err.stdout ?? ""}${err.stderr ? `\n${err.stderr}` : ""}`.trim() || String(e)
-    return { ok: false, output: output.slice(0, 8000), command }
+    const exitCode = typeof err.code === "number" && Number.isFinite(err.code) ? err.code : 1
+    return { ok: false, output: output.slice(0, 8000), command, exitCode }
   }
 }
 // Deteksi perintah verify yang masuk akal untuk proyek di `cwd`.

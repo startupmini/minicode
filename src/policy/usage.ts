@@ -11,6 +11,21 @@ export interface Usage {
   cost?: number
 }
 
+/**
+ * [Fase 3 / LOOP-INV-11] Seed akumulasi pemakaian dari turn/run sebelumnya pada
+ * sesi yang sama (mis. saat `--resume`), sehingga restart tidak me-reset budget
+ * sesi kembali ke nol.
+ */
+export interface UsageInitialSnapshot {
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  totalCostUsd?: number
+  turnCount?: number
+}
+
 // Tabel harga pindah ke src/policy/pricing.ts: bawaan (offline) + overlay
 // opsional dari models.dev yang HANYA ditarik lewat `minicode pricing sync`.
 // Overlay dimuat sekali per proses; sebelum termuat, tabel bawaan tetap dipakai
@@ -116,6 +131,33 @@ export function budgetExceededError(): Error {
 }
 
 /**
+ * [Fase 3 / LOOP-INV-11] Error batas keras `maxTurns` lintas resume.
+ * Memakai `AgentError("budget_exceeded", ...)` agar kernel frozen mempertahankan
+ * `kind: "budget_exceeded"` melewati `abortError`, ditambah properti `code`
+ * deterministik `"max_turns_exceeded"`.
+ */
+export function maxTurnsExceededError(
+  maxTurns: number,
+  turnCount?: number,
+): AgentError & {
+  readonly code: "max_turns_exceeded"
+} {
+  const err = new AgentError(
+    "budget_exceeded",
+    `max_turns_exceeded: turn count ${turnCount ?? maxTurns} reached limit ${maxTurns}`,
+  )
+  return Object.assign(err, { code: "max_turns_exceeded" as const })
+}
+
+export function turnBudgetStatus(
+  maxTurns: number | undefined,
+  turnCount: number,
+): "ok" | "max-turns" {
+  if (maxTurns == null || !Number.isFinite(maxTurns) || maxTurns < 1) return "ok"
+  return turnCount >= Math.floor(maxTurns) ? "max-turns" : "ok"
+}
+
+/**
  * Pemutus budget MID-TURN (audit 2026-09-16 M3).
  *
  * Pre-check di driver (REPL/exec) hanya menolak prompt BARU, sehingga turn
@@ -134,15 +176,31 @@ export function watchBudgetLimit(opts: {
   bus: EventBus
   budget?: number
   strict?: boolean
+  /** [Fase 3 / LOOP-INV-11] Batas keras jumlah turn lintas resume. */
+  maxTurns?: number
   getCost: () => number | undefined
   /** Total token sesi (untuk fail-closed unknown-cost, F-06). Default 0. */
   getTokens?: () => number
-  onOver: (status: "over" | "unknown-strict", cost: number | undefined) => void
+  /** Jumlah turn sesi saat ini (termasuk carry-forward resume). */
+  getTurns?: () => number
+  onOver: (status: "over" | "unknown-strict" | "max-turns", cost: number | undefined) => void
 }): () => void {
-  if (opts.budget == null) return () => {}
+  const hasBudget = opts.budget != null
+  const hasMaxTurns = opts.maxTurns != null && Number.isFinite(opts.maxTurns) && opts.maxTurns >= 1
+  if (!hasBudget && !hasMaxTurns) return () => {}
   let fired = false
+  const checkTurns = () => {
+    if (fired || !hasMaxTurns) return
+    const turns = opts.getTurns?.() ?? 0
+    if (turnBudgetStatus(opts.maxTurns, turns) !== "ok") {
+      fired = true
+      opts.onOver("max-turns", opts.getCost())
+    }
+  }
   const check = () => {
     if (fired) return
+    checkTurns()
+    if (fired || !hasBudget) return
     const tokens = opts.getTokens?.() ?? 0
     const st = budgetStatus(opts.budget, opts.getCost(), opts.strict ?? false, tokens)
     if (st !== "ok") {
@@ -150,23 +208,38 @@ export function watchBudgetLimit(opts: {
       opts.onOver(st, opts.getCost())
     }
   }
-  const off = opts.bus.on("provider:extension", (e) => {
+  const offExt = opts.bus.on("provider:extension", (e) => {
     if (e.kind === "usage" || e.kind === "effective-model") check()
   })
+  const offTurn = hasMaxTurns
+    ? opts.bus.on("turn:completed", () => {
+        checkTurns()
+      })
+    : null
+  checkTurns()
   // Investigasi Phase 5 (E-3c): instant check saat pasang TIDAK boleh
   // menggugurkan turn yang mulai dengan tokens==0 (belum ada pemakaian
   // tercatat) di strict-mode — itu lockout total setiap prompt pertama.
   // Gugur hanya bila sudah ada bukti belanja (tokens>0 + cost tak dikenal).
   const tokensAtStart = opts.getTokens?.() ?? 0
-  if (tokensAtStart > 0) check()
+  if (!fired && hasBudget && tokensAtStart > 0) check()
   return () => {
     try {
-      off()
+      offExt()
+    } catch {}
+    try {
+      offTurn?.()
     } catch {}
   }
 }
 
-export function createUsageCollector(bus: EventBus, model?: string) {
+export function createUsageCollector(
+  bus: EventBus,
+  model?: string,
+  initialSnapshot?: UsageInitialSnapshot,
+) {
+  const cleanNonNeg = (n: number | undefined): number =>
+    typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0
   // DUA akumulator, bukan satu.
   //
   // `turn` di-reset setiap kali pemanggil menyimpan hasil satu turn
@@ -180,7 +253,20 @@ export function createUsageCollector(bus: EventBus, model?: string) {
   // Tidak pernah di-assign ulang: field-nya yang diakumulasi. `turn` sebaliknya
   // diganti objek baru oleh reset() supaya pemanggil yang menyimpan hasil lama
   // tidak ikut ternol.
-  const session: Usage = emptyUsage()
+  // [Fase 3 / LOOP-INV-11] Seed dengan pemakaian sesi sebelumnya bila ada.
+  const seedInput = cleanNonNeg(initialSnapshot?.inputTokens)
+  const seedOutput = cleanNonNeg(initialSnapshot?.outputTokens)
+  const seedTotal =
+    initialSnapshot?.totalTokens !== undefined
+      ? Math.max(seedInput + seedOutput, cleanNonNeg(initialSnapshot.totalTokens))
+      : seedInput + seedOutput
+  const session: Usage = {
+    inputTokens: seedInput,
+    outputTokens: seedOutput,
+    totalTokens: seedTotal,
+    cacheReadTokens: cleanNonNeg(initialSnapshot?.cacheReadTokens),
+    cacheWriteTokens: cleanNonNeg(initialSnapshot?.cacheWriteTokens),
+  }
   // cacheIncluded bisa beda per provider (Anthropic true, OpenAI false).
   // Simpan per-event, akumulasi cost per segmen, bukan recompute dari total
   // dengan flag global yang terakhir.
@@ -195,9 +281,28 @@ export function createUsageCollector(bus: EventBus, model?: string) {
   // Akumulasi biaya per segmen (bukan recompute total dengan model terakhir)
   // untuk sesi multi-model: gpt-4o-mini → claude-opus tidak di-reprice 100×.
   let turnCost = 0
-  let sessionCost = 0
+  let sessionCost =
+    typeof initialSnapshot?.totalCostUsd === "number" &&
+    Number.isFinite(initialSnapshot.totalCostUsd) &&
+    initialSnapshot.totalCostUsd >= 0
+      ? initialSnapshot.totalCostUsd
+      : 0
   let turnHasCost = false
-  let sessionHasCost = false
+  let sessionHasCost =
+    typeof initialSnapshot?.totalCostUsd === "number" &&
+    Number.isFinite(initialSnapshot.totalCostUsd) &&
+    initialSnapshot.totalCostUsd >= 0
+  let sessionTurns = Math.floor(cleanNonNeg(initialSnapshot?.turnCount))
+  let lastProviderUsage: { inputTokens: number; outputTokens: number; totalTokens: number } | null =
+    seedTotal > 0
+      ? { inputTokens: seedInput, outputTokens: seedOutput, totalTokens: seedTotal }
+      : null
+
+  try {
+    bus.on("turn:completed", () => {
+      sessionTurns += 1
+    })
+  } catch {}
 
   bus.on("provider:extension", (e) => {
     if (e.kind === "effective-model") {
@@ -232,13 +337,23 @@ export function createUsageCollector(bus: EventBus, model?: string) {
         typeof d.cacheIncluded === "boolean" ? d.cacheIncluded : cacheIncluded
       if (typeof d.cacheIncluded === "boolean") cacheIncluded = d.cacheIncluded
 
-      for (const acc of [turn, session]) {
-        acc.inputTokens += input
-        acc.outputTokens += output
-        acc.totalTokens = acc.inputTokens + acc.outputTokens
-        acc.cacheReadTokens = (acc.cacheReadTokens ?? 0) + cRead
-        acc.cacheWriteTokens = (acc.cacheWriteTokens ?? 0) + cWrite
-      }
+      const reportedTotal =
+        typeof d.totalTokens === "number" && Number.isFinite(d.totalTokens) && d.totalTokens >= 0
+          ? Math.max(input + output, d.totalTokens)
+          : input + output
+      lastProviderUsage = { inputTokens: input, outputTokens: output, totalTokens: reportedTotal }
+
+      turn.inputTokens += input
+      turn.outputTokens += output
+      turn.totalTokens += reportedTotal
+      turn.cacheReadTokens = (turn.cacheReadTokens ?? 0) + cRead
+      turn.cacheWriteTokens = (turn.cacheWriteTokens ?? 0) + cWrite
+
+      session.inputTokens += input
+      session.outputTokens += output
+      session.totalTokens += reportedTotal
+      session.cacheReadTokens = (session.cacheReadTokens ?? 0) + cRead
+      session.cacheWriteTokens = (session.cacheWriteTokens ?? 0) + cWrite
       // Akumulasi biaya per segmen dengan model efektif saat itu
       const segModel = effectiveModel ?? model
       if (segModel) {
@@ -280,6 +395,10 @@ export function createUsageCollector(bus: EventBus, model?: string) {
      * header REPL, dan pemeriksaan `--budget`. Tidak terpengaruh reset().
      */
     getSession: (m?: string) => withCost(session, m ?? effectiveModel ?? sessionModel ?? model),
+    /** [Fase 3 / LOOP-INV-11] Jumlah turn sesi (termasuk carry-forward resume). */
+    getTurnCount: () => sessionTurns,
+    /** [Fase 3 / CTX-03] Laporan token terakhir dari provider untuk kalibrasi. */
+    lastProviderTokens: () => lastProviderUsage,
     modelUsed: () => ({ effective: effectiveModel, provider: effectiveProvider }),
     reset: () => {
       turn = emptyUsage()

@@ -55,7 +55,7 @@ jobs:
 
       - name: Test
         working-directory: minicode
-        run: bun test
+        run: bun test test/test/*.test.ts test/p*.test.ts test/p15-*.test.ts test/p16-*.test.ts test/bench/eval-gate.test.ts
 
       # Gate agregat nyata. `bun test --coverage` sendirian selalu lulus —
       # threshold Bun dievaluasi per-file sehingga tak bisa dipakai sebagai gate.

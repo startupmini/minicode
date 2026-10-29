@@ -11,10 +11,18 @@ if (!existsSync(file)) {
   process.exit(0)
 }
 
-const traces = readFileSync(file, "utf8")
+const rawTraces = readFileSync(file, "utf8")
+  .replace(/^\uFEFF/, "") // Strip UTF-8 BOM if present (prevent parse crash)
   .split("\n")
   .filter(Boolean)
-  .map((l) => JSON.parse(l))
+
+let traces: { ok?: boolean }[]
+try {
+  traces = rawTraces.map((l) => JSON.parse(l))
+} catch (e) {
+  console.error(`[gate] ERROR: Invalid JSON in traces.jsonl`, (e as Error).message)
+  process.exit(1)
+}
 
 const ok = traces.filter((t) => t.ok).length
 const rate = traces.length ? ok / traces.length : 0

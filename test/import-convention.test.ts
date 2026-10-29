@@ -205,6 +205,21 @@ describe("integritas encoding berkas", () => {
     // eksplisit menjaga asersi tetap utuh tanpa bergantung pada beban mesin.
   }, 20_000)
 
+  test("tidak ada byte NUL (0x00) di berkas teks terlacak", () => {
+    // [Fase 6A] Satu blob di HEAD pernah kemasukan byte 0x00 (escaped `\u0000`
+    // tertulis sebagai NUL literal), yang membuat git melabelinya `Bin` pada
+    // `git diff --cached --stat`. Guard ini memastikan tidak ada berkas teks
+    // terlacak yang mengandung NUL — penyebab status `Bin` yang tak diinginkan.
+    const withNul: string[] = []
+    for (const f of [...textFiles, ...ROOT_CONFIG_FILES]) {
+      const buf = readFileSync(join(repoRoot, f))
+      if (buf.includes(0)) withNul.push(f)
+    }
+    expect(withNul).toEqual([])
+    // Alasan sama dengan test U+FFFD/BOM di atas: ±860 berkas dibaca sinkron;
+    // batas 20 dtk mencegah flake beban tanpa melonggarkan cek NUL.
+  }, 20_000)
+
   test("berkas konfigurasi tidak memakai BOM", () => {
     // BOM membuat JSON.parse gagal ("Unrecognized token") — ditemukan saat
     // test ini sendiri gagal membaca tsconfig.json. Editor Windows kadang

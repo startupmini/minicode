@@ -1835,9 +1835,9 @@ export function deriveLegacyHistoryEventId(
 ): string {
   const digest = createHash("sha256")
     .update(sessionId, "utf8")
-    .update(" ", "utf8")
+    .update("\u0000", "utf8")
     .update(threadId, "utf8")
-    .update(" ", "utf8")
+    .update("\u0000", "utf8")
     .update(String(seq), "utf8")
     .digest("hex")
     .slice(0, 32)

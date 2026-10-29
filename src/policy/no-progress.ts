@@ -60,6 +60,11 @@ export interface NoProgressOptions {
   readonly maxConsecutiveReadCalls?: number
   /** Postur sesi saat ini; non-"active" menonaktifkan detektor read-only thrashing. */
   readonly getPosture?: () => NoProgressPosture
+  /**
+   * [Fase 6A / ACE-04] Maksimum retry terjustifikasi setelah bukti baru
+   * (default 1). Hard cap absolut: tidak pernah menambah budget tanpa batas.
+   */
+  readonly maxNewEvidenceRetries?: number
 }
 
 function canonicalize(value: unknown): string {
@@ -197,6 +202,10 @@ export interface NoProgressDetector {
     readonly repeatedErrorStreak: number
     readonly consecutiveReadCalls: number
     readonly oscillatingPaths: readonly string[]
+    /** [Fase 6A / ACE-04] Ada bukti baru sejak blokir REPEATED_ACTION_ERROR. */
+    readonly newEvidenceSinceFailure: boolean
+    /** [Fase 6A / ACE-04] Retry terjustifikasi yang sudah dipakai untuk blokir aktif. */
+    readonly justifiedRetriesUsed: number
   }
 }
 
@@ -220,10 +229,23 @@ export function createNoProgressDetector(options: NoProgressOptions = {}): NoPro
       ? Math.floor(options.maxConsecutiveReadCalls)
       : 15
   const getPosture = options.getPosture ?? (() => "active" as const)
+  const maxNewEvidenceRetries =
+    typeof options.maxNewEvidenceRetries === "number" &&
+    Number.isFinite(options.maxNewEvidenceRetries) &&
+    options.maxNewEvidenceRetries >= 0
+      ? Math.floor(options.maxNewEvidenceRetries)
+      : 1
 
   let lastErrorFingerprint: string | null = null
   let lastErrorActionKey: string | null = null
   let repeatedErrorStreak = 0
+
+  // [Fase 6A / ACE-04] Blokir REPEATED_ACTION_ERROR bersifat PERSISTEN sampai
+  // ada bukti baru — sukses yang tidak relevan tidak boleh membuka jalan
+  // mengulang perintah yang sama secara buta.
+  let activeBlock: { fingerprint: string; actionKey: string; streak: number } | null = null
+  let newEvidenceAfterBlock = false
+  let justifiedRetries = 0
 
   let consecutiveReadCalls = 0
 
@@ -235,7 +257,26 @@ export function createNoProgressDetector(options: NoProgressOptions = {}): NoPro
     const name = String(call.name ?? "")
     const actionKey = `${name}\0${canonicalArgsHash(call.args)}`
 
-    // Sinyal 1: panggilan identik yang sudah gagal N kali berturut-turut.
+    // Sinyal 1a: blokir persisten. Hanya boleh dibuka oleh SATU retry
+    // terjustifikasi setelah bukti diagnostik/mutasi baru, dengan hard cap.
+    if (activeBlock !== null && actionKey === activeBlock.actionKey) {
+      if (newEvidenceAfterBlock && justifiedRetries < maxNewEvidenceRetries) {
+        justifiedRetries += 1
+        newEvidenceAfterBlock = false
+        return { allowed: true }
+      }
+      return {
+        allowed: false,
+        kind: "NO_PROGRESS",
+        reason: "REPEATED_ACTION_ERROR",
+        message:
+          `[LOOP_GUARD kind=NO_PROGRESS reason=REPEATED_ACTION_ERROR count=${activeBlock.streak}] ` +
+          `Identical tool call failed ${activeBlock.streak} times consecutively with the same error. ` +
+          `Read fresh diagnostic evidence or change your approach before retrying.`,
+      }
+    }
+
+    // Sinyal 1b: panggilan identik yang sudah gagal N kali berturut-turut.
     if (
       repeatedErrorStreak >= maxRepeatedErrors &&
       lastErrorActionKey !== null &&
@@ -407,6 +448,16 @@ export function createNoProgressDetector(options: NoProgressOptions = {}): NoPro
           repeatedErrorStreak = 1
         }
         if (repeatedErrorStreak >= maxRepeatedErrors) {
+          if (activeBlock === null || activeBlock.actionKey !== actionKey) {
+            // Blokir baru: buka budget retry dari nol.
+            activeBlock = { fingerprint: fp, actionKey, streak: repeatedErrorStreak }
+            justifiedRetries = 0
+          } else {
+            // Retry terjustifikasi gagal lagi: pertahankan budget yang sudah
+            // terpakai (hard cap) dan cabut bukti yang sudah dikonsumsi.
+            activeBlock = { ...activeBlock, streak: repeatedErrorStreak }
+          }
+          newEvidenceAfterBlock = false
           return {
             allowed: false,
             kind: "NO_PROGRESS",
@@ -419,7 +470,15 @@ export function createNoProgressDetector(options: NoProgressOptions = {}): NoPro
         }
         return { allowed: true }
       }
-      // Eksekusi sukses memutus streak error berulang.
+      // Eksekusi sukses memutus streak error berulang. [Fase 6A / ACE-04]
+      // Sukses baca diagnostik atau mutasi workspace = bukti baru yang
+      // membenarkan SATU retry; sukses lain tidak membuka blokir.
+      if (activeBlock !== null) {
+        const tier = contractForTool(name)?.sideEffectTier
+        if (tier === "PURE_READ" || tier === "WORKSPACE_MUTATION") {
+          newEvidenceAfterBlock = true
+        }
+      }
       lastErrorFingerprint = null
       lastErrorActionKey = null
       repeatedErrorStreak = 0
@@ -457,6 +516,14 @@ export function createNoProgressDetector(options: NoProgressOptions = {}): NoPro
         tracker.visits = visits
         tracker.oscillationMessage = null
       }
+      // [Fase 6A / ACE-04] Verifikasi hijau adalah kemajuan nyata: blokir
+      // repeated-error tidak lagi relevan.
+      activeBlock = null
+      newEvidenceAfterBlock = false
+      justifiedRetries = 0
+      lastErrorFingerprint = null
+      lastErrorActionKey = null
+      repeatedErrorStreak = 0
     },
     noteAssistantResponse() {
       consecutiveReadCalls = 0
@@ -466,6 +533,9 @@ export function createNoProgressDetector(options: NoProgressOptions = {}): NoPro
       lastErrorActionKey = null
       repeatedErrorStreak = 0
       consecutiveReadCalls = 0
+      activeBlock = null
+      newEvidenceAfterBlock = false
+      justifiedRetries = 0
       fileTrackers.clear()
       inflightPreHash.clear()
     },
@@ -478,6 +548,8 @@ export function createNoProgressDetector(options: NoProgressOptions = {}): NoPro
         repeatedErrorStreak,
         consecutiveReadCalls,
         oscillatingPaths,
+        newEvidenceSinceFailure: newEvidenceAfterBlock,
+        justifiedRetriesUsed: justifiedRetries,
       }
     },
   }

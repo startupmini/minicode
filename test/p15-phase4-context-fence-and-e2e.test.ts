@@ -206,12 +206,17 @@ describe("LOOP-INV-16 / LOOP-G18 - Runtime State Header Survives Compaction", ()
     const headerText = buildRuntimeStateHeader({ turnCount: 1, maxTurns: null })
     const summaryContent = "Previous context [0,5):\nringkasan"
     const combined = { role: "user" as const, content: `${headerText}\n\n${summaryContent}` }
-    const messages = [combined as { role: string; content: string }, { role: "assistant", content: "x" }]
+    const messages = [
+      combined as { role: string; content: string },
+      { role: "assistant", content: "x" },
+    ]
     const stripped = stripContextOnly(messages, combined)
     expect(stripped).toHaveLength(1)
     expect((stripped[0] as { content: string }).content).toBe("x")
     // Tidak ada artefak header/summary yang tersisa.
-    expect(stripped.some((m) => (m as { content: string }).content.includes("RUNTIME_STATE_HEADER"))).toBe(false)
+    expect(
+      stripped.some((m) => (m as { content: string }).content.includes("RUNTIME_STATE_HEADER")),
+    ).toBe(false)
   })
 })
 

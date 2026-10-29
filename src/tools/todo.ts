@@ -8,6 +8,7 @@ import { isJournalHealthy, loadJournal, mutationsSinceTurn } from "../session/jo
 import {
   checkWorkspaceIntegrity,
   collectModifiedFilesFromJournal,
+  detectEvaluationTampering,
 } from "../session/verification.ts"
 import { type CanonicalAssignmentTable, encodeCanonicalAssignments } from "../task/assignment.ts"
 import { isTaskId, TaskError } from "../task/model.ts"
@@ -146,6 +147,16 @@ export async function resolveFreshEvidence(
             ...(base.requireVerified ? { requireVerified: true } : {}),
           }
         }
+        // [Fase 6A / ACE-02] Tamper guard fail-closed: evaluator/gate yang
+        // disentuh membuat SEMUA klaim completion tak bisa dipercaya.
+        const tamper = await detectEvaluationTampering(modified, cwd)
+        if (tamper.tampered) {
+          return {
+            verdict: "failed",
+            detail: `EVALUATOR_TAMPER_ATTEMPT: ${tamper.reason}`,
+            ...(base.requireVerified ? { requireVerified: true } : {}),
+          }
+        }
       }
     }
     return base
@@ -191,6 +202,16 @@ export async function resolveFreshEvidence(
         return {
           verdict: "failed",
           detail: integrity.summary,
+          ...(base.requireVerified ? { requireVerified: true } : {}),
+        }
+      }
+      // [Fase 6A / ACE-02] Tamper guard: bukti `passed` batal bila evaluator
+      // atau test diubah untuk meloloskan verifikasi.
+      const tamper = await detectEvaluationTampering(modified, cwd)
+      if (tamper.tampered) {
+        return {
+          verdict: "failed",
+          detail: `EVALUATOR_TAMPER_ATTEMPT: ${tamper.reason}`,
           ...(base.requireVerified ? { requireVerified: true } : {}),
         }
       }

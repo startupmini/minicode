@@ -10,6 +10,7 @@
 //   - Tidak ada I/O, tidak ada write, tidak ada mutation.
 //   - Format stabil (tidak bergantung pada model eksternal).
 
+import type { ConsequenceDecision } from "../policy/consequence-engine.ts"
 import type { Usage as UsageSession } from "../policy/usage.ts"
 import { TaskStore } from "../task/store.ts"
 
@@ -31,6 +32,11 @@ export interface OperationalStateSnapshot {
     readonly status: string
     readonly verificationVerdict?: "passed" | "failed" | "stale"
   }[]
+  /**
+   * [Fase 6A / ACE-01] Keputusan consequence terakhir. Opsional: sesi lama
+   * tanpa verifikasi tidak memiliki baris `ace_state`.
+   */
+  readonly aceDecision?: ConsequenceDecision | null
 }
 
 /**
@@ -91,6 +97,14 @@ export function buildRuntimeStateHeader(state: OperationalStateSnapshot): string
     lines.push(`active_tasks: ${activeLines.join("; ")}`)
   }
 
+  // Baris lima: keputusan consequence ACE-Lite (bila sudah ada verifikasi).
+  if (state.aceDecision) {
+    const d = state.aceDecision
+    lines.push(
+      `ace_state: verdict=${d.verdict} | failure_class=${d.failureClass} | next_action=${d.nextAction} | new_evidence=${d.newEvidenceSinceLastAttempt === true}`,
+    )
+  }
+
   lines.push("[END_RUNTIME_STATE_HEADER]")
   return lines.join("\n")
 }
@@ -114,6 +128,7 @@ export function collectOperationalState(
   cwd: string,
   usage: { getSession(): UsageSession; getTurnCount(): number },
   maxTurns?: number | null,
+  aceDecision?: ConsequenceDecision | null,
 ): OperationalStateSnapshot | null {
   try {
     const store = new TaskStore(cwd)
@@ -158,6 +173,7 @@ export function collectOperationalState(
       blockedTasks,
       completedVerifiedTasks,
       activeTasks: activeTasks.length > 0 ? activeTasks : undefined,
+      ...(aceDecision ? { aceDecision } : {}),
     }
   } catch {
     return null

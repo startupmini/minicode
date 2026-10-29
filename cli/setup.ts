@@ -17,8 +17,13 @@ import { runRunHooks, shouldRunHooks } from "../src/hooks/run.ts"
 import { homeDir } from "../src/lib/db-path.ts"
 import { closeAllLsp as lspCloseAll, setLspProcessSupervisor } from "../src/lsp/client.ts"
 import { closeAll as mcpCloseAll } from "../src/mcp/client.ts"
-import { addMemory } from "../src/memory/vector.ts"
+import { addMemory, promoteOrRejectLessonsBySession } from "../src/memory/vector.ts"
 import { createLlmCompaction } from "../src/policy/compaction.ts"
+import {
+  type AceFailureType,
+  type ConsequenceDecision,
+  evaluateConsequence,
+} from "../src/policy/consequence-engine.ts"
 import type { NoProgressDetector } from "../src/policy/no-progress.ts"
 import type { PermissionAsk } from "../src/policy/permission.ts"
 import type { RateLimiter } from "../src/policy/ratelimit.ts"
@@ -164,6 +169,7 @@ import { snapshotTree } from "../src/session/shadow-git.ts"
 import {
   checkWorkspaceIntegrity,
   collectModifiedFilesFromJournal,
+  detectEvaluationTampering,
 } from "../src/session/verification.ts"
 import type { Skill } from "../src/skills/loader.ts"
 import type { AutonomousSessionSpec } from "../src/task/autonomous-context.ts"
@@ -1052,6 +1058,13 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // [Fase 4 / LOOP-13] Header operasional deterministik untuk system prompt
   // (buffer kedua: selalu dikirim, tak pernah dikompaksi, tak masuk histori).
   let runtimeStateHeader: string | undefined
+  // [Fase 6A / ACE-01] Keputusan consequence terakhir. Dideklarasikan SEBELUM
+  // blok resume agar `collectOperationalState` bisa menyertakannya pada header
+  // yang dibangun saat sesi dilanjutkan (tidak ada akses ke system prompt
+  // yang sudah dibekukan kernel setelah sesi dibuat).
+  let lastAceDecision: ConsequenceDecision | null = null
+  // Streak kegagalan verify (dipakai ACE sebagai `repeatedFailureCount`).
+  let verifyFailureStreak = 0
   // Baseline kanonik saat resume (isi `messages` yang SUDAH durable). Setelah
   // proyeksi menutupi prefix, buffer konteks TIDAK lagi superset histori
   // kanonik — jadi persist harus menyusun ulang: baseline ++ ekor baru.
@@ -1102,6 +1115,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
             cwd ?? process.cwd(),
             snapUsage,
             null,
+            lastAceDecision,
           )
         } catch {}
 
@@ -2135,6 +2149,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     // jurnal sesi ini sebelum mengizinkan status akhir hijau.
     let integrityOk = true
     let integrityDetail = ""
+    let tamperReason = ""
     const loaded = await loadJournal(sessionId, effectiveRoot).catch(() => null)
     if (loaded?.status === "valid") {
       const modified = collectModifiedFilesFromJournal(loaded.records)
@@ -2142,12 +2157,18 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         const integrity = await checkWorkspaceIntegrity(modified, effectiveRoot)
         integrityOk = integrity.ok
         if (!integrity.ok) integrityDetail = integrity.summary
+        // [Fase 6A / ACE-02] Evaluator/gate yang disentuh membatalkan seluruh
+        // klaim verifikasi (fail-closed) — tidak ada jalan "hijau" via curang.
+        const tamper = await detectEvaluationTampering(modified, effectiveRoot)
+        if (tamper.tampered) tamperReason = tamper.reason
       }
     }
-    const effectiveOk = result.ok && integrityOk
+    const effectiveOk = result.ok && integrityOk && tamperReason === ""
     const effectiveOutput = !integrityOk
       ? `${integrityDetail}${result.output ? `\n${result.output}` : ""}`
-      : result.output
+      : tamperReason
+        ? `EVALUATOR_TAMPER_ATTEMPT: ${tamperReason}${result.output ? `\n${result.output}` : ""}`
+        : result.output
     const effectiveExitCode = effectiveOk ? (result.exitCode ?? 0) : result.exitCode || 1
     // Turn state kode ini diverifikasi: turnCount SETELAH turn terakhir
     // selesai = nilai yang dibawa intent mutasi turn itu (turnOf baca live
@@ -2162,6 +2183,53 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       turn: verifiedTurn,
       exitCode: effectiveExitCode,
     }
+    // [Fase 6A / ACE-01] Terjemahkan bukti verifikasi menjadi keputusan
+    // consequence deterministik. `repeatedFailureCount` memakai streak
+    // SEBELUM percobaan ini (kontrak evaluateConsequence).
+    const tampered = tamperReason.length > 0
+    const transient =
+      !effectiveOk &&
+      /ECONN|ETIMEDOUT|timed? ?out|rate.?limit|429|503|network|EAI_AGAIN|socket hang up/i.test(
+        effectiveOutput,
+      )
+    const permissionBlocked =
+      !effectiveOk &&
+      /permission denied|EACCES|EPERM|operation not permitted/i.test(effectiveOutput)
+    const failureType: AceFailureType = effectiveOk ? null : transient ? "timeout" : "functional"
+    const repeatedBefore = verifyFailureStreak
+    verifyFailureStreak = effectiveOk ? 0 : verifyFailureStreak + 1
+    lastAceDecision = evaluateConsequence({
+      verificationPassed: effectiveOk,
+      evaluatorTamperAttempt: tampered,
+      failureType,
+      isTransientError: transient,
+      repeatedFailureCount: repeatedBefore,
+      newEvidenceSinceLastAttempt: noProgressDetector?.snapshot().newEvidenceSinceFailure === true,
+      blockedByPermissionOrExternalBlocker: permissionBlocked,
+      budgetExhausted:
+        typeof effectiveMaxTurns === "number" && session.state.turnCount >= effectiveMaxTurns,
+      insufficientEvidence: !effectiveOk && effectiveOutput.trim().length === 0,
+      baselineContentChanged: false,
+    })
+    if (lastAceDecision.verdict === "BLOCKED") {
+      process.stderr.write(
+        c.dim(
+          `[ace] verdict=BLOCKED next_action=${lastAceDecision.nextAction} — ${lastAceDecision.rationale}\n`,
+        ),
+      )
+    }
+    // [Fase 6A / ACE-03] Pelajaran kandidat sesi ini dipromosikan hanya bila
+    // verifikasi hijau; kegagalan sementara/human-blocker tidak menghukumnya.
+    const lessonVerdict: "passed" | "failed" | "unknown" = effectiveOk
+      ? "passed"
+      : lastAceDecision.failureClass === "TRANSIENT_ENV" ||
+          lastAceDecision.failureClass === "PERMISSION_OR_EXTERNAL_BLOCKER" ||
+          lastAceDecision.failureClass === "INSUFFICIENT_EVIDENCE"
+        ? "unknown"
+        : "failed"
+    try {
+      await promoteOrRejectLessonsBySession(sessionId, lessonVerdict, effectiveRoot)
+    } catch {}
     if (effectiveOk) {
       noProgressDetector?.noteVerificationPassed()
     }
@@ -2172,7 +2240,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         exitCode: effectiveExitCode,
         command: verifyCommand,
         summary: effectiveOutput.slice(0, 300) || verifyCommand,
-        integrityOk,
+        integrityOk: integrityOk && !tampered,
       })
     } catch {}
     const evidence = parseVerifyTestEvidence(verifyCommand, effectiveOutput)

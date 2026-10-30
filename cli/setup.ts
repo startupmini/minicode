@@ -3,6 +3,7 @@
 import { readFileSync } from "node:fs"
 import { resolve as resolvePath } from "node:path"
 import type { Message, Session, Tool } from "#minicore"
+import { AgentError } from "#minicore"
 import { createProviderLayer } from "../src/app/provider-layer.ts"
 import { createRagLayer } from "../src/app/rag-layer.ts"
 import {
@@ -34,6 +35,7 @@ import {
   primePricing,
   type UsageInitialSnapshot,
   watchBudgetLimit,
+  watchContextWindowLimit,
 } from "../src/policy/usage.ts"
 import {
   buildBaselineNote,
@@ -957,6 +959,20 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     process.stderr.write(`[warn] invalid timeout ${effectiveTimeoutMs}, fallback to 900000\n`)
     effectiveTimeoutMs = 900_000
   }
+  // [Fase 7 / Live #3] ROOT wall-clock timeout. Sebelumnya `--timeout` hanya
+  // dioper ke kernel turn (session.timeoutMs), sehingga setup/retry di luar
+  // turn (DB init, system prompt, provider connect) tidak diikat satu
+  // deadline — uji live: `--timeout 30000` selesai di TOTAL_MS=71967 karena
+  // ~42 dtk setup berada di luar pagar. Signal root ini dibuat di sini
+  // (sebelum setup) dan di-compose ke sinyal turn + diperiksa selama setup,
+  // jadi TOTAL_MS benar-benar menghormati batas pengguna.
+  const rootTimeoutSignal =
+    effectiveTimeoutMs === Infinity || effectiveTimeoutMs === 0
+      ? undefined
+      : AbortSignal.timeout(effectiveTimeoutMs)
+  try {
+    ;(rootTimeoutSignal as unknown as { unref?: () => void })?.unref?.()
+  } catch {}
 
   const permissionMode = allowAll
     ? "allow-all"
@@ -2290,6 +2306,21 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   }
 
   async function runPromptWithVerify(p: string, signal?: AbortSignal): Promise<void> {
+    // [Fase 7 / Live #3] Root wall-clock: kalau timeout CLI sudah lewat saat
+    // turn mau mulai (setup/retry memakan seluruh budget), tolak langsung
+    // dengan alasan jelas — jangan biarkan turn baru melebihi deadline total.
+    if (rootTimeoutSignal?.aborted) {
+      const msg = `run exceeded root wall-clock timeout (${effectiveTimeoutMs}ms) before turn start`
+      process.stderr.write(`[timeout] ${msg}\n`)
+      throw new AgentError("timeout", msg)
+    }
+    // Composit root signal ke sinyal turn: deadline pengguna berlaku untuk
+    // SELURUH fase (setup + turn + retry), bukan hanya kernel turn.
+    const composedSignal = rootTimeoutSignal
+      ? signal
+        ? AbortSignal.any([signal, rootTimeoutSignal])
+        : rootTimeoutSignal
+      : signal
     // P2.2: pagar pra-turn (lihat ensureWriterFresh). Basi → turn dilewati
     // sebelum provider dibelanjakan; histori tak tersentuh.
     if (!ensureWriterFresh()) return
@@ -2322,10 +2353,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       ;(markTurnActive as ((cwd?: string, id?: string) => void) | undefined)?.(cwd, sessionId)
     } catch {}
     try {
-      await runPromptWithVerifyInner(p, signal)
+      await runPromptWithVerifyInner(p, composedSignal)
       lastTurnOutcome = "completed"
     } catch (e) {
-      lastTurnOutcome = classifyTurnError(e, signal?.aborted === true)
+      lastTurnOutcome = classifyTurnError(e, composedSignal?.aborted === true)
       throw e
     } finally {
       // [Fase 1 / LOOP-INV-03] Bukti terminal jurnal harus TUNTAS sebelum turn
@@ -2387,6 +2418,30 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           )
         },
       })
+      // [Fase 7 / Live #2] Pemutus aliran MID-STREAM untuk `--context-window`.
+      // Kernel hanya mengecek estimasi token pesan SEBELUM request (kompaksi);
+      // model yang menghasilkan respons sangat panjang bisa membakar jutaan
+      // token tanpa henti (uji live: --context-window 2000 → tokens=6.830.639).
+      // Watcher ini membaca token OUTPUT turn berjalan dari usage collector
+      // dan menggugurkan turn begitu melewati allowance output
+      // (max(256, W − estimasiInput)) — murah karena dijalankan per-event usage.
+      const stopCtxWindow = watchContextWindowLimit({
+        bus: session.events,
+        windowTokens: contextWindowTokens ?? 0,
+        getInputTokens: () => usage.get().inputTokens,
+        getOutputTokens: () => usage.get().outputTokens,
+        onOver: (allowed, actual) => {
+          process.stderr.write(
+            `[context] stream truncated: context-window limit reached (output ${actual} > allowance ${allowed} of window ${contextWindowTokens})\n`,
+          )
+          ctl.abort(
+            new AgentError(
+              "budget_exceeded",
+              `context window exceeded: output ${actual} > allowance ${allowed} (window ${contextWindowTokens})`,
+            ),
+          )
+        },
+      })
       try {
         try {
           // [P1 M15] SATU jalur eksekusi turn. Mode `off`/`constructed`:
@@ -2422,6 +2477,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         }
       } finally {
         stopWatch()
+        stopCtxWindow()
         if (s) s.removeEventListener("abort", onParentAbort)
         turnStatus?.endTurn()
       }

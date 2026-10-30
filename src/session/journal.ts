@@ -113,12 +113,25 @@ export type ChildStatus =
  * panjang sama), BUKAN transkrip anak. Absent (`null`) = data memang tak
  * tersedia di jalur itu — jangan difabrikasi.
  */
+/** [Fase 7 / LOOP-INV-13/15] Verdict consequence-engine (ACE-Lite) dari hasil anak. */
+export interface AceResultSnapshot {
+  readonly verdict: import("../policy/consequence-engine.ts").AceVerdict
+  readonly failureClass: import("../policy/consequence-engine.ts").AceFailureClass
+  readonly nextAction: import("../policy/consequence-engine.ts").AceNextAction
+  readonly rationale?: string
+}
+
 export interface ChildResultEnvelope {
   readonly childStatus: ChildStatus
   readonly resultSummary: string
   readonly runId: string | null
   readonly steps: number | null
   readonly truncated: boolean
+  /** [Fase 7 / LOOP-INV-13/15] Hasil deterministik consequence-engine pada penyelesaian/
+   * kegagalan turn anak — tersurat di amplop agar parent dan auditor bisa verifikasi
+   * apakah outcome layak diterima apa adanya (PASS) atau perlu review/retry (FAIL).
+   * Absent = test khusus / legacy runner yang belum hitung ACE. */
+  readonly aceVerdict?: AceResultSnapshot
 }
 
 export interface JournalRecord {

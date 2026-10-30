@@ -78,7 +78,7 @@ const TASK_DATA_VERSION = 1
  *  tries, only `SQLITE_BUSY` / "database is locked" is retried, every other
  *  error propagates immediately, and exhaustion yields `null` so the caller
  *  raises its own domain error. */
-const SCHEMA_ATTEMPTS = 3
+const SCHEMA_ATTEMPTS = 8
 const SCHEMA_BACKOFF_MS = 25
 
 function isBusyError(message: string): boolean {
@@ -701,25 +701,38 @@ function handle(cwd?: string): Database {
   const p = dbFile(cwd)
   const existing = handles.get(p)
   if (existing) return existing
+  // [Phase 7 / Live #1] Sama dengan persistence.ts: buka koneksi + PRAGMA
+  // setup dalam retry. `new Database(p)` dan `PRAGMA journal_mode=WAL`
+  // bisa gagal SQLITE_BUSY saat beberapa proses membuka tasks.db bersamaan.
+  // busy_timeout diatur SEBELUM journal_mode (peralihan WAL butuh exclusive
+  // lock sesaat yang langsung gagal tanpa busy_timeout).
   let db: Database
-  try {
-    db = new Database(p)
-  } catch (e) {
-    throw new TaskError("TASK_DB_INIT_FAILURE", `cannot open ${p}: ${(e as Error).message}`)
-  }
-  try {
-    // Same pragma order as `persistence.ts`: busy_timeout FIRST, before any
-    // statement that needs a lock.
-    db.exec(`PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}`)
-  } catch {}
-  if (!initialized.has(p)) {
+  const opened = withBusyRetrySync(() => {
+    const d = new Database(p)
     try {
+      d.exec(`PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}`)
+    } catch {}
+    return d
+  })
+  if (!opened) {
+    throw new TaskError(
+      "TASK_DB_INIT_FAILURE",
+      `cannot open ${p} after ${SCHEMA_ATTEMPTS} busy-retry attempts`,
+    )
+  }
+  db = opened
+  if (!initialized.has(p)) {
+    // Sama dengan persistence.ts: PRAGMA WAL dibungkus retry (peralihan WAL
+    // butuh exclusive lock sesaat).
+    const walOk = withBusyRetrySync(() => {
       db.exec(
         `PRAGMA journal_mode=WAL; PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=${LIMITS.SQLITE_WAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=${LIMITS.SQLITE_WAL_AUTOCHECKPOINT_PAGES};`,
       )
-    } catch (e) {
+      return true
+    })
+    if (walOk === null) {
       process.stderr.write(
-        `[warn] taskstore: wal setup deferred, retry next open: ${(e as Error).message}\n`,
+        `[warn] taskstore: wal setup deferred, retry next open: ${p}\n`,
       )
     }
     try {

@@ -49,6 +49,13 @@ export interface CalibratedEstimator {
   }): TokenCalibrationSnapshot
   effectiveContextTokens(localEstimatedTokens: number): number
   snapshot(): TokenCalibrationSnapshot
+  /** [Fase 7 / CTX-03 / U2] Rekonsiliasi eksplisit drift ratio estimator vs
+   *  provider `totalTokens`. Mencatat sampel dan menyesuaikan faktor kalibrasi
+   *  deterministik; mengembalikan snapshot terbaru. Nama eksplisit agar test
+   *  (dan telemetri) bisa memanggilnya tanpa bergantung pada event bus. */
+  recordTokenCalibrationSample(estimatedTokens: number, providerActualTokens: number): TokenCalibrationSnapshot
+  /** [Fase 7 / CTX-03 / U2] Rasio drift terakhir: actual / max(1, estimated). */
+  lastDriftRatio(): number
 }
 
 const DEFAULT_MAX_CALIBRATION_FACTOR = 64
@@ -66,6 +73,20 @@ export function createCalibratedEstimator(opts: { maxFactor?: number } = {}): Ca
   const estimator: TokenEstimator = (text: string) => {
     const base = minicodeEstimator(text)
     return factor > 1 ? Math.ceil(base * factor) : base
+  }
+
+  // Satu-satunya titik yang menyesuaikan `factor` dari sampel
+  // (estimer vs provider aktual). Idempoten dan konservatif: factor tidak
+  // pernah < 1, sehingga estimasi lokal tidak pernah dilemahkan; hanya naik
+  // proporsional saat aktual > estimasi (mencegah under-budget kompaksi).
+  const applyCalibration = (local: number, actual: number): void => {
+    lastLocal = local > 0 ? Math.ceil(local) : null
+    lastActual = actual > 0 ? Math.ceil(actual) : null
+    drift = (lastActual ?? 0) - (lastLocal ?? 0)
+    if (local > 0 && actual > 0) {
+      const observedRatio = actual / local
+      factor = Math.min(maxFactor, Math.max(1, observedRatio))
+    }
   }
 
   return {
@@ -90,18 +111,23 @@ export function createCalibratedEstimator(opts: { maxFactor?: number } = {}): Ca
       // Pakai inputTokens bila tersedia (apel-ke-apel dengan prompt konteks);
       // fallback ke totalTokens bila provider hanya melaporkan total.
       const actual = pInput > 0 ? pInput : pTotal
-      if (actual > 0) {
-        lastLocal = local
-        lastActual = actual
-        drift = actual - local
-        if (local > 0) {
-          // Conservative max: faktor tidak pernah < 1 (tidak pernah melemahkan
-          // estimasi dasar), namun naik proporsional saat aktual > lokal.
-          const observedRatio = actual / local
-          factor = Math.min(maxFactor, Math.max(1, observedRatio))
-        }
-      }
+      if (actual > 0) applyCalibration(local, actual)
       return this.snapshot()
+    },
+    recordTokenCalibrationSample(estimatedTokens, providerActualTokens) {
+      const local =
+        Number.isFinite(estimatedTokens) && estimatedTokens > 0
+          ? Math.ceil(estimatedTokens)
+          : 0
+      const actual =
+        Number.isFinite(providerActualTokens) && providerActualTokens > 0
+          ? Math.ceil(providerActualTokens)
+          : 0
+      if (actual > 0) applyCalibration(local, actual)
+      return this.snapshot()
+    },
+    lastDriftRatio(): number {
+      return lastLocal !== null && lastLocal > 0 ? (lastActual ?? 0) / lastLocal : 1
     },
     effectiveContextTokens(localEstimatedTokens: number): number {
       const cleanLocal =

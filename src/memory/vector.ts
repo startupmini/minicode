@@ -10,6 +10,65 @@ const dbPath = (cwd?: string) => resolveDbPath("vector.db", cwd)
 
 const initializedPaths = new Set<string>()
 
+// [Fase 7 / Live #3] Circuit-breaker embedding per-endpoint.
+// Gateway tanpa endpoint `/embeddings` memicu timeout 3,5 dtk (per-attempt)
+// pada SETIAP operasi memori sebelum jatuh ke fallback FTS5/keyword. Ini
+// membengkakkan wall-clock setiap write_memory/read_memory. Circuit-breaker
+// menandai endpoint yang GAGAL (timeout/404/405/501/koneksi ditolak) dengan
+// TTL cooldown 5 menit, sehingga panggilan berikutnya LANGSUNG lompat ke
+// fallback keyword dalam <5ms tanpa menunggu timeout jaringan lagi.
+const EMBEDDING_CIRCUIT_BREAKER_TTL_MS = 5 * 60 * 1000
+
+export interface EmbeddingCircuitState {
+  readonly brokenAt: number
+  readonly reason: string
+}
+
+/** endpoint (normalized baseUrl) → state circuit-breaker. */
+const embeddingCircuitBrokenByEndpoint = new Map<string, EmbeddingCircuitState>()
+
+/** Normalisasi kunci endpoint circuit-breaker (bentuk baseUrl + model). */
+function embeddingCircuitKey(baseUrl: string, model?: string): string {
+  return `${baseUrl.replace(/\/+$/, "").toLowerCase()}|${model ?? "default"}`
+}
+
+/** Cek apakah endpoint dalam cooldown circuit-breaker (belum kedaluwarsa). */
+function embeddingCircuitBroken(baseUrl: string, model?: string): boolean {
+  const st = embeddingCircuitBrokenByEndpoint.get(embeddingCircuitKey(baseUrl, model))
+  if (!st) return false
+  if (Date.now() - st.brokenAt < EMBEDDING_CIRCUIT_BREAKER_TTL_MS) return true
+  embeddingCircuitBrokenByEndpoint.delete(embeddingCircuitKey(baseUrl, model))
+  return false
+}
+
+/** Tandai endpoint sebagai broken (masuk cooldown). */
+function markEmbeddingCircuitBroken(baseUrl: string, model: string | undefined, reason: string): void {
+  embeddingCircuitBrokenByEndpoint.set(embeddingCircuitKey(baseUrl, model), {
+    brokenAt: Date.now(),
+    reason,
+  })
+}
+
+/** Seam uji: reset circuit-breaker (dan seluruh state memori global) agar test
+ *  hermetik bisa memulai dari keadaan bersih. */
+export function resetEmbeddingCircuitBreaker(): void {
+  embeddingCircuitBrokenByEndpoint.clear()
+}
+
+/**
+ * [Fase 7 / seam uji] Trip circuit-breaker EKSPLISIT untuk pengujian hermetik.
+ * Production code tidak memanggil ini — hanya dipakai oleh `test/p19-*.test.ts`
+ * untuk memverifikasi jalur fast-fallback (<20ms, 0 request jaringan) tanpa
+ * bergantung pada kegagalan DNS/jaringan nyata yang tidak deterministik.
+ */
+export function tripEmbeddingCircuitForTest(
+  baseUrl: string,
+  model: string | undefined,
+  reason: string,
+): void {
+  markEmbeddingCircuitBroken(baseUrl, model, reason)
+}
+
 function open(cwd?: string): Database {
   return openAt(dbPath(cwd))
 }
@@ -214,6 +273,12 @@ export async function embedTexts(
   timeouts?: { attemptMs?: number; totalMs?: number },
 ): Promise<number[][] | null> {
   if (!apiKey || !baseUrl) return null
+  // [Fase 7 / Live #3] Circuit-breaker: endpoint yang baru saja gagal
+  // (timeout/404/koneksi ditolak) langsung di-skip <5ms — tanpa menunggu
+  // timeout jaringan lagi. Fallback keyword/FTS5 berjalan apa adanya.
+  if (embeddingCircuitBroken(baseUrl, model)) {
+    return null
+  }
   try {
     const hostname = new URL(baseUrl).hostname
     if (await isPrivateHostWithDns(hostname, { strict: true, timeoutMs: 1000, noCache: true })) {
@@ -255,6 +320,9 @@ export async function embedTexts(
       if (json?.data && Array.isArray(json.data)) return json.data.map((d) => d.embedding)
     }
   }
+  // Semua attempt gagal (timeout/404/405/501/koneksi ditolak) → tandai endpoint
+  // di circuit-breaker agar panggilan berikutnya langsung fallback.
+  markEmbeddingCircuitBroken(baseUrl, model, "all embedding attempts failed")
   return null
 }
 

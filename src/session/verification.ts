@@ -365,6 +365,14 @@ export function childStatusOutcomeFlags(status: ChildStatus): {
   }
 }
 
+/** [Fase 7 / LOOP-INV-13/15] Verdict consequence-engine (ACE-Lite) dari hasil anak. */
+export interface AceResultSnapshot {
+  readonly verdict: import("../policy/consequence-engine.ts").AceVerdict
+  readonly failureClass: import("../policy/consequence-engine.ts").AceFailureClass
+  readonly nextAction: import("../policy/consequence-engine.ts").AceNextAction
+  readonly rationale?: string
+}
+
 /**
  * Bangun amplop hasil anak (P9.2.1): sanitasi salinan DENGAN primitif yang
  * sudah mapan (`scrubSecrets`, sama seperti ack/evidenceReference), lalu
@@ -372,13 +380,17 @@ export function childStatusOutcomeFlags(status: ChildStatus): {
  * dilihat parent (atau pesan rejection bila tak ada) — JANGAN umpan teks
  * mentah tak terbatas ke sini; pemanggil memotong di batas parent dulu.
  * `runId`/`steps` null bila memang tak tersedia di jalur itu.
+ * ACE verdict opsional: bila ada, disimpan bersama outcome untuk auditability.
  */
-export function buildChildResultEnvelope(input: {
-  childStatus: ChildStatus
-  summary: string
-  runId: string | null
-  steps: number | null
-}): ChildResultEnvelope {
+export function buildChildResultEnvelope(
+  input: {
+    childStatus: ChildStatus
+    summary: string
+    runId: string | null
+    steps: number | null
+    aceVerdict?: AceResultSnapshot
+  },
+): ChildResultEnvelope {
   const clean = scrubSecrets(input.summary)
   const truncated = clean.length > CHILD_RESULT_SUMMARY_MAX
   return {
@@ -387,6 +399,7 @@ export function buildChildResultEnvelope(input: {
     runId: input.runId,
     steps: typeof input.steps === "number" && Number.isFinite(input.steps) ? input.steps : null,
     truncated,
+    ...(input.aceVerdict !== undefined ? { aceVerdict: input.aceVerdict } : {}),
   }
 }
 

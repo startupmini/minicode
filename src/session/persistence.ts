@@ -29,18 +29,41 @@ const initializedSessionPaths = new Set<string>()
  * `withBusyRetry` (async) tidak bisa dipakai di sini karena `open()` sinkron
  * dan dipanggil dari jalur sinkron (`loadSession`, `listSessions`, dst).
  */
-export function withBusyRetrySync<T>(fn: () => T, attempts = 3): T | null {
+// Konstanta retry inisialisasi DB. Naikkan dari 3 (baseline) ke 8 dengan
+// backoff exponential + jitter kecil agar tahan terhadap lonjakan proses
+// paralel di Windows/POSIX (temuan Live #1: dua CLI paralel → SQLITE_BUSY
+// saat `new Database(p)` + PRAGMA setup, salah satu proses gagal di
+// `cli/router.ts`). Backoff: 15+0, 30+j, 60+j, 120+j, 240+j, 480+j, 960+j,
+// 1920+j ms → total ≤ ~3,8 dtk untuk 8 percobaan, masih di bawah budget
+// startup. Jitter memecah sinkronisasi antar-proses yang mencoba ulang
+// pada waktu yang sama (thundering herd).
+const DB_INIT_ATTEMPTS = 8
+const DB_INIT_BACKOFF_MS = 15
+
+function dbInitBackoffMs(attempt: number): number {
+  const base = DB_INIT_BACKOFF_MS * 2 ** attempt
+  // jitter deterministik kecil (±20%) dari attempt ke-2 dst; attempt pertama
+  // (i=0) tidak dijitter agar kasus SQLITE_BUSY tunggal tetap selesai secepat
+  // mungkin (tanpa menambah latensi startup untuk jalur yang TIDAK balapan).
+  if (attempt === 0) return base
+  return base + ((attempt * 7919 + 3) % Math.max(1, Math.floor(base * 0.2)))
+}
+
+export function withBusyRetrySync<T>(fn: () => T, attempts = DB_INIT_ATTEMPTS): T | null {
   let last: unknown
   for (let i = 0; i < attempts; i++) {
     try {
       return fn()
     } catch (e) {
       const msg = String((e as Error).message ?? e)
+      // Hanya retry pada SQLITE_BUSY/locked — kompetisi lock antar-proses yang
+      // persis merupakan penyebab temuan Live #1. Error lain (disk I/O, schema)
+      // dilempar terus karena retry buta tidak akan menyelesaikannya dan hanya
+      // menutupi kegagalan asli (kebijakan yang sama dengan store.ts).
       if (!msg.includes("SQLITE_BUSY") && !msg.includes("database is locked")) throw e
       last = e
-      // Backoff sinkron pendek. Total ≤ 175ms; cukup untuk lock yang datang
-      // dari proses lain yang sedang commit, dan jauh di bawah budget startup.
-      Bun.sleepSync(25 * 2 ** i)
+      // Backoff sinkron eksponensial + jitter kecil (lihat dbInitBackoffMs).
+      Bun.sleepSync(dbInitBackoffMs(i))
     }
   }
   process.stderr.write(
@@ -51,15 +74,27 @@ export function withBusyRetrySync<T>(fn: () => T, attempts = 3): T | null {
 
 function open(cwd?: string, local = false): Database {
   const p = dbPath(cwd, local)
-  const db = new Database(p)
-  // busy_timeout DULU, sebelum statement apa pun yang butuh lock (audit #09
-  // P1 §27: dua proses membuka DB bersamaan → PRAGMA journal_mode balapan →
-  // SQLITE_BUSY padahal timeout 3000ms belum aktif — reproducer: 2×
-  // loadSession konkuren lintas proses, satu gagal). Set pragma tak butuh
-  // lock data sehingga aman duluan.
-  try {
-    db.exec(`PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}`)
-  } catch {}
+  // [Phase 7 / Live #1] Pembukaan koneksi + PRAGMA setup dibungkus dengan
+  // withBusyRetrySync. Sebelumnya hanya DDL yang di-retry; `new Database(p)`
+  // dan `PRAGMA journal_mode=WAL` bisa gagal SQLITE_BUSY saat dua proses CLI
+  // paralel membuka DB bersamaan (race nyata di cli/router.ts:128). Dengan
+  // membungkus seluruh urutan inisialisasi, proses yang kalah tunggu lalu
+  // coba ulang sampai lock dilepas (backoff eksponensial + jitter, 8×).
+  // PRAGMA busy_timeout DIATUR dalam retry yang sama SEBELUM journal_mode:
+  // peralihan ke WAL butuh exclusive lock sesaat yang langsung gagal tanpa
+  // busy_timeout aktif (audit #09 P1 §27).
+  const db = withBusyRetrySync(() => {
+    const d = new Database(p)
+    try {
+      d.exec(`PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}`)
+    } catch {}
+    return d
+  })
+  if (!db) {
+    throw new Error(
+      `persistence: cannot open sessions.db after ${DB_INIT_ATTEMPTS} busy-retry attempts: ${p}`,
+    )
+  }
   if (!initializedSessionPaths.has(p)) {
     // journal_size_limit + wal_autocheckpoint: WAL tidak tumbuh tak terbatas.
     // Bungkus try/catch DENGAN retry-next-open (audit 2026-09-16): di Windows,
@@ -68,14 +103,18 @@ function open(cwd?: string, local = false): Database {
     // sesi padahal mode rollback-journal tetap bisa baca. Jangan tandai
     // initialized bila gagal agar open berikutnya mencoba lagi (mode WAL
     // persisten di berkas DB, jadi sekali sukses berlaku untuk semua handle).
-    try {
+    // Phase 7: PRAGMA setup ini juga dibungkus withBusyRetrySync karena
+    // peralihan WAL butuh exclusive lock sesaat.
+    const walOk = withBusyRetrySync(() => {
       db.exec(
         `PRAGMA journal_mode=WAL; PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=${LIMITS.SQLITE_WAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=${LIMITS.SQLITE_WAL_AUTOCHECKPOINT_PAGES};`,
       )
       initializedSessionPaths.add(p)
-    } catch (e) {
+      return true
+    })
+    if (walOk === null) {
       process.stderr.write(
-        `[warn] persistence: wal setup deferred, retry next open: ${(e as Error).message}\n`,
+        `[warn] persistence: wal setup deferred, retry next open: ${p}\n`,
       )
     }
     // File DB dibuat dengan 644 default; ubah ke 600 agar history tidak world-readable

@@ -233,6 +233,40 @@ export function watchBudgetLimit(opts: {
   }
 }
 
+export function watchContextWindowLimit(opts: {
+  bus: EventBus
+  /** Batas window konteks (W). Bila 0/undefined → no-op. */
+  windowTokens: number
+  /** Estimasi token INPUT (pesan) pada sesi; output allowance = max(256, W - input). */
+  getInputTokens: () => number
+  /** Token output turn berjalan (dari usage collector). */
+  getOutputTokens: () => number
+  onOver: (allowed: number, actual: number) => void
+}): () => void {
+  const W = opts.windowTokens
+  if (!Number.isFinite(W) || W <= 0) return () => {}
+  let fired = false
+  const check = () => {
+    if (fired) return
+    const input = opts.getInputTokens()
+    const allowedOutput = Math.max(256, Math.floor(W - input))
+    const output = opts.getOutputTokens()
+    if (output > allowedOutput) {
+      fired = true
+      opts.onOver(allowedOutput, output)
+    }
+  }
+  const offExt = opts.bus.on("provider:extension", (e) => {
+    if (e.kind === "usage") check()
+  })
+  check()
+  return () => {
+    try {
+      offExt()
+    } catch {}
+  }
+}
+
 export function createUsageCollector(
   bus: EventBus,
   model?: string,
@@ -298,9 +332,115 @@ export function createUsageCollector(
       ? { inputTokens: seedInput, outputTokens: seedOutput, totalTokens: seedTotal }
       : null
 
+  // [Fase 7 / Live #2] Batas-permintaan (request boundary) untuk akuntansi
+  // token streaming. Provider OpenAI-compat mengirim objek `usage` pada
+  // SETIAP chunk SSE yang membawa total kumulatif untuk permintaan itu
+  // (satu panggilan model = satu "step" kernel = satu `provider.complete()`).
+  // Sebelumnya `usage.ts` MENJUMLAHKAN (`+=`) setiap chunk → token inflasi
+  // ekstrem (uji live: balasan 1 kata "OK" tercatat tokens=142530; padahal
+  // token nyata ~50k).
+  //
+  // DESAIN (delta + overwrite): dalam SATU permintaan, snapshot usage tiap
+  // chunk bersifat KUMULATIF (chunk k punya total utuh permintaan itu, bukan
+  // tambahan per-chunk). Agar (a) nilai turn/session langsung terlihat oleh
+  // watcher budget tanpa menunggu batas step, dan (b) chunk berturut-turut
+  // TIDAK menjumlah, kita terapkan DELTA dari snapshot terakhir per-permintaan:
+  //   - event usage PERTAMA untuk suatu permintaan: terapkan snapshot penuh
+  //   - event usage BERIKUTNYA: terapkan selisih (snapshot_baru − snapshot_lama)
+  // Total bersih = snapshot TERAKHIR (overwrite), bukan penjumlahan chunk.
+  // Pada batas permintaan berikutnya (step:started/turn:started), baseline
+  // di-reset ke snapshot terakhir (yang sudah penuh terlihat).
+  let pendingRequestTokens: {
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
+    cost: number | undefined
+    segModel: string | undefined
+  } | null = null
+  let requestBoundary = 0
+  // totalTokens permintaan yang sedang berjalan. Digunakan untuk mendeteksi
+  // MULAI permintaan BARU dalam satu step yang sama (mis. retry recovery
+  // kernel): total kumulatif streaming hanya bertambah dalam satu permintaan,
+  // jadi nilai yang MENURUN menandakan permintaan baru (bukan chunk lagi).
+  let lastRequestTotal = 0
+
+  // Terapkan snapshot ke turn+session. `prev` = snapshot permintaan yang sama
+  // sebelumnya (null untuk event pertama) — bila ada, hanya SELISIH yang
+  // diterapkan (delta), sehingga chunk kumulatif tidak menjumlah.
+  const applyPending = (p: {
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
+    cost: number | undefined
+    segModel: string | undefined
+  }, prev: typeof p | null): void => {
+    const dInput = prev ? p.inputTokens - prev.inputTokens : p.inputTokens
+    const dOutput = prev ? p.outputTokens - prev.outputTokens : p.outputTokens
+    const dTotal = prev ? p.totalTokens - prev.totalTokens : p.totalTokens
+    const dRead = prev ? p.cacheReadTokens - prev.cacheReadTokens : p.cacheReadTokens
+    const dWrite = prev ? p.cacheWriteTokens - prev.cacheWriteTokens : p.cacheWriteTokens
+    turn.inputTokens += dInput
+    turn.outputTokens += dOutput
+    turn.totalTokens += dTotal
+    turn.cacheReadTokens = (turn.cacheReadTokens ?? 0) + dRead
+    turn.cacheWriteTokens = (turn.cacheWriteTokens ?? 0) + dWrite
+    session.inputTokens += dInput
+    session.outputTokens += dOutput
+    session.totalTokens += dTotal
+    session.cacheReadTokens = (session.cacheReadTokens ?? 0) + dRead
+    session.cacheWriteTokens = (session.cacheWriteTokens ?? 0) + dWrite
+    // Cost: hitung ulang dari snapshot TERAKHIR (delta cost = costBaru − costLama).
+    // costFor dipanggil per snapshot di handler; di sini cukup tambahkan delta
+    // cost bila keduanya terdefinisi. Untuk keandalan, kita simpan cost terakhir
+    // dan terapkan delta terhadap prev.cost.
+    const prevCost = prev?.cost
+    if (prevCost !== undefined && p.cost !== undefined) {
+      turnCost += p.cost - prevCost
+      sessionCost += p.cost - prevCost
+      turnHasCost = true
+      sessionHasCost = true
+    } else if (prevCost === undefined && p.cost !== undefined) {
+      turnCost += p.cost
+      sessionCost += p.cost
+      turnHasCost = true
+      sessionHasCost = true
+    }
+  }
+
+  // Komit permintaan yang sedang berjalan (baseline tetap pada snapshot
+  // terakhir yang sudah penuh terlihat — tidak ada tambahan lagi).
+  const flushPendingRequest = (): void => {
+    pendingRequestTokens = null
+  }
+
+  // Batas permintaan baru → komit snapshot lama, mulai baseline baru.
+  const beginRequest = (): void => {
+    flushPendingRequest()
+    requestBoundary += 1
+  }
+
   try {
     bus.on("turn:completed", () => {
       sessionTurns += 1
+      // Selesaikan snapshot permintaan terakhir di turn ini.
+      flushPendingRequest()
+    })
+  } catch {}
+
+  try {
+    bus.on("turn:started", () => {
+      beginRequest()
+    })
+  } catch {}
+
+  try {
+    bus.on("step:started", () => {
+      // Setiap step kernel = satu panggilan provider = satu batas permintaan.
+      beginRequest()
     })
   } catch {}
 
@@ -343,28 +483,33 @@ export function createUsageCollector(
           : input + output
       lastProviderUsage = { inputTokens: input, outputTokens: output, totalTokens: reportedTotal }
 
-      turn.inputTokens += input
-      turn.outputTokens += output
-      turn.totalTokens += reportedTotal
-      turn.cacheReadTokens = (turn.cacheReadTokens ?? 0) + cRead
-      turn.cacheWriteTokens = (turn.cacheWriteTokens ?? 0) + cWrite
-
-      session.inputTokens += input
-      session.outputTokens += output
-      session.totalTokens += reportedTotal
-      session.cacheReadTokens = (session.cacheReadTokens ?? 0) + cRead
-      session.cacheWriteTokens = (session.cacheWriteTokens ?? 0) + cWrite
-      // Akumulasi biaya per segmen dengan model efektif saat itu
-      const segModel = effectiveModel ?? model
-      if (segModel) {
-        const segCost = costFor(segModel, input, output, cRead, cWrite, segCacheIncluded)
-        if (segCost !== undefined) {
-          turnCost += segCost
-          sessionCost += segCost
-          turnHasCost = true
-          sessionHasCost = true
-        }
+      // [Fase 7 / Live #2] JANGAN `+=` langsung ke turn+session per chunk SSE.
+      // Simpan ke snapshot permintaan yang sedang berjalan dan terapkan DELTA
+      // terhadap snapshot sebelumnya — chunk kumulatif berikutnya MENGGANTI
+      // (overwrite) kontribusi, bukan menjumlah. Nilai turn/session langsung
+      // terlihat oleh watcher budget (delta diterapkan seketika).
+      //
+      // Deteksi batas permintaan dalam step yang sama (recovery/retry kernel):
+      // total kumulatif streaming hanya bertambah dalam satu permintaan, jadi
+      // nilai yang menurun menandakan permintaan baru → komit snapshot lama dulu.
+      if (pendingRequestTokens && reportedTotal < lastRequestTotal) {
+        flushPendingRequest()
+        requestBoundary += 1
       }
+      lastRequestTotal = reportedTotal
+      const segModel = effectiveModel ?? model
+      const segCost = segModel ? costFor(segModel, input, output, cRead, cWrite, segCacheIncluded) : undefined
+      const newSnapshot = {
+        inputTokens: input,
+        outputTokens: output,
+        totalTokens: reportedTotal,
+        cacheReadTokens: cRead,
+        cacheWriteTokens: cWrite,
+        cost: segCost,
+        segModel,
+      }
+      applyPending(newSnapshot, pendingRequestTokens)
+      pendingRequestTokens = newSnapshot
     }
   })
 

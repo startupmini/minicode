@@ -7,6 +7,8 @@ import { loadConfig } from "../config.ts"
 import { LIMITS } from "../constants.ts"
 import { resolveLocalDbPath } from "../lib/db-path.ts"
 import type { RateLimiter } from "../policy/ratelimit.ts"
+import type { NoProgressOptions } from "../policy/no-progress.ts"
+import { evaluateConsequence } from "../policy/consequence-engine.ts"
 import type { WorkMode } from "../policy/work-mode.ts"
 import { buildProviderListAsync } from "../providers/build.ts"
 import { createRouterProvider } from "../providers/router.ts"
@@ -22,15 +24,15 @@ import {
   readWriterEpoch,
   transitionRun,
 } from "../session/persistence.ts"
+import { buildChildResultEnvelope, type ChildStatus } from "../session/verification.ts"
 import {
-  buildChildResultEnvelope,
-  type ChildStatus,
   childStatusOutcomeFlags,
   classifyChildStatus,
   type EffectIntentResult,
   persistEffectIntent,
   persistEffectReceipt,
 } from "../session/verification.ts"
+import type { AceResultSnapshot } from "../session/journal.ts"
 import { withEvidence } from "./evidence.ts"
 import { todoSession } from "./todo.ts"
 
@@ -86,6 +88,11 @@ export interface SubAgentSpec {
    * (live, ikut /model mid-session); opsional agar factory lama tetap jalan.
    */
   model?: string
+  /** [Fase 7 / LOOP-INV-15] Konfigurasi NoProgressDetector anak. Default =
+   *  aktif (createMinicodeSession aktif secara default); field ini
+   *  memungkinkan factory menurunkan ambang thrashing read-only karena anak
+   *  explore/plan memang read-only (stagnasi = perulangan grep/glob). */
+  noProgress?: NoProgressOptions
 }
 
 /** Subset struktural sesi yang dibutuhkan tool ini — tanpa tipe lapisan app. */
@@ -469,6 +476,7 @@ export const delegateTaskTool: Tool = {
     let childStatus: ChildStatus = "failed_to_start"
     let observedSummary: string | null = null
     let observedSteps: number | null = null
+    let childAceVerdict: AceResultSnapshot | null = null
     try {
       const out = await pool.run(async () => {
         ctx.signal.throwIfAborted()
@@ -500,6 +508,14 @@ export const delegateTaskTool: Tool = {
           workMode: childWorkMode,
           maxSteps: cap,
           timeoutMs: LIMITS.SUB_AGENT_TIMEOUT_MS,
+          // [Fase 7 / LOOP-INV-15] NoProgressDetector anak EKSPLISIT (bukan
+          // hanya default aktif): subagent explore/plan memang read-only, jadi
+          // stagnasi yang relevan adalah perulangan read yang tak membuahkan
+          // apa-apa. Ambang diturunkan dari 15 (default) ke 8 agar thrashing
+          // read-only terdeteksi lebih cepat dan anak berhenti deterministik
+          // dengan alasan no_progress_detected (bukan menggantung sampai
+          // SUB_AGENT_TIMEOUT habis).
+          noProgress: { maxConsecutiveReadCalls: 8 },
           // Warisan model parent (audit #14): baca live dari ToolContext agar
           // ikut /model mid-session; absen = default router seperti dulu.
           ...(() => {
@@ -589,6 +605,11 @@ export const delegateTaskTool: Tool = {
           // parent di bawah ini byte-identik dengan sebelum amplop ada.
           childStatus = "returned"
           observedSteps = res.usage?.steps ?? null
+          // String parent BYTE-IDENTIK dengan kontrak P9.2.1 yang lama — jangan
+          // ubah wording di sini karena test mengharapkan exact match. ACE-Lite
+          // verdict tetap tersurat dalam amplop durable (envelope.aceVerdict),
+          // tidak bocor ke observasi parent sebagai string terpisah.
+          childAceVerdict = evaluateConsequence({ verificationPassed: true })
           observedSummary = `sub-agent (${m}) done: ${res.finalText?.slice(0, 2000) ?? "(no output)"} [steps ${res.usage.steps}]`
           return observedSummary
         } catch (e) {
@@ -597,6 +618,14 @@ export const delegateTaskTool: Tool = {
           // terstruktur (tak pernah dari wording pesan); string parent tetap
           // byte-identik, receipt `state` tetap `committed` seperti dulu.
           childStatus = classifyChildStatus(e)
+          // [Fase 7 / LOOP-INV-13/15] ACE verdict untuk jalur error: failure
+          // type dipetakan deterministik dari childStatus → verdict FAIL/BLOCKED
+          // sesuai consequence-engine. `timeout`/`aborted` = timeout; lainnya = functional.
+          childAceVerdict = evaluateConsequence({
+            verificationPassed: false,
+            failureType:
+              childStatus === "aborted" || childStatus === "timeout" ? "timeout" : "functional",
+          })
           observedSummary = `[sub-agent ${m} error] ${msg.slice(0, 500)}`
           return observedSummary
         } finally {
@@ -680,6 +709,7 @@ export const delegateTaskTool: Tool = {
         summary: observedSummary ?? "",
         runId: childRunId,
         steps: observedSteps,
+        ...(childAceVerdict !== null ? { aceVerdict: childAceVerdict } : {}),
       })
       await persistEffectReceipt({
         sessionId: parentId,

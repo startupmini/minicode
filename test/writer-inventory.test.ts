@@ -78,7 +78,17 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // may legitimately be absent/stale; without these lines the operator could not
   // tell whether a `summary-plus-tail` resume was backed by a real projection or
   // silently fell back. Declared, not absorbed, per the rule above.
-  "cli/setup.ts": { max: 38, owner: "diagnostic" },
+  // [Fase 6A] 38 -> 39 for exactly ONE writer: the ACE-Lite consequence-engine
+  // BLOCKED verdict (`[ace] verdict=BLOCKED next_action=…`). A silently swallowed
+  // block would let the operator believe a failed tool step self-healed normally
+  // while the engine actually halted the consequence hunt. Declared, not absorbed.
+  // [Fase 7 / Live #2 & #3] 39 -> 41 for exactly TWO writers: (a) the root
+  // wall-clock timeout refusal (`[timeout] run exceeded root wall-clock timeout`)
+  // and (b) the mid-stream context-window truncation (`[context] stream
+  // truncated: context-window limit reached`). Both abort a turn the operator
+  // asked to bound; a silent abort would read as a hang/hidden cut instead of an
+  // enforced deadline/window. Declared, not absorbed, per the rule above.
+  "cli/setup.ts": { max: 41, owner: "diagnostic" },
   "cli/tui.ts": { max: 9, owner: "screen" },
   // [P2.2] 3 -> 4 for exactly ONE writer: the stale-writer durability
   // diagnostic after a headless run persisted. The ACP success envelope is

@@ -967,13 +967,32 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // ~42 dtk setup berada di luar pagar. Signal root ini dibuat di sini
   // (sebelum setup) dan di-compose ke sinyal turn + diperiksa selama setup,
   // jadi TOTAL_MS benar-benar menghormati batas pengguna.
+  // [Fase 10 / QF] `AbortSignal.timeout()` menembak dengan reason DOMException
+  // (bukan AgentError). `abortError()` kernel lalu mengklasifikasikannya sebagai
+  // "aborted" generik — bukan "timeout" — sehingga `--timeout` yang fire di
+  // tengah provider menggantung melaporkan "Run was aborted" alih-alih
+  // "Run exceeded timeout". Kita buat controller sendiri supaya reason-nya
+  // AgentError("timeout") → kernel mempertahankan identitas timeout.
   const rootTimeoutSignal =
     effectiveTimeoutMs === Infinity || effectiveTimeoutMs === 0
       ? undefined
-      : AbortSignal.timeout(effectiveTimeoutMs)
-  try {
-    ;(rootTimeoutSignal as unknown as { unref?: () => void })?.unref?.()
-  } catch {}
+      : (() => {
+          const rc = new AbortController()
+          const timer = setTimeout(
+            () =>
+              rc.abort(
+                new AgentError(
+                  "timeout",
+                  `run exceeded root wall-clock timeout (${effectiveTimeoutMs}ms)`,
+                ),
+              ),
+            effectiveTimeoutMs,
+          )
+          try {
+            ;(timer as unknown as { unref?: () => void })?.unref?.()
+          } catch {}
+          return rc.signal
+        })()
 
   const permissionMode = allowAll
     ? "allow-all"

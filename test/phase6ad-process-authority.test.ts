@@ -14,6 +14,10 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
+import { isolateHomeForTests } from "./helpers/hermetic-home.ts"
+
+// Hermetic: config global/state mesin tak boleh menentukan provider/model.
+isolateHomeForTests()
 
 const REPO = import.meta.dir.replace(/[\\/]test$/, "").replace(/\\/g, "/")
 

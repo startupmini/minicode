@@ -21,6 +21,7 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | `MINICODE_HOME` | Override home untuk DB lokal/global (sessions + vector); default `~` |
 | `MINICODE_TELEMETRY` | `0`/`false`/`off` → matikan penulisan traces.jsonl |
 | `MINICODE_VERIFY_CMD` | Custom verify command (ganti `detectVerifyCommand`) |
+| `MINICODE_ACE_ENABLED` | `0`/`false`/`off`/`no` → nonaktifkan ACE-Lite consequence engine (rollback instan ke baseline murni, tanpa self-heal loop). Default `true`. Hard-safety/tamper-guard & permission policy TETAP aktif — sakelar ini hanya mematikan evaluasi consequence, bukan batas keamanan |
 | `MINICODE_BASH_ALLOWLIST` | Kustom allowlist bash (koma-pisah, ganti DEFAULT) |
 
 ## Bahasa, diagnosis & kunci

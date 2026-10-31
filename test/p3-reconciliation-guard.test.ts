@@ -48,6 +48,10 @@ import {
 import { SESSION_LEASE_MS } from "../src/task/session-authority.ts"
 import { resetTaskStoreHandles } from "../src/task/store.ts"
 import { startFakeProvider } from "./helpers/fake-provider.ts"
+import { isolateHomeForTests } from "./helpers/hermetic-home.ts"
+
+// Hermetic: config global/state mesin tak boleh menentukan provider/model.
+isolateHomeForTests()
 
 const u = (content: string) => ({ role: "user", content })
 const a = (content: string) => ({ role: "assistant", content })

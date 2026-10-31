@@ -36,7 +36,11 @@ import { loadSession } from "../src/session/persistence.ts"
 import { resetSessionOwnershipForTests } from "../src/task/session-ownership.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 import { type FakeProvider, type FakeReply, startFakeProvider } from "./helpers/fake-provider.ts"
+import { isolateHomeForTests } from "./helpers/hermetic-home.ts"
 import { normalizeSourceEol } from "./helpers/source-eol.ts"
+
+// Hermetic: config global/state mesin tak boleh menentukan provider/model.
+isolateHomeForTests()
 
 const REPO = import.meta.dir.replace(/[\\/]test$/, "").replace(/\\/g, "/")
 

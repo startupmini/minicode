@@ -180,6 +180,11 @@ export function cleanEnvForChild(extra: Record<string, string | undefined> = {})
     if (providerOrControlEnv.test(k)) continue
     out[k] = v
   }
+  // MINICODE_HOME adalah mekanisme ISOLASI home (bukan kebocoran provider/control):
+  // lestarikan agar anak proses ikut hermetic — tanpa ini anak jatuh ke home asli
+  // (`homedir()`) dan membaca config global pemilik, sehingga test fake-provider
+  // memanggil API nyata (lambat / requestCount===0) secara flaky lintas mesin.
+  if (process.env.MINICODE_HOME !== undefined) out.MINICODE_HOME = process.env.MINICODE_HOME
   return { ...out, ...extra }
 }
 

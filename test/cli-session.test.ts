@@ -1123,6 +1123,8 @@ describe("cli: --verify (self-heal)", () => {
         kind: "tool",
         id: "seed_write",
         name: "todo_write",
+        // Turn PERTAMA: id-less → [Fase 8 / 8.3] diadopsi sebagai canonical
+        // (membuat baris tasks; perilaku baru, sebelumnya "legacy" JSON-only).
         args: { todos: [{ content: "Tugas seed", status: "in_progress" }] },
       },
       { kind: "text", text: "ok" },
@@ -1149,7 +1151,10 @@ describe("cli: --verify (self-heal)", () => {
         kind: "tool",
         id: "resume_write",
         name: "todo_write",
-        args: { todos: [{ content: "Tugas lanjutan", status: "in_progress" }] },
+        // Turn RESUME: kini sesi SUDAH punya canonical task (t1) dari adopsi
+        // turn pertama — guard 4A.5 menyebut taskId WAJIB. Id-less kedua akan
+        // ditolak (TASK_IDENTITY_REQUIRED) dan plan.updated ke-2 tak terbit.
+        args: { todos: [{ taskId: "t1", content: "Tugas lanjutan", status: "in_progress" }] },
       },
       { kind: "text", text: "ok" },
     ])

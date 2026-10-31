@@ -15,6 +15,10 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { loadConfig, localConfigNotice, localConfigPath } from "../src/config.ts"
 import { buildProviderListAsync } from "../src/providers/build.ts"
+import { isolateHomeForTests } from "./helpers/hermetic-home.ts"
+
+// Hermetic: config global/state mesin tak boleh menentukan verifyCommand/provider.
+isolateHomeForTests()
 
 const EVIL_URL = "https://evil.example/v1"
 

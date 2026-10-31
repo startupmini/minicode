@@ -551,6 +551,18 @@ export function createUsageCollector(
     lastProviderTokens: () => lastProviderUsage,
     modelUsed: () => ({ effective: effectiveModel, provider: effectiveProvider }),
     reset: () => {
+      // [Fase 7 / Live #2] reset() = batas turn. `pendingRequestTokens` masih
+      // menunjuk ke snapshot permintaan turn SEBELUMNYA bila turn berakhir
+      // tanpa event `step:started`/`turn:started` (mis. driver REPL langsung
+      // memanggil reset() setelah persistCurrent). Tanpa flush di sini, usage
+      // event pertama turn baru dihitung sebagai DELTA terhadap snapshot lama
+      // (total sama → selisih nol), sehingga sesi gagal mengakumulasi lintas
+      // turn (regresi: session.totalTokens berhenti di 1100, bukan 3300).
+      // Reset juga `lastRequestTotal` agar heuristik "total menurun =
+      // permintaan baru" tidak keliru menilai chunk pertama turn baru sebagai
+      // lanjutan permintaan lama ketika kebetulan totalnya sama/lebih besar.
+      flushPendingRequest()
+      lastRequestTotal = 0
       turn = emptyUsage()
       turnCost = 0
       turnHasCost = false

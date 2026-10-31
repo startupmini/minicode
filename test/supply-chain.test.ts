@@ -14,6 +14,10 @@ import { loadConfig } from "../src/config.ts"
 import { shouldRunHooks } from "../src/hooks/run.ts"
 import { gitFilterNeutralizers } from "../src/lib/git-hardening.ts"
 import { formatVerifyNotice } from "../src/policy/verifier.ts"
+import { isolateHomeForTests } from "./helpers/hermetic-home.ts"
+
+// Hermetic: config global/state mesin tak boleh menentukan verifyCommand/provider.
+isolateHomeForTests()
 
 const gitAvailable = spawnSync("git", ["--version"], { stdio: "ignore" }).status === 0
 

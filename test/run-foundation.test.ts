@@ -40,6 +40,10 @@ import {
   tombstoneDeadRuns,
   transitionRun,
 } from "../src/session/persistence.ts"
+import { isolateHomeForTests } from "./helpers/hermetic-home.ts"
+
+// Hermetic: config global/state mesin tak boleh menentukan provider/model.
+isolateHomeForTests()
 
 function ws(withConfig = false): string {
   const dir = mkdtempSync(join(tmpdir(), "mc-p26-"))

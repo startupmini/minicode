@@ -32,6 +32,10 @@ import {
 import { SESSION_LEASE_MS } from "../src/task/session-authority.ts"
 import { TaskStore } from "../src/task/store.ts"
 import { startFakeProvider } from "./helpers/fake-provider.ts"
+import { isolateHomeForTests } from "./helpers/hermetic-home.ts"
+
+// Hermetic: config global/state mesin tak boleh menentukan provider/model.
+isolateHomeForTests()
 
 function ws(): string {
   const dir = mkdtempSync(join(tmpdir(), "mc-p22-"))

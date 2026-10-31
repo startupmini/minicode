@@ -21,6 +21,10 @@ import type { TaskStatus } from "../src/task/model.ts"
 import { resetSessionOwnershipForTests } from "../src/task/session-ownership.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 import { type FakeProvider, startFakeProvider } from "./helpers/fake-provider.ts"
+import { isolateHomeForTests } from "./helpers/hermetic-home.ts"
+
+// Hermetic: config global/state mesin tak boleh menentukan provider/model.
+isolateHomeForTests()
 
 const READ_ONLY = [{ kind: "text" as const, text: "notes.txt mentions SEVENTY_THREE." }]
 /** The model asks for every dangerous capability in turn. */

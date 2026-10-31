@@ -213,12 +213,16 @@ describe("todo_write / todo_read", () => {
         { todos: [{ content: "langkah satu", status: "in_progress" }] },
         ctx,
       )) as string
-      expect(written).toContain("[~] langkah satu")
+      // [Fase 8 / 8.3] id di-adopsi: render memuat prefix `t1 — `.
+      expect(written).toContain("langkah satu")
+      expect(written).toContain("[~]")
       const read = (await todoReadTool.execute({}, ctx)) as string
       expect(read).toContain("langkah satu")
-      expect(await loadTodos("sesi-uji", tmp)).toEqual([
-        { content: "langkah satu", status: "in_progress" },
-      ])
+      // [Fase 8 / 8.3] First id-less write kini DIADOPSI: id dialokasikan
+      // TaskStore dan ditulis balik, jadi item membawa taskId kanonik.
+      const loaded = await loadTodos("sesi-uji", tmp)
+      expect(loaded.map((t) => t.content)).toEqual(["langkah satu"])
+      expect(loaded.map((t) => t.status)).toEqual(["in_progress"])
     } finally {
       todoSession.id = prev.id
       todoSession.cwd = prev.cwd

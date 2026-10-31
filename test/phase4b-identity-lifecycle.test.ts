@@ -462,22 +462,26 @@ test("11. all-id-less reorder of a canonical list is rejected and changes nothin
 // ===========================================================================
 // 12. LEGACY PATH
 // ===========================================================================
-test("12. a genuinely pre-canonical session stays legacy: no bootstrap, no canonical rows", async () => {
+test("12. a genuinely pre-canonical session ADOPTS identity (Fase 8): sync, canonical rows", async () => {
   const dir = await ownedDir()
   // No seed: this session has never had canonical identity.
   const out = await write(dir, [
     { content: "legacy one", status: "pending" },
     { content: "legacy two", status: "pending" },
   ])
-  // Accepted, but nothing canonical was manufactured.
-  expect(out).not.toContain("canonical-tasks")
-  expect(open(dir).listTasks(S)).toEqual([])
-  // And the read path shows no invented ids.
+  // [Fase 8 / 8.3] First id-less write is ADOPTED: canonical state manufactured
+  // so tasks.db is populated (Live Test §3.1 "0 rows" fixed).
+  expect(out).toContain("canonical-tasks")
+  expect(
+    open(dir)
+      .listTasks(S)
+      .map((t) => t.title),
+  ).toEqual(["legacy one", "legacy two"])
+  // Read path now shows the allocated ids.
   const observed = await read(dir)
   expect(observed).toContain("legacy one")
-  expect(observed).not.toMatch(/t\d+\s*—/)
-  // Legacy compatibility is not canonical identity support: the moment canonical
-  // state appears, the same payload is rejected.
+  expect(observed).toMatch(/t\d+\s*—/)
+  // Identity is now canonical; a later identity-blind write is rejected.
   seed(dir, ["legacy one", "legacy two"], S)
   await expect(write(dir, [{ content: "legacy one", status: "pending" }])).rejects.toThrow()
 })

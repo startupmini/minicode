@@ -731,9 +731,7 @@ function handle(cwd?: string): Database {
       return true
     })
     if (walOk === null) {
-      process.stderr.write(
-        `[warn] taskstore: wal setup deferred, retry next open: ${p}\n`,
-      )
+      process.stderr.write(`[warn] taskstore: wal setup deferred, retry next open: ${p}\n`)
     }
     try {
       const { chmodSync } = require("node:fs") as typeof import("node:fs")

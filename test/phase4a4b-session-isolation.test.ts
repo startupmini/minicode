@@ -402,10 +402,12 @@ test("H. with a per-request session the global is never consulted", async () => 
   )) as string
 
   expect(await todoFiles(dir)).toEqual(["ctx-only.json"])
-  expect(new TaskStore(dir).listTasks("ctx-only")).toEqual([])
+  // [Fase 8 / 8.3] First id-less write untuk sesi baru kini DIADOPSI → task
+  // dibuat di store milik sesi ctx (Live Test §3.1: sebelumnya 0 rows).
+  expect(new TaskStore(dir).listTasks("ctx-only").map((t) => t.title)).toEqual(["from-ctx-only"])
   expect(new TaskStore(dir).listTasks("GLOBAL-SHOULD-NEVER-BE-USED")).toEqual([])
-  // No assignment at all here (all-id-less legacy), and no session leak in text.
-  expect(decodeCanonicalAssignments(out, { sessionId: "ctx-only" })).toBeUndefined()
+  // Assignment dipancarkan (id dialokasikan), dan tak ada kebocoran sesi di teks.
+  expect(decodeCanonicalAssignments(out, { sessionId: "ctx-only" })).toBeDefined()
 })
 
 test("H2. the operation context is an immutable snapshot, and prefers ctx over the global", () => {

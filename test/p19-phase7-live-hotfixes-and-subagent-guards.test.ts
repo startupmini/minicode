@@ -18,28 +18,29 @@ import { rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { EventBus } from "#minicore"
-import { openSessionDb } from "../src/session/persistence.ts"
-import { TaskStore, resetTaskStoreHandles } from "../src/task/store.ts"
+import { createCliSession } from "../cli/setup.ts"
+import { Pool } from "../src/agents/pool.ts"
+import { LIMITS } from "../src/constants.ts"
 import {
-  createUsageCollector,
-  watchContextWindowLimit,
-} from "../src/policy/usage.ts"
+  embedTexts,
+  resetEmbeddingCircuitBreaker,
+  tripEmbeddingCircuitForTest,
+} from "../src/memory/vector.ts"
 import { createCalibratedEstimator } from "../src/policy/context.ts"
+import { createUsageCollector, watchContextWindowLimit } from "../src/policy/usage.ts"
+import {
+  type ChildResultEnvelope,
+  type JournalRecord,
+  loadJournal,
+} from "../src/session/journal.ts"
+import { openSessionDb } from "../src/session/persistence.ts"
+import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 import {
   clearSubAgentSessionFactory,
   delegateTaskTool,
   type SubAgentSpec,
   setSubAgentSessionFactory,
 } from "../src/tools/task.ts"
-import { Pool } from "../src/agents/pool.ts"
-import { LIMITS } from "../src/constants.ts"
-import {
-  type ChildResultEnvelope,
-  type JournalRecord,
-  loadJournal,
-} from "../src/session/journal.ts"
-import { resetEmbeddingCircuitBreaker, tripEmbeddingCircuitForTest, embedTexts } from "../src/memory/vector.ts"
-import { createCliSession } from "../cli/setup.ts"
 import { todoSession } from "../src/tools/todo.ts"
 
 const dirs: string[] = []

@@ -382,15 +382,13 @@ export interface AceResultSnapshot {
  * `runId`/`steps` null bila memang tak tersedia di jalur itu.
  * ACE verdict opsional: bila ada, disimpan bersama outcome untuk auditability.
  */
-export function buildChildResultEnvelope(
-  input: {
-    childStatus: ChildStatus
-    summary: string
-    runId: string | null
-    steps: number | null
-    aceVerdict?: AceResultSnapshot
-  },
-): ChildResultEnvelope {
+export function buildChildResultEnvelope(input: {
+  childStatus: ChildStatus
+  summary: string
+  runId: string | null
+  steps: number | null
+  aceVerdict?: AceResultSnapshot
+}): ChildResultEnvelope {
   const clean = scrubSecrets(input.summary)
   const truncated = clean.length > CHILD_RESULT_SUMMARY_MAX
   return {

@@ -6,14 +6,15 @@ import { Pool } from "../agents/pool.ts"
 import { loadConfig } from "../config.ts"
 import { LIMITS } from "../constants.ts"
 import { resolveLocalDbPath } from "../lib/db-path.ts"
-import type { RateLimiter } from "../policy/ratelimit.ts"
-import type { NoProgressOptions } from "../policy/no-progress.ts"
 import { evaluateConsequence } from "../policy/consequence-engine.ts"
+import type { NoProgressOptions } from "../policy/no-progress.ts"
+import type { RateLimiter } from "../policy/ratelimit.ts"
 import type { WorkMode } from "../policy/work-mode.ts"
 import { buildProviderListAsync } from "../providers/build.ts"
 import { createRouterProvider } from "../providers/router.ts"
 import type { ProductionExecutionRunner } from "../runtime/production-execution.ts"
 import { acquireSessionWriter, releaseSessionWriter } from "../session/authority.ts"
+import type { AceResultSnapshot } from "../session/journal.ts"
 import {
   allocateChildSessionId,
   completeRun,
@@ -24,15 +25,15 @@ import {
   readWriterEpoch,
   transitionRun,
 } from "../session/persistence.ts"
-import { buildChildResultEnvelope, type ChildStatus } from "../session/verification.ts"
 import {
+  buildChildResultEnvelope,
+  type ChildStatus,
   childStatusOutcomeFlags,
   classifyChildStatus,
   type EffectIntentResult,
   persistEffectIntent,
   persistEffectReceipt,
 } from "../session/verification.ts"
-import type { AceResultSnapshot } from "../session/journal.ts"
 import { withEvidence } from "./evidence.ts"
 import { todoSession } from "./todo.ts"
 

@@ -369,15 +369,18 @@ export function createUsageCollector(
   // Terapkan snapshot ke turn+session. `prev` = snapshot permintaan yang sama
   // sebelumnya (null untuk event pertama) — bila ada, hanya SELISIH yang
   // diterapkan (delta), sehingga chunk kumulatif tidak menjumlah.
-  const applyPending = (p: {
-    inputTokens: number
-    outputTokens: number
-    totalTokens: number
-    cacheReadTokens: number
-    cacheWriteTokens: number
-    cost: number | undefined
-    segModel: string | undefined
-  }, prev: typeof p | null): void => {
+  const applyPending = (
+    p: {
+      inputTokens: number
+      outputTokens: number
+      totalTokens: number
+      cacheReadTokens: number
+      cacheWriteTokens: number
+      cost: number | undefined
+      segModel: string | undefined
+    },
+    prev: typeof p | null,
+  ): void => {
     const dInput = prev ? p.inputTokens - prev.inputTokens : p.inputTokens
     const dOutput = prev ? p.outputTokens - prev.outputTokens : p.outputTokens
     const dTotal = prev ? p.totalTokens - prev.totalTokens : p.totalTokens
@@ -498,7 +501,9 @@ export function createUsageCollector(
       }
       lastRequestTotal = reportedTotal
       const segModel = effectiveModel ?? model
-      const segCost = segModel ? costFor(segModel, input, output, cRead, cWrite, segCacheIncluded) : undefined
+      const segCost = segModel
+        ? costFor(segModel, input, output, cRead, cWrite, segCacheIncluded)
+        : undefined
       const newSnapshot = {
         inputTokens: input,
         outputTokens: output,

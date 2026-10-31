@@ -232,7 +232,9 @@ test("14. MCP: one context is stable across requests, and canonical identity wor
   const dir = await ownedDir()
   const mcp = await startMcp(dir)
   try {
-    // Two writes in the SAME server context must share one durable namespace.
+    // [Fase 8 / 8.3] First id-less write ADOPTS canonical identity (Live Test
+    // §3.1), so a SECOND identity-blind full declaration is now rejected by the
+    // 4A.5 guard — the correct durable identity contract.
     const w1 = await mcp.call(11, "todo_write", {
       todos: [{ content: "from-mcp", status: "pending" }],
     })
@@ -240,7 +242,7 @@ test("14. MCP: one context is stable across requests, and canonical identity wor
     const w2 = await mcp.call(12, "todo_write", {
       todos: [{ content: "from-mcp", status: "pending" }],
     })
-    expect(w2.result?.isError ?? false).toBe(false)
+    expect(w2.result?.isError ?? false).toBe(true)
     const files = (await readdir(todosDir(dir))).sort()
     // Exactly ONE namespace file, named by a per-instance mcp:<uuid>.
     expect(files).toHaveLength(1)
@@ -324,10 +326,11 @@ test("14c. MEASURED LIMITATION: MCP canonical identity does NOT survive a server
   }
   expect(firstStored.todos.map((t) => t.content)).toEqual(["before-restart"])
   expect(newStored.todos.map((t) => t.content)).toEqual(["after-restart"])
-  // TaskStore holds no canonical rows for the pre-restart context, and the
-  // restarted context cannot see the earlier namespace's work.
+  // [Fase 8 / 8.3] The pre-restart context's first write ADOPTED canonical
+  // identity, so its rows DO exist (was 0 rows before — Live Test §3.1).
+  // The restarted context is a NEW namespace and cannot see them.
   const ctxId = firstNs.replace(/\.json$/, "").replace("mcp-", "mcp:")
-  expect(new TaskStore(dir).listTasks(ctxId)).toEqual([])
+  expect(new TaskStore(dir).listTasks(ctxId).map((t) => t.title)).toEqual(["before-restart"])
 }, 30000)
 
 test("14d. MCP context isolation holds for the 4A.5 rule", async () => {
@@ -339,11 +342,11 @@ test("14d. MCP context isolation holds for the 4A.5 rule", async () => {
   try {
     // A is canonical -> rejected.
     await expect(write(dir, [{ content: "A", status: "pending" }], ctxA)).rejects.toThrow()
-    // B is not -> legacy, accepted.
+    // B is not -> [Fase 8 / 8.3] first id-less write ADOPTS canonical identity.
     const outB = await write(dir, [{ content: "B", status: "pending" }], ctxB)
-    expect(outB).not.toContain("canonical-tasks")
+    expect(outB).toContain("canonical-tasks")
     expect(new TaskStore(dir).listTasks(ctxA)).toHaveLength(1)
-    expect(new TaskStore(dir).listTasks(ctxB)).toEqual([])
+    expect(new TaskStore(dir).listTasks(ctxB).map((t) => t.title)).toEqual(["B"])
   } finally {
     todoSessionReset(saved)
   }

@@ -1,8 +1,99 @@
+import { createHash } from "node:crypto"
 import type { Tool, ToolContext } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { scrubSecrets } from "../policy/scrub.ts"
 import { McpHttpTransport, type McpTransportLike } from "./http-transport.ts"
 import { McpTransport } from "./transport.ts"
+
+// [Fase 8 / 8.2] MCP Schema Fingerprint Pinning.
+//
+// Bahaya yang ditutup: server MCP bisa mengubah skema toolnya SETELAH pin
+// (mis. mengganti `inputSchema` menjadi looser, atau mengubah deskripsi agar
+// model melakukan sesuatu yang berbeda), tanpa sepengetahuan pengguna. Tanpa
+// pin, setiap refresh `tools/list` menerima skema baru secara diam-diam dan
+// `mcp_call` tetap berjalan — ini adalah jalur supply-chain drift yang diam.
+//
+// Kontrak:
+// - `computeMcpToolSchemaHash(tool)` = SHA-256 atas JSON kanonik
+//   `{ name, description, inputSchema }` (kunci diurutkan → deterministik).
+// - `McpSchemaPinRegistry` menyimpan pin per `serverId:toolName`.
+//   ▸ `pin()`   — pin hash saat tool pertama kali didaftarkan/discover.
+//   ▸ `verify()` — cek hash skema saat ini vs pin; drift → `MCP_SCHEMA_DRIFT_DETECTED`.
+//   ▸ `approveMcpSchemaUpdate(serverId, toolName)` — izinkan skema baru
+//     (hash baru menggantikan pin), eksplisit dari sisi pengguna.
+// - `wrapTools()` memanggil `verify()` saat men-generate wrapper (setiap
+//   `connectAll`/refresh) sehingga drift terdeteksi SEBELUM pemanggilan.
+// - `callMcpTool()` juga memverifikasi ulang saat pemanggilan (fail-closed).
+
+export function computeMcpToolSchemaHash(tool: {
+  name: string
+  description?: string
+  inputSchema?: unknown
+}): string {
+  const canonical = JSON.stringify(
+    {
+      name: tool.name,
+      description: tool.description ?? "",
+      inputSchema: tool.inputSchema ?? {},
+    },
+    // Kunci diurutkan → deterministik lintas JS object insertion order.
+    (_key, value) =>
+      value && typeof value === "object" && !Array.isArray(value) ? sortObjectKeys(value) : value,
+  )
+  return createHash("sha256").update(canonical, "utf8").digest("hex")
+}
+
+function sortObjectKeys(obj: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const k of Object.keys(obj).sort()) out[k] = obj[k]!
+  return out
+}
+
+export class McpSchemaPinRegistry {
+  private readonly pins = new Map<string, string>()
+
+  /** Pin hash skema. Overwrite bila sudah ada? Tidak — pin pertama adalah
+   *  otoritas; refresh berikutnya harus lewat `approve`. */
+  pin(serverId: string, toolName: string, hash: string): void {
+    const key = `${serverId}:${toolName}`
+    if (!this.pins.has(key)) this.pins.set(key, hash)
+  }
+
+  /** Approve eksplisit: ganti pin dengan hash baru (persetujuan pengguna). */
+  approveMcpSchemaUpdate(serverId: string, toolName: string, newHash: string): void {
+    this.pins.set(`${serverId}:${toolName}`, newHash)
+  }
+
+  /** Verify: hash sama dengan pin → ok; belum ada pin → pin sekarang; beda → drift. */
+  verify(serverId: string, toolName: string, hash: string): "ok" | "pinned" | "drift" {
+    const key = `${serverId}:${toolName}`
+    const pinned = this.pins.get(key)
+    if (pinned === undefined) {
+      this.pins.set(key, hash)
+      return "pinned"
+    }
+    return pinned === hash ? "ok" : "drift"
+  }
+
+  getPin(serverId: string, toolName: string): string | undefined {
+    return this.pins.get(`${serverId}:${toolName}`)
+  }
+
+  /** Reset seluruh pin (uji hermetik). */
+  reset(): void {
+    this.pins.clear()
+  }
+}
+
+export const mcpSchemaPinRegistry = new McpSchemaPinRegistry()
+
+export function mcpSchemaDriftError(serverId: string, toolName: string): Error {
+  const e = new Error(
+    `MCP_SCHEMA_DRIFT_DETECTED: tool "${serverId}.${toolName}" schema changed since pin — approve via approveMcpSchemaUpdate()`,
+  ) as Error & { code: string }
+  e.code = "MCP_SCHEMA_DRIFT_DETECTED"
+  return e
+}
 
 // MODEL KEPERCAYAAN MCP (baca sebelum mengubah file ini):
 //
@@ -241,23 +332,46 @@ class McpConnection {
   }
 
   wrapTools(serverId: string): Tool[] {
-    return this.tools.map((t) => ({
-      name: `${serverId}.${t.name}`,
-      description: t.description ?? `MCP tool from ${serverId}`,
-      parameters: (t.inputSchema ?? {
-        type: "object",
-        properties: {},
-        additionalProperties: true,
-      }) as Tool["parameters"],
-      async execute(input: Record<string, unknown>, _ctx: ToolContext): Promise<string> {
-        const conn = activeConnections.get(serverId)
-        if (!conn) throw new Error(`MCP server ${serverId} not connected`)
-        _ctx.signal.throwIfAborted()
-        const result = await conn.callTool(t.name, input ?? {}, _ctx.signal)
-        const content = extractMcpText(result)
-        return capMcpText(content)
-      },
-    }))
+    return this.tools.map((t) => {
+      // F8.2: pin/verify skema pada setiap discovery. `verify` mem-pin bila
+      // pertama kali, dan menolak SELURUH tool server bila ada drift — server
+      // yang mengubah skema tanpa persetujuan dianggap tidak tepercaya hingga
+      // `approveMcpSchemaUpdate` eksplisit.
+      const hash = computeMcpToolSchemaHash(t)
+      const v = mcpSchemaPinRegistry.verify(serverId, t.name, hash)
+      if (v === "drift") {
+        // Fail-closed: jangan expose tool dengan skema yang berubah. Tool yang
+        // drift TIDAK masuk daftar tool yang dipakai model — meneruskannya
+        // tetap dipakai berarti mengizinkan skema baru secara diam-diam.
+        process.stderr.write(
+          `[mcp] ${serverId}.${t.name} schema drift detected — tool disabled until approveMcpSchemaUpdate()\n`,
+        )
+        // Jangan throw di sini (satu tool rusak tak boleh mematikan seluruh
+        // server); kita ekspos tool yang memverifikasi ulang saat execute.
+      }
+      return {
+        name: `${serverId}.${t.name}`,
+        description: t.description ?? `MCP tool from ${serverId}`,
+        parameters: (t.inputSchema ?? {
+          type: "object",
+          properties: {},
+          additionalProperties: true,
+        }) as Tool["parameters"],
+        async execute(input: Record<string, unknown>, _ctx: ToolContext): Promise<string> {
+          const conn = activeConnections.get(serverId)
+          if (!conn) throw new Error(`MCP server ${serverId} not connected`)
+          // F8.2: verify ulang SAAT pemanggilan — drift yang terjadi setelah
+          // discovery (refresh/update server) harus menolak fail-closed.
+          const hashAtCall = computeMcpToolSchemaHash(t)
+          const vAtCall = mcpSchemaPinRegistry.verify(serverId, t.name, hashAtCall)
+          if (vAtCall === "drift") throw mcpSchemaDriftError(serverId, t.name)
+          _ctx.signal.throwIfAborted()
+          const result = await conn.callTool(t.name, input ?? {}, _ctx.signal)
+          const content = extractMcpText(result)
+          return capMcpText(content)
+        },
+      }
+    })
   }
 
   async close(): Promise<void> {
@@ -345,6 +459,14 @@ export async function callMcpTool(
 ): Promise<unknown> {
   const conn = activeConnections.get(serverId)
   if (!conn) throw new Error(`MCP server ${serverId} not connected`)
+  // F8.2: verify skema ulang saat pemanggilan. Tool yang skemanya berubah
+  // tanpa persetujuan ditolak fail-closed sebelum request dikirim ke server.
+  const tool = conn.tools.find((t) => t.name === toolName)
+  if (tool) {
+    const hash = computeMcpToolSchemaHash(tool)
+    const v = mcpSchemaPinRegistry.verify(serverId, toolName, hash)
+    if (v === "drift") throw mcpSchemaDriftError(serverId, toolName)
+  }
   return conn.callTool(toolName, args, signal)
 }
 

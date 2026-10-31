@@ -128,11 +128,20 @@ export function synchronizeCanonicalTasks(opts: {
    * `VERIFYING -> COMPLETED` dan menyimpan `evidence_json`.
    */
   verificationOutcome?: VerificationGateOutcome
+  /**
+   * [Fase 8 / 8.3] Izinkan payload all-id-less di-adopsi sebagai canonical
+   * saat sesi BELUM punya identitas kanonik sama sekali (belum ada baris
+   * tasks). Tanpa ini, `todo_write` pertama yang memakai payload tanpa `taskId`
+   * tidak pernah masuk `tasks.db` → Live Test §3.1 (`0 rows`). Setiap item
+   * id-less dianggap task baru dan id dialokasikan oleh TaskStore.
+   */
+  adoptIdlessAsNew?: boolean
 }): CanonicalSyncResult {
-  const { cwd, sessionId, declared, verificationOutcome } = opts
+  const { cwd, sessionId, declared, verificationOutcome, adoptIdlessAsNew } = opts
 
-  // All-id-less: legacy behaviour, untouched. No adoption, no allocation.
-  if (!hasCanonicalIdentity(declared)) {
+  // All-id-less: legacy behaviour, untouched — KECUALI caller meminta adopsi
+  // (first canonical write). No adoption, no allocation bila tidak diminta.
+  if (!hasCanonicalIdentity(declared) && !adoptIdlessAsNew) {
     return {
       applied: false,
       reason: "legacy-idless-payload",

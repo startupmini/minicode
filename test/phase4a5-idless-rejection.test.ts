@@ -99,17 +99,21 @@ function build(dir: string, sessionId = S) {
 }
 
 // ---------------------------------------------------------------------------
-// A. no canonical tasks + all-id-less -> LEGACY preserved
+// A. no canonical tasks + all-id-less -> ADOPTED (Fase 8 / 8.3)
 // ---------------------------------------------------------------------------
-test("A. all-id-less with NO canonical identity stays legacy and creates nothing", async () => {
+// PHASE 8 BEHAVIOUR CHANGE (Live Test §3.1): the old contract kept an id-less
+// first write as "legacy" (JSON-only, 0 TaskStore rows). That is exactly the
+// "0 rows" defect. Fase 8 now ADOPTS the first id-less write for a session with
+// no canonical identity yet: ids are allocated and the store is populated.
+test("A. all-id-less with NO canonical identity is adopted: sync + assignment", async () => {
   const dir = await ownedDir()
   expect(hasCanonicalTasks(dir, S)).toBe(false)
   const out = await write(dir, [{ content: "pure legacy", status: "pending" }])
-  // No rejection, no assignment, no canonical state invented.
-  expect(out).not.toContain("canonical-tasks")
-  expect(decodeCanonicalAssignments(out, { sessionId: S })).toBeUndefined()
-  expect(rows(dir)).toEqual([])
-  expect(hasCanonicalTasks(dir, S)).toBe(false)
+  // No rejection; adoption emits assignment and canonical state.
+  expect(out).toContain("canonical-tasks")
+  expect(decodeCanonicalAssignments(out, { sessionId: S })).toBeDefined()
+  expect(rows(dir).map((t) => t.title)).toEqual(["pure legacy"])
+  expect(hasCanonicalTasks(dir, S)).toBe(true)
 })
 
 // ---------------------------------------------------------------------------
@@ -275,7 +279,7 @@ test("L. a rejected write publishes no plan, and certainly no v2", async () => {
 // ---------------------------------------------------------------------------
 // M. MCP context isolation
 // ---------------------------------------------------------------------------
-test("M. the rule is per MCP context: A rejects, B stays legacy", async () => {
+test("M. the rule is per MCP context: A rejects, B adopts (Fase 8)", async () => {
   const dir = await ownedDir()
   const ctxA = newMcpContextId()
   const ctxB = newMcpContextId()
@@ -289,10 +293,11 @@ test("M. the rule is per MCP context: A rejects, B stays legacy", async () => {
     // A: rejected.
     await expect(write(dir, REORDER_IDLESS, ctxA)).rejects.toThrow()
     expect(rows(dir, ctxA)).toHaveLength(3)
-    // B: legacy, allowed, and it did not touch A's namespace.
+    // B: [Fase 8 / 8.3] id-less first write untuk B kini DIADOPSI (bukan legacy
+    // JSON-only) sehingga tasks B tak lagi 0 rows; namespace A tak tersentuh.
     const outB = await write(dir, [{ content: "legacy in B", status: "pending" }], ctxB)
-    expect(outB).not.toContain("canonical-tasks")
-    expect(rows(dir, ctxB)).toEqual([])
+    expect(outB).toContain("canonical-tasks")
+    expect(rows(dir, ctxB).map((t) => t.title)).toEqual(["legacy in B"])
     expect(rows(dir, ctxA).map((t) => t.id)).toEqual(["t1", "t2", "t3"])
     expect(existsSync(todoFile(dir, `${ctxA.replace(/:/g, "-")}.json`))).toBe(false)
   } finally {
@@ -340,10 +345,12 @@ test("P. hasCanonicalTasks counts every status and ignores the legacy JSON", asy
   const dir = await ownedDir()
   // No store, no JSON at all -> not canonical.
   expect(hasCanonicalTasks(dir, S)).toBe(false)
-  // A legacy JSON file alone must NOT make it canonical.
+  // [Fase 8 / 8.3] first id-less write adopts canonical identity, so the store
+  // is populated (was 0 rows before). The predicate must still be answered by
+  // TASKSTORE, not the JSON file: here both change, so we assert the rows exist.
   await write(dir, [{ content: "legacy only", status: "pending" }])
   expect(existsSync(todoFile(dir))).toBe(true)
-  expect(hasCanonicalTasks(dir, S)).toBe(false)
+  expect(hasCanonicalTasks(dir, S)).toBe(true)
   // Completed / cancelled / blocked rows still count as canonical identity.
   const store = new TaskStore(dir)
   for (const [i, status] of (["COMPLETED", "CANCELLED", "BLOCKED"] as const).entries()) {

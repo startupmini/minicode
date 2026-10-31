@@ -699,7 +699,19 @@ export const todoWriteTool: Tool = {
     // its output is byte-identical to what it was before this phase.
     let assignment: CanonicalAssignmentTable | undefined
     const holdInVerifying = evidence.verdict === "unverified" && evidence.requireVerified === true
-    if (hasCanonicalIdentity(list)) {
+    // [Fase 8 / 8.3] Todo→TaskStore sync untuk payload all-id-less.
+    //
+    // Live Test §3.1: `todo_write` dengan payload tanpa `taskId` (all-id-less)
+    // TIDAK pernah menyinkronkan ke `.minicode/tasks.db` → query tasks selalu
+    // `0 rows`. `synchronizeCanonicalTasks` sengaja menolak payload id-less
+    // (legacy). Namun untuk sesi yang BELUM punya identitas kanonik sama sekali
+    // (belum ada baris tasks), payload id-less adalah deklarasi pertama — item
+    // di dalamnya memang task baru, jadi mengalokasikan id via TaskStore adalah
+    // aman dan justru menghilangkan `0 rows`. Guard 4A.5 (reject id-less bila
+    // canonical tasks sudah ada) tetap berjalan di atas — jadi alur ini hanya
+    // menjangkau sesi yang benar-benar baru (dup yang sudah ada tetap ditolak).
+    const firstCanonicalWrite = !hasCanonicalIdentity(list) && !hasCanonicalTasks(cwd, sessionId)
+    if (hasCanonicalIdentity(list) || firstCanonicalWrite) {
       try {
         const sync = synchronizeCanonicalTasks({
           cwd,
@@ -711,6 +723,7 @@ export const todoWriteTool: Tool = {
             ...(t.blockedReason ? { blockedReason: t.blockedReason } : {}),
             ...(holdInVerifying && rawDeclaredCompleted.has(idx) ? { holdVerifying: true } : {}),
           })),
+          ...(firstCanonicalWrite ? { adoptIdlessAsNew: true } : {}),
           ...(evidence.verdict === "passed"
             ? {
                 verificationOutcome: {

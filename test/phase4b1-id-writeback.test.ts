@@ -135,22 +135,23 @@ test("3. the write result itself names the created id, and still carries the ass
 })
 
 // ---------------------------------------------------------------------------
-// 4. the legacy all-id-less path is untouched
+// 4. [Fase 8 / 8.3] the first id-less write ADOPTS identity
 // ---------------------------------------------------------------------------
-test("4. a pre-canonical session writes no ids and performs no second write", async () => {
+test("4. a pre-canonical session ADOPTS identity: writes ids, syncs TaskStore", async () => {
   const dir = await ownedDir()
-  // No canonical identity, so the legacy path runs and mints nothing.
+  // No canonical identity: Fase 8 adopts (was legacy/mint-nothing before).
   const out = (await todoWriteTool.execute(
     { todos: [{ content: "legacy", status: "pending" }] } as never,
     opCtx(dir),
   )) as string
-  expect(out).not.toContain("canonical-tasks")
-  expect(out).not.toMatch(/t\d+\s*—/)
+  expect(out).toContain("canonical-tasks")
+  expect(out).toMatch(/t\d+\s*—/)
   const raw = await readFile(join(dir, ".minicode", "todos", `${S}.json`), "utf8")
-  expect(raw).not.toContain("taskId")
-  expect(rows(dir)).toEqual([])
-  // No plan snapshot identity was invented either.
-  expect(await planMd(dir)).not.toMatch(/t\d+\s*—/)
+  expect(raw).toContain("taskId")
+  expect(rows(dir).map((t) => t.title)).toEqual(["legacy"])
+  // The plan markdown is a human-readable snapshot and never carried taskId
+  // (identity lives in the JSON + TaskStore, not the rendered plan).
+  expect(await planMd(dir)).toContain("legacy")
 })
 
 // ---------------------------------------------------------------------------

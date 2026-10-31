@@ -53,7 +53,10 @@ export interface CalibratedEstimator {
    *  provider `totalTokens`. Mencatat sampel dan menyesuaikan faktor kalibrasi
    *  deterministik; mengembalikan snapshot terbaru. Nama eksplisit agar test
    *  (dan telemetri) bisa memanggilnya tanpa bergantung pada event bus. */
-  recordTokenCalibrationSample(estimatedTokens: number, providerActualTokens: number): TokenCalibrationSnapshot
+  recordTokenCalibrationSample(
+    estimatedTokens: number,
+    providerActualTokens: number,
+  ): TokenCalibrationSnapshot
   /** [Fase 7 / CTX-03 / U2] Rasio drift terakhir: actual / max(1, estimated). */
   lastDriftRatio(): number
 }
@@ -116,9 +119,7 @@ export function createCalibratedEstimator(opts: { maxFactor?: number } = {}): Ca
     },
     recordTokenCalibrationSample(estimatedTokens, providerActualTokens) {
       const local =
-        Number.isFinite(estimatedTokens) && estimatedTokens > 0
-          ? Math.ceil(estimatedTokens)
-          : 0
+        Number.isFinite(estimatedTokens) && estimatedTokens > 0 ? Math.ceil(estimatedTokens) : 0
       const actual =
         Number.isFinite(providerActualTokens) && providerActualTokens > 0
           ? Math.ceil(providerActualTokens)

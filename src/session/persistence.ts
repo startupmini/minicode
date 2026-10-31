@@ -113,9 +113,7 @@ function open(cwd?: string, local = false): Database {
       return true
     })
     if (walOk === null) {
-      process.stderr.write(
-        `[warn] persistence: wal setup deferred, retry next open: ${p}\n`,
-      )
+      process.stderr.write(`[warn] persistence: wal setup deferred, retry next open: ${p}\n`)
     }
     // File DB dibuat dengan 644 default; ubah ke 600 agar history tidak world-readable
     try {

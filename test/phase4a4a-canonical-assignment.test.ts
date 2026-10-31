@@ -489,35 +489,40 @@ test("K. the assignment channel holds no module-level mutable state", async () =
 })
 
 // ---------------------------------------------------------------------------
-// L. the legacy all-id-less path is untouched
+// L. [FASE 8 / 8.3] first id-less payload now ADOPTS canonical identity
 // ---------------------------------------------------------------------------
-// PHASE 4A.5 FIXTURE CORRECTION. This test used to seed canonical tasks and then
-// write an all-id-less payload into that same session. That is exactly the case
-// 4A.5 now REJECTS, so the fixture no longer described the legacy path. The
-// intent - "the legacy path is unchanged" - is preserved by using a session with
-// NO canonical identity, which is precisely what LEGACY means. The complementary
-// case (canonical tasks + all-id-less) is proven in the 4A.5 suite, not here.
-test("L. an all-id-less payload with no canonical identity stays legacy: no sync, no assignment", async () => {
+// PHASE 8 FIXTURE CORRECTION (replaces the Phase 4A.5 "stays legacy" contract).
+// Live Test §3.1: `todo_write` all-id-less pada sesi baru tidak pernah
+// menyinkronkan ke `tasks.db` → query tasks selalu `0 rows`. Fase 8 membalik
+// perilaku itu: payload id-less PERTAMA pada sesi yang belum punya identitas
+// kanonik DIADOPSI sebagai task baru (ids dialokasikan TaskStore), sehingga
+// tasks tak lagi kosong. Guard 4A.5 (reject id-less bila canonical tasks sudah
+// ada) tetap utuh — hanya jalur sesi-benar-benar-baru yang berubah.
+test("L. an all-id-less first payload with no canonical identity is adopted: sync + assignment", async () => {
   const dir = await ownedDir()
-  // NO seed: this session has never had canonical identity, so it is LEGACY.
+  // NO seed: this session has never had canonical identity.
   const todos = [
     { content: "legacy one", status: "pending" },
     { content: "legacy two", status: "pending" },
   ]
   const out = await runTodoWrite(dir, todos)
-  // No assignment is emitted at all - nothing to decode, and nothing invented.
-  expect(decodeCanonicalAssignments(out, { sessionId: S })).toBeUndefined()
-  expect(out).not.toContain("canonical-tasks")
-  // Nothing was adopted, allocated or created: the store is still empty.
+  // Fase 8: assignment dipancarkan (id dialokasikan untuk tiap item baru).
+  expect(decodeCanonicalAssignments(out, { sessionId: S })).toBeDefined()
+  expect(out).toContain("canonical-tasks")
+  // Item diadopsi & dibuat: store tak lagi kosong (Live Test §3.1 FIXED).
   const store = new TaskStore(dir)
-  expect(store.listTasks(S)).toEqual([])
-  // The legacy JSON file holds exactly the id-less payload, at its real path
-  // (`.minicode/todos/<sanitized-session>.json`).
+  expect(store.listTasks(S).length).toBe(2)
+  expect(store.listTasks(S).map((t) => t.title)).toEqual(["legacy one", "legacy two"])
+  // The legacy JSON file now carries the resolved taskIds (identity round-trip).
   const raw = await readFile(join(dir, ".minicode", "todos", `${S}.json`), "utf8")
-  const parsed = JSON.parse(raw) as { sessionId: string; todos: Array<{ content: string }> }
+  const parsed = JSON.parse(raw) as {
+    sessionId: string
+    todos: Array<{ content: string; taskId?: string }>
+  }
   expect(parsed.sessionId).toBe(S)
   expect(parsed.todos.map((t) => t.content)).toEqual(["legacy one", "legacy two"])
-  expect(raw).not.toContain("taskId")
+  expect(parsed.todos.every((t) => typeof t.taskId === "string")).toBe(true)
+  expect(raw).toContain("taskId")
 })
 
 // ---------------------------------------------------------------------------

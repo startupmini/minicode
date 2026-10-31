@@ -74,161 +74,192 @@ function makeWaiter(
 }
 
 export function parallelExecutor(
-  opts: { concurrency?: number; writeConcurrency?: number } = {},
+  opts: { concurrency?: number; writeConcurrency?: number; maxToolsPerBatch?: number } = {},
 ): ToolExecutor {
   const concurrency = opts.concurrency ?? LIMITS.EXECUTOR_CONCURRENCY
   const writeConcurrency = opts.writeConcurrency ?? LIMITS.EXECUTOR_WRITE_CONCURRENCY
+  // [Fase 8 / 8.3] Batas tool per batch. Bila disetel (>0), batch yang
+  // melebihi batas dipangkas: tool yang melampaui batas TIDAK dieksekusi dan
+  // diganti hasil tool-error dengan pesan `[batch limit reached: maxToolsPerBatch=...]`.
+  // Mencegah eksekusi berlebih dalam satu batch (Live Test: model mengirim
+  // puluhan tool call sekaligus yang membakar budget tanpa hasil berguna).
+  const maxToolsPerBatch = opts.maxToolsPerBatch ?? 0
+
+  async function runBatch(
+    calls: readonly ToolCall[],
+    deps: ExecutorDeps,
+  ): Promise<readonly ToolResult[]> {
+    if (calls.length === 0) return []
+    const results: (ToolResult | undefined)[] = new Array(calls.length)
+
+    // write+baca campur → sekuensial urut input: read setelah write pada file
+    // sama harus melihat konten baru (paralel akan balapan). Perilaku P4 yang
+    // dibekukan.
+    const anyWrite = calls.some(isWrite)
+    const anyRead = calls.some((c) => !isWrite(c))
+    if (anyWrite && anyRead) {
+      for (let i = 0; i < calls.length; i++) {
+        if (deps.signal.aborted) throw abortError(deps.signal)
+        results[i] = await runCall(calls[i]!, deps)
+      }
+      return results as ToolResult[]
+    }
+
+    // F-01 (P5 §C1): slot tulis (writeConcurrency > 1) hanya didemonstrasikan
+    // aman untuk write tool ber-kunci args.path. Batch yang mengandung write
+    // tanpa kunci — EXCLUSIVE_TOOLS (bash dsb.), move_file (from/to), atau
+    // WRITE_TOOL tanpa path valid — dijalankan sekuensial penuh. Ini menutup
+    // overlap dua bash, bash vs write path, dan dua move_file yang dulu lolos
+    // pada wc > 1 tanpa bukti keselamatan; batch murni write ber-path tetap
+    // memakai semaphore + file-lock di bawah. Race terhadap signal
+    // mempertahankan penolakan prompt saat abort (setara antrean writeWaiter):
+    // tool in-flight boleh mengabaikan signal, tetapi execute() reject begitu
+    // abort datang, tanpa menunggu tool selesai.
+    const anyUnkeyedWrite = calls.some((c) => isWrite(c) && getLockPath(c, deps.cwd) === null)
+    if (anyWrite && anyUnkeyedWrite) {
+      const signal = deps.signal
+      let onAbort: (() => void) | undefined
+      const aborted = new Promise<never>((_, reject) => {
+        onAbort = () => reject(abortError(signal))
+        if (signal.aborted) onAbort()
+        else signal.addEventListener("abort", onAbort, { once: true })
+      })
+      try {
+        await Promise.race([
+          (async () => {
+            for (let i = 0; i < calls.length; i++) {
+              if (signal.aborted) throw abortError(signal)
+              results[i] = await runCall(calls[i]!, deps)
+            }
+          })(),
+          aborted,
+        ])
+      } finally {
+        // lepas listener agar signal jangka panjang tidak menumpuk listener
+        if (onAbort) signal.removeEventListener("abort", onAbort)
+      }
+      return results as ToolResult[]
+    }
+
+    let cursor = 0
+    let activeWrites = 0
+    // per-file lock to prevent same-file write race (e.g. two edits to same path)
+    const fileLocks = new Map<string, number>()
+    const fileWaiters = new Map<string, Waiter[]>()
+    const writeWaiters: Waiter[] = []
+    const signal = deps.signal
+
+    function acquireWrite(): Promise<void> {
+      if (signal.aborted) return Promise.reject(abortError(signal))
+      if (activeWrites < writeConcurrency) {
+        activeWrites++
+        return Promise.resolve()
+      }
+      const { promise, waiter } = makeWaiter(signal, (w) => {
+        const i = writeWaiters.indexOf(w)
+        if (i !== -1) writeWaiters.splice(i, 1)
+      })
+      writeWaiters.push(waiter)
+      return promise
+    }
+    function releaseWrite(): void {
+      const next = writeWaiters.shift()
+      if (next) {
+        // ownership berpindah — counter tetap (setara decrement+increment lama)
+        next.resolve()
+      } else {
+        activeWrites--
+      }
+    }
+
+    function acquireFileLock(path: string | null): Promise<void> {
+      if (!path) return Promise.resolve()
+      if (signal.aborted) return Promise.reject(abortError(signal))
+      if ((fileLocks.get(path) ?? 0) === 0) {
+        fileLocks.set(path, 1)
+        return Promise.resolve()
+      }
+      const { promise, waiter } = makeWaiter(signal, (w) => {
+        const q = fileWaiters.get(path)
+        if (!q) return
+        const i = q.indexOf(w)
+        if (i !== -1) q.splice(i, 1)
+        if (q.length === 0) fileWaiters.delete(path)
+      })
+      const q = fileWaiters.get(path) ?? []
+      q.push(waiter)
+      fileWaiters.set(path, q)
+      return promise
+    }
+    function releaseFileLock(path: string | null): void {
+      if (!path) return
+      const q = fileWaiters.get(path)
+      const next = q?.shift()
+      if (next) {
+        if (q && q.length === 0) fileWaiters.delete(path)
+        next.resolve() // ownership berpindah ke waiter berikutnya
+      } else {
+        fileLocks.delete(path)
+      }
+    }
+
+    const workers = Array(Math.min(concurrency, calls.length))
+      .fill(0)
+      .map(async () => {
+        while (true) {
+          if (deps.signal.aborted) throw abortError(deps.signal)
+          const idx = cursor++
+          if (idx >= calls.length) break
+          const call = calls[idx]!
+          const needWrite = isWrite(call)
+          const filePath = needWrite ? getLockPath(call, deps.cwd) : null
+          let held = false
+          try {
+            if (needWrite) {
+              await acquireWrite() // nothing held yet — safe to throw
+              try {
+                await acquireFileLock(filePath)
+                held = true
+              } catch (e) {
+                releaseWrite()
+                throw e
+              }
+            }
+            const res = await runCall(call, deps)
+            results[idx] = res
+          } finally {
+            if (held) {
+              releaseFileLock(filePath)
+              releaseWrite()
+            }
+          }
+        }
+      })
+    await Promise.all(workers)
+    return results as ToolResult[]
+  }
 
   return {
     async execute(calls: readonly ToolCall[], deps: ExecutorDeps): Promise<readonly ToolResult[]> {
       if (calls.length === 0) return []
-      const results: (ToolResult | undefined)[] = new Array(calls.length)
-
-      // write+baca campur → sekuensial urut input: read setelah write pada file
-      // sama harus melihat konten baru (paralel akan balapan). Perilaku P4 yang
-      // dibekukan.
-      const anyWrite = calls.some(isWrite)
-      const anyRead = calls.some((c) => !isWrite(c))
-      if (anyWrite && anyRead) {
-        for (let i = 0; i < calls.length; i++) {
-          if (deps.signal.aborted) throw abortError(deps.signal)
-          results[i] = await runCall(calls[i]!, deps)
-        }
-        return results as ToolResult[]
-      }
-
-      // F-01 (P5 §C1): slot tulis (writeConcurrency > 1) hanya didemonstrasikan
-      // aman untuk write tool ber-kunci args.path. Batch yang mengandung write
-      // tanpa kunci — EXCLUSIVE_TOOLS (bash dsb.), move_file (from/to), atau
-      // WRITE_TOOL tanpa path valid — dijalankan sekuensial penuh. Ini menutup
-      // overlap dua bash, bash vs write path, dan dua move_file yang dulu lolos
-      // pada wc > 1 tanpa bukti keselamatan; batch murni write ber-path tetap
-      // memakai semaphore + file-lock di bawah. Race terhadap signal
-      // mempertahankan penolakan prompt saat abort (setara antrean writeWaiter):
-      // tool in-flight boleh mengabaikan signal, tetapi execute() reject begitu
-      // abort datang, tanpa menunggu tool selesai.
-      const anyUnkeyedWrite = calls.some((c) => isWrite(c) && getLockPath(c, deps.cwd) === null)
-      if (anyWrite && anyUnkeyedWrite) {
-        const signal = deps.signal
-        let onAbort: (() => void) | undefined
-        const aborted = new Promise<never>((_, reject) => {
-          onAbort = () => reject(abortError(signal))
-          if (signal.aborted) onAbort()
-          else signal.addEventListener("abort", onAbort, { once: true })
-        })
-        try {
-          await Promise.race([
-            (async () => {
-              for (let i = 0; i < calls.length; i++) {
-                if (signal.aborted) throw abortError(signal)
-                results[i] = await runCall(calls[i]!, deps)
-              }
-            })(),
-            aborted,
-          ])
-        } finally {
-          // lepas listener agar signal jangka panjang tidak menumpuk listener
-          if (onAbort) signal.removeEventListener("abort", onAbort)
-        }
-        return results as ToolResult[]
-      }
-
-      let cursor = 0
-      let activeWrites = 0
-      // per-file lock to prevent same-file write race (e.g. two edits to same path)
-      const fileLocks = new Map<string, number>()
-      const fileWaiters = new Map<string, Waiter[]>()
-      const writeWaiters: Waiter[] = []
-      const signal = deps.signal
-
-      function acquireWrite(): Promise<void> {
-        if (signal.aborted) return Promise.reject(abortError(signal))
-        if (activeWrites < writeConcurrency) {
-          activeWrites++
-          return Promise.resolve()
-        }
-        const { promise, waiter } = makeWaiter(signal, (w) => {
-          const i = writeWaiters.indexOf(w)
-          if (i !== -1) writeWaiters.splice(i, 1)
-        })
-        writeWaiters.push(waiter)
-        return promise
-      }
-      function releaseWrite(): void {
-        const next = writeWaiters.shift()
-        if (next) {
-          // ownership berpindah — counter tetap (setara decrement+increment lama)
-          next.resolve()
-        } else {
-          activeWrites--
-        }
-      }
-
-      function acquireFileLock(path: string | null): Promise<void> {
-        if (!path) return Promise.resolve()
-        if (signal.aborted) return Promise.reject(abortError(signal))
-        if ((fileLocks.get(path) ?? 0) === 0) {
-          fileLocks.set(path, 1)
-          return Promise.resolve()
-        }
-        const { promise, waiter } = makeWaiter(signal, (w) => {
-          const q = fileWaiters.get(path)
-          if (!q) return
-          const i = q.indexOf(w)
-          if (i !== -1) q.splice(i, 1)
-          if (q.length === 0) fileWaiters.delete(path)
-        })
-        const q = fileWaiters.get(path) ?? []
-        q.push(waiter)
-        fileWaiters.set(path, q)
-        return promise
-      }
-      function releaseFileLock(path: string | null): void {
-        if (!path) return
-        const q = fileWaiters.get(path)
-        const next = q?.shift()
-        if (next) {
-          if (q && q.length === 0) fileWaiters.delete(path)
-          next.resolve() // ownership berpindah ke waiter berikutnya
-        } else {
-          fileLocks.delete(path)
-        }
-      }
-
-      const workers = Array(Math.min(concurrency, calls.length))
-        .fill(0)
-        .map(async () => {
-          while (true) {
-            if (deps.signal.aborted) throw abortError(deps.signal)
-            const idx = cursor++
-            if (idx >= calls.length) break
-            const call = calls[idx]!
-            const needWrite = isWrite(call)
-            const filePath = needWrite ? getLockPath(call, deps.cwd) : null
-            let held = false
-            try {
-              if (needWrite) {
-                await acquireWrite() // nothing held yet — safe to throw
-                try {
-                  await acquireFileLock(filePath)
-                  held = true
-                } catch (e) {
-                  releaseWrite()
-                  throw e
-                }
-              }
-              const res = await runCall(call, deps)
-              results[idx] = res
-            } finally {
-              if (held) {
-                releaseFileLock(filePath)
-                releaseWrite()
-              }
-            }
+      // [Fase 8 / 8.3] Pangkas batch bila maxToolsPerBatch aktif.
+      if (maxToolsPerBatch > 0 && calls.length > maxToolsPerBatch) {
+        const kept = calls.slice(0, maxToolsPerBatch)
+        const results: (ToolResult | undefined)[] = new Array(calls.length)
+        const trimmed = await runBatch(kept, deps)
+        for (let i = 0; i < trimmed.length; i++) results[i] = trimmed[i]
+        for (let i = maxToolsPerBatch; i < calls.length; i++) {
+          results[i] = {
+            role: "tool",
+            toolCallId: calls[i]!.id,
+            name: calls[i]!.name,
+            content: `[batch limit reached: maxToolsPerBatch=${maxToolsPerBatch}]`,
+            isError: true,
           }
-        })
-      await Promise.all(workers)
-      return results as ToolResult[]
+        }
+        return results as ToolResult[]
+      }
+      return runBatch(calls, deps)
     },
   }
 }

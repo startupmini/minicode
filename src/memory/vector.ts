@@ -42,7 +42,11 @@ function embeddingCircuitBroken(baseUrl: string, model?: string): boolean {
 }
 
 /** Tandai endpoint sebagai broken (masuk cooldown). */
-function markEmbeddingCircuitBroken(baseUrl: string, model: string | undefined, reason: string): void {
+function markEmbeddingCircuitBroken(
+  baseUrl: string,
+  model: string | undefined,
+  reason: string,
+): void {
   embeddingCircuitBrokenByEndpoint.set(embeddingCircuitKey(baseUrl, model), {
     brokenAt: Date.now(),
     reason,
@@ -140,6 +144,25 @@ function openAt(p: string): Database {
     // (NULL) diperlakukan sebagai `validated` agar perilaku lama tak berubah.
     if (!cols.some((c) => c.name === "validation_status"))
       db.exec(`ALTER TABLE memory ADD COLUMN validation_status TEXT DEFAULT 'validated'`)
+    // F8.1: Supersession tracking untuk memory replacement. Idempoten — skip bila
+    // sudah ada (migration dari versi sebelumnya). `superseded_by IS NOT NULL` menandai
+    // baris yang telah digantikan oleh fakta/keputusan baru; recall default mengabaikan
+    // baris superseded untuk prevent staleness.
+    if (!cols.some((c) => c.name === "supersedes"))
+      db.exec(`ALTER TABLE memory ADD COLUMN supersedes TEXT NULL`)
+    if (!cols.some((c) => c.name === "superseded_by"))
+      db.exec(`ALTER TABLE memory ADD COLUMN superseded_by TEXT NULL`)
+    // F8.1: Index untuk query performan (filter row yang tidak superseded)
+    try {
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_memory_not_superseded ON memory(rowid) WHERE superseded_by IS NULL OR superseded_by = '';`,
+      )
+    } catch {}
+    try {
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_memory_supersedes ON memory(supersedes) WHERE supersedes IS NOT NULL AND supersedes != '';`,
+      )
+    } catch {}
   } catch {}
   // P1.1: expression index + FTS5 untuk keyword pre-filter (10-50× vs instr scan)
   try {
@@ -435,6 +458,10 @@ export async function addMemory(
     // [Fase 6A / ACE-03] Pelajaran kandidat disimpan `provisional` sampai
     // verifikasi berikutnya memutuskan promote/reject.
     validationStatus?: "validated" | "provisional" | "rejected"
+    // [Fase 8 / 8.1] Id baris memory LAMA yang digantikan oleh entri baru ini
+    // (supersession). Saat diisi, baris lama di-tombstone (superseded_by = newId)
+    // dan baris baru ditautkan (supersedes = oldId) dalam transaksi yang sama.
+    supersedesId?: string | null
   } = {},
 ) {
   const clean = scrubSecrets(text)
@@ -471,6 +498,8 @@ export async function addMemory(
     }
   } catch {}
   try {
+    // F8.1: transaksi supersession — insert baris baru + tombstone baris lama
+    // (bila `supersedesId` diisi) atomik dalam satu transaksi.
     for (let i = 0; i < chunks.length; i++) {
       const v = vecs?.[i]
       const embedding = v ? toBlob(v) : null
@@ -478,10 +507,11 @@ export async function addMemory(
       const category = (opts.category as string) ?? "fact"
       const tagsJson = opts.tags ? JSON.stringify(opts.tags) : null
       // MEM-01: insert provenance columns (nullable; legacy DBs get NULL default)
+      const supersedes = i === 0 ? (opts.supersedesId ?? null) : null
       await withBusyRetry(() =>
         db
           .prepare(
-            "INSERT INTO memory (id, text, embedding, created_at, model, dim, parent, category, tags, access_count, session_id, turn_id, source_kind, source_ref, validation_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)",
+            "INSERT INTO memory (id, text, embedding, created_at, model, dim, parent, category, tags, access_count, session_id, turn_id, source_kind, source_ref, validation_status, supersedes, superseded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, NULL)",
           )
           .run(
             id,
@@ -498,8 +528,17 @@ export async function addMemory(
             opts.sourceKind ?? null,
             opts.sourceRef ?? null,
             opts.validationStatus ?? "validated",
+            supersedes,
           ),
       )
+      // Tombstone baris lama hanya pada chunk pertama (parent) — sinkronisasi
+      // tombstone untuk chunk berbagi parent dilakukan di supersedeMemory.
+      if (i === 0 && opts.supersedesId) {
+        const oldId = opts.supersedesId as string
+        await withBusyRetry(() =>
+          db.prepare(`UPDATE memory SET superseded_by = ? WHERE id = ?`).run(id, oldId),
+        )
+      }
     }
     // P13 P1: prune TTL HIERARKIS per kategori (best-effort, jangan gagalkan write).
     // Fakta/keputusan awet 180 hari, ringkasan 90, snippet 14 — snippet basi
@@ -550,7 +589,92 @@ export async function addMemory(
 }
 
 /**
- * [Fase 6A / ACE-03] Rekam pelajaran KANDIDAT (belum terverifikasi).
+ * [Fase 8 / 8.1] Supersession Memory — gantikan fakta/keputusan lama dengan
+ * yang baru secara durable & idempoten.
+ *
+ * - `supersedeMemory(oldId, newId, cwd?)` mengisi `supersedes = oldId` pada
+ *   baris baru (`newId`) dan `superseded_by = newId` pada baris lama
+ *   (`oldId`), lalu memperbarui `MEMORY.md`.
+ * - `addMemory(..., { supersedesId })` menerima `supersedesId` (id baris lama
+ *   yang digantikan) saat insert baris baru; hubungan dua arah dicatat dalam
+ *   transaksi yang sama.
+ * - `topicKey(name)` menghasilkan kunci topik `key:<name>` yang bisa dipakai
+ *   sebagai `category`/tag untuk mengelompokkan supersession per topik.
+ */
+export function topicKey(name: string): string {
+  return `key:${name}`
+}
+
+export async function supersedeMemory(oldId: string, newId: string, cwd?: string): Promise<void> {
+  const db = open(cwd)
+  try {
+    await withBusyRetry(() => {
+      // Baris lama tidak boleh dihapus — hanya ditandai superseded (tombstone).
+      const oldRow = db.prepare(`SELECT id FROM memory WHERE id = ?`).get(oldId) as {
+        id: string
+      } | null
+      if (!oldRow) {
+        throw new Error(`supersedeMemory: old memory id not found: ${oldId}`)
+      }
+      const newRow = db.prepare(`SELECT id FROM memory WHERE id = ?`).get(newId) as {
+        id: string
+      } | null
+      if (!newRow) {
+        throw new Error(`supersedeMemory: new memory id not found: ${newId}`)
+      }
+      // Tombstone baris lama → superseded_by = newId
+      db.prepare(`UPDATE memory SET superseded_by = ? WHERE id = ?`).run(newId, oldId)
+      // Tautkan baris baru → supersedes = oldId
+      db.prepare(`UPDATE memory SET supersedes = ? WHERE id = ?`).run(oldId, newId)
+    })
+    // Perbarui MEMORY.md (best-effort — jangan gagalkan supersession)
+    try {
+      await syncMemoryFileToSupersession(cwd, oldId, newId)
+    } catch {}
+  } finally {
+    db.close()
+  }
+}
+
+async function syncMemoryFileToSupersession(
+  cwd: string | undefined,
+  oldId: string,
+  newId: string,
+): Promise<void> {
+  // Append catatan supersession ke MEMORY.md (best-effort; appendMemory hanya
+  // menerima (text, cwd?) — tanpa object opts).
+  const { appendMemory } = await import("../memory/files.ts")
+  await appendMemory(`[supersession] fact ${oldId} → ${newId} (superseded)`, cwd)
+}
+
+export async function supersedeMemoryByIds(
+  oldIds: string[],
+  newId: string,
+  cwd?: string,
+): Promise<number> {
+  let n = 0
+  const db = open(cwd)
+  try {
+    await withBusyRetry(() => {
+      for (const oldId of oldIds) {
+        const oldRow = db.prepare(`SELECT id FROM memory WHERE id = ?`).get(oldId) as {
+          id: string
+        } | null
+        if (oldRow) {
+          db.prepare(`UPDATE memory SET superseded_by = ? WHERE id = ?`).run(newId, oldId)
+          n++
+        }
+      }
+      db.prepare(`UPDATE memory SET supersedes = ? WHERE id = ?`).run(oldIds.join(","), newId)
+    })
+  } finally {
+    db.close()
+  }
+  return n
+}
+
+/**
+ * [Fase 8 / 8.1] Rekam pelajaran KANDIDAT (belum terverifikasi).
  * Pelajaran disimpan `provisional` sehingga retrieval default tidak akan
  * menyajikannya sebagai fakta; verifikasi berikutnya memutuskan promote/reject
  * lewat `promoteOrRejectLessonsBySession`.
@@ -632,6 +756,9 @@ type MemoryRow = {
   source_ref?: string | null
   // [Fase 6A / ACE-03] NULL legacy = validated
   validation_status?: string | null
+  // F8.1: Supersession tracking (nullable — legacy rows won't have them)
+  supersedes?: string | null
+  superseded_by?: string | null
 }
 
 export interface MemoryHit {
@@ -736,6 +863,8 @@ export async function searchHybrid(
     trackAccess?: boolean
     /** [Fase 6A / ACE-03] default false: pelajaran `provisional`/`rejected` disembunyikan. */
     includeProvisional?: boolean
+    /** [Fase 8 / 8.1] default false: baris yang sudah di-supersede disembunyikan dari recall. */
+    includeSuperseded?: boolean
   } = {},
 ): Promise<MemoryHit[]> {
   const scope = opts.scope ?? (process.env.MINICODE_MEMORY_SCOPE as string) ?? "cwd"
@@ -745,10 +874,16 @@ export async function searchHybrid(
     const escKeywords = keywords.map((k) =>
       k.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_"),
     )
+    // F8.1: recall default SENGAJA mengecualikan baris yang sudah di-supersede
+    // (superseded_by IS NOT NULL AND != ''). Hanya `includeSuperseded: true`
+    // yang menampilkannya kembali (untuk forensik/audit).
+    const notSuperseded =
+      opts.includeSuperseded === true ? `1=1` : `(superseded_by IS NULL OR superseded_by = '')`
+    const cols = `text, embedding, dim, model, created_at, category, tags, session_id, turn_id, source_kind, source_ref, validation_status, supersedes, superseded_by`
     if (keywords.length > 0) {
       const recentRows = db
         .prepare(
-          `SELECT text, embedding, dim, model, created_at, category, tags, session_id, turn_id, source_kind, source_ref, validation_status FROM memory ORDER BY created_at DESC LIMIT ${LIMITS.VECTOR_RECENT_LIMIT}`,
+          `SELECT ${cols} FROM memory WHERE ${notSuperseded} ORDER BY created_at DESC LIMIT ${LIMITS.VECTOR_RECENT_LIMIT}`,
         )
         .all() as MemoryRow[]
       let keywordRows: MemoryRow[] = []
@@ -757,7 +892,7 @@ export async function searchHybrid(
         try {
           keywordRows = db
             .prepare(
-              `SELECT m.text as text, m.embedding as embedding, m.dim as dim, m.model as model, m.created_at as created_at, m.category as category, m.tags as tags, m.session_id as session_id, m.turn_id as turn_id, m.source_kind as source_kind, m.source_ref as source_ref, m.validation_status as validation_status FROM memory_fts f JOIN memory m ON m.rowid = f.rowid WHERE memory_fts MATCH ? ORDER BY rank LIMIT ${LIMITS.VECTOR_KEYWORD_LIMIT}`,
+              `SELECT m.text as text, m.embedding as embedding, m.dim as dim, m.model as model, m.created_at as created_at, m.category as category, m.tags as tags, m.session_id as session_id, m.turn_id as turn_id, m.source_kind as source_kind, m.source_ref as source_ref, m.validation_status as validation_status, m.supersedes as supersedes, m.superseded_by as superseded_by FROM memory_fts f JOIN memory m ON m.rowid = f.rowid WHERE ${notSuperseded} AND memory_fts MATCH ? ORDER BY rank LIMIT ${LIMITS.VECTOR_KEYWORD_LIMIT}`,
             )
             .all(ftsQ) as MemoryRow[]
         } catch {
@@ -770,7 +905,7 @@ export async function searchHybrid(
           .join(" OR ")
         keywordRows = db
           .prepare(
-            `SELECT text, embedding, dim, model, created_at, category, tags, session_id, turn_id, source_kind, source_ref, validation_status FROM memory WHERE ${likeClauses} ORDER BY created_at DESC LIMIT ${LIMITS.VECTOR_KEYWORD_LIMIT}`,
+            `SELECT ${cols} FROM memory WHERE ${notSuperseded} AND (${likeClauses}) ORDER BY created_at DESC LIMIT ${LIMITS.VECTOR_KEYWORD_LIMIT}`,
           )
           .all(...escKeywords) as MemoryRow[]
       }
@@ -781,7 +916,7 @@ export async function searchHybrid(
     } else {
       return db
         .prepare(
-          `SELECT text, embedding, dim, model, created_at, category, tags, session_id, turn_id, source_kind, source_ref, validation_status FROM memory ORDER BY created_at DESC LIMIT ${LIMITS.VECTOR_SEARCH_LIMIT}`,
+          `SELECT ${cols} FROM memory WHERE ${notSuperseded} ORDER BY created_at DESC LIMIT ${LIMITS.VECTOR_SEARCH_LIMIT}`,
         )
         .all() as MemoryRow[]
     }

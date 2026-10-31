@@ -29,6 +29,18 @@ import { scrubSecrets } from "../policy/scrub.ts"
 import { classifyContractTool } from "../policy/tool-contract.ts"
 import { isMcpToolName } from "../presentation/label.ts"
 
+/**
+ * [Fase 10 / 10.1] Otoritas penyimpanan kanonik.
+ * `session/journal.ts` adalah Canonical Recovery Authority: satu-satunya
+ * sumber kebenaran intent/receipt/verification untuk crash recovery.
+ * `runtime/execution-journal.ts` adalah Diagnostic Audit Projection: history
+ * audit yang MEREKAM, bukan memutus recovery. Matriks lengkap 7 penyimpanan
+ * didefinisikan di `runtime/execution-journal.ts#STORAGE_AUTHORITY_MATRIX`
+ * (diimpor balik untuk menghindari siklus impor) — konstanta ini adalah
+ * penanda local authority agar tak pernah tertukar source of truth.
+ */
+export const SESSION_JOURNAL_AUTHORITY = "canonical_recovery_ledger" as const
+
 // [Fase 2 / LOOP-INV-07] `unknown` = terminal AMBIGU: eksekusi berhenti tanpa
 // bukti apakah efeknya terjadi (mis. timeout bash). Bukan `failed` (yang
 // menyiratkan "tidak terjadi") dan bukan `pending` (yang menyiratkan "belum

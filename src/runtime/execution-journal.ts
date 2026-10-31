@@ -42,6 +42,43 @@ import type { ExecutionEvent } from "./execution-events.ts"
 /** Versi skema jurnal (bentuk/encoding) — BUKAN executionVersion. */
 export const JOURNAL_SCHEMA_VERSION = 1
 
+/**
+ * [Fase 10 / 10.1] Otoritas penyimpanan jurnal eksekusi.
+ * `runtime/execution-journal.ts` adalah Diagnostic Audit Projection: history
+ * audit durable yang MEREKAM event+intent untuk forensik, BUKAN pemutus
+ * recovery. Canonical Recovery Authority adalah `session/journal.ts`
+ * (`SESSION_JOURNAL_AUTHORITY = "canonical_recovery_ledger"`). Konstanta ini
+ * menandai peran lokal agar batas source-of-truth tidak pernah tertukar.
+ */
+export const EXECUTION_JOURNAL_AUTHORITY = "diagnostic_audit_projection" as const
+
+/**
+ * [Fase 10 / 10.1] Matriks otoritas penyimpanan MiniCode — klasifikasi eksplisit
+ * peran + source-of-truth 7 penyimpanan lokal. Dipakai audit/uji untuk
+ * memastikan tidak ada source of truth kedua (invariant "derived ≠ canonical").
+ *
+ *   - "canonical"           : sumber kebenaran; state di sini bersifat otoritatif.
+ *   - "derived_projection"  : view yang DITURUNKAN dari canonical; bila tidak
+ *                             sinkron, canonical yang menang (reconciliation).
+ *   - "derived_index"       : indeks percepat look-up; bisa di-rebuild dari canonical.
+ */
+export const STORAGE_AUTHORITY_MATRIX = {
+  /** Session store: sesi/run/thread/approval durable + writer epoch. */
+  "sessions.db": { role: "canonical", domain: "session_runs_threads_approvals" },
+  /** Task store: state task + lease otoritas sesi (single authority sinkron todo). */
+  "tasks.db": { role: "canonical", domain: "task_state_and_session_authority_leases" },
+  /** Vector store: memori semantik + episodik (provenance supersession). */
+  "vector.db": { role: "canonical", domain: "semantic_and_episodic_memory" },
+  /** Session journal (session/journal.ts): intent/receipt/verification recovery. */
+  session_journal: { role: "canonical", domain: "crash_recovery_intent_receipt_verification" },
+  /** Execution journal (modul ini): history audit, diturunkan dari session journal. */
+  execution_journal: { role: "derived_projection", sourceOfTruth: "session_journal" },
+  /** MEMORY.md: teks datar baca-manusia, projection dari vector.db. */
+  "MEMORY.md": { role: "derived_projection", sourceOfTruth: "vector.db" },
+  /** memory_fts: indeks FTS5 percepat keyword recall, rebuild-able dari vector.db. */
+  memory_fts: { role: "derived_index", sourceOfTruth: "vector.db" },
+} as const
+
 export type JournalErrorCode =
   | "not-open"
   | "already-closed"

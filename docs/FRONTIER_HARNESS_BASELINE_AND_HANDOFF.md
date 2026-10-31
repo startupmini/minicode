@@ -751,3 +751,121 @@ yang disebutkan di sana, bukan sebagai hasil baru.
 | CONTEXT | LOOP | Pemicu kompaksi memengaruhi terminasi |
 | MEMORY | LOOP | Durabilitas append menentukan recovery |
 | TOOL | LOOP | Perilaku executor menentukan semantik langkah |
+
+---
+
+## J. Fase 10 — Penutupan final (status pasca-Fase 10)
+
+Bagian ini ditambahkan pada Fase 10 untuk merekam status akhir setelah seluruh
+celah P0/P1 (Fase 0–9) ditutup dan release gate paripurna dikunci. Status di
+bawah mencerminkan working tree commit Fase 10, bukan status historis baseline
+§B/§C (yang tetap dipertahankan sebagai evidence index historis).
+
+### J.1 Storage authority matrix (7 penyimpanan) dan otoritas journal
+
+`STORAGE_AUTHORITY_MATRIX` (dites di `test/p22-*`) mengunci klasifikasi eksplisit
+peran + source-of-truth 7 penyimpanan lokal, agar tidak pernah ada source of
+truth kedua:
+
+| Storage | Role | Domain / source-of-truth |
+|---|---|---|
+| `sessions.db` | `canonical` | `session_runs_threads_approvals` |
+| `tasks.db` | `canonical` | `task_state_and_session_authority_leases` |
+| `vector.db` | `canonical` | `semantic_and_episodic_memory` |
+| `session_journal` | `canonical` | `crash_recovery_intent_receipt_verification` |
+| `execution_journal` | `derived_projection` | `sourceOfTruth: session_journal` |
+| `MEMORY.md` | `derived_projection` | `sourceOfTruth: vector.db` |
+| `memory_fts` | `derived_index` | `sourceOfTruth: vector.db` |
+
+Otoritas lokal dinyatakan sebagai konstanta eksplisit:
+`SESSION_JOURNAL_AUTHORITY = "canonical_recovery_ledger"` (di
+`src/session/journal.ts`) dan `EXECUTION_JOURNAL_AUTHORITY =
+"diagnostic_audit_projection"` (di `src/runtime/execution-journal.ts`), yang
+menegaskan batas **Canonical Recovery Authority** vs **Diagnostic Audit
+Projection** — execution journal MEREKAM history, tidak memutus recovery.
+`src/tools/evidence.ts` (`withEvidence`) telah aktif di produksi via
+`src/app/tool-layer.ts` dan `src/tools/task.ts` — 0 modul `src/**` berstatus
+dead-code/test-only.
+
+### J.2 18 LOOP invariants — CONFIRMED
+
+Seluruh 18 LOOP invariant berstatus `CONFIRMED` (dikunci oleh `test/p15-*` s/d
+`test/p22-*`):
+
+`LOOP-INV-01` budget carry-forward, `LOOP-INV-02` no-progress detector,
+`LOOP-INV-03` completed-butuh-bukti, `LOOP-INV-04` ambient directory guard,
+`LOOP-INV-05` engine swap isolation, `LOOP-INV-06` max-steps halts,
+`LOOP-INV-07` unknown terminal, `LOOP-INV-08` staleness fence, `LOOP-INV-09`
+break-body loop guard, `LOOP-INV-10` pending tools run correlation,
+`LOOP-INV-11` budget carry-forward lintas resume, `LOOP-INV-12` estimator
+calibration (CTX-03), `LOOP-INV-13` subagent burst pool limit, `LOOP-INV-14`
+child abort propagation, `LOOP-INV-15` subagent no-progress unification,
+`LOOP-INV-16` RUNTIME_STATE_HEADER survives compaction, `LOOP-INV-17` watching
+context-window limit, `LOOP-INV-18` memory split-brain fault-injection recovery.
+
+### J.3 Shared finding registry — status penutupan final
+
+| ID | Status final | Catatan penutupan |
+|---|---|---|
+| `LOOP-01` (restart daemon E2E) | `VERIFIED` | `p13-daemon-lifecycle` + `p13-live-durable-ordering` (kill/respawn koreografi E2E) |
+| `LOOP-02` (eval kualitas ber-skor) | `VERIFIED` | `bench/eval-gate.ts` deterministik + `compareAceAblation` (Fase 9/10) |
+| `LOOP-03` (semantik append durable) | `ACCEPTED` | fail-closed append (desain sadar) — `p13-live-durable-ordering` |
+| `LOOP-04` (pool subagent) | `VERIFIED` | `p19` burst saturation (peak ≤ 3), abort propagation |
+| `LOOP-05` (guard timeout berlapis) | `VERIFIED` | `hang-fix` + `p13-runtime-contract` |
+| `TOOL-01` (TOCTOU) | `ACCEPTED` (residual) | `live-toctou`/`tool-toctou` skip pada host tanpa hak symlink (Windows) |
+| `TOOL-02` (bash-guard) | `VERIFIED` | korpus 62/24 deterministik + fuzz nightly |
+| `TOOL-03` (MCP gate fail-closed) | `VERIFIED` | `instruction-trust` + `mcp_call` bertitik gate |
+| `TOOL-04` (redaksi secret) | `VERIFIED` | `scrub-bounded` 84 titik pemakaian |
+| `TOOL-05` (fence output tool) | `VERIFIED` | `fenceUntrustedToolOutput` pada `web_fetch`/`web_search`/`mcp_*` (Fase 8) |
+| `MEM-01` (provenance) | `VERIFIED` | `session_id`/`turn_id`/`source_*` + `revokeByProvenance` |
+| `MEM-02` (trust recall fence) | `VERIFIED` | `rag-layer.ts` UNTRUSTED fence + isolasi proyek |
+| `MEM-03` (TTL hierarkis) | `VERIFIED` | TTL 14/90/180 + cap |
+| `MEM-04` (crash parsial) | `VERIFIED` | `p2-durability-forensic` + fault-injection split-brain `p21` |
+| `CTX-01` (batas kompaksi) | `VERIFIED` | `boundaryIsSafe` suite hijau |
+| `CTX-02` (ringkasan fence anti-thrash) | `VERIFIED` | `compaction.ts` fence + streak gate |
+| `CTX-03` (budget token) | `VERIFIED` | `recordTokenCalibrationSample` drift ratio (Fase 7) |
+| `CTX-04` (integritas instruksi) | `VERIFIED` | `instruction-trust` 13 tes |
+| `CTX-05` (fence output tool lintas TOOL-05) | `VERIFIED` | sama dengan TOOL-05 |
+| `CTL-01` (auto-update signature) | `ACCEPTED` (residual) | risiko diterima & terdokumentasi — verifikasi client-side tidak memungkinkan online zero-dep |
+| `CTL-02` (trust daemon loopback) | `VERIFIED` | `p13` + `p2-daemon-guards` (multi-user Windows PARTIAL) |
+| `CTL-03` (Windows tanpa sandbox) | `ACCEPTED` | turun ke allowlist, alasan eksplisit |
+| `CTL-04` (telemetry gate cabang) | `VERIFIED` | `p17-telemetry-gate` + `--require-min-runs` (Fase 9) |
+| `CTL-05` (ceiling permission) | `VERIFIED` | `work-mode-*` + `permission-matrix` + `deny-reason` |
+| `CTL-06` (klaim platform vs CI) | `VERIFIED` | ci.yml `p15`–`p22` + `ci-windows` + `bunfig` timeout 15s (Fase 9/10) |
+
+Uncertainties `U1`–`U10`: `U1` (injeksi output tool) closed → `fenceUntrustedToolOutput`;
+`U2` (drift budget) closed → `recordTokenCalibrationSample`; `U3` (retrieval quality)
+closed → `precision@k` golden corpus `p16`; `U4` (daemon multi-user) → `ACCEPTED`
+(dokumentasi); `U5` (code_run escape) → `ACCEPTED` (Docker host dependency,
+terdokumentasi); `U6` (pool burst) closed → `p19`; `U7` (split-brain) closed →
+`p21` fault-injection; `U8` (retry append) → `ACCEPTED` (fail-closed desain sadar);
+`U9` (PTY/ConPTY) → `ACCEPTED` (skip platform-kondisional); `U10` (auto-update
+risk) → `ACCEPTED` (sign-off pemilik).
+
+### J.4 Bypass matrix — 4 jalur eksekusi (0 MISSING guards)
+
+| Jalur | beforeToolEffect | pending_tool_ids | NoProgressDetector | VERIFYING + Tamper Guard | RUNTIME_STATE_HEADER | ACE-Lite + rollback | kalibrasi token/budget |
+|---|---|---|---|---|---|---|---|---|
+| Interactive CLI | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (`isAceEnabled`) | ✓ |
+| Daemon | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Scheduler | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Subagent | ✓ | ✓ | ✓ (explicit `noProgress`) | ✓ | ✓ (child journal) | ✓ (`aceVerdict`) | ✓ |
+
+Semua empat jalur kini menerapkan seluruh guard lintas-dimensi; **0 MISSING**.
+
+### J.5 Pemetaan standar keamanan (05_CONTROL §D)
+
+| Risiko / requirement | Enforcement deterministik MiniCode | Bukti test | Residual risk |
+|---|---|---|---|
+| **OWASP Agentic 2026 ASI01** (agent goal hijack / indirect prompt injection) | `fenceUntrustedToolOutput` (`scrub.ts`), `rag-layer.ts` UNTRUSTED fence, `RUNTIME_STATE_HEADER` dual-buffer | `test/p15-phase4-*`, `test/p20-*` | Model tetap bisa salah tafsir; batas eksplisit, bukan jaminan absolut |
+| **OWASP Agentic 2026 ASI02 / OWASP ACS** (tool misuse & excessive agency) | `tool-contract.ts` (37 tools, 4 tier), WorkMode ceiling intersection (`permission.ts`), `maxToolsPerBatch` (`executor.ts`), `McpSchemaPinRegistry` (`mcp/client.ts`) | `test/p15-phase2-*`, `test/p20-*` | Registry map kernel tahan penyembunyian — enforcement tetap permission ceiling |
+| **OWASP Agentic 2026 ASI03** (identity/privilege abuse / confused deputy) | `verifyApprovalBinding` (`args_hash` + `invocation_id`), `session_authority` incarnation leases, daemon capability token `0600` | `test/p15-phase2-*`, `test/p2-daemon-guards.test.ts` | Multi-user Windows belum diuji akun kedua |
+| **OWASP Agentic 2026 ASI04** (memory poisoning / state corruption) | Provenance columns + `revokeByProvenance`, `supersedeMemory`, `validation_status` (`provisional`→`validated`), `reconcileMemoryStores` | `test/p16-*`, `test/p18-*`, `test/p20-*`, `test/p21-*` | Recall kualitas vs keamanan (security diterima; relevansi diukur `precision@k`) |
+| **MITRE ATLAS** (exfiltration / sandbox escape / egress abuse) + **NIST AI RMF** (Measure/Manage) | `bash-guard.ts` + fast fuzz, `jail.ts`, `isPrivateHostWithDns` SSRF guard (`web_fetch.ts`), `detectEvaluationTampering` + `compareAceAblation` (`eval-gate.ts`) | `test/bash-guard-fast-fuzz.test.ts`, `test/p18-*`, `test/p21-*` | Sandbox Docker host-dependent (`code_run`), auto-update signature risk diterima |
+
+### J.6 Release gate paripurna
+
+`test/p22-phase10-holistic-release-gate.test.ts` mengunci kontrak lintas-dimensi
+(LOOP/TOOL/MEMORY/CONTEXT/CONTROL/ACE) + `STORAGE_AUTHORITY_MATRIX` + konsistensi
+dokumentasi & CI, dan didaftarkan di `.github/workflows/ci.yml` (job `ci` +
+`ci-windows`, suite `p15`–`p22`).

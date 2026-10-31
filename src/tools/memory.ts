@@ -3,6 +3,7 @@ import { appendMemory, deleteMemoryLines, readMemoryFile } from "../memory/files
 import {
   addMemory,
   deleteMemoryByQuery,
+  invokeMemoryWriteFaultForTest,
   recordCandidateLesson,
   searchHybrid,
 } from "../memory/vector.ts"
@@ -163,6 +164,10 @@ export const writeMemoryTool: Tool = {
       return `candidate lesson recorded (provisional) id=${id}: ${t.slice(0, 100)}`
     }
     const path = await appendMemory(t, cwd)
+    // [Fase 9 / 9.2] Fault-injection boundary: file (MEMORY.md) sudah ketulis,
+    // vector.db belum. Injector yang melempar di stage ini menyimulasikan crash
+    // persis di titik ini → menghasilkan entri file-only (split-brain arah 1).
+    invokeMemoryWriteFaultForTest("after_file_before_vector")
     const cat = (category as string) ?? "fact"
     const tagArr = Array.isArray(tags) ? (tags as string[]) : undefined
 

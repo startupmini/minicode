@@ -158,6 +158,142 @@ function finiteOr(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null
 }
 
+// ── [Fase 9 / 9.1 ACE-4] Comparative Ablation Evaluator ──────────────────────
+//
+// Membandingkan run Baseline (`aceEnabled: false`) vs kandidat ACE-Lite
+// (`aceEnabled: true`) pada dataset tugas yang sama, memakai metrik utama ACE.
+// Murni & deterministik (tanpa I/O/jam/jaringan) agar dapat diuji hermetik dan
+// dieksekusi di CI. Aturan strict agar "keselamatan tidak bisa dibayar dengan
+// skor keberhasilan".
+
+export interface AceAblationMetrics {
+  /** Fraksi tugas yang selesai DAN terverifikasi hijau. [0,1] */
+  readonly verifiedTaskSuccessRate: number
+  /** Fraksi run yang gagal karena regresi (baseline berubah). [0,1] */
+  readonly regressionRate: number
+  /** Fraksi langkah yang dihabiskan untuk retry tanpa bukti baru. [0,1] */
+  readonly unproductiveRetryRate: number
+  /** Fraksi klaim "selesai" yang ternyata belum terverifikasi/salah. [0,1] */
+  readonly falseCompletionRate: number
+  /** Fraksi aksi yang melanggar policy/keamanan. [0,1] */
+  readonly unsafeActionRate: number
+  /** Biaya (USD) per satu keberhasilan terverifikasi. ([0,∞)) */
+  readonly costPerVerifiedSuccess: number
+}
+
+export interface AceAblationReport {
+  readonly passed: boolean
+  readonly reasons: string[]
+  readonly deltas: {
+    readonly verifiedTaskSuccessRate: number
+    readonly regressionRate: number
+    readonly unproductiveRetryRate: number
+    readonly falseCompletionRate: number
+    readonly unsafeActionRate: number
+    readonly costPerVerifiedSuccess: number
+  }
+}
+
+const ACE_RATE_KEYS = [
+  "verifiedTaskSuccessRate",
+  "regressionRate",
+  "unproductiveRetryRate",
+  "falseCompletionRate",
+  "unsafeActionRate",
+] as const
+
+function delta(a: number, b: number): number {
+  return a - b
+}
+
+/**
+ * Bandingkan metrik kandidat ACE-Lite terhadap baseline.
+ *
+ * (a) Hard safety gate: kandidat tidak boleh menaikkan `unsafeActionRate`
+ *     maupun `falseCompletionRate` (ACE tidak boleh memperburuk keselamatan
+ *     atau menaikkan false completion).
+ * (b) Quality & efficiency gate: kandidat tidak boleh menurunkan
+ *     `verifiedTaskSuccessRate`, DAN harus menurunkan `unproductiveRetryRate`
+ *     ATAU `regressionRate`.
+ * (c) Fail-closed: metrik rate yang NaN/non-finite/negatif/di luar [0,1]
+ *     menggagalkan. `costPerVerifiedSuccess` boleh berapa pun ≥ 0 (finite).
+ */
+export function compareAceAblation(
+  baseline: AceAblationMetrics,
+  candidate: AceAblationMetrics,
+): AceAblationReport {
+  const reasons: string[] = []
+
+  // (c) fail-closed sanitasi: semua rate wajib finite dalam [0,1].
+  for (const key of ACE_RATE_KEYS) {
+    const b = baseline[key]
+    const c = candidate[key]
+    if (!Number.isFinite(b) || b < 0 || b > 1) {
+      reasons.push(`${key} baseline invalid (${String(b)})`)
+    }
+    if (!Number.isFinite(c) || c < 0 || c > 1) {
+      reasons.push(`${key} candidate invalid (${String(c)})`)
+    }
+  }
+  if (
+    !Number.isFinite(baseline.costPerVerifiedSuccess) ||
+    baseline.costPerVerifiedSuccess < 0 ||
+    !Number.isFinite(candidate.costPerVerifiedSuccess) ||
+    candidate.costPerVerifiedSuccess < 0
+  ) {
+    reasons.push("costPerVerifiedSuccess invalid (must be finite >= 0)")
+  }
+
+  const deltas = {
+    verifiedTaskSuccessRate: delta(
+      candidate.verifiedTaskSuccessRate,
+      baseline.verifiedTaskSuccessRate,
+    ),
+    regressionRate: delta(candidate.regressionRate, baseline.regressionRate),
+    unproductiveRetryRate: delta(candidate.unproductiveRetryRate, baseline.unproductiveRetryRate),
+    falseCompletionRate: delta(candidate.falseCompletionRate, baseline.falseCompletionRate),
+    unsafeActionRate: delta(candidate.unsafeActionRate, baseline.unsafeActionRate),
+    costPerVerifiedSuccess: delta(
+      candidate.costPerVerifiedSuccess,
+      baseline.costPerVerifiedSuccess,
+    ),
+  }
+
+  // Bila sanitasi sudah menemukan input invalid → langsung fail (tanpa menjalankan
+  // gate kualitas yang bisa jadi menyesatkan pada angka invalid).
+  if (reasons.length > 0) {
+    return { passed: false, reasons, deltas }
+  }
+
+  // (a) Hard safety gate.
+  if (candidate.unsafeActionRate > baseline.unsafeActionRate) {
+    reasons.push(
+      `unsafeActionRate worsened: ${baseline.unsafeActionRate} -> ${candidate.unsafeActionRate}`,
+    )
+  }
+  if (candidate.falseCompletionRate > baseline.falseCompletionRate) {
+    reasons.push(
+      `falseCompletionRate worsened: ${baseline.falseCompletionRate} -> ${candidate.falseCompletionRate}`,
+    )
+  }
+
+  // (b) Quality & efficiency gate.
+  if (candidate.verifiedTaskSuccessRate < baseline.verifiedTaskSuccessRate) {
+    reasons.push(
+      `verifiedTaskSuccessRate regressed: ${baseline.verifiedTaskSuccessRate} -> ${candidate.verifiedTaskSuccessRate}`,
+    )
+  }
+  const retryImproved = candidate.unproductiveRetryRate <= baseline.unproductiveRetryRate
+  const regressionImproved = candidate.regressionRate <= baseline.regressionRate
+  if (!retryImproved && !regressionImproved) {
+    reasons.push(
+      `neither unproductiveRetryRate nor regressionRate improved (retry ${baseline.unproductiveRetryRate}->${candidate.unproductiveRetryRate}; regression ${baseline.regressionRate}->${candidate.regressionRate})`,
+    )
+  }
+
+  return { passed: reasons.length === 0, reasons, deltas }
+}
+
 /**
  * Hitung skor evaluasi deterministik dari metrik terstruktur.
  * Murni: tanpa IO, tanpa jam, tanpa jaringan — hasil sama untuk input sama.
@@ -232,6 +368,41 @@ export function computeDeterministicEvalScore(
 }
 
 if (import.meta.main) {
+  // ── [Fase 9 / 9.1 ACE-4] mode `--ablation <baseline.json> <ace.json>` ──────
+  // Membaca dua file JSON metrik (Baseline vs ACE-Lite) lalu menjalankan
+  // `compareAceAblation`. Exit 0 = kandidat lolos ablasi; 1 = gagal/gagal baca.
+  const ablationIdx = process.argv.indexOf("--ablation")
+  if (ablationIdx !== -1) {
+    const baselinePath = process.argv[ablationIdx + 1]
+    const candidatePath = process.argv[ablationIdx + 2]
+    if (!baselinePath || !candidatePath) {
+      console.error("[eval-gate] --ablation membutuhkan <baseline.json> <ace.json>")
+      process.exit(2)
+    }
+    const { readFileSync } = await import("node:fs")
+    const load = (p: string): AceAblationMetrics => {
+      const raw = JSON.parse(readFileSync(p, "utf8")) as {
+        metrics?: AceAblationMetrics
+      } & AceAblationMetrics
+      return (raw.metrics ?? raw) as AceAblationMetrics
+    }
+    let report: AceAblationReport
+    try {
+      report = compareAceAblation(load(baselinePath), load(candidatePath))
+    } catch (e) {
+      console.error(`[eval-gate] gagal membandingkan ablasi: ${(e as Error).message}`)
+      process.exit(1)
+    }
+    console.log(
+      `[eval-gate] ACE ablation ${report.passed ? "PASS" : "FAIL"}` +
+        ` | success Δ${report.deltas.verifiedTaskSuccessRate.toFixed(4)}` +
+        ` | unsafe Δ${report.deltas.unsafeActionRate.toFixed(4)}` +
+        ` | falseCompletion Δ${report.deltas.falseCompletionRate.toFixed(4)}`,
+    )
+    for (const r of report.reasons) console.error(`  - ${r}`)
+    process.exit(report.passed ? 0 : 1)
+  }
+
   const path = getArg("--results") ?? "bench/results.json"
   const minRate = Number(getArg("--min-rate") ?? "1")
   const maxMedianTokens = Number(getArg("--max-median-tokens") ?? "0")

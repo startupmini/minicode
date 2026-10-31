@@ -1,5 +1,8 @@
 [test]
-timeout = 10000
+# [Fase 9 / 9.3 CTL-06] Dinaikkan 10_000 -> 15_000 ms untuk mencegah kegagalan
+# flaky pada test E2E subprocess (spawn/kill/respawn daemon & PTY) di bawah beban
+# tinggi CI. Ambang default Bun bervariasi; timeout eksplisit menjaga determinisme.
+timeout = 15000
 # test/helpers/pty-harness.ts (infrastruktur test PTY) DIKECUALIKAN dari
 # coverage: jalur spawn-nya platform-kondisional — di mesin dengan ConPTY
 # rusak (sebagian Windows dev) sebagian besar tak terjangkau test, di CI

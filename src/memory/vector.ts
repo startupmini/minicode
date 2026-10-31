@@ -73,6 +73,36 @@ export function tripEmbeddingCircuitForTest(
   markEmbeddingCircuitBroken(baseUrl, model, reason)
 }
 
+// ── [Fase 9 / 9.2 MEM-04 / U7] Fault-Injection seam untuk split-brain memori ──
+//
+// Menyediakan hook uji yang mensimulasikan crash TEPAT di antara dua write
+// penyimpanan memori (vector.db dan MEMORY.md). `stage` menandakan titik crash:
+//   - "after_vector_before_file" : vector.db sudah ketulis, MEMORY.md belum
+//   - "after_file_before_vector" : MEMORY.md sudah ketulis, vector.db belum
+// Dengan begitu `reconcileMemoryStores` dapat diuji memulihkan kedua arah
+// split-brain (vector-only → dihapus; file-only → ditambah ke vector) tanpa
+// duplikasi dan tanpa kehilangan entri valid.
+//
+// Production code tidak memanggil hook ini kecuali via writeMemoryTool: saat
+// injector di-set, writeMemoryTool memanggilnya di titik boundary lalu
+// meneruskan exception (simulasi crash). Default = null (tak ada fault).
+
+export type MemoryWriteFaultStage = "after_vector_before_file" | "after_file_before_vector"
+
+let memoryWriteFaultInjector: ((stage: MemoryWriteFaultStage) => void) | null = null
+
+/** Seam uji: pasang/lepas injector fault untuk batas write memori. */
+export function setMemoryWriteFaultInjectorForTest(
+  fn: ((stage: MemoryWriteFaultStage) => void) | null,
+): void {
+  memoryWriteFaultInjector = fn
+}
+
+/** Internal: panggil injector (bila ada) pada stage tertentu. */
+export function invokeMemoryWriteFaultForTest(stage: MemoryWriteFaultStage): void {
+  if (memoryWriteFaultInjector) memoryWriteFaultInjector(stage)
+}
+
 function open(cwd?: string): Database {
   return openAt(dbPath(cwd))
 }
@@ -540,6 +570,13 @@ export async function addMemory(
         )
       }
     }
+    // [Fase 9 / 9.2] Fault-injection boundary ":after_vector_before_file":
+    // vector.db sudah ter-commit (loop insert di atas selesai), but "file write"
+    // (MEMORY.md) yang dalam model atomic two-store belum selesai. Injector yang
+    // melempar di stage ini menyimulasikan crash persis setelah vector berhasil
+    // → menghasilkan entri vector-only (split-brain arah 2). Panggil SEBELUM
+    // prune agar baris vector yang baru di-commit tetap utuh saat crash.
+    invokeMemoryWriteFaultForTest("after_vector_before_file")
     // P13 P1: prune TTL HIERARKIS per kategori (best-effort, jangan gagalkan write).
     // Fakta/keputusan awet 180 hari, ringkasan 90, snippet 14 — snippet basi
     // (mis. "test X lolos") menyesatkan bila dibiarkan selama fakta.
@@ -1266,8 +1303,11 @@ export async function reconcileMemoryStores(cwd?: string): Promise<{
     try {
       txt = await readFile(path, "utf8")
     } catch {
-      // No file yet → clean slate, ok
-      return { reconciled: 0, vectorOnlyRemoved: 0, fileOnlyAdded: 0 }
+      // [Fase 9 / 9.2] File MEMORY.md ABSENT bukan berarti "clean slate" —
+      // vector.db yang sudah punya baris (crash "after_vector_before_file")
+      // berarti split-brain vector-only. Perlakukan file kosong (bukan early
+      // return) agar baris vector-only tetap terdeteksi & dibersihkan.
+      txt = ""
     }
 
     const fileLines = txt.split("\n").filter((l) => l.startsWith("- "))

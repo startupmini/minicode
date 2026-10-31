@@ -24,6 +24,7 @@ import {
   type AceFailureType,
   type ConsequenceDecision,
   evaluateConsequence,
+  isAceEnabled,
 } from "../src/policy/consequence-engine.ts"
 import type { NoProgressDetector } from "../src/policy/no-progress.ts"
 import type { PermissionAsk } from "../src/policy/permission.ts"
@@ -2214,38 +2215,46 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     const failureType: AceFailureType = effectiveOk ? null : transient ? "timeout" : "functional"
     const repeatedBefore = verifyFailureStreak
     verifyFailureStreak = effectiveOk ? 0 : verifyFailureStreak + 1
-    lastAceDecision = evaluateConsequence({
-      verificationPassed: effectiveOk,
-      evaluatorTamperAttempt: tampered,
-      failureType,
-      isTransientError: transient,
-      repeatedFailureCount: repeatedBefore,
-      newEvidenceSinceLastAttempt: noProgressDetector?.snapshot().newEvidenceSinceFailure === true,
-      blockedByPermissionOrExternalBlocker: permissionBlocked,
-      budgetExhausted:
-        typeof effectiveMaxTurns === "number" && session.state.turnCount >= effectiveMaxTurns,
-      insufficientEvidence: !effectiveOk && effectiveOutput.trim().length === 0,
-      baselineContentChanged: false,
-    })
-    if (lastAceDecision.verdict === "BLOCKED") {
-      process.stderr.write(
-        c.dim(
-          `[ace] verdict=BLOCKED next_action=${lastAceDecision.nextAction} — ${lastAceDecision.rationale}\n`,
-        ),
-      )
+    // [Fase 9 / 9.1] Operational rollback switch: `MINICODE_ACE_ENABLED=0`
+    // melewati seluruh evaluasi consequence (baseline murni) — `lastAceDecision`
+    // tetap null sehingga `ace_state` tidak ikut ke RUNTIME_STATE_HEADER, dan
+    // pelajaran kandidat ACE tidak dipromosikan. Hard-safety/tamper-guard TETAP
+    // aktif (sudah diterapkan di atas via `detectEvaluationTampering`).
+    if (isAceEnabled()) {
+      lastAceDecision = evaluateConsequence({
+        verificationPassed: effectiveOk,
+        evaluatorTamperAttempt: tampered,
+        failureType,
+        isTransientError: transient,
+        repeatedFailureCount: repeatedBefore,
+        newEvidenceSinceLastAttempt:
+          noProgressDetector?.snapshot().newEvidenceSinceFailure === true,
+        blockedByPermissionOrExternalBlocker: permissionBlocked,
+        budgetExhausted:
+          typeof effectiveMaxTurns === "number" && session.state.turnCount >= effectiveMaxTurns,
+        insufficientEvidence: !effectiveOk && effectiveOutput.trim().length === 0,
+        baselineContentChanged: false,
+      })
+      if (lastAceDecision && lastAceDecision.verdict === "BLOCKED") {
+        process.stderr.write(
+          c.dim(
+            `[ace] verdict=BLOCKED next_action=${lastAceDecision.nextAction} — ${lastAceDecision.rationale}\n`,
+          ),
+        )
+      }
+      // [Fase 6A / ACE-03] Pelajaran kandidat sesi ini dipromosikan hanya bila
+      // verifikasi hijau; kegagalan sementara/human-blocker tidak menghukumnya.
+      const lessonVerdict: "passed" | "failed" | "unknown" = effectiveOk
+        ? "passed"
+        : lastAceDecision.failureClass === "TRANSIENT_ENV" ||
+            lastAceDecision.failureClass === "PERMISSION_OR_EXTERNAL_BLOCKER" ||
+            lastAceDecision.failureClass === "INSUFFICIENT_EVIDENCE"
+          ? "unknown"
+          : "failed"
+      try {
+        await promoteOrRejectLessonsBySession(sessionId, lessonVerdict, effectiveRoot)
+      } catch {}
     }
-    // [Fase 6A / ACE-03] Pelajaran kandidat sesi ini dipromosikan hanya bila
-    // verifikasi hijau; kegagalan sementara/human-blocker tidak menghukumnya.
-    const lessonVerdict: "passed" | "failed" | "unknown" = effectiveOk
-      ? "passed"
-      : lastAceDecision.failureClass === "TRANSIENT_ENV" ||
-          lastAceDecision.failureClass === "PERMISSION_OR_EXTERNAL_BLOCKER" ||
-          lastAceDecision.failureClass === "INSUFFICIENT_EVIDENCE"
-        ? "unknown"
-        : "failed"
-    try {
-      await promoteOrRejectLessonsBySession(sessionId, lessonVerdict, effectiveRoot)
-    } catch {}
     if (effectiveOk) {
       noProgressDetector?.noteVerificationPassed()
     }

@@ -6,7 +6,7 @@ import { Pool } from "../agents/pool.ts"
 import { loadConfig } from "../config.ts"
 import { LIMITS } from "../constants.ts"
 import { resolveLocalDbPath } from "../lib/db-path.ts"
-import { evaluateConsequence } from "../policy/consequence-engine.ts"
+import { evaluateConsequence, isAceEnabled } from "../policy/consequence-engine.ts"
 import type { NoProgressOptions } from "../policy/no-progress.ts"
 import type { RateLimiter } from "../policy/ratelimit.ts"
 import type { WorkMode } from "../policy/work-mode.ts"
@@ -610,7 +610,11 @@ export const delegateTaskTool: Tool = {
           // ubah wording di sini karena test mengharapkan exact match. ACE-Lite
           // verdict tetap tersurat dalam amplop durable (envelope.aceVerdict),
           // tidak bocor ke observasi parent sebagai string terpisah.
-          childAceVerdict = evaluateConsequence({ verificationPassed: true })
+          // [Fase 9 / 9.1] Rollback switch: `MINICODE_ACE_ENABLED=0` → lewati
+          // evaluasi consequence; `childAceVerdict` tetap null (tanpa aceVerdict).
+          if (isAceEnabled()) {
+            childAceVerdict = evaluateConsequence({ verificationPassed: true })
+          }
           observedSummary = `sub-agent (${m}) done: ${res.finalText?.slice(0, 2000) ?? "(no output)"} [steps ${res.usage.steps}]`
           return observedSummary
         } catch (e) {
@@ -622,11 +626,14 @@ export const delegateTaskTool: Tool = {
           // [Fase 7 / LOOP-INV-13/15] ACE verdict untuk jalur error: failure
           // type dipetakan deterministik dari childStatus → verdict FAIL/BLOCKED
           // sesuai consequence-engine. `timeout`/`aborted` = timeout; lainnya = functional.
-          childAceVerdict = evaluateConsequence({
-            verificationPassed: false,
-            failureType:
-              childStatus === "aborted" || childStatus === "timeout" ? "timeout" : "functional",
-          })
+          // [Fase 9 / 9.1] Rollback switch: skip saat ACE disabled.
+          if (isAceEnabled()) {
+            childAceVerdict = evaluateConsequence({
+              verificationPassed: false,
+              failureType:
+                childStatus === "aborted" || childStatus === "timeout" ? "timeout" : "functional",
+            })
+          }
           observedSummary = `[sub-agent ${m} error] ${msg.slice(0, 500)}`
           return observedSummary
         } finally {

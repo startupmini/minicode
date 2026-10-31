@@ -44,6 +44,24 @@ export type AceFailureType =
   | "regression"
   | null
 
+// [Fase 9 / 9.1] Operational Rollback Switch — `MINICODE_ACE_ENABLED`.
+//
+// Operator harus bisa menonaktifkan ACE-Lite secara bersih (rollback instan
+// atau baseline murni) tanpa mengubah kode. Default `true` (aktif) agar seluruh
+// test `p18` dan `p19` tetap hijau tanpa env var. Nilai yang dianggap "off"
+// (case-insensitive, di-trim): "0", "false", "off", "no". Selain itu → aktif.
+//
+// PENTING: sakelar ini TIDAK menyentuh hard-safety/permission policy maupun
+// Evaluator Tamper Guard — keduanya tetap berjalan apa pun nilainya (safety
+// constraint tidak boleh dimatikan oleh sakelar fitur).
+const ACE_DISABLE_VALUES = new Set(["0", "false", "off", "no"])
+
+export function isAceEnabled(env?: Record<string, string | undefined>): boolean {
+  const raw = (env?.MINICODE_ACE_ENABLED ?? process.env.MINICODE_ACE_ENABLED)?.trim().toLowerCase()
+  if (raw === undefined || raw === "") return true
+  return !ACE_DISABLE_VALUES.has(raw)
+}
+
 export interface ConsequenceDecision {
   readonly verdict: AceVerdict
   readonly failureClass: AceFailureClass

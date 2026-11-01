@@ -328,8 +328,7 @@ export async function withJournalBusyRetry<T>(
     try {
       return fn()
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      if (!msg.includes("SQLITE_BUSY") && !msg.includes("database is locked")) throw e
+      if (!isSqliteContention(e)) throw e
       last = e
       if (i + 1 < attempts) await sleep(i)
     }
@@ -337,9 +336,35 @@ export async function withJournalBusyRetry<T>(
   throw last instanceof Error ? last : new Error(`SQLITE_BUSY after ${attempts} attempts`)
 }
 
-function isBusyError(e: unknown): boolean {
-  const msg = e instanceof Error ? e.message : String(e)
-  return msg.includes("SQLITE_BUSY") || msg.includes("database is locked")
+// [Phase 12.3] Predikat kontensi SQLite transien lintas-proses — SELARAS dengan
+// persistence.ts / store.ts / vector.ts (Fase 12.2). Bun menaruh kode simbolik di
+// `error.code` (mis. "SQLITE_IOERR_TRUNCATE") dan teks manusiawi di `error.message`
+// ("disk I/O error"), jadi keduanya diperiksa. SENGAJA TIDAK di-retry:
+// SQLITE_CORRUPT / SQLITE_NOTADB / constraint error.
+const SQLITE_CONTENTION_RE =
+  /SQLITE_BUSY|database is locked|database table is locked|SQLITE_LOCKED|SQLITE_PROTOCOL|SQLITE_IOERR_TRUNCATE|SQLITE_IOERR_SHMOPEN|SQLITE_IOERR_LOCK|disk I\/O error/i
+
+function isSqliteContention(e: unknown): boolean {
+  const code = (e as { code?: unknown } | null)?.code
+  if (typeof code === "string" && SQLITE_CONTENTION_RE.test(code)) return true
+  const msg = e instanceof Error ? String(e.message ?? e) : String(e)
+  return SQLITE_CONTENTION_RE.test(msg)
+}
+
+const DB_INIT_ATTEMPTS = 8
+const DB_INIT_BACKOFF_MS = 15
+
+/** Retry sinkron untuk setup PRAGMA/WAL saat open (jalur sinkron openExecutionJournal). */
+function withBusyRetrySync<T>(fn: () => T, attempts = DB_INIT_ATTEMPTS): T | null {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return fn()
+    } catch (e) {
+      if (!isSqliteContention(e)) throw e
+      Bun.sleepSync(DB_INIT_BACKOFF_MS * 2 ** i)
+    }
+  }
+  return null
 }
 
 function isCorruptionError(e: unknown): boolean {
@@ -396,11 +421,25 @@ export function openExecutionJournal(
     if (!opts?.readonly) mkdirSync(dirname(path), { recursive: true })
     db = new Database(path, opts?.readonly ? { readonly: true } : undefined)
     // busy_timeout DULU (konvensi persistence.ts — sebelum statement lock apa pun).
-    db.exec(`PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}`)
-    if (!opts?.readonly) {
-      db.exec(
-        `PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=${LIMITS.SQLITE_WAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=${LIMITS.SQLITE_WAL_AUTOCHECKPOINT_PAGES};`,
+    // [Phase 12.3] Setup busy_timeout + WAL di-retry kontensi transien
+    // (SQLITE_IOERR_TRUNCATE dkk.); non-kontensi langsung lempar, dan bila semua
+    // percobaan habis LEMPAR (bukan defer) agar catch di bawah menutup db.
+    const dbHandle = db
+    const setupOk = withBusyRetrySync(() => {
+      dbHandle.exec(`PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}`)
+      if (!opts?.readonly) {
+        dbHandle.exec(
+          `PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=${LIMITS.SQLITE_WAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=${LIMITS.SQLITE_WAL_AUTOCHECKPOINT_PAGES};`,
+        )
+      }
+      return true
+    })
+    if (setupOk === null) {
+      throw new Error(
+        `execution journal: WAL/busy_timeout setup gave up after ${DB_INIT_ATTEMPTS} busy attempts`,
       )
+    }
+    if (!opts?.readonly) {
       db.exec(`CREATE TABLE IF NOT EXISTS journal_meta(key TEXT PRIMARY KEY, value TEXT)`)
       db.exec(
         `CREATE TABLE IF NOT EXISTS journal_events(
@@ -677,7 +716,7 @@ export function openExecutionJournal(
           }
           return fail("constraint-conflict", msg.slice(0, 300))
         }
-        if (isBusyError(e)) return fail("busy-timeout", msg.slice(0, 300))
+        if (isSqliteContention(e)) return fail("busy-timeout", msg.slice(0, 300))
         if (isCorruptionError(e)) {
           m.corruptionCount++
           return fail("corruption", msg.slice(0, 300))
@@ -770,7 +809,7 @@ export function openExecutionJournal(
           }
           return fail("constraint-conflict", msg.slice(0, 300))
         }
-        if (isBusyError(e)) return fail("busy-timeout", msg.slice(0, 300))
+        if (isSqliteContention(e)) return fail("busy-timeout", msg.slice(0, 300))
         if (isCorruptionError(e)) {
           m.corruptionCount++
           return fail("corruption", msg.slice(0, 300))

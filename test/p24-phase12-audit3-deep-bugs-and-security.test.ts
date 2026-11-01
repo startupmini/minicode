@@ -217,4 +217,34 @@ describe("p24: Audit #3 deep bugs & security", () => {
       }, 3),
     ).toThrow()
   })
+
+  test("RT-2: withJournalBusyRetry me-retry SQLITE_IOERR_TRUNCATE, bukan SQLITE_NOTADB", async () => {
+    const { withJournalBusyRetry } =
+      require("../src/runtime/execution-journal.ts") as typeof import("../src/runtime/execution-journal.ts")
+
+    // Positif: kontensi WAL transien di-retry → berhasil pada percobaan berikutnya.
+    let calls = 0
+    const ok = await withJournalBusyRetry(
+      () => {
+        calls++
+        if (calls === 1) {
+          throw Object.assign(new Error("disk I/O error"), { code: "SQLITE_IOERR_TRUNCATE" })
+        }
+        return "ok"
+      },
+      { attempts: 3, sleepMs: () => Promise.resolve() },
+    )
+    expect(ok).toBe("ok")
+    expect(calls).toBe(2)
+
+    // Negatif: korupsi/bukan-database TIDAK di-retry — reject segera.
+    await expect(
+      withJournalBusyRetry(
+        () => {
+          throw Object.assign(new Error("file is not a database"), { code: "SQLITE_NOTADB" })
+        },
+        { attempts: 3, sleepMs: () => Promise.resolve() },
+      ),
+    ).rejects.toThrow()
+  })
 })

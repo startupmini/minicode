@@ -1,6 +1,6 @@
 {
   "name": "minicode-ai",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "Coding agent CLI built on the frozen MiniCore runtime — tools, MCP, LSP, sandbox, shadow-git checkpoints",
   "type": "module",
   "private": false,
@@ -33,7 +33,7 @@
     "url": "https://github.com/startupmini/minicode/issues"
   },
   "bin": {
-    "minicode": "./cli/index.ts"
+    "minicode": "cli/minicode.js"
   },
   "imports": {
     "#minicore": "./vendor/minicore/src/core/index.ts",

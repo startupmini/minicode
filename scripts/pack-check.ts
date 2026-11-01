@@ -98,6 +98,10 @@ for (const b of binPaths) {
 // Import bare (`minicore`, `node:*`, `bun:*`) diperiksa terpisah.
 const RELATIVE_IMPORT = /(?:^|\n)\s*(?:import|export)[\s\S]*?from\s+["'](\.[^"']+)["']/g
 const DYNAMIC_IMPORT = /import\(\s*["'](\.[^"']+)["']\s*\)/g
+// Side-effect import (`import "./x"`) — dipakai wrapper bin cli/minicode.js →
+// cli/index.ts. Tanpa ini, gateway import berhenti di wrapper dan tak lagi
+// memverifikasi graf cli/index.ts (regresi kualitas gate, bukan kegagalan).
+const SIDE_IMPORT = /(?:^|\n)\s*import\s+["'](\.[^"']+)["']/g
 const BARE_IMPORT = /from\s+["'](minicore(?:\/[^"']*)?)["']/g
 
 function readIfPacked(rel: string): string | null {
@@ -131,6 +135,7 @@ function walk(rel: string): void {
   }
   collect(RELATIVE_IMPORT)
   collect(DYNAMIC_IMPORT)
+  collect(SIDE_IMPORT)
 
   BARE_IMPORT.lastIndex = 0
   let b: RegExpExecArray | null = BARE_IMPORT.exec(src)

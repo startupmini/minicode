@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.1] - 2026-11-01
+
+### Fixed — bin distribusi `minicode`
+
+- `bin` sebelumnya menunjuk `./cli/index.ts` dengan prefix `./`; npm me-normalisasi prefix itu dan melaporkan warning `"bin[minicode]" ... was invalid and removed` saat publish. `bin` kini menunjuk wrapper `.js` (`cli/minicode.js`, shebang `#!/usr/bin/env bun`) yang memuat `cli/index.ts` — tanpa prefix `./` dan berekstensi `.js` sehingga kompatibilitas bin npm lebih baik dan warning publish hilang. Gateway distribusi (`scripts/pack-check.ts`) diperluas agar menelusuri side-effect import sehingga graf `cli/index.ts` tetap terverifikasi sebelum publish.
+
 ## [0.13.0] - 2026-11-01
 
 ### Frontier Harness — 6 dimensi frontier terintegrasi penuh (Fase 1–12)

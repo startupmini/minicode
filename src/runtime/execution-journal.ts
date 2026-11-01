@@ -268,6 +268,17 @@ export function diffCanonicalContent(
   return diff
 }
 
+/** [ST-6] Parse metadata JSON aman: baris korup → `null`, bukan uncaught throw
+ *  (integritas record tak boleh membuat `integrityCheck`/`readAll` melempar). */
+function parseMetadata(metadataJson: string | null | undefined): Record<string, unknown> | null {
+  if (metadataJson == null) return null
+  try {
+    return JSON.parse(metadataJson) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
 function storedEventContent(rec: JournalEventRecord): Record<string, unknown> {
   return {
     eventId: rec.eventId,
@@ -286,7 +297,7 @@ function storedEventContent(rec: JournalEventRecord): Record<string, unknown> {
     attempt: rec.attempt ?? null,
     generation: rec.generation ?? null,
     supersedes: rec.supersedes ?? null,
-    metadata: JSON.parse(rec.metadataJson) as Record<string, unknown>,
+    metadata: parseMetadata(rec.metadataJson),
   }
 }
 
@@ -299,7 +310,7 @@ function storedIntentContent(rec: JournalIntentRecord): Record<string, unknown> 
     executionVersion: rec.executionVersion,
     reason: rec.reason,
     source: rec.source,
-    metadata: JSON.parse(rec.metadataJson) as Record<string, unknown>,
+    metadata: parseMetadata(rec.metadataJson),
   }
 }
 

@@ -721,28 +721,30 @@ function handle(cwd?: string): Database {
     )
   }
   db = opened
-  if (!initialized.has(p)) {
-    // Sama dengan persistence.ts: PRAGMA WAL dibungkus retry (peralihan WAL
-    // butuh exclusive lock sesaat).
-    const walOk = withBusyRetrySync(() => {
-      db.exec(
-        `PRAGMA journal_mode=WAL; PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=${LIMITS.SQLITE_WAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=${LIMITS.SQLITE_WAL_AUTOCHECKPOINT_PAGES};`,
-      )
-      return true
-    })
-    if (walOk === null) {
-      process.stderr.write(`[warn] taskstore: wal setup deferred, retry next open: ${p}\n`)
-    }
-    try {
-      const { chmodSync } = require("node:fs") as typeof import("node:fs")
-      chmodSync(p, 0o600)
-    } catch {}
-  }
-  // D2: the artifact ran this bare and could therefore throw SQLITE_BUSY before
-  // any retry. Bounded retry now. On failure the handle is closed and dropped
-  // from the cache, exactly as the artifact did, so the next call retries from a
-  // clean state instead of handing out a half-built connection.
+  // [Audit #3 RL-3] WAL + DDL/migrasi dibungkus SATU guard pasca-konstruksi agar
+  // kegagalan IOERR/CORRUPT menutup handle (bukan bocor) — WAL sebelumnya di luar guard.
   try {
+    if (!initialized.has(p)) {
+      // Sama dengan persistence.ts: PRAGMA WAL dibungkus retry (peralihan WAL
+      // butuh exclusive lock sesaat).
+      const walOk = withBusyRetrySync(() => {
+        db.exec(
+          `PRAGMA journal_mode=WAL; PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=${LIMITS.SQLITE_WAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=${LIMITS.SQLITE_WAL_AUTOCHECKPOINT_PAGES};`,
+        )
+        return true
+      })
+      if (walOk === null) {
+        process.stderr.write(`[warn] taskstore: wal setup deferred, retry next open: ${p}\n`)
+      }
+      try {
+        const { chmodSync } = require("node:fs") as typeof import("node:fs")
+        chmodSync(p, 0o600)
+      } catch {}
+    }
+    // D2: the artifact ran this bare and could therefore throw SQLITE_BUSY before
+    // any retry. Bounded retry now. On failure the handle is closed and dropped
+    // from the cache, exactly as the artifact did, so the next call retries from a
+    // clean state instead of handing out a half-built connection.
     for (const stmt of DDL_STATEMENTS) {
       const ok = withBusyRetrySync(() => {
         db.exec(stmt)

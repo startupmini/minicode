@@ -12,6 +12,8 @@ export class McpTransport {
       resolve: (v: unknown) => void
       reject: (e: Error) => void
       timer: ReturnType<typeof setTimeout>
+      /** Lepas listener abort saat request settle (RL-5 — anti bocor). */
+      unsubscribe?: () => void
     }
   >()
   private seq = 0
@@ -50,6 +52,7 @@ export class McpTransport {
         if (msg.id != null && this.pending.has(msg.id)) {
           const p = this.pending.get(msg.id)!
           clearTimeout(p.timer)
+          p.unsubscribe?.()
           this.pending.delete(msg.id)
           if (msg.error) p.reject(new Error(msg.error.message || JSON.stringify(msg.error)))
           else p.resolve(msg.result)
@@ -73,27 +76,21 @@ export class McpTransport {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
+        unsubscribe()
         reject(new Error(`MCP request ${method} timed out after ${timeoutMs}ms`))
       }, timeoutMs)
-      const entry = { resolve, reject, timer }
-      this.pending.set(id, entry)
-      // stdio JSON-RPC tak punya pembatalan di-kabel: abort hanya menghentikan
-      // PENUNGGUAN di sisi kita (server child tetap hidup sampai close/timeout
-      // dan efek yang sudah terjadi di server TIDAK dibatalkan).
-      signal?.addEventListener(
-        "abort",
-        () => {
-          if (!this.pending.has(id)) return
-          this.pending.delete(id)
-          clearTimeout(timer)
-          reject(
-            signal.reason instanceof Error
-              ? signal.reason
-              : new Error(`MCP request ${method} aborted`),
-          )
-        },
-        { once: true },
-      )
+      const onAbort = () => {
+        if (!this.pending.has(id)) return
+        this.pending.delete(id)
+        clearTimeout(timer)
+        const reason = signal?.reason
+        reject(reason instanceof Error ? reason : new Error(`MCP request ${method} aborted`))
+      }
+      // [RL-5] Simpan pembersih listener agar request yang settle normal
+      // (respon masuk / timeout) melepas `onAbort` dari signal — anti bocor.
+      const unsubscribe = () => signal?.removeEventListener("abort", onAbort)
+      signal?.addEventListener("abort", onAbort, { once: true })
+      this.pending.set(id, { resolve, reject, timer, unsubscribe })
     })
   }
 

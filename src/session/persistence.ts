@@ -119,46 +119,49 @@ function open(cwd?: string, local = false): Database {
       `persistence: cannot open sessions.db after ${DB_INIT_ATTEMPTS} busy-retry attempts: ${p}`,
     )
   }
-  if (!initializedSessionPaths.has(p)) {
-    // journal_size_limit + wal_autocheckpoint: WAL tidak tumbuh tak terbatas.
-    // Bungkus try/catch DENGAN retry-next-open (audit 2026-09-16): di Windows,
-    // lock AV/file sesaat saat dua proses membuka bersamaan membuat setup WAL
-    // gagal SQLITE_IOERR_TRUNCATE — crash di sini mematikan SELURUH operasi
-    // sesi padahal mode rollback-journal tetap bisa baca. Jangan tandai
-    // initialized bila gagal agar open berikutnya mencoba lagi (mode WAL
-    // persisten di berkas DB, jadi sekali sukses berlaku untuk semua handle).
-    // Phase 7: PRAGMA setup ini juga dibungkus withBusyRetrySync karena
-    // peralihan WAL butuh exclusive lock sesaat.
-    const walOk = withBusyRetrySync(() => {
-      db.exec(
-        `PRAGMA journal_mode=WAL; PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=${LIMITS.SQLITE_WAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=${LIMITS.SQLITE_WAL_AUTOCHECKPOINT_PAGES};`,
-      )
-      initializedSessionPaths.add(p)
-      return true
-    })
-    if (walOk === null) {
-      process.stderr.write(`[warn] persistence: wal setup deferred, retry next open: ${p}\n`)
+  // [Audit #3 RL-1] Seluruh langkah pasca-konstruksi (WAL + DDL/migrasi) dibungkus
+  // agar kegagalan SQLITE_IOERR/CORRUPT menutup handle `Database` — bukan bocor.
+  try {
+    if (!initializedSessionPaths.has(p)) {
+      // journal_size_limit + wal_autocheckpoint: WAL tidak tumbuh tak terbatas.
+      // Bungkus try/catch DENGAN retry-next-open (audit 2026-09-16): di Windows,
+      // lock AV/file sesaat saat dua proses membuka bersamaan membuat setup WAL
+      // gagal SQLITE_IOERR_TRUNCATE — crash di sini mematikan SELURUH operasi
+      // sesi padahal mode rollback-journal tetap bisa baca. Jangan tandai
+      // initialized bila gagal agar open berikutnya mencoba lagi (mode WAL
+      // persisten di berkas DB, jadi sekali sukses berlaku untuk semua handle).
+      // Phase 7: PRAGMA setup ini juga dibungkus withBusyRetrySync karena
+      // peralihan WAL butuh exclusive lock sesaat.
+      const walOk = withBusyRetrySync(() => {
+        db.exec(
+          `PRAGMA journal_mode=WAL; PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=${LIMITS.SQLITE_WAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=${LIMITS.SQLITE_WAL_AUTOCHECKPOINT_PAGES};`,
+        )
+        initializedSessionPaths.add(p)
+        return true
+      })
+      if (walOk === null) {
+        process.stderr.write(`[warn] persistence: wal setup deferred, retry next open: ${p}\n`)
+      }
+      // File DB dibuat dengan 644 default; ubah ke 600 agar history tidak world-readable
+      try {
+        const { chmodSync } = require("node:fs") as typeof import("node:fs")
+        chmodSync(p, 0o600)
+        // WAL/SHM akan dibuat dengan mode yang sama pada checkpoint berikutnya
+      } catch {}
     }
-    // File DB dibuat dengan 644 default; ubah ke 600 agar history tidak world-readable
-    try {
-      const { chmodSync } = require("node:fs") as typeof import("node:fs")
-      chmodSync(p, 0o600)
-      // WAL/SHM akan dibuat dengan mode yang sama pada checkpoint berikutnya
-    } catch {}
-  }
-  // [Audit #2 C.F1] DDL/migrasi DI-GATE per path: bila path sudah di-migrasi
-  // DAN marker migrasi terakhir (kolom daemon_approvals.invocation_id) masih ada
-  // di koneksi ini, lewati seluruh blok CREATE/ALTER. Cek KOLOM di koneksi saat
-  // ini memastikan DB yang dihapus + dibuat ulang (atau kolom di-DROP oleh test
-  // migrasi) TETAP di-migrasi ulang — Set hanya cache path, bukan handle Database.
-  const needsDdl = !migratedSessionPaths.has(p) || !daemonApprovalsMigrated(db)
-  if (needsDdl) {
-    // DDL setup: `CREATE TABLE IF NOT EXISTS` butuh lock tulis bila tabel belum
-    // ada. Tanpa retry di sini, DB yang sedang dikunci proses lain membuat
-    // SETIAP operasi sesi gagal seketika. `null` = gagal terus; pemanggil akan
-    // gagal di statement berikutnya dengan pesan yang lebih jelas.
-    withBusyRetrySync(() => {
-      db.exec(`
+    // [Audit #2 C.F1] DDL/migrasi DI-GATE per path: bila path sudah di-migrasi
+    // DAN marker migrasi terakhir (kolom daemon_approvals.invocation_id) masih ada
+    // di koneksi ini, lewati seluruh blok CREATE/ALTER. Cek KOLOM di koneksi saat
+    // ini memastikan DB yang dihapus + dibuat ulang (atau kolom di-DROP oleh test
+    // migrasi) TETAP di-migrasi ulang — Set hanya cache path, bukan handle Database.
+    const needsDdl = !migratedSessionPaths.has(p) || !daemonApprovalsMigrated(db)
+    if (needsDdl) {
+      // DDL setup: `CREATE TABLE IF NOT EXISTS` butuh lock tulis bila tabel belum
+      // ada. Tanpa retry di sini, DB yang sedang dikunci proses lain membuat
+      // SETIAP operasi sesi gagal seketika. `null` = gagal terus; pemanggil akan
+      // gagal di statement berikutnya dengan pesan yang lebih jelas.
+      withBusyRetrySync(() => {
+        db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, created_at INTEGER, cwd TEXT, system TEXT, writer_epoch INTEGER NOT NULL DEFAULT 0, default_thread_id TEXT NULL);
     CREATE TABLE IF NOT EXISTS messages (session_id TEXT, seq INTEGER, role TEXT, content TEXT, toolCalls TEXT, toolCallId TEXT, name TEXT, reasoning TEXT, is_error INTEGER, ts INTEGER, thread_id TEXT NULL, event_id TEXT NULL, run_id TEXT NULL, migrated INTEGER NOT NULL DEFAULT 0, migrated_compacted INTEGER NOT NULL DEFAULT 0, projection_note TEXT NULL, PRIMARY KEY(session_id, seq));
     CREATE TABLE IF NOT EXISTS turns (session_id TEXT, turn_idx INTEGER, usage TEXT, ts INTEGER, PRIMARY KEY(session_id, turn_idx));
@@ -174,170 +177,170 @@ function open(cwd?: string, local = false): Database {
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq);
     CREATE INDEX IF NOT EXISTS idx_presentation_events_session ON presentation_events(session_id, event_seq);
   `)
-    })
-    // migration: add updated_at, toolCallId, name jika kolom lama (backward-compat)
-    try {
-      const cols = db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]
-      if (!cols.some((c) => c.name === "updated_at")) {
-        db.exec("ALTER TABLE sessions ADD COLUMN updated_at INTEGER")
-        db.exec("UPDATE sessions SET updated_at = created_at WHERE updated_at IS NULL")
+      })
+      // migration: add updated_at, toolCallId, name jika kolom lama (backward-compat)
+      try {
+        const cols = db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]
+        if (!cols.some((c) => c.name === "updated_at")) {
+          db.exec("ALTER TABLE sessions ADD COLUMN updated_at INTEGER")
+          db.exec("UPDATE sessions SET updated_at = created_at WHERE updated_at IS NULL")
+        }
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC)`)
+        // P2.9 — lineage Sub-Agent. Aditif + idempoten. NULL = sesi root (parent
+        // ATAU anak legasi pra-P2.9). Sesi anak MEILIKI baris sessions sendiri;
+        // ini yang menutup cacat namespace hantu (presentation_events.session_id
+        // menunjuk id tanpa baris sessions → dihapus orphan-purge).
+        if (!cols.some((c) => c.name === "parent_session_id")) {
+          db.exec("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT NULL")
+        }
+        if (!cols.some((c) => c.name === "parent_run_id")) {
+          db.exec("ALTER TABLE sessions ADD COLUMN parent_run_id TEXT NULL")
+        }
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)`)
+      } catch (e) {
+        process.stderr.write(
+          `[warn] persistence: sessions migration skipped: ${(e as Error).message}\n`,
+        )
       }
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC)`)
-      // P2.9 — lineage Sub-Agent. Aditif + idempoten. NULL = sesi root (parent
-      // ATAU anak legasi pra-P2.9). Sesi anak MEILIKI baris sessions sendiri;
-      // ini yang menutup cacat namespace hantu (presentation_events.session_id
-      // menunjuk id tanpa baris sessions → dihapus orphan-purge).
-      if (!cols.some((c) => c.name === "parent_session_id")) {
-        db.exec("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT NULL")
+      try {
+        const msgCols = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[]
+        if (!msgCols.some((c) => c.name === "toolCallId")) {
+          db.exec("ALTER TABLE messages ADD COLUMN toolCallId TEXT")
+          db.exec("ALTER TABLE messages ADD COLUMN name TEXT")
+        }
+        // Fidelity resume: `reasoning` (thinking DeepSeek-style) dan `is_error`
+        // (tool gagal) adalah bagian dari kernel Message dan ikut dibawa ke
+        // history, tapi kolomnya tak pernah ada — resume lama sewajarnya buta dan
+        // model kehilangan konteks kegagalannya. Additive, jadi DB lama tetap
+        // terbaca dan turn lama (tanpa kolom ini) tetap resume dengan isError
+        // diperlakukan absen.
+        if (!msgCols.some((c) => c.name === "reasoning")) {
+          db.exec("ALTER TABLE messages ADD COLUMN reasoning TEXT")
+        }
+        if (!msgCols.some((c) => c.name === "is_error")) {
+          db.exec("ALTER TABLE messages ADD COLUMN is_error INTEGER")
+        }
+      } catch (e) {
+        process.stderr.write(
+          `[warn] persistence: messages migration skipped: ${(e as Error).message}\n`,
+        )
       }
-      if (!cols.some((c) => c.name === "parent_run_id")) {
-        db.exec("ALTER TABLE sessions ADD COLUMN parent_run_id TEXT NULL")
-      }
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)`)
-    } catch (e) {
-      process.stderr.write(
-        `[warn] persistence: sessions migration skipped: ${(e as Error).message}\n`,
-      )
-    }
-    try {
-      const msgCols = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[]
-      if (!msgCols.some((c) => c.name === "toolCallId")) {
-        db.exec("ALTER TABLE messages ADD COLUMN toolCallId TEXT")
-        db.exec("ALTER TABLE messages ADD COLUMN name TEXT")
-      }
-      // Fidelity resume: `reasoning` (thinking DeepSeek-style) dan `is_error`
-      // (tool gagal) adalah bagian dari kernel Message dan ikut dibawa ke
-      // history, tapi kolomnya tak pernah ada — resume lama sewajarnya buta dan
-      // model kehilangan konteks kegagalannya. Additive, jadi DB lama tetap
-      // terbaca dan turn lama (tanpa kolom ini) tetap resume dengan isError
-      // diperlakukan absen.
-      if (!msgCols.some((c) => c.name === "reasoning")) {
-        db.exec("ALTER TABLE messages ADD COLUMN reasoning TEXT")
-      }
-      if (!msgCols.some((c) => c.name === "is_error")) {
-        db.exec("ALTER TABLE messages ADD COLUMN is_error INTEGER")
-      }
-    } catch (e) {
-      process.stderr.write(
-        `[warn] persistence: messages migration skipped: ${(e as Error).message}\n`,
-      )
-    }
-    // P2.1 — peta alias identitas sesi: alias (input mentah eksak) → kanonik.
-    // Additive: DB lama mendapat tabel kosong; tak ada baris lama yang berubah.
-    // `alias` = input mentah persis (bukan hasil sanitasi) agar tabrakan
-    // sanitizer (`a/b` vs `a-b`) tetap terbedakan; `fs_key` = bentuk kanonik
-    // untuk deteksi tabrakan kunci filesystem.
-    withBusyRetrySync(() => {
-      db.exec(`
+      // P2.1 — peta alias identitas sesi: alias (input mentah eksak) → kanonik.
+      // Additive: DB lama mendapat tabel kosong; tak ada baris lama yang berubah.
+      // `alias` = input mentah persis (bukan hasil sanitasi) agar tabrakan
+      // sanitizer (`a/b` vs `a-b`) tetap terbedakan; `fs_key` = bentuk kanonik
+      // untuk deteksi tabrakan kunci filesystem.
+      withBusyRetrySync(() => {
+        db.exec(`
     CREATE TABLE IF NOT EXISTS session_aliases (alias TEXT PRIMARY KEY, fs_key TEXT NOT NULL, canonical TEXT NOT NULL, reason TEXT NOT NULL, created_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_session_aliases_fs ON session_aliases(fs_key);
     CREATE INDEX IF NOT EXISTS idx_session_aliases_canonical ON session_aliases(canonical);
   `)
-    })
-    // P2.2 — pagar penulis (writer fence): generasi otoritas penulis dalam
-    // satu generasi identitas sesi. BEDA dari inkarnasi TaskStore (generasi
-    // identitas lintas delete/recreate): epoch hanya maju lewat takeover dan
-    // tak pernah diubah save biasa. Baris lama → 0 (deterministik).
-    // P2.3 — slot default_thread_id (nullable transisional; P2.4 menegakkan
-    // invariant) + kolom dorman messages (NULL/0 = legacy tak-berskala;
-    // P2.4 backfill, P2.5 alokator + UNIQUE event_id via index).
-    try {
-      const sessCols = db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]
-      if (!sessCols.some((c) => c.name === "writer_epoch")) {
-        db.exec("ALTER TABLE sessions ADD COLUMN writer_epoch INTEGER NOT NULL DEFAULT 0")
-      }
-      if (!sessCols.some((c) => c.name === "default_thread_id")) {
-        db.exec("ALTER TABLE sessions ADD COLUMN default_thread_id TEXT NULL")
-      }
-      const msgCols2 = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[]
-      const addMsgCol = (name: string, ddl: string): void => {
-        if (!msgCols2.some((c) => c.name === name))
-          db.exec(`ALTER TABLE messages ADD COLUMN ${ddl}`)
-      }
-      addMsgCol("thread_id", "thread_id TEXT NULL")
-      addMsgCol("event_id", "event_id TEXT NULL")
-      addMsgCol("run_id", "run_id TEXT NULL")
-      addMsgCol("migrated", "migrated INTEGER NOT NULL DEFAULT 0")
-      addMsgCol("migrated_compacted", "migrated_compacted INTEGER NOT NULL DEFAULT 0")
-      addMsgCol("projection_note", "projection_note TEXT NULL")
-      // P2.6: takeover_epoch untuk runs (NULL = pra-P2.6; diisi saat create).
+      })
+      // P2.2 — pagar penulis (writer fence): generasi otoritas penulis dalam
+      // satu generasi identitas sesi. BEDA dari inkarnasi TaskStore (generasi
+      // identitas lintas delete/recreate): epoch hanya maju lewat takeover dan
+      // tak pernah diubah save biasa. Baris lama → 0 (deterministik).
+      // P2.3 — slot default_thread_id (nullable transisional; P2.4 menegakkan
+      // invariant) + kolom dorman messages (NULL/0 = legacy tak-berskala;
+      // P2.4 backfill, P2.5 alokator + UNIQUE event_id via index).
       try {
-        const runCols = db.prepare("PRAGMA table_info(runs)").all() as { name: string }[]
-        if (runCols.length > 0 && !runCols.some((c) => c.name === "takeover_epoch")) {
-          db.exec("ALTER TABLE runs ADD COLUMN takeover_epoch INTEGER NULL")
+        const sessCols = db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]
+        if (!sessCols.some((c) => c.name === "writer_epoch")) {
+          db.exec("ALTER TABLE sessions ADD COLUMN writer_epoch INTEGER NOT NULL DEFAULT 0")
         }
-      } catch {
-        // Tabel absen (handle mentah) atau gagal — CREATE di atas yang berlaku.
-      }
-      // P2.7: anchor_event_id untuk history_projections (NULL = pra-P2.7 atau
-      // cakupan kosong; diisi saat build bila base_seq > 0). Aditif idempoten
-      // seperti kolom di atas; baris lama (bila ada) dipertahankan utuh.
-      try {
-        const projCols = db.prepare("PRAGMA table_info(history_projections)").all() as {
-          name: string
-        }[]
-        if (projCols.length > 0 && !projCols.some((c) => c.name === "anchor_event_id")) {
-          db.exec("ALTER TABLE history_projections ADD COLUMN anchor_event_id TEXT NULL")
+        if (!sessCols.some((c) => c.name === "default_thread_id")) {
+          db.exec("ALTER TABLE sessions ADD COLUMN default_thread_id TEXT NULL")
         }
-      } catch {
-        // Tabel absen atau gagal — CREATE di bawah yang berlaku.
-      }
-      // Indeks di SINI (setelah ALTER): CREATE INDEX atas kolom yang belum ada
-      // melempar di DB legacy bila dikerjakan sebelum migrasi kolom (temuan
-      // P2.3: open() gagal total). Idempoten seperti indeks lain di atas.
-      // P2.4 — identitas histori kanonik (session_id, thread_id, seq): UNIQUE
-      // (menggantikan idx_messages_thread P2.3 yang salah-bentuk tanpa
-      // session_id). NULL thread legacy dikecualikan SQLite secara alami.
-      // P2.5 — keunikan event: UNIQUE(session_id, thread_id, event_id).
-      // NULL dikecualikan (baris legacy pra-backfill tak pernah konflik);
-      // komposit (bukan global) agar branch PRESERVE event_id tetap konsisten
-      // (masa lalu bersama = id sama di sesi berbeda — analogi objek git).
-      db.exec("DROP INDEX IF EXISTS idx_messages_thread")
-      withBusyRetrySync(() => {
-        db.exec(`
+        const msgCols2 = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[]
+        const addMsgCol = (name: string, ddl: string): void => {
+          if (!msgCols2.some((c) => c.name === name))
+            db.exec(`ALTER TABLE messages ADD COLUMN ${ddl}`)
+        }
+        addMsgCol("thread_id", "thread_id TEXT NULL")
+        addMsgCol("event_id", "event_id TEXT NULL")
+        addMsgCol("run_id", "run_id TEXT NULL")
+        addMsgCol("migrated", "migrated INTEGER NOT NULL DEFAULT 0")
+        addMsgCol("migrated_compacted", "migrated_compacted INTEGER NOT NULL DEFAULT 0")
+        addMsgCol("projection_note", "projection_note TEXT NULL")
+        // P2.6: takeover_epoch untuk runs (NULL = pra-P2.6; diisi saat create).
+        try {
+          const runCols = db.prepare("PRAGMA table_info(runs)").all() as { name: string }[]
+          if (runCols.length > 0 && !runCols.some((c) => c.name === "takeover_epoch")) {
+            db.exec("ALTER TABLE runs ADD COLUMN takeover_epoch INTEGER NULL")
+          }
+        } catch {
+          // Tabel absen (handle mentah) atau gagal — CREATE di atas yang berlaku.
+        }
+        // P2.7: anchor_event_id untuk history_projections (NULL = pra-P2.7 atau
+        // cakupan kosong; diisi saat build bila base_seq > 0). Aditif idempoten
+        // seperti kolom di atas; baris lama (bila ada) dipertahankan utuh.
+        try {
+          const projCols = db.prepare("PRAGMA table_info(history_projections)").all() as {
+            name: string
+          }[]
+          if (projCols.length > 0 && !projCols.some((c) => c.name === "anchor_event_id")) {
+            db.exec("ALTER TABLE history_projections ADD COLUMN anchor_event_id TEXT NULL")
+          }
+        } catch {
+          // Tabel absen atau gagal — CREATE di bawah yang berlaku.
+        }
+        // Indeks di SINI (setelah ALTER): CREATE INDEX atas kolom yang belum ada
+        // melempar di DB legacy bila dikerjakan sebelum migrasi kolom (temuan
+        // P2.3: open() gagal total). Idempoten seperti indeks lain di atas.
+        // P2.4 — identitas histori kanonik (session_id, thread_id, seq): UNIQUE
+        // (menggantikan idx_messages_thread P2.3 yang salah-bentuk tanpa
+        // session_id). NULL thread legacy dikecualikan SQLite secara alami.
+        // P2.5 — keunikan event: UNIQUE(session_id, thread_id, event_id).
+        // NULL dikecualikan (baris legacy pra-backfill tak pernah konflik);
+        // komposit (bukan global) agar branch PRESERVE event_id tetap konsisten
+        // (masa lalu bersama = id sama di sesi berbeda — analogi objek git).
+        db.exec("DROP INDEX IF EXISTS idx_messages_thread")
+        withBusyRetrySync(() => {
+          db.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS udx_messages_thread_seq ON messages(session_id, thread_id, seq);
       CREATE UNIQUE INDEX IF NOT EXISTS udx_messages_event_id ON messages(session_id, thread_id, event_id);
       CREATE INDEX IF NOT EXISTS idx_messages_run ON messages(run_id);
     `)
-      })
-    } catch (e) {
-      process.stderr.write(
-        `[warn] persistence: writer_epoch migration skipped: ${(e as Error).message}\n`,
-      )
-    }
-    // P2.2 — rekaman takeover durable: SATU baris per (sesi, prior_epoch).
-    // Keunikan inilah yang membuat takeover simultan punya tepat satu pemenang
-    // (tanpa mengandalkan Date.now): pecundang menabrak constraint dan
-    // mengamati hasil pemenang (idempoten), bukan menaikkan epoch lagi.
-    withBusyRetrySync(() => {
-      db.exec(`
+        })
+      } catch (e) {
+        process.stderr.write(
+          `[warn] persistence: writer_epoch migration skipped: ${(e as Error).message}\n`,
+        )
+      }
+      // P2.2 — rekaman takeover durable: SATU baris per (sesi, prior_epoch).
+      // Keunikan inilah yang membuat takeover simultan punya tepat satu pemenang
+      // (tanpa mengandalkan Date.now): pecundang menabrak constraint dan
+      // mengamati hasil pemenang (idempoten), bukan menaikkan epoch lagi.
+      withBusyRetrySync(() => {
+        db.exec(`
     CREATE TABLE IF NOT EXISTS session_takeovers (session_id TEXT NOT NULL, prior_epoch INTEGER NOT NULL, new_epoch INTEGER NOT NULL, reason TEXT NOT NULL, boot TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(session_id, prior_epoch));
     CREATE INDEX IF NOT EXISTS idx_session_takeovers_session ON session_takeovers(session_id);
   `)
-    })
-    // P2.3 — kerangka penyimpanan (STORAGE ONLY, tanpa semantik aktif).
-    // Ketiga tabel + kolom dorman di bawah TIDAK ditulis/dibaca runtime mana
-    // pun di fase ini; P2.4 (Thread), P2.5 (Run/kursor), P2.7 (proyeksi) yang
-    // mengaktifkannya. Konvensi migrasi = DDL idempoten di open() (tanpa
-    // user_version: semua perubahan aditif; restart-safe via idempotence,
-    // bukan via atomisitas DDL — SQLite men-commit tiap statement).
-    // P2.4 — koreksi identitas Thread: komposit (session_id, thread_id).
-    // Skema P2.3 memakai thread_id PK global (satu 'th_default' sedunia —
-    // mustahil). Identitas kanonik menurut blueprint adalah pasangan
-    // (session, thread); runs/projections sudah membawa session_id. Rebuild
-    // HANYA bila bentuk lama terdeteksi (di bawah); AMAN karena tabel P2.3
-    // dijamin kosong (guard netralitas + assert menolak bila ada baris —
-    // tak pernah hapus data). Open berulang pada bentuk baru = no-op.
-    if (threadsTableNeedsP24Rebuild(db)) {
-      assertEmptyTableForRebuild(db, "threads")
-      db.exec("DROP TABLE IF EXISTS threads")
-    }
-    if (projectionsTableNeedsP24Rebuild(db)) {
-      assertEmptyTableForRebuild(db, "history_projections")
-      db.exec("DROP TABLE IF EXISTS history_projections")
-    }
-    withBusyRetrySync(() => {
-      db.exec(`
+      })
+      // P2.3 — kerangka penyimpanan (STORAGE ONLY, tanpa semantik aktif).
+      // Ketiga tabel + kolom dorman di bawah TIDAK ditulis/dibaca runtime mana
+      // pun di fase ini; P2.4 (Thread), P2.5 (Run/kursor), P2.7 (proyeksi) yang
+      // mengaktifkannya. Konvensi migrasi = DDL idempoten di open() (tanpa
+      // user_version: semua perubahan aditif; restart-safe via idempotence,
+      // bukan via atomisitas DDL — SQLite men-commit tiap statement).
+      // P2.4 — koreksi identitas Thread: komposit (session_id, thread_id).
+      // Skema P2.3 memakai thread_id PK global (satu 'th_default' sedunia —
+      // mustahil). Identitas kanonik menurut blueprint adalah pasangan
+      // (session, thread); runs/projections sudah membawa session_id. Rebuild
+      // HANYA bila bentuk lama terdeteksi (di bawah); AMAN karena tabel P2.3
+      // dijamin kosong (guard netralitas + assert menolak bila ada baris —
+      // tak pernah hapus data). Open berulang pada bentuk baru = no-op.
+      if (threadsTableNeedsP24Rebuild(db)) {
+        assertEmptyTableForRebuild(db, "threads")
+        db.exec("DROP TABLE IF EXISTS threads")
+      }
+      if (projectionsTableNeedsP24Rebuild(db)) {
+        assertEmptyTableForRebuild(db, "history_projections")
+        db.exec("DROP TABLE IF EXISTS history_projections")
+      }
+      withBusyRetrySync(() => {
+        db.exec(`
     CREATE TABLE IF NOT EXISTS threads (session_id TEXT NOT NULL, thread_id TEXT NOT NULL, parent_thread_id TEXT NULL, fork_event_seq INTEGER NULL, head_seq INTEGER NOT NULL DEFAULT -1, status TEXT NOT NULL DEFAULT 'active', read_only INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, PRIMARY KEY(session_id, thread_id), CHECK(head_seq >= -1), CHECK(fork_event_seq IS NULL OR fork_event_seq >= 0));
     CREATE INDEX IF NOT EXISTS idx_threads_session ON threads(session_id);
     CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, thread_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'CREATED', started_at INTEGER NOT NULL, ended_at INTEGER NULL, last_persisted_seq INTEGER NOT NULL DEFAULT 0, pending_tool_ids TEXT NOT NULL DEFAULT '[]', recovery_status TEXT NULL, takeover_epoch INTEGER NULL, created_at INTEGER NOT NULL, CHECK(last_persisted_seq >= 0));
@@ -349,21 +352,21 @@ function open(cwd?: string, local = false): Database {
     CREATE TABLE IF NOT EXISTS history_projections (session_id TEXT NOT NULL, thread_id TEXT NOT NULL, projection_id TEXT NOT NULL, base_seq INTEGER NOT NULL DEFAULT 0, summary_text TEXT NOT NULL DEFAULT '', included_ranges TEXT NOT NULL DEFAULT '[]', built_at INTEGER NOT NULL, anchor_event_id TEXT NULL, PRIMARY KEY(session_id, thread_id, projection_id), CHECK(base_seq >= 0));
     CREATE INDEX IF NOT EXISTS idx_projections_thread ON history_projections(session_id, thread_id);
   `)
-    })
-    // P2.12 — dua tabel milik daemon, DDL di sini karena `open()` SATU-SATUNYA
-    // pemilik skema (setiap jalur buka DB melewati retry yang sama; DDL terpisah
-    // di modul lain = dua jalur setup yang bisa berbeda urutan lock-nya).
-    //
-    // consumer_offsets: offset terakhir yang DIACK konsumen. TERPISAH dari
-    // `runs.last_persisted_seq` (watermark penulis), `writer_epoch` (pagar
-    // mutasi), dan `presentation_events.event_seq` (kepala kanonik) — empat
-    // angka yang sering tertukar; kontrak melarang menggabungkannya karena
-    // offset konsumen = "sudah diproses", bukan "sudah ditulis"/"punya siapa".
-    //
-    // daemon_approvals: mesin persetujuan durable. `state` dkk. — UI hanya
-    // MENGUSULKAN keputusan; baris ini adalah otoritasnya.
-    withBusyRetrySync(() => {
-      db.exec(`
+      })
+      // P2.12 — dua tabel milik daemon, DDL di sini karena `open()` SATU-SATUNYA
+      // pemilik skema (setiap jalur buka DB melewati retry yang sama; DDL terpisah
+      // di modul lain = dua jalur setup yang bisa berbeda urutan lock-nya).
+      //
+      // consumer_offsets: offset terakhir yang DIACK konsumen. TERPISAH dari
+      // `runs.last_persisted_seq` (watermark penulis), `writer_epoch` (pagar
+      // mutasi), dan `presentation_events.event_seq` (kepala kanonik) — empat
+      // angka yang sering tertukar; kontrak melarang menggabungkannya karena
+      // offset konsumen = "sudah diproses", bukan "sudah ditulis"/"punya siapa".
+      //
+      // daemon_approvals: mesin persetujuan durable. `state` dkk. — UI hanya
+      // MENGUSULKAN keputusan; baris ini adalah otoritasnya.
+      withBusyRetrySync(() => {
+        db.exec(`
     CREATE TABLE IF NOT EXISTS consumer_offsets (
       consumer_id TEXT NOT NULL,
       session_id TEXT NOT NULL,
@@ -391,31 +394,37 @@ function open(cwd?: string, local = false): Database {
     CREATE INDEX IF NOT EXISTS idx_daemon_approvals_session ON daemon_approvals(session_id, requested_at);
     CREATE INDEX IF NOT EXISTS idx_daemon_approvals_state ON daemon_approvals(state);
   `)
-    })
-    // [Fase 2 / LOOP-INV-08] Migrasi aditif untuk DB lama: kolom pengikat
-    // approval. `PRAGMA table_info` + `ALTER TABLE` idempoten, tanpa
-    // user_version (konvensi yang sama dengan migrasi lain di file ini).
-    // Baris lama mendapat NULL = "tanpa pengikat" dan tetap terbaca; validasi
-    // pengikatan memperlakukan NULL sebagai tidak cocok bila sisi eksekusi
-    // membawa hash (fail-closed), bukan sebagai izin.
-    try {
-      const approvalCols = db.prepare("PRAGMA table_info(daemon_approvals)").all() as {
-        name: string
-      }[]
-      if (!approvalCols.some((c) => c.name === "args_hash")) {
-        db.exec("ALTER TABLE daemon_approvals ADD COLUMN args_hash TEXT NULL")
+      })
+      // [Fase 2 / LOOP-INV-08] Migrasi aditif untuk DB lama: kolom pengikat
+      // approval. `PRAGMA table_info` + `ALTER TABLE` idempoten, tanpa
+      // user_version (konvensi yang sama dengan migrasi lain di file ini).
+      // Baris lama mendapat NULL = "tanpa pengikat" dan tetap terbaca; validasi
+      // pengikatan memperlakukan NULL sebagai tidak cocok bila sisi eksekusi
+      // membawa hash (fail-closed), bukan sebagai izin.
+      try {
+        const approvalCols = db.prepare("PRAGMA table_info(daemon_approvals)").all() as {
+          name: string
+        }[]
+        if (!approvalCols.some((c) => c.name === "args_hash")) {
+          db.exec("ALTER TABLE daemon_approvals ADD COLUMN args_hash TEXT NULL")
+        }
+        if (!approvalCols.some((c) => c.name === "invocation_id")) {
+          db.exec("ALTER TABLE daemon_approvals ADD COLUMN invocation_id TEXT NULL")
+        }
+      } catch (e) {
+        process.stderr.write(
+          `[warn] persistence: daemon_approvals migration skipped: ${(e as Error).message}\n`,
+        )
       }
-      if (!approvalCols.some((c) => c.name === "invocation_id")) {
-        db.exec("ALTER TABLE daemon_approvals ADD COLUMN invocation_id TEXT NULL")
-      }
-    } catch (e) {
-      process.stderr.write(
-        `[warn] persistence: daemon_approvals migration skipped: ${(e as Error).message}\n`,
-      )
+      migratedSessionPaths.add(p)
     }
-    migratedSessionPaths.add(p)
+    return db
+  } catch (err) {
+    try {
+      db.close()
+    } catch {}
+    throw err
   }
-  return db
 }
 
 // P2.12 — gerbang terbuka untuk pemilik skema lain (toko konsumen/persetujuan
@@ -1325,10 +1334,15 @@ function decodeMessageRows(rows: StoredMessageRow[]): unknown[] {
   }
   return rows.map((r) => {
     const reasoning = readReasoning(r.reasoning)
+    // [ST-2] toolCalls WAJIB array: kolom korup (bukan array) dikembalikan
+    // undefined, BUKAN string mentah, agar `message.toolCalls.map(...)` di
+    // kernel tak melempar TypeError saat resume.
+    const rawToolCalls =
+      r.toolCalls && r.toolCalls !== "null" ? parseContent(r.toolCalls) : undefined
     return {
       role: r.role,
       content: parseContent(r.content),
-      ...(r.toolCalls && r.toolCalls !== "null" ? { toolCalls: parseContent(r.toolCalls) } : {}),
+      ...(Array.isArray(rawToolCalls) ? { toolCalls: rawToolCalls } : {}),
       ...(r.toolCallId ? { toolCallId: r.toolCallId } : {}),
       ...(r.name ? { name: r.name } : {}),
       ...(reasoning ? { reasoning } : {}),

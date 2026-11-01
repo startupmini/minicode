@@ -278,15 +278,18 @@ function runOp(op: ControlOp, req: ControlRequest, deps: ControlDeps): ControlOu
       if (decisionRaw !== "accept" && decisionRaw !== "deny") {
         return refuse("PROTOCOL_ERROR", 'args.decision harus "accept" atau "deny"')
       }
-      const r = deps.approvals.decide(approvalId, decisionRaw)
-      if (!r.ok) return { ok: false, refusal: r.refusal }
-      if (sid && r.row.sid !== sid) {
+      // [RC-2] Cek kepemilikan session SEBELUM mutasi DB: baca baris tanpa menulis,
+      // tolak mismatch SESSION_MISMATCH tanpa membangunkan waiter/mengubah state.
+      const existing = deps.approvals.read(approvalId)
+      if (sid && existing && existing.sid !== sid) {
         // Approval milik sesi lain: menolaknya menggagalkan keputusan yang
         // sebenarnya valid, jadi jangan — laporkan kecocokan yang salah saja.
         return refuse("SESSION_MISMATCH", "approval bukan milik sesi yang disebut", {
-          actual: r.row.sid,
+          actual: existing.sid,
         })
       }
+      const r = deps.approvals.decide(approvalId, decisionRaw)
+      if (!r.ok) return { ok: false, refusal: r.refusal }
       deps.telemetry.inc("approval.decided")
       return { ok: true, result: { approvalId, state: r.row.state }, replayed: false }
     }

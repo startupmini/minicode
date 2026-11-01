@@ -1475,7 +1475,7 @@ export interface EvaluationTamperingOptions {
 }
 
 const EVALUATOR_GATE_FILES = new Set(["bench/eval-gate.ts", "scripts/telemetry-gate.ts"])
-const SKIP_TODO_RE = /\.(?:skip|todo)\s*\(/g
+const SKIP_TODO_RE = /\.(?:skip|skipIf|only|todo|fails)\s*\(/g
 
 function countSkipTodo(text: string): number {
   return (text.match(SKIP_TODO_RE) ?? []).length

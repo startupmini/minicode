@@ -127,94 +127,105 @@ function openGlobalDb(fallbackCwd?: string): Database {
 
 function openAt(p: string): Database {
   const db = new Database(p)
-  // busy_timeout DULU seperti sessions.db (audit #09 P1 §27): pola yang sama
-  // (journal_mode sebelum timeout aktif) gagal SQLITE_BUSY saat dua proses
-  // membuka bersamaan.
+  // [Audit #3 RL-2] Langkah pasca-konstruksi (busy_timeout + WAL + DDL/migrasi)
+  // dibungkus agar kegagalan IOERR/CORRUPT menutup handle, bukan bocor. busy_timeout
+  // diatur SEBELUM journal_mode (audit #09 P1 §27).
   try {
-    db.exec(`PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}`)
-  } catch {}
-  if (!initializedPaths.has(p)) {
-    // journal_size_limit + wal_autocheckpoint: WAL tidak tumbuh tak terbatas
-    db.exec(
-      `PRAGMA journal_mode=WAL; PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=${LIMITS.SQLITE_WAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=${LIMITS.SQLITE_WAL_AUTOCHECKPOINT_PAGES};`,
-    )
-    initializedPaths.add(p)
-  }
-  db.exec(`
+    // busy_timeout DULU seperti sessions.db (audit #09 P1 §27): pola yang sama
+    // (journal_mode sebelum timeout aktif) gagal SQLITE_BUSY saat dua proses
+    // membuka bersamaan.
+    try {
+      db.exec(`PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}`)
+    } catch {}
+    if (!initializedPaths.has(p)) {
+      // journal_size_limit + wal_autocheckpoint: WAL tidak tumbuh tak terbatas
+      db.exec(
+        `PRAGMA journal_mode=WAL; PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=${LIMITS.SQLITE_WAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=${LIMITS.SQLITE_WAL_AUTOCHECKPOINT_PAGES};`,
+      )
+      initializedPaths.add(p)
+    }
+    db.exec(`
     CREATE TABLE IF NOT EXISTS memory(id TEXT PRIMARY KEY, text TEXT, embedding BLOB, created_at INTEGER, category TEXT DEFAULT 'fact', tags TEXT, model TEXT, dim INTEGER, parent TEXT, access_count INTEGER DEFAULT 0);
     CREATE INDEX IF NOT EXISTS idx_memory_created ON memory(created_at);
     CREATE INDEX IF NOT EXISTS idx_memory_text ON memory(text);
   `)
-  // P1.3: kolom model/dim untuk deteksi embedding-mismatch (best-effort migrasi)
-  // P2.2: kolom parent untuk chunk entri panjang (chunk berbagi parent id)
-  // P13 S2: kategori terstruktur untuk retrieval presisi
-  // P13 P1: access_count untuk bukti manfaat (berapa kali row ikut jadi hit)
-  // MEM-01 / Fase 5A: provenance tracking (session/turn/source) untuk revokasi selektif
-  try {
-    const cols = db.prepare(`PRAGMA table_info(memory)`).all() as { name: string }[]
-    if (!cols.some((c) => c.name === "model")) db.exec(`ALTER TABLE memory ADD COLUMN model TEXT`)
-    if (!cols.some((c) => c.name === "dim")) db.exec(`ALTER TABLE memory ADD COLUMN dim INTEGER`)
-    if (!cols.some((c) => c.name === "parent")) db.exec(`ALTER TABLE memory ADD COLUMN parent TEXT`)
-    if (!cols.some((c) => c.name === "category"))
-      db.exec(`ALTER TABLE memory ADD COLUMN category TEXT DEFAULT 'fact'`)
-    if (!cols.some((c) => c.name === "tags")) db.exec(`ALTER TABLE memory ADD COLUMN tags TEXT`)
-    if (!cols.some((c) => c.name === "access_count"))
-      db.exec(`ALTER TABLE memory ADD COLUMN access_count INTEGER DEFAULT 0`)
-    // MEM-01: provenance columns (idempoten — skip bila sudah ada)
-    if (!cols.some((c) => c.name === "session_id"))
-      db.exec(`ALTER TABLE memory ADD COLUMN session_id TEXT`)
-    if (!cols.some((c) => c.name === "turn_id"))
-      db.exec(`ALTER TABLE memory ADD COLUMN turn_id TEXT`)
-    if (!cols.some((c) => c.name === "source_kind"))
-      db.exec(`ALTER TABLE memory ADD COLUMN source_kind TEXT`)
-    if (!cols.some((c) => c.name === "source_ref"))
-      db.exec(`ALTER TABLE memory ADD COLUMN source_ref TEXT`)
-    // [Fase 6A / ACE-03] Gate pelajaran kandidat: hanya pelajaran yang sudah
-    // lolos verifikasi yang boleh muncul di retrieval default. Baris legacy
-    // (NULL) diperlakukan sebagai `validated` agar perilaku lama tak berubah.
-    if (!cols.some((c) => c.name === "validation_status"))
-      db.exec(`ALTER TABLE memory ADD COLUMN validation_status TEXT DEFAULT 'validated'`)
-    // F8.1: Supersession tracking untuk memory replacement. Idempoten — skip bila
-    // sudah ada (migration dari versi sebelumnya). `superseded_by IS NOT NULL` menandai
-    // baris yang telah digantikan oleh fakta/keputusan baru; recall default mengabaikan
-    // baris superseded untuk prevent staleness.
-    if (!cols.some((c) => c.name === "supersedes"))
-      db.exec(`ALTER TABLE memory ADD COLUMN supersedes TEXT NULL`)
-    if (!cols.some((c) => c.name === "superseded_by"))
-      db.exec(`ALTER TABLE memory ADD COLUMN superseded_by TEXT NULL`)
-    // F8.1: Index untuk query performan (filter row yang tidak superseded)
+    // P1.3: kolom model/dim untuk deteksi embedding-mismatch (best-effort migrasi)
+    // P2.2: kolom parent untuk chunk entri panjang (chunk berbagi parent id)
+    // P13 S2: kategori terstruktur untuk retrieval presisi
+    // P13 P1: access_count untuk bukti manfaat (berapa kali row ikut jadi hit)
+    // MEM-01 / Fase 5A: provenance tracking (session/turn/source) untuk revokasi selektif
     try {
-      db.exec(
-        `CREATE INDEX IF NOT EXISTS idx_memory_not_superseded ON memory(rowid) WHERE superseded_by IS NULL OR superseded_by = '';`,
-      )
+      const cols = db.prepare(`PRAGMA table_info(memory)`).all() as { name: string }[]
+      if (!cols.some((c) => c.name === "model")) db.exec(`ALTER TABLE memory ADD COLUMN model TEXT`)
+      if (!cols.some((c) => c.name === "dim")) db.exec(`ALTER TABLE memory ADD COLUMN dim INTEGER`)
+      if (!cols.some((c) => c.name === "parent"))
+        db.exec(`ALTER TABLE memory ADD COLUMN parent TEXT`)
+      if (!cols.some((c) => c.name === "category"))
+        db.exec(`ALTER TABLE memory ADD COLUMN category TEXT DEFAULT 'fact'`)
+      if (!cols.some((c) => c.name === "tags")) db.exec(`ALTER TABLE memory ADD COLUMN tags TEXT`)
+      if (!cols.some((c) => c.name === "access_count"))
+        db.exec(`ALTER TABLE memory ADD COLUMN access_count INTEGER DEFAULT 0`)
+      // MEM-01: provenance columns (idempoten — skip bila sudah ada)
+      if (!cols.some((c) => c.name === "session_id"))
+        db.exec(`ALTER TABLE memory ADD COLUMN session_id TEXT`)
+      if (!cols.some((c) => c.name === "turn_id"))
+        db.exec(`ALTER TABLE memory ADD COLUMN turn_id TEXT`)
+      if (!cols.some((c) => c.name === "source_kind"))
+        db.exec(`ALTER TABLE memory ADD COLUMN source_kind TEXT`)
+      if (!cols.some((c) => c.name === "source_ref"))
+        db.exec(`ALTER TABLE memory ADD COLUMN source_ref TEXT`)
+      // [Fase 6A / ACE-03] Gate pelajaran kandidat: hanya pelajaran yang sudah
+      // lolos verifikasi yang boleh muncul di retrieval default. Baris legacy
+      // (NULL) diperlakukan sebagai `validated` agar perilaku lama tak berubah.
+      if (!cols.some((c) => c.name === "validation_status"))
+        db.exec(`ALTER TABLE memory ADD COLUMN validation_status TEXT DEFAULT 'validated'`)
+      // F8.1: Supersession tracking untuk memory replacement. Idempoten — skip bila
+      // sudah ada (migration dari versi sebelumnya). `superseded_by IS NOT NULL` menandai
+      // baris yang telah digantikan oleh fakta/keputusan baru; recall default mengabaikan
+      // baris superseded untuk prevent staleness.
+      if (!cols.some((c) => c.name === "supersedes"))
+        db.exec(`ALTER TABLE memory ADD COLUMN supersedes TEXT NULL`)
+      if (!cols.some((c) => c.name === "superseded_by"))
+        db.exec(`ALTER TABLE memory ADD COLUMN superseded_by TEXT NULL`)
+      // F8.1: Index untuk query performan (filter row yang tidak superseded)
+      try {
+        db.exec(
+          `CREATE INDEX IF NOT EXISTS idx_memory_not_superseded ON memory(rowid) WHERE superseded_by IS NULL OR superseded_by = '';`,
+        )
+      } catch {}
+      try {
+        db.exec(
+          `CREATE INDEX IF NOT EXISTS idx_memory_supersedes ON memory(supersedes) WHERE supersedes IS NOT NULL AND supersedes != '';`,
+        )
+      } catch {}
+    } catch {}
+    // P1.1: expression index + FTS5 untuk keyword pre-filter (10-50× vs instr scan)
+    try {
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_text_lower ON memory(lower(text));`)
     } catch {}
     try {
-      db.exec(
-        `CREATE INDEX IF NOT EXISTS idx_memory_supersedes ON memory(supersedes) WHERE supersedes IS NOT NULL AND supersedes != '';`,
-      )
-    } catch {}
-  } catch {}
-  // P1.1: expression index + FTS5 untuk keyword pre-filter (10-50× vs instr scan)
-  try {
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_text_lower ON memory(lower(text));`)
-  } catch {}
-  try {
-    db.exec(`
+      db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(text, content='memory', content_rowid='rowid', tokenize='porter unicode61');
       CREATE TRIGGER IF NOT EXISTS memory_ai AFTER INSERT ON memory BEGIN INSERT INTO memory_fts(rowid, text) VALUES (new.rowid, new.text); END;
       CREATE TRIGGER IF NOT EXISTS memory_ad AFTER DELETE ON memory BEGIN INSERT INTO memory_fts(memory_fts, rowid, text) VALUES('delete', old.rowid, old.text); END;
       CREATE TRIGGER IF NOT EXISTS memory_au AFTER UPDATE ON memory BEGIN INSERT INTO memory_fts(memory_fts, rowid, text) VALUES('delete', old.rowid, old.text); INSERT INTO memory_fts(rowid, text) VALUES (new.rowid, new.text); END;
     `)
-    // populate FTS untuk DB lama yang sudah ada sebelum trigger
-    const cnt =
-      (db.prepare(`SELECT count(*) as c FROM memory_fts`).get() as { c: number } | null)?.c ?? 0
-    const total =
-      (db.prepare(`SELECT count(*) as c FROM memory`).get() as { c: number } | null)?.c ?? 0
-    if (cnt === 0 && total > 0) {
-      db.exec(`INSERT INTO memory_fts(memory_fts) VALUES('rebuild')`)
-    }
-  } catch {}
-  return db
+      // populate FTS untuk DB lama yang sudah ada sebelum trigger
+      const cnt =
+        (db.prepare(`SELECT count(*) as c FROM memory_fts`).get() as { c: number } | null)?.c ?? 0
+      const total =
+        (db.prepare(`SELECT count(*) as c FROM memory`).get() as { c: number } | null)?.c ?? 0
+      if (cnt === 0 && total > 0) {
+        db.exec(`INSERT INTO memory_fts(memory_fts) VALUES('rebuild')`)
+      }
+    } catch {}
+    return db
+  } catch (err) {
+    try {
+      db.close()
+    } catch {}
+    throw err
+  }
 }
 
 function toBlob(vec: number[]): Buffer {
@@ -1313,9 +1324,10 @@ export async function reconcileMemoryStores(cwd?: string): Promise<{
     const fileLines = txt.split("\n").filter((l) => l.startsWith("- "))
     const fileTexts = new Set<string>()
     for (const line of fileLines) {
-      // MEMORY.md format: `- YYYY-MM-DDTHH:MM:SS.sssZ text [tags: ...]`
-      // Extract everything after the ISO date string
-      const match = line.match(/^-\s+\d{4}-\d{2}-\d{2}T.*?\s+(.*)$/)
+      // MEMORY.md format: `- YYYY-MM-DD text` ATAU `- YYYY-MM-DDTHH:MM:SS.sssZ text`.
+      // [LF-1] Lama mensyaratkan `T` (ISO timestamp) sehingga tanggal polos
+      // `YYYY-MM-DD` jatuh ke fallback rusak yang memotong teks ke kata pertama.
+      const match = line.match(/^-\s+\d{4}-\d{2}-\d{2}(?:T\S+)?\s+(.+)$/)
       if (match) {
         let text = match[1]!
         // Strip tags metadata if present
@@ -1325,12 +1337,13 @@ export async function reconcileMemoryStores(cwd?: string): Promise<{
         }
         fileTexts.add(text.trim())
       } else {
-        // Fallback: just use everything after first space following date-like prefix
-        const parts = line.trim().split(" ", 3)
-        if (parts.length >= 3) {
-          const text = parts.slice(2).join(" ")
-          fileTexts.add(text)
-        }
+        // [LF-1] Fallback: buang prefix `- <date-token> ` dan pertahankan SISA TEKS
+        // UTUH (bukan potong ke kata pertama seperti `split(" ", 3)` lama).
+        const text = line
+          .trim()
+          .replace(/^-\s+\S+\s+/, "")
+          .trim()
+        if (text) fileTexts.add(text)
       }
     }
 

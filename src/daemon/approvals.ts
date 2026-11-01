@@ -282,7 +282,12 @@ export class ApprovalBroker {
     try {
       transitionApproval(approvalId, state, { decision: state }, this.#deps.cwd)
     } catch {
-      // Sudah terminal — biarkan; waiter tetap harus diselesaikan di bawah.
+      // [RC-6] Transisi gagal: settle waiter HANYA bila baris benar-benar sudah
+      // terminal (perorangan decide/kadaluwarsa lain menang). Baris hilang atau
+      // masih non-terminal = error nyata → jangan settle diam-diam.
+      const row = getApproval(approvalId, this.#deps.cwd)
+      if (!row) return false
+      if (row.state === "requested" || row.state === "pending") return false
     }
     this.#settleWaiter(approvalId, decision)
     return true
@@ -301,6 +306,15 @@ export class ApprovalBroker {
       return listOpenApprovals(sid, this.#deps.cwd).map(toView)
     } catch {
       return []
+    }
+  }
+
+  /** Baca baris approval tanpa mutasi — untuk cek otoritas SEBELUM decide (RC-2). */
+  read(approvalId: string): ApprovalRow | null {
+    try {
+      return getApproval(approvalId, this.#deps.cwd)
+    } catch {
+      return null
     }
   }
 

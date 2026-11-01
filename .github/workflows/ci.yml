@@ -70,6 +70,7 @@ jobs:
           test/p21-*.test.ts
           test/p22-*.test.ts
           test/p23-*.test.ts
+          test/p24-*.test.ts
           test/bench/eval-gate.test.ts
 
       # Gate agregat nyata. `bun test --coverage` sendirian selalu lulus —
@@ -174,6 +175,7 @@ jobs:
           test/p18-*.test.ts test/p19-*.test.ts test/p20-*.test.ts
           test/p21-*.test.ts test/p22-*.test.ts
           test/p23-*.test.ts
+          test/p24-*.test.ts
       - name: Bash bypass probe (auto)
         run: bun experiments/bash-bypass-probe.ts
       - name: Pack check (npm tarball)

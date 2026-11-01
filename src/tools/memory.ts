@@ -127,12 +127,19 @@ export const writeMemoryTool: Tool = {
         description:
           "validated (default) = durable fact; provisional = candidate lesson hidden from retrieval until the next verification promotes it",
       },
+      // [Fase 12 / LF-4] Identitas memori lama yang digantikan entri baru ini —
+      // teruskan untuk men-tombstone baris lama (supersession) lewat jalur tool.
+      supersedes_id: {
+        type: "string",
+        description:
+          "optional id of a previous memory row this new entry supersedes (replaces without deleting it)",
+      },
     },
     required: ["text"],
     additionalProperties: false,
   },
   async execute(
-    { text, category, tags, sessionId, turnId, sourceKind, sourceRef, validation },
+    { text, category, tags, sessionId, turnId, sourceKind, sourceRef, validation, supersedes_id },
     ctx,
   ) {
     ctx.signal.throwIfAborted()
@@ -170,6 +177,8 @@ export const writeMemoryTool: Tool = {
     invokeMemoryWriteFaultForTest("after_file_before_vector")
     const cat = (category as string) ?? "fact"
     const tagArr = Array.isArray(tags) ? (tags as string[]) : undefined
+    // [Fase 12 / LF-4] id memori lama yang digantikan (supersession) dari argumen tool.
+    const supersedesId = typeof supersedes_id === "string" && supersedes_id ? supersedes_id : null
 
     // MEM-01: add provenance tags to MEMORY.md (as metadata comment at end of line)
     const memTags = tagArr ? [...tagArr] : []
@@ -194,6 +203,7 @@ export const writeMemoryTool: Tool = {
           turnId,
           sourceKind,
           sourceRef,
+          supersedesId,
         })
         added = true
       } catch (e) {
@@ -210,6 +220,7 @@ export const writeMemoryTool: Tool = {
           turnId,
           sourceKind,
           sourceRef,
+          supersedesId,
         })
       } catch (e2) {
         process.stderr.write(

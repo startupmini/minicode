@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { rm } from "node:fs/promises"
-import { join, resolve } from "node:path"
+import { isAbsolute, join, relative, resolve } from "node:path"
 import { LIMITS } from "../constants.ts"
 import { GIT_NO_DIFF_DRIVERS, GIT_SAFE_BASE, gitFilterNeutralizers } from "../lib/git-hardening.ts"
 import { sanitizeSessionPart } from "../lib/session-id.ts"
@@ -239,6 +239,17 @@ export interface RestoreResult {
 }
 
 /**
+ * [XP-1] Cek apakah `p` berada di dalam workspace `root` lewat `path.relative`.
+ * Pengganti pola `abs.startsWith(root + sep)` yang gagal saat `root` adalah
+ * root drive (`D:\` → `D:\\`, `/` → `//`). Diekspor untuk test.
+ */
+export function isPathWithinWorkspace(root: string, p: string): boolean {
+  const abs = resolve(root, p)
+  const rel = relative(root, abs)
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))
+}
+
+/**
  * Pulihkan workspace ke `tree`, menyentuh HANYA path yang berbeda dari kondisi
  * sekarang. File yang muncul setelah snapshot dihapus; yang berubah/terhapus
  * ditulis ulang dari object store.
@@ -259,10 +270,7 @@ export async function restoreTree(cwd: string, tree: string): Promise<RestoreRes
   const changes = await diffTrees(cwd, tree, now)
   if (changes.length === 0) return { applied, skipped: [] }
 
-  const inside = (p: string): boolean => {
-    const abs = resolve(root, p)
-    return abs === root || abs.startsWith(root + (process.platform === "win32" ? "\\" : "/"))
-  }
+  const inside = (p: string): boolean => isPathWithinWorkspace(root, p)
 
   // Path yang harus DIAMBIL dari tree lama (berubah di tree lama → sekarang
   // sebagai M, atau hilang sekarang sebagai D dari sudut pandang diff).

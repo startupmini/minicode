@@ -132,6 +132,33 @@ export function inlineSimpleVars(cmd: string): string {
  * Wrapper dibuang berulang karena bisa berlapis (`time nice env`).
  * Diekspor untuk test.
  */
+/**
+ * [SEC-2] Dekode literal ANSI-C `$'...'` sebelum `stripQuotes`. Bash menafsirkan
+ * escape `\xHH` (hex), `\NNN`/`\0NNN` (oktal) dan escape standar di dalam
+ * `$'...'`, sehingga `cat $'\x2eenv'` membaca `.env` — tanpa dekode, guard hanya
+ * melihat `\x2eenv` dan SENSITIVE_TARGET meleset.
+ */
+export function decodeAnsiCQuotes(cmd: string): string {
+  return cmd.replace(/\$'((?:\\.|[^'])*)'/g, (_full, body: string) => {
+    return body.replace(/\\(?:x([0-9a-fA-F]{1,2})|([0-7]{1,3})|(.))/g, (_m, hex, oct, std) => {
+      if (hex !== undefined) return String.fromCharCode(parseInt(hex, 16))
+      if (oct !== undefined) return String.fromCharCode(parseInt(oct, 8))
+      const ESC: Record<string, string> = {
+        n: "\n",
+        r: "\r",
+        t: "\t",
+        b: "\b",
+        f: "\f",
+        v: "\v",
+        a: "\x07",
+        e: "\x1b",
+      }
+      if (std === "\\" || std === "'" || std === '"') return std
+      return ESC[std] ?? std
+    })
+  })
+}
+
 export function stripCommandWrappers(cmd: string): string {
   const WRAPPER =
     /(^|[;&|]\s*)(?:command|exec|builtin|eval|nice(?:\s+-n\s*-?\d+)?|nohup|time|timeout\s+[\d.]+[smhd]?|stdbuf(?:\s+-\S+)*|env(?=\s+[A-Za-z_][A-Za-z0-9_]*=)|setsid|ionice(?:\s+-\S+)*|xargs(?:\s+-\S+)*|sudo(?:\s+-\S+)*|doas)\s+/gi
@@ -143,7 +170,7 @@ export function stripCommandWrappers(cmd: string): string {
   // 'cat /etc/shadow'` tetap kena SENSITIVE_TARGET. Jangkar awal mencegah
   // strip di tengah perintah (`echo su -c env` tak tersentuh).
   const WRAPPER_SHELL =
-    /(^|[;&|]\s*)(?:(?:su|runuser|gosu|chroot|nsenter)(?:\s+(?:-[^\s;|]+|--[^\s;|]*|\/[^\s;|]*|[^-;\s|/][^;\s|]*))*\s+|cmd(?:\.exe)?(?:\s+\/[a-zA-Z]+)*\s+\/c\s+)/gi
+    /(^|[;&|]\s*)(?:(?:su|runuser|gosu|chroot|nsenter)(?:\s+(?:-[^\s;|]+|--[^\s;|]*|\/[^\s;|]*|[^-;\s|/][^;\s|]*))*\s+|cmd(?:\.exe)?(?:\s+\/[a-zA-Z]+)*\s+\/c\s+|powershell(?:\.exe)?(?:\s+-(?:Command|c|EncodedCommand|enc|ec))?\s+|pwsh(?:\.exe)?(?:\s+-(?:Command|c|EncodedCommand|enc|ec))?\s+)/gi
   let out = cmd
   for (let pass = 0; pass < 4; pass++) {
     const next = out.replace(WRAPPER, "$1").replace(WRAPPER_SHELL, "$1")
@@ -161,14 +188,19 @@ export function stripCommandWrappers(cmd: string): string {
  * ia butuh melihat kutip ganda asli untuk tahu apakah caret harfiah.
  */
 export function normalizeCommand(cmd: string): string {
-  return stripCommandWrappers(inlineSimpleVars(stripQuotes(stripCaretEscapes(cmd))))
+  // [SEC-1] Gabungkan backslash line-continuation dulu agar perintah multi-baris
+  // (`curl ... \\\n -d $KEY`) tidak membuat regex satu-baris `[^\n]*` meleset.
+  let c = cmd.replace(/\\\r?\n/g, " ")
+  // [SEC-2] Dekode ANSI-C quoting sebelum quote dibuang.
+  c = decodeAnsiCQuotes(c)
+  return stripCommandWrappers(inlineSimpleVars(stripQuotes(stripCaretEscapes(c))))
 }
 
 // ── Aturan ──
 
 /** Path/berkas kredensial, dicek pada bentuk ternormalisasi. */
 const SENSITIVE_TARGET =
-  /(?:^|[\s/\\=@"'([:])(?:\.env(?:\.[\w.-]+)?|\.git-credentials|\.npmrc|\.netrc|id_(?:rsa|dsa|ecdsa|ed25519)|credentials(?:\.json)?|\.pem|\.p12|\.pfx|shadow|master\.key|config[/\\](?:sam|system|security|software|default)(?=[/\\]|$|[\s;"'&|])|ntds\.dit\b|hklm[/\\](?:sam|system|security)(?=[/\\]|$|[\s;"'&|]))\b/i
+  /(?:^|[\s/\\=@"'([:<>])(?:\.env(?:\.[\w.-]+)?|\.git-credentials|\.npmrc|\.netrc|id_(?:rsa|dsa|ecdsa|ed25519)|credentials(?:\.json)?|\.pem|\.p12|\.pfx|shadow|master\.key|config[/\\](?:sam|system|security|software|default)(?=[/\\]|$|[\s;"'&|])|ntds\.dit\b|hklm[/\\](?:sam|system|security)(?=[/\\]|$|[\s;"'&|]))\b/i
 
 /** Direktori kredensial: ~/.ssh, $HOME/.aws, /etc/shadow, dst. */
 const SENSITIVE_DIR = /(?:~|\$HOME|\$\{HOME\}|\/etc|\/root|\/proc\/self)[/\\](?:\.?[\w.-]+)/i
@@ -210,6 +242,13 @@ const ENV_DUMP =
   // awal-perintah di berkas ini.
   /(?:^|[;&|\n]\s*)(?:printenv|env|set|export\s+-p|declare\s+-[xp]|compgen\s+-v|(?:Get-ChildItem|dir|ls|gci)\s+env:)\s*(?:$|[;&|\n]|\|)/i
 
+// [SEC-4] Bentuk dump env BER-ARGUMEN yang tak tercakup ENV_DUMP (yang mensyaratkan
+// akhir perintah): `printenv <ARG>`, `env -0`/`env --null`, dan `set <PREFIX_IDENT>`
+// (dump prefix variabel cmd.exe/zsh). `set -e`/`-u`/`-o`/`+e`/`--` (opsi shell
+// POSIX) sengaja TIDAK cocok: argumennya diawali `-`/`+`/`--`, bukan ident.
+const ENV_DUMP_ARG =
+  /(?:^|[;&|\n]\s*)(?:printenv(?:\.exe)?\b|env\s+--?(?:0|null)\b|set\s+[A-Za-z_][A-Za-z0-9_]*\*?\b)/i
+
 /** Referensi eksplisit ke variabel env yang berbau kredensial.
  * Case-insensitive karena bash case-sensitive tapi nama lazim campuran;
  * PowerShell ($env:Var) dan CMD (%VAR%) juga dicakup agar cross-shell. */
@@ -235,7 +274,7 @@ const VAR_UPLOAD =
  * `core.fsmonitor` mengeksekusi pipe-independent (bug-hunt 2026-09-19 F2);
  * `core.pager` mati-di-pipe pada git-windows (negatif terdokumentasi). */
 const GIT_DANGEROUS_CONFIG =
-  /-c\s+["']?(?:core\.(?:pager|fsmonitor|sshCommand|askpass|editor)|protocol\.ext\.allow|core\.hooksPath)\s*=/i
+  /-c\s+["']?(?:core\.(?:pager|fsmonitor|sshCommand|askpass|editor)|protocol\.ext\.allow|core\.hooksPath|gpg\.program|credential\.helper|diff\.(?:external|\w+\.command)|(?:merge|filter)\.\w+\.(?:driver|clean|smudge))\s*=/i
 
 /** git keluar workspace: `-C dir` / `--git-dir=` / `--work-tree=` menunjuk
  * repo/pohon lain (baca objek repo korban = jail-bypass READ, validasi e2e
@@ -245,7 +284,7 @@ const GIT_DIR_OVERRIDE = /(?:^|\s)(?:-C|--git-dir=|--work-tree=)\s*(\S+)/i
 
 /** Env git eksekusi (`GIT_PAGER=id ...`, `GIT_SSH=...`): efek sama dengan
  * `-c` di atas, lewat assignment env. */
-const GIT_EXEC_ENV = /(?:^|[;&|\n]\s*)GIT_(?:PAGER|SSH|ASKPASS|EDITOR)\s*=/i
+const GIT_EXEC_ENV = /(?:^|[;&|\n]\s*)GIT_(?:PAGER|SSH|ASKPASS|EDITOR|DIR|WORK_TREE)\s*=/i
 
 /** Interpreter dijalankan dengan kode inline (semua bentuk flag). */
 const INLINE_INTERPRETER =
@@ -262,7 +301,7 @@ const PROCESS_SUB = /<\s*\(|>\s*\(|<<<|\bsource\s+<|\.\s+<\(/
 
 /** Pipe ke shell/interpreter — bentuk apa pun sumbernya. */
 const PIPE_TO_SHELL =
-  /\|\s*(?:sudo\s+)?(?:sh|bash|dash|zsh|ksh|python|python2|python3|pyw?|node|deno|bun|perl|ruby|php|iex|Invoke-Expression)(?:\.exe)?\b/i
+  /\|\s*(?:sudo\s+)?(?:sh|bash|dash|zsh|ksh|python|python2|python3|pyw?|node|deno|bun|perl|ruby|php|iex|Invoke-Expression|powershell|pwsh)(?:\.exe)?\b/i
 
 /** Unduh ke berkas lalu jalankan berkas itu dalam satu baris. Catatan pola:
  * - `certutil -urlcache` ikut (downloader Windows di luar curl/wget/iwr).
@@ -452,6 +491,14 @@ const STATIC_DENY: [RegExp, string][] = [
   // (Get-Content rahasia) atau -InFile <berkas>. Download polos (-OutFile)
   // TETAP lolos (seperti curl tanpa -d @file): bukan upload.
   [/\b(?:Invoke-WebRequest|iwr)\b[^\n]*?(?:-InFile\b|Get-Content)/i, "file upload to network"],
+  // [SEC-7] SSH/SCP `-o ProxyCommand=`/`-o LocalCommand=` mengeksekusi perintah
+  // arbitrer saat koneksi — jalur RCE/eksfiltrasi yang tak terlihat oleh aturan
+  // konten (host yang dihubungi sendiri bisa jinak).
+  [/\b(?:ssh|scp|sftp)\b[^\n]*-o\s*(?:ProxyCommand|LocalCommand)\s*=/i, "ssh proxy/local command"],
+  // [SEC-8] Launcher berbahaya Windows/macOS: semua menjalankan kode/script
+  // arbitrer dari argumen single-command. `wscript`/`cscript` (Windows Script
+  // Host), `mshta` (HTML app), `rundll32`/`regsvr32` (load arbitrary DLL).
+  [/\b(?:mshta|wscript|cscript|rundll32|regsvr32)(?:\.exe)?\b/i, "dangerous windows launcher"],
 ]
 
 /**
@@ -477,7 +524,7 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
   if (both(DOWNLOAD_THEN_RUN)) return { denied: true, reason: "download then execute" }
   if (both(INLINE_INTERPRETER)) return { denied: true, reason: "inline interpreter code" }
   if (both(CONTAINER_ESCAPE)) return { denied: true, reason: "container escape" }
-  if (both(ENV_DUMP)) return { denied: true, reason: "environment dump" }
+  if (both(ENV_DUMP) || both(ENV_DUMP_ARG)) return { denied: true, reason: "environment dump" }
   if (both(ENV_SECRET_REF)) return { denied: true, reason: "credential env reference" }
   if (both(UPLOAD_FLAG)) return { denied: true, reason: "file upload to network" }
   if (both(VAR_UPLOAD)) return { denied: true, reason: "variable data upload to network" }

@@ -381,11 +381,16 @@ export function createUsageCollector(
     },
     prev: typeof p | null,
   ): void => {
-    const dInput = prev ? p.inputTokens - prev.inputTokens : p.inputTokens
-    const dOutput = prev ? p.outputTokens - prev.outputTokens : p.outputTokens
-    const dTotal = prev ? p.totalTokens - prev.totalTokens : p.totalTokens
-    const dRead = prev ? p.cacheReadTokens - prev.cacheReadTokens : p.cacheReadTokens
-    const dWrite = prev ? p.cacheWriteTokens - prev.cacheWriteTokens : p.cacheWriteTokens
+    const dInput = Math.max(0, prev ? p.inputTokens - prev.inputTokens : p.inputTokens)
+    const dOutput = Math.max(0, prev ? p.outputTokens - prev.outputTokens : p.outputTokens)
+    const dTotal = Math.max(0, prev ? p.totalTokens - prev.totalTokens : p.totalTokens)
+    // [LF-3] Delta cache juga di-clamp ≥ 0: pemakaian terukur tak boleh berjalan
+    // mundur bila provider melaporkan snapshot yang lebih kecil dari sebelumnya.
+    const dRead = Math.max(0, prev ? p.cacheReadTokens - prev.cacheReadTokens : p.cacheReadTokens)
+    const dWrite = Math.max(
+      0,
+      prev ? p.cacheWriteTokens - prev.cacheWriteTokens : p.cacheWriteTokens,
+    )
     turn.inputTokens += dInput
     turn.outputTokens += dOutput
     turn.totalTokens += dTotal

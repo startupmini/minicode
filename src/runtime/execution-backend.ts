@@ -451,6 +451,9 @@ export function createHostBackend(): ExecutionBackend {
           resolveWait({ status: "timeout" })
         }
         rec.waiters.add(resolveWait)
+        // [RL-6] bersihkan timer tunggu sebelumnya agar tak bocor saat wait()
+        // dipanggil ulang pada record yang sama.
+        if (rec.timer) clearTimeout(rec.timer)
         rec.timer = setTimeout(onTimeout, timeoutMs)
       })
     },

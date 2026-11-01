@@ -144,12 +144,15 @@ export function createAnthropicProvider(config: AnthropicConfig): ModelProvider 
         if (!data) continue
         // handle different event types
         const raw = data as AnthropicRaw
-        if (currentEvent === "content_block_delta") {
+        // [ST-4] Bila proxy/gateway menghapus header baris `event:`, pakai
+        // `raw.type` dari body sebagai fallback jenis event.
+        const evType = raw.type ?? currentEvent
+        if (evType === "content_block_delta") {
           const delta = raw.delta
           if (delta?.type === "text_delta" && typeof delta.text === "string") {
             yield { type: "text", text: delta.text }
           }
-        } else if (currentEvent === "message_delta") {
+        } else if (evType === "message_delta") {
           const d = raw.delta
           const stop = d?.stop_reason
           if (stop) {
@@ -178,7 +181,7 @@ export function createAnthropicProvider(config: AnthropicConfig): ModelProvider 
               },
             }
           }
-        } else if (raw.type === "message_start") {
+        } else if (evType === "message_start") {
           const usage = raw.message?.usage
           if (usage) {
             yield {
@@ -195,13 +198,16 @@ export function createAnthropicProvider(config: AnthropicConfig): ModelProvider 
           }
         }
         // content_block_start for tool_use
-        if (raw.type === "content_block_start") {
+        if (evType === "content_block_start") {
           const block = raw.content_block
           if (block?.type === "tool_use") {
-            pendingTools.set(raw.index ?? 0, { id: block.id!, name: block.name!, args: "" })
+            // [ST-5] Non-null guard: blok malformed tanpa id/name dikunci, bukan
+            // dipaksa `block.id!`/`block.name!` yang bisa menyimpan undefined.
+            if (typeof block.id !== "string" || typeof block.name !== "string") continue
+            pendingTools.set(raw.index ?? 0, { id: block.id, name: block.name, args: "" })
           }
         }
-        if (raw.type === "content_block_delta") {
+        if (evType === "content_block_delta") {
           const d = raw.delta
           if (d?.type === "input_json_delta") {
             const idx = raw.index ?? 0
@@ -212,7 +218,7 @@ export function createAnthropicProvider(config: AnthropicConfig): ModelProvider 
             yield { type: "extension", kind: "reasoning", data: { text: d.thinking } }
           }
         }
-        if (raw.type === "content_block_stop") {
+        if (evType === "content_block_stop") {
           const idx = raw.index ?? 0
           const p = pendingTools.get(idx)
           if (p) {
@@ -291,7 +297,9 @@ export function toAnthropicMessages(messages: readonly Message[]): unknown[] {
       }
       out.push({
         role: "assistant",
-        content: content.length ? content : [{ type: "text", text: "" }],
+        // [ST-1] Blok text KOSONG `""` memicu HTTP 400 Anthropic; pakai placeholder
+        // non-kosong `" "` untuk pesan assistant tanpa konten & tanpa tool_use.
+        content: content.length ? content : [{ type: "text", text: " " }],
       })
     } else {
       const c = m as unknown as { toolCallId: string; content: unknown; isError?: boolean }

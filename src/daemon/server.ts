@@ -505,6 +505,10 @@ export class DaemonServer {
     if (this.#liveUnsub.has(sid)) return
     const feed = this.#deps.feeds.get(sid)
     if (!feed) return
+    // [RC-1] Jangan subscribe/memoize feed NON-HOSTED (store feed → liveSubscribe
+    // no-op). Bila sesi kemudian jadi hosted, subscriber yang tersambung saat
+    // jendela boot bisa re-bind dan menerima stream LIVE yang sebenarnya.
+    if (!feed.hosted) return
     const unsub = feed.liveSubscribe((event) => this.#fanout(sid, event))
     this.#liveUnsub.set(sid, unsub)
   }

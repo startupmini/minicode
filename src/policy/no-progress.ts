@@ -433,8 +433,11 @@ export function createNoProgressDetector(options: NoProgressOptions = {}): NoPro
     recordOutcome(input) {
       const name = String(input.name ?? "")
       const content = String(input.content ?? "")
-      // Jangan hitung error yang berasal dari LOOP_GUARD sendiri sebagai kegagalan tool.
-      if (content.includes("[LOOP_GUARD ")) {
+      // [LF-2] Jangan hitung error yang berasal dari LOOP_GUARD sendiri sebagai
+      // kegagalan tool. Hanya cocokkan pesan SINTETIS yang ber-prefix eksak di
+      // AWAL string (`[LOOP_GUARD kind=...]` — format nyata observable di modul
+      // ini), bukan substring di tengah output tool eksternal.
+      if (/^\[LOOP_GUARD kind=(?:NO_PROGRESS|OSCILLATION)\b/.test(content.trimStart())) {
         return { allowed: true }
       }
       if (input.isError === true) {

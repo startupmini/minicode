@@ -92,7 +92,7 @@ export const gitStatusTool: Tool = {
   },
   async execute({ cwd }, ctx) {
     const c = cwd as string | undefined
-    const sessionRoot = (ctx as { cwd?: string }).cwd ?? process.cwd()
+    const sessionRoot = ctx.cwd ?? process.cwd()
     assertCwd(c, sessionRoot)
     const resolvedCwd = c ? resolve(sessionRoot, c) : sessionRoot
     if (!(await isGitRepo(resolvedCwd, ctx.signal))) return "not a git repository"
@@ -131,7 +131,7 @@ export const gitDiffTool: Tool = {
     additionalProperties: false,
   },
   async execute({ cwd, staged }, ctx) {
-    const sessionRoot = (ctx as { cwd?: string }).cwd ?? process.cwd()
+    const sessionRoot = ctx.cwd ?? process.cwd()
     assertCwd(cwd as string | undefined, sessionRoot)
     const resolvedCwd = (cwd as string | undefined)
       ? resolve(sessionRoot, cwd as string)
@@ -160,7 +160,7 @@ export const gitLogTool: Tool = {
     additionalProperties: false,
   },
   async execute({ cwd, limit }, ctx) {
-    const sessionRoot = (ctx as { cwd?: string }).cwd ?? process.cwd()
+    const sessionRoot = ctx.cwd ?? process.cwd()
     assertCwd(cwd as string | undefined, sessionRoot)
     const resolvedCwd = (cwd as string | undefined)
       ? resolve(sessionRoot, cwd as string)
@@ -222,7 +222,7 @@ export const gitCommitTool: Tool = {
   async execute({ message, paths, all, cwd }, ctx) {
     ctx.signal.throwIfAborted()
     const c = cwd as string | undefined
-    const sessionRoot = (ctx as { cwd?: string }).cwd ?? process.cwd()
+    const sessionRoot = ctx.cwd ?? process.cwd()
     assertCwd(c, sessionRoot)
     const resolvedCwd = c ? resolve(sessionRoot, c) : sessionRoot
     const msg = String(message ?? "").trim()

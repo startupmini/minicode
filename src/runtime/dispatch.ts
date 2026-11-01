@@ -554,7 +554,7 @@ export function createDispatchBridge(deps: DispatchBridgeDeps): DispatchBridge {
           request.dispatchId,
           base,
           "FAILED",
-          `admission port threw: ${(e as Error).message.slice(0, 120)}`,
+          `admission port threw: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`,
         )
       }
       if (!admitted.admitted) {

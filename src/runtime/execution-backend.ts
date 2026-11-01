@@ -343,7 +343,10 @@ export function createHostBackend(): ExecutionBackend {
             detached: process.platform !== "win32",
           })
         } catch (e) {
-          resolveStart({ started: false as const, reason: (e as Error).message })
+          resolveStart({
+            started: false as const,
+            reason: e instanceof Error ? e.message : String(e),
+          })
           return
         }
         const id = allocateBackendHandleId()
@@ -518,7 +521,7 @@ function createRunToCompletionShim(
         records.set(id, { done: true, code: res.code, output: res.output })
         return { started: true as const, handle: { id, kind } }
       } catch (e) {
-        return { started: false as const, reason: (e as Error).message }
+        return { started: false as const, reason: e instanceof Error ? e.message : String(e) }
       }
     },
     observe(handle: BackendHandle): BackendObservation {

@@ -239,7 +239,7 @@ export async function syncPricing(url: string = MODELS_DEV_URL): Promise<SyncRes
     const hostname = new URL(url).hostname
     if (await isPrivateHostWithDns(hostname)) throw new Error(`private host rejected: ${hostname}`)
   } catch (e) {
-    if ((e as Error).message.includes("private host")) throw e
+    if (e instanceof Error && e.message.includes("private host")) throw e
   }
   const res = await fetch(url, {
     signal: AbortSignal.timeout(LIMITS.PRICING_FETCH_TIMEOUT_MS * 4),
@@ -254,7 +254,7 @@ export async function syncPricing(url: string = MODELS_DEV_URL): Promise<SyncRes
         if (await isPrivateHostWithDns(nextHost))
           throw new Error(`private host rejected: ${nextHost}`)
       } catch (e) {
-        if ((e as Error).message.includes("private host")) throw e
+        if (e instanceof Error && e.message.includes("private host")) throw e
       }
     }
     throw new Error(`models.dev → redirect ${res.status} not followed`)
@@ -296,6 +296,20 @@ export async function syncPricing(url: string = MODELS_DEV_URL): Promise<SyncRes
  * Overlay (models.dev) diperiksa lebih dulu karena lebih baru; bawaan menjadi
  * jaring pengaman.
  */
+// [Audit #2 C.F4] Cache urutan kunci per-tabel (terpanjang dulu). `Object.keys`
+// + sort semula dijalankan setiap `findPrice` (per event token). BUILTIN_PRICING
+// adalah const (cache stabil); overlay di-REASSIGN (bukan di-mutasi), jadi
+// WeakMap otomatis miss saat overlay diganti objek baru.
+const priceKeyOrderCache = new WeakMap<Record<string, ModelPrice>, string[]>()
+function priceKeysDescLength(table: Record<string, ModelPrice>): string[] {
+  let keys = priceKeyOrderCache.get(table)
+  if (!keys) {
+    keys = Object.keys(table).sort((a, b) => b.length - a.length)
+    priceKeyOrderCache.set(table, keys)
+  }
+  return keys
+}
+
 export function findPrice(
   model: string,
   overlayMap: Record<string, ModelPrice> = overlay ?? {},
@@ -320,7 +334,7 @@ export function findPrice(
   const segments = m.split(/[/:]/)
 
   for (const table of [overlayMap, BUILTIN_PRICING]) {
-    const keys = Object.keys(table).sort((a, b) => b.length - a.length)
+    const keys = priceKeysDescLength(table)
     for (const k of keys) {
       const kl = k.toLowerCase()
       for (const s of segments) {

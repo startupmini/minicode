@@ -46,7 +46,7 @@ export const codeRunTool: Tool = {
     }
     const src = code as string
     if (src.includes("\0")) throw new Error("code contains NUL byte")
-    const root = (ctx as { cwd?: string }).cwd ?? process.cwd()
+    const root = ctx.cwd ?? process.cwd()
     const timeoutMs =
       typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0 ? timeout : 10000
     // Tanpa shell perantara di sisi kita: kode jadi SATU argumen single-quoted

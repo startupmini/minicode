@@ -561,7 +561,13 @@ const DPAPI_UNPROTECT = [
 
 function dpapiAvailable(): boolean {
   if (process.env.MINICODE_KEYSTORE_DISABLE === "1") return false
-  if (process.platform !== "win32" && !process.env.MINICODE_KEYSTORE_FORCE_DPAPI) return false
+  // [Audit #2 A.8] Force DPAPI HANYA saat env eksplisit "1"/"true" — nilai "0"
+  // atau "false" tak boleh mengaktifkan jalur DPAPI (sebelumnya `!env` membuat
+  // string "0" yang truthy ikut memaksa DPAPI).
+  const forceDpapi =
+    process.env.MINICODE_KEYSTORE_FORCE_DPAPI === "1" ||
+    process.env.MINICODE_KEYSTORE_FORCE_DPAPI === "true"
+  if (process.platform !== "win32" && !forceDpapi) return false
   return true
 }
 

@@ -19,7 +19,7 @@ export const moveFileTool: Tool = {
   },
   async execute({ from, to }, ctx) {
     ctx.signal.throwIfAborted()
-    const root = (ctx as { cwd?: string }).cwd ?? process.cwd()
+    const root = ctx.cwd ?? process.cwd()
     const f = from as string
     const t = to as string
     // Verifikasi kedua ujung via pemilik tunggal (logis + target nyata) —

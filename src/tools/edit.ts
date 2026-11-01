@@ -145,7 +145,7 @@ export const editTool: Tool = {
   async execute({ path, oldString, newString }, ctx) {
     ctx.signal.throwIfAborted()
     const p = path as string
-    const root = (ctx as { cwd?: string }).cwd ?? process.cwd()
+    const root = ctx.cwd ?? process.cwd()
     // Verifikasi path terpusat (logis + target nyata, induk symlink ikut
     // ter-resolusi) — symlink internal tetap bisa diedit, targetnya yang dicek.
     const { abs, real: realAbs } = await resolveSafePath(p, root)

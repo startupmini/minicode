@@ -87,11 +87,13 @@ export async function handleExec(
   // Audit #07 P0: local config repo tak dipercaya kecuali operator opt-in.
   const allowLocal = allowLocalConfig(subArgs)
   const budgetRaw = getArg("--budget")
-  const parsedBudget = budgetRaw ? Number(budgetRaw) : undefined
-  const budget =
-    parsedBudget !== undefined && Number.isFinite(parsedBudget) && parsedBudget >= 0
-      ? parsedBudget
-      : undefined
+  let budget = budgetRaw ? Number(budgetRaw) : undefined
+  // [Audit #2 A.1/B.4] Selaras dengan cli/index.ts: --budget non-angka/negatif
+  // diingatkan eksplisit, bukan dibiarkan berubah jadi undefined secara diam.
+  if (budgetRaw && (!Number.isFinite(budget) || (budget as number) < 0)) {
+    process.stderr.write(`[warn] --budget requires a USD number, ignoring "${budgetRaw}"\n`)
+    budget = undefined
+  }
   // Harness-P1: sama seperti one-shot — strict fail-closed bila cost tak dikenal.
   const budgetStrict =
     hasFlag(subArgs, "--budget-strict") || process.env.MINICODE_BUDGET_STRICT === "1"
@@ -107,7 +109,17 @@ export async function handleExec(
   const workMode = workModeResolved.workMode
   if (workModeResolved.warning) console.error(`[warn] ${workModeResolved.warning}`)
   const ratelimitRaw = getArg("--ratelimit")
-  const rateLimiter = ratelimitRaw ? createRateLimiter(Number(ratelimitRaw)) : undefined
+  let rateLimiter: ReturnType<typeof createRateLimiter> | undefined
+  if (ratelimitRaw) {
+    const rpm = Number(ratelimitRaw)
+    if (!Number.isFinite(rpm) || rpm <= 0) {
+      process.stderr.write(
+        `[warn] --ratelimit requires a positive number, ignoring "${ratelimitRaw}"\n`,
+      )
+    } else {
+      rateLimiter = createRateLimiter(rpm)
+    }
+  }
 
   const effectivePrompt = prompt.trim()
   if (!effectivePrompt) {

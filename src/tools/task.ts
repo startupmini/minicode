@@ -347,7 +347,7 @@ export const delegateTaskTool: Tool = {
     })
     // Child tools are wrapped with canonical P2.10 evidence after the child
     // identity and authoritative domain exist (see below).
-    const parentCwd = (ctx as unknown as { cwd?: string })?.cwd ?? process.cwd()
+    const parentCwd = ctx.cwd ?? process.cwd()
     const parentId = todoSession.id || "main"
     // P2.9: id anak = identitas Session KANONIK (128-bit). Id P1 lawas
     // `sub_<8hex>` (32-bit) tidak cukup untuk durable authority; prefix `sub_`

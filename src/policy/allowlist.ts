@@ -51,6 +51,19 @@ export async function saveAllowlist(entry: string, cwd?: string, opts: { global?
   await atomicWriteText(path, JSON.stringify(list, null, 2))
 }
 
+// [Audit #2 C.F6] Cache kompilasi RegExp per pola allowlist: `new RegExp`
+// semula dibuat ulang di setiap pemeriksaan tool call (hot path).
+const allowlistReCache = new Map<string, RegExp>()
+function allowlistRe(pat: string): RegExp {
+  let re = allowlistReCache.get(pat)
+  if (!re) {
+    const safe = pat.replace(/[.+^${}()|[\]\\?]/g, "\\$&").replace(/\*/g, ".*")
+    re = new RegExp(`^${safe}$`)
+    allowlistReCache.set(pat, re)
+  }
+  return re
+}
+
 export function matchAllowlist(call: ToolCall, allowlist: string[]): boolean {
   // Tanpa pemotongan: kunci = nama + JSON ARG PENUH. Versi lama memakai
   // `.slice(0, 200)` sehingga dua panggilan dengan 200-char prefix sama
@@ -59,8 +72,7 @@ export function matchAllowlist(call: ToolCall, allowlist: string[]): boolean {
   // prefix 'A'x195 + tail jinak vs tail jahat → kunci terpotong identik).
   const key = `${call.name}:${JSON.stringify(call.args)}`
   return allowlist.some((pat) => {
-    const safe = pat.replace(/[.+^${}()|[\]\\?]/g, "\\$&").replace(/\*/g, ".*")
-    const re = new RegExp(`^${safe}$`)
+    const re = allowlistRe(pat)
     if (pat.includes(":")) return re.test(key)
     return re.test(call.name) || re.test(key)
   })

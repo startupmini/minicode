@@ -127,8 +127,8 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
       try {
         res = await fetch(endpoint, { method: "POST", headers, body, signal })
       } catch (e) {
-        if ((e as Error).name === "AbortError") throw e
-        throw new ProviderError("network", (e as Error).message)
+        if (e instanceof Error && e.name === "AbortError") throw e
+        throw new ProviderError("network", e instanceof Error ? e.message : String(e))
       }
       if (!res.ok) {
         const txt = await res.text().catch(() => "")

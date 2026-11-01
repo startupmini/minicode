@@ -19,7 +19,7 @@ import { sanitizeSessionPart } from "../src/lib/session-id.ts"
 describe("portabilitas nama sesi", () => {
   test("hasil sanitasi tak pernah berakhir dengan titik (potong 60 karakter)", () => {
     // Titik jatuh persis di posisi ke-60 → hasil potongannya berakhir titik.
-    const id = "x".repeat(59) + ".y"
+    const id = `${"x".repeat(59)}.y`
     const out = sanitizeSessionPart(id)
     expect(out.endsWith(".")).toBe(false)
     expect(out.endsWith("-")).toBe(false)
@@ -46,7 +46,7 @@ describe("portabilitas nama sesi", () => {
     // Setelah fix, nama hasil sanitasi aman untuk kedua jalur.
     const dir = mkdtempSync(join(tmpdir(), "mc-sidname-"))
     try {
-      const name = sanitizeSessionPart("x".repeat(59) + ".y")
+      const name = sanitizeSessionPart(`${"x".repeat(59)}.y`)
       mkdirSync(join(dir, name))
       expect(readdirSync(dir)).toEqual([name])
       expect(name.endsWith(".")).toBe(false)
@@ -62,7 +62,7 @@ describe("portabilitas nama sesi", () => {
   })
 
   test("sanitasi tetap idempoten dan stabil", () => {
-    for (const raw of ["", "...", ".foo", "a/b", "x".repeat(100), "x".repeat(59) + ".y"]) {
+    for (const raw of ["", "...", ".foo", "a/b", "x".repeat(100), `${"x".repeat(59)}.y`]) {
       const once = sanitizeSessionPart(raw)
       expect(sanitizeSessionPart(once)).toBe(once)
     }

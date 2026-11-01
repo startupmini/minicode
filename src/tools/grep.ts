@@ -219,7 +219,7 @@ export const grepTool: Tool = {
     additionalProperties: false,
   },
   async execute({ pattern, cwd, include, limit }, ctx) {
-    const sessionRoot = (ctx as { cwd?: string }).cwd ?? process.cwd()
+    const sessionRoot = ctx.cwd ?? process.cwd()
     const rawRoot = (cwd as string) ?? "."
     const root = resolve(sessionRoot, rawRoot)
     if (isPathOutsideRoot(root, sessionRoot)) throw new Error(`cwd outside workspace: ${rawRoot}`)

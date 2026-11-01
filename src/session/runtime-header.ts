@@ -12,6 +12,7 @@
 
 import type { ConsequenceDecision } from "../policy/consequence-engine.ts"
 import type { Usage as UsageSession } from "../policy/usage.ts"
+import type { TaskEvidence } from "../task/model.ts"
 import { TaskStore } from "../task/store.ts"
 
 /** State operasonal minimal yang diperlukan untuk rendering header. */
@@ -122,6 +123,29 @@ export function injectRuntimeHeaderIntoContent(
   return `${header}\n\n${content}`
 }
 
+/**
+ * [Audit #2 A.3] Parse `verdict` dari `detail` evidence "verify" secara LOKAL:
+ * satu detail korup tidak boleh membatalkan seluruh snapshot `collectOperationalState`.
+ */
+function evidenceVerdict(detail: string): "passed" | "failed" | "stale" | undefined {
+  try {
+    const v = JSON.parse(detail) as { verdict?: unknown }
+    const verdict = v.verdict
+    return verdict === "passed" || verdict === "failed" || verdict === "stale" ? verdict : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Evidence ber-`kind === "verify"` PALING AKHIR (bukan sekadar elemen terakhir). */
+function lastVerifyEvidence(list: TaskEvidence[] | undefined): TaskEvidence | undefined {
+  if (!list) return undefined
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i]!.kind === "verify") return list[i]!
+  }
+  return undefined
+}
+
 /** Build snapshot dari sumber-sumber operasional yang ada di CLI. */
 export function collectOperationalState(
   sessionId: string,
@@ -139,21 +163,24 @@ export function collectOperationalState(
     const blockedTasks = tasks.filter((t) => t.status === "BLOCKED").length
     const completedVerifiedTasks = tasks.filter((t) => {
       if (t.status !== "COMPLETED") return false
-      return t.evidence?.some(
-        (e) => e.kind === "verify" && JSON.parse(e.detail).verdict === "passed",
+      return (t.evidence ?? []).some(
+        (e) => e.kind === "verify" && evidenceVerdict(e.detail) === "passed",
       )
     }).length
 
     const activeTasks = tasks
       .filter((t) => ["IN_PROGRESS", "VERIFYING", "BLOCKED", "PENDING"].includes(t.status))
       .slice(0, 16) // Limit tampilan ke 16 task aktif saja
-      .map((t) => ({
-        id: t.id,
-        status: t.status,
-        verificationVerdict: t.evidence?.find((e) => e.kind === "verify")
-          ? JSON.parse(t.evidence[t.evidence.length - 1]!.detail).verdict
-          : undefined,
-      }))
+      .map((t) => {
+        // [Audit #2 A.3] Ambil evidence "verify" PALING AKHIR (bukan sekadar
+        // elemen terakhir array yang bisa ber-kind lain), lalu parse secara aman.
+        const verify = lastVerifyEvidence(t.evidence)
+        return {
+          id: t.id,
+          status: t.status,
+          verificationVerdict: verify ? evidenceVerdict(verify.detail) : undefined,
+        }
+      })
 
     return {
       runId: undefined, // DIISI oleh caller dari session state

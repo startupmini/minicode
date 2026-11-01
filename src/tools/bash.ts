@@ -298,7 +298,7 @@ function makeBashTool(ownerSid: string | null): Tool {
       additionalProperties: false,
     },
     async execute({ cmd, cwd, timeoutMs, background }, ctx) {
-      const sessionRoot = (ctx as { cwd?: string }).cwd ?? process.cwd()
+      const sessionRoot = ctx.cwd ?? process.cwd()
       const c = cwd as string | undefined
       if (c && (isCwdOutsideRoot(c, sessionRoot) || isPathOutsideRoot(c, sessionRoot)))
         throw new Error(`cwd outside workspace: ${c}`)

@@ -437,9 +437,15 @@ export function openExecutionJournal(
     } catch {}
     db = null
     if (isCorruptionError(e)) {
-      openError = { code: "corruption", detail: (e as Error).message.slice(0, 300) }
+      openError = {
+        code: "corruption",
+        detail: (e instanceof Error ? e.message : String(e)).slice(0, 300),
+      }
     } else {
-      openError = { code: "storage-failure", detail: (e as Error).message.slice(0, 300) }
+      openError = {
+        code: "storage-failure",
+        detail: (e instanceof Error ? e.message : String(e)).slice(0, 300),
+      }
     }
   }
 
@@ -816,7 +822,10 @@ export function openExecutionJournal(
         m.flushFailureCount++
         return {
           status: "failed",
-          error: { code: "flush-uncertain", detail: (e as Error).message.slice(0, 200) },
+          error: {
+            code: "flush-uncertain",
+            detail: (e instanceof Error ? e.message : String(e)).slice(0, 200),
+          },
         }
       }
     },

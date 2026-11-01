@@ -2033,8 +2033,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         // F1.2: token kumulatif sesi saat tool selesai — bahan kurva token.
         // `usage` dideklarasikan di bawah, tapi callback ini baru jalan setelah
         // createCliSession selesai — aman dari TDZ.
+        // [Audit #2 B.5] `.catch` di sini redundan: writeStepTrace sudah
+        // menelan seluruh error async di dalamnya (trace.ts), dan argumen
+        // dibangun sinkron di bawah guard `try/catch` di atas.
         totalTokens: usage.getSession().totalTokens,
-      }).catch(() => {})
+      })
     } catch {}
   })
   session.events.on("step:completed", (e) => {
@@ -2049,8 +2052,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         errors: s.results.filter((r) => r.isError).length,
         sandbox: process.env.MINICODE_SANDBOX ?? "none",
         // F1.2: sama seperti baris tool — kumulatif sesi saat step selesai.
+        // [Audit #2 B.5] `.catch` di sini redundan: writeStepTrace sudah
+        // menelan seluruh error async di dalamnya (trace.ts), dan argumen
+        // dibangun sinkron di bawah guard `try/catch` di atas.
         totalTokens: usage.getSession().totalTokens,
-      }).catch(() => {})
+      })
     } catch {}
   })
   // ── P2.11 observasi verifikasi (observation-only) ──

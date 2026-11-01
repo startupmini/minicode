@@ -111,7 +111,12 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // [P12 S2.2] 8 -> 9 for exactly ONE writer: the `--work-mode` unknown-value
   // warning on the machine path (stderr; stdout stays pure JSONL). Declared,
   // not absorbed.
-  "cli/commands/exec.ts": { max: 9, owner: "machine" },
+  // [Audit #2 A.1/B.4] 9 -> 11 for exactly TWO writers: the `--budget` and
+  // `--ratelimit` invalid-value warnings on the machine path, added for parity
+  // with cli/index.ts. A silently ignored `--ratelimit abc` would produce a
+  // broken rate-limiter (NaN); a warning keeps machine-output honest while
+  // stdout stays pure JSONL. Declared, not absorbed.
+  "cli/commands/exec.ts": { max: 11, owner: "machine" },
   "cli/commands/mcp.ts": { max: 2, owner: "human-cmd" },
   "cli/commands/memory.ts": { max: 11, owner: "human-cmd" },
   // [P14.4] 0 -> 8 for the openwork command's writers, per the terminal

@@ -106,8 +106,15 @@ export interface SnapshotResult {
  * beserta provenance-nya. Yang DILARANG menyimpulkan: "snapshot ini = state
  * sesi pada satu titik waktu tunggal" — tidak ada transaksi yang menjamin itu.
  */
-export function buildSnapshot(feed: SessionFeed, now = Date.now()): SnapshotResult {
-  const frontiers = feed.frontiers()
+export function buildSnapshot(
+  feed: SessionFeed,
+  now = Date.now(),
+  precomputedFrontiers?: SessionFrontiers,
+): SnapshotResult {
+  // [Audit #2 C.F3] Terima frontier yang sudah dihitung pemanggil (mis.
+  // server.ts sudah mengambil feed.frontiers() untuk baris `frontiers`) agar tak
+  // menghitung dua kali.
+  const frontiers = precomputedFrontiers ?? feed.frontiers()
   const head = feed.head()
   const from = Math.max(0, head - SNAPSHOT_EVENT_LIMIT + 1)
   const { events, rejected, head: durableHead } = feed.readRange(from, SNAPSHOT_EVENT_LIMIT)

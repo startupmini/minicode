@@ -22,7 +22,7 @@ export const writeFileTool: Tool = {
   async execute({ path, content }, ctx) {
     ctx.signal.throwIfAborted()
     const p = path as string
-    const root = (ctx as { cwd?: string }).cwd ?? process.cwd()
+    const root = ctx.cwd ?? process.cwd()
     // Verifikasi path terpusat (logis + target nyata) — detail di safe-open.ts.
     const { real: realAbs } = await resolveSafePath(p, root)
     // Tolak menimpa symlink final (swap antara cek dan tulis gagal tutup).

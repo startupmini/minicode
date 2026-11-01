@@ -270,7 +270,7 @@ export async function compactWithLlm(
     const hostname = new URL(baseUrl).hostname
     if (await isPrivateHostWithDns(hostname)) throw new Error(`private host rejected: ${hostname}`)
   } catch (e) {
-    if ((e as Error).message.includes("private host")) throw e
+    if (e instanceof Error && e.message.includes("private host")) throw e
   }
   const provider =
     opts.provider ??

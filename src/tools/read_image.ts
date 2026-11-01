@@ -25,7 +25,7 @@ export const readImageTool: Tool = {
   async execute({ path }, ctx) {
     ctx.signal.throwIfAborted()
     const p = path as string
-    const root = (ctx as { cwd?: string }).cwd ?? process.cwd()
+    const root = ctx.cwd ?? process.cwd()
     const abs = isAbsolute(p) ? resolve(p) : resolve(root, p)
     // TOCTOU-safe: safeOpenRead = realpath(abs) → cek jail+sensitif di dalam
     // root → open(preReal, O_NOFOLLOW). Bukan open(abs) yang bisa di-swap jadi

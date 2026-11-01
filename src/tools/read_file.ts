@@ -83,7 +83,7 @@ export const readFileTool: Tool = {
   async execute({ path, offset, limit }, ctx) {
     ctx.signal.throwIfAborted()
     const p = path as string
-    const root = (ctx as { cwd?: string }).cwd ?? process.cwd()
+    const root = ctx.cwd ?? process.cwd()
     const abs = isAbsolute(p) ? resolve(p) : resolve(root, p)
     // Semua verifikasi path (jail + sensitif + O_NOFOLLOW) terjadi di SATU
     // titik saat open — detail di safe-open.ts. Tidak ada resolve/stat

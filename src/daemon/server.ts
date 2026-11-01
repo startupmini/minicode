@@ -405,7 +405,7 @@ export class DaemonServer {
     // 1) frontiers  2) snapshot  3) cursor
     const frontiers = feed.frontiers()
     this.#send(conn, { t: "frontiers", sid, frontiers })
-    const { snapshot, rejected } = buildSnapshot(feed)
+    const { snapshot, rejected } = buildSnapshot(feed, undefined, frontiers)
     this.#send(conn, { t: "snapshot", sid, consumer, snapshot })
     this.#send(conn, {
       t: "subscribed",

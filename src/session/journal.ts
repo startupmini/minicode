@@ -1027,8 +1027,11 @@ async function sweepInner(sessionId: string, root: string): Promise<number> {
     }
   }
   const committedKeys = committedPathsKeys(loaded.records)
+  // [Audit #2 C.F8] Hoist maxFinalizeSeq ke konstanta — semula dihitung ulang
+  // di dalam `.filter` untuk setiap record (O(n²)). Sekali jalan = O(n).
+  const maxFinalize = maxFinalizeSeq(loaded.records)
   const keep = loaded.records.filter((r) => {
-    if (r.kind === "finalize") return r.seq === maxFinalizeSeq(loaded.records)
+    if (r.kind === "finalize") return r.seq === maxFinalize
     if (r.kind === "undo" || r.kind === "redo") return r.seq > maxUpto
     // P2.10 verification evidence is retained like dedup terminals: it may be
     // the only durable external-effect observation after finalize/sweep.

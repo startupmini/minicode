@@ -531,7 +531,10 @@ export function createRuntimeComposition(opts: RuntimeCompositionOptions): Runti
           ownedExecutions.add(record.executionId)
           return { admitted: true, executionId: record.executionId }
         } catch (e) {
-          return { admitted: false, reason: (e as Error).message.slice(0, 120) }
+          return {
+            admitted: false,
+            reason: (e instanceof Error ? e.message : String(e)).slice(0, 120),
+          }
         }
       },
     },
@@ -642,7 +645,7 @@ export function createRuntimeComposition(opts: RuntimeCompositionOptions): Runti
           : `host=${host.state()}`,
       )
     } catch (e) {
-      phase("host-shutdown", "failed", (e as Error).message.slice(0, 160))
+      phase("host-shutdown", "failed", (e instanceof Error ? e.message : String(e)).slice(0, 160))
       errors.push({ phase: "host-shutdown", error: e })
     }
 
@@ -697,7 +700,11 @@ export function createRuntimeComposition(opts: RuntimeCompositionOptions): Runti
           `stopped=${cleaned.stopped} failed=${cleaned.failed}`,
         )
       } catch (e) {
-        phase("process-cleanup", "failed", (e as Error).message.slice(0, 160))
+        phase(
+          "process-cleanup",
+          "failed",
+          (e instanceof Error ? e.message : String(e)).slice(0, 160),
+        )
         errors.push({ phase: "process-cleanup", error: e })
       }
     } else {
@@ -763,7 +770,7 @@ export function createRuntimeComposition(opts: RuntimeCompositionOptions): Runti
             error: new Error("journal still open after close"),
           })
       } catch (e) {
-        phase("journal-close", "failed", (e as Error).message.slice(0, 160))
+        phase("journal-close", "failed", (e instanceof Error ? e.message : String(e)).slice(0, 160))
         errors.push({ phase: "journal-close", error: e })
       }
     }
@@ -780,7 +787,7 @@ export function createRuntimeComposition(opts: RuntimeCompositionOptions): Runti
         errors.push({ phase: "host-close", error: new Error(`host not CLOSED (${host.state()})`) })
     } catch (e) {
       // Host M3 melempar bila hook onClose gagal — meski state sudah CLOSED.
-      phase("host-close", "failed", (e as Error).message.slice(0, 160))
+      phase("host-close", "failed", (e instanceof Error ? e.message : String(e)).slice(0, 160))
       errors.push({ phase: "host-close", error: e })
     }
 

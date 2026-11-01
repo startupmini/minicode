@@ -23,7 +23,7 @@ export const readMemoryTool: Tool = {
   },
   async execute({ query, topK }, ctx) {
     ctx.signal.throwIfAborted()
-    const cwd = (ctx as { cwd?: string }).cwd ?? process.cwd()
+    const cwd = ctx.cwd ?? process.cwd()
     // Mode readonly/plan: retrieval tidak boleh menulis access_count/WAL —
     // permissionMode diteruskan kernel per turn (lihat task.ts).
     const pm = (ctx as unknown as { permissionMode?: string }).permissionMode
@@ -138,7 +138,7 @@ export const writeMemoryTool: Tool = {
     ctx.signal.throwIfAborted()
     const t = text as string
     if (!t.trim()) throw new Error("text empty")
-    const cwd = (ctx as { cwd?: string }).cwd ?? process.cwd()
+    const cwd = ctx.cwd ?? process.cwd()
     // [Fase 6A / ACE-03] Pelajaran kandidat TIDAK ditulis ke MEMORY.md (file
     // itu dibaca mentah saat query kosong) dan hanya hidup di store vektor
     // dengan status `provisional` sampai verifikasi mempromosikannya.
@@ -245,7 +245,7 @@ export const forgetMemoryTool: Tool = {
       throw new Error("query or provenance criteria required")
     }
 
-    const cwd = (ctx as { cwd?: string }).cwd ?? process.cwd()
+    const cwd = ctx.cwd ?? process.cwd()
 
     let resultText = ""
 

@@ -18,7 +18,7 @@ export const deleteFileTool: Tool = {
   async execute({ path }, ctx) {
     ctx.signal.throwIfAborted()
     const p = path as string
-    const root = (ctx as { cwd?: string }).cwd ?? process.cwd()
+    const root = ctx.cwd ?? process.cwd()
     // Verifikasi path terpusat (logis + target nyata) — detail di safe-open.ts.
     const { abs, real } = await resolveSafePath(p, root)
     const st = await stat(real).catch(() => null)

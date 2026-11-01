@@ -62,6 +62,37 @@ export interface CheckpointManifest {
   checkpoints: Checkpoint[]
 }
 
+/**
+ * [Audit #2 A.2] Normalisasi manifest korup: `JSON.parse` yang sukses belumlah
+ * berarti strukturnya valid. `checkpoints` yang bukan array atau `currentIndex`
+ * di luar batas akan memicu `TypeError` saat undo/redo mengindeks
+ * `manifest.checkpoints[manifest.currentIndex]`. Bentuk tak valid → jatuh ke
+ * state kosong yang aman; pointer di luar batas di-clamp ke `[-1, len-1]`.
+ */
+function normalizeCheckpointManifest(
+  parsed: unknown,
+  fallbackSessionId: string,
+): CheckpointManifest {
+  if (typeof parsed !== "object" || parsed === null) {
+    return { sessionId: sanitizeSessionId(fallbackSessionId), currentIndex: -1, checkpoints: [] }
+  }
+  const m = parsed as Partial<CheckpointManifest>
+  const checkpoints = Array.isArray(m.checkpoints) ? m.checkpoints : []
+  let currentIndex =
+    typeof m.currentIndex === "number" && Number.isInteger(m.currentIndex) ? m.currentIndex : -1
+  if (currentIndex < -1) currentIndex = -1
+  if (currentIndex >= checkpoints.length) currentIndex = checkpoints.length - 1
+  if (checkpoints.length === 0) currentIndex = -1
+  return {
+    sessionId:
+      typeof m.sessionId === "string" && m.sessionId.trim() !== ""
+        ? m.sessionId
+        : sanitizeSessionId(fallbackSessionId),
+    currentIndex,
+    checkpoints,
+  }
+}
+
 function getCheckpointDir(sessionId: string, cwd: string = process.cwd()): string {
   return resolve(cwd, ".minicode", "checkpoints", sanitizeSessionId(sessionId))
 }
@@ -134,7 +165,7 @@ export async function loadCheckpointManifest(
   try {
     const raw = await readFile(path, "utf8")
     try {
-      return JSON.parse(raw) as CheckpointManifest
+      return normalizeCheckpointManifest(JSON.parse(raw), sessionId)
     } catch (e) {
       if (e instanceof SyntaxError) {
         const backup = `${path}.corrupt.${Date.now()}`

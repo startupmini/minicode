@@ -125,6 +125,37 @@ function openGlobalDb(fallbackCwd?: string): Database {
   return open(fallbackCwd)
 }
 
+// [Phase 12.2] Predikat + retry sinkron kontensi SQLite transien (buka/WAL di
+// Windows). Sebelumnya vector.db tidak me-retry setup WAL/DDL sama sekali, dan
+// predikat retry tulis hanya mengenali SQLITE_BUSY/"database is locked".
+// SQLITE_IOERR_TRUNCATE / SHMOPEN / LOCK / PROTOCOL / LOCKED (transien, bukan
+// korupsi) kini ikut di-retry. Bun menaruh kode simbolik di `error.code`, teks
+// manusiawi di `error.message`, jadi keduanya diperiksa.
+const SQLITE_CONTENTION_RE =
+  /SQLITE_BUSY|database is locked|database table is locked|SQLITE_LOCKED|SQLITE_PROTOCOL|SQLITE_IOERR_TRUNCATE|SQLITE_IOERR_SHMOPEN|SQLITE_IOERR_LOCK|disk I\/O error/i
+
+function isSqliteContention(e: unknown): boolean {
+  const code = (e as { code?: unknown } | null)?.code
+  if (typeof code === "string" && SQLITE_CONTENTION_RE.test(code)) return true
+  const msg = e instanceof Error ? String(e.message ?? e) : String(e)
+  return SQLITE_CONTENTION_RE.test(msg)
+}
+
+const DB_INIT_ATTEMPTS = 8
+const DB_INIT_BACKOFF_MS = 15
+
+function withBusyRetrySync<T>(fn: () => T, attempts = DB_INIT_ATTEMPTS): T | null {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return fn()
+    } catch (e) {
+      if (!isSqliteContention(e)) throw e
+      Bun.sleepSync(DB_INIT_BACKOFF_MS * 2 ** i)
+    }
+  }
+  return null
+}
+
 function openAt(p: string): Database {
   const db = new Database(p)
   // [Audit #3 RL-2] Langkah pasca-konstruksi (busy_timeout + WAL + DDL/migrasi)
@@ -138,11 +169,20 @@ function openAt(p: string): Database {
       db.exec(`PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}`)
     } catch {}
     if (!initializedPaths.has(p)) {
-      // journal_size_limit + wal_autocheckpoint: WAL tidak tumbuh tak terbatas
-      db.exec(
-        `PRAGMA journal_mode=WAL; PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=${LIMITS.SQLITE_WAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=${LIMITS.SQLITE_WAL_AUTOCHECKPOINT_PAGES};`,
-      )
-      initializedPaths.add(p)
+      // journal_size_limit + wal_autocheckpoint: WAL tidak tumbuh tak terbatas.
+      // [Phase 12.2] Setup WAL di-retry kontensi transien (SQLITE_IOERR_TRUNCATE
+      // dkk.) seperti sessions.db; bila semua percobaan habis, tunda (jangan tandai
+      // initialized) agar open berikutnya mencoba lagi — mode rollback tetap terbaca.
+      const walOk = withBusyRetrySync(() => {
+        db.exec(
+          `PRAGMA journal_mode=WAL; PRAGMA busy_timeout=${LIMITS.SQLITE_BUSY_TIMEOUT_MS}; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=${LIMITS.SQLITE_WAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=${LIMITS.SQLITE_WAL_AUTOCHECKPOINT_PAGES};`,
+        )
+        initializedPaths.add(p)
+        return true
+      })
+      if (walOk === null) {
+        process.stderr.write(`[warn] vector: wal setup deferred, retry next open: ${p}\n`)
+      }
     }
     db.exec(`
     CREATE TABLE IF NOT EXISTS memory(id TEXT PRIMARY KEY, text TEXT, embedding BLOB, created_at INTEGER, category TEXT DEFAULT 'fact', tags TEXT, model TEXT, dim INTEGER, parent TEXT, access_count INTEGER DEFAULT 0);
@@ -390,16 +430,17 @@ export async function embedTexts(
   return null
 }
 
-// Retry singkat utk SQLITE_BUSY saat beberapa sub-agent menulis bersamaan.
-// P0.2: async + Bun.sleep agar tidak block event-loop (sebelumnya Atomics.wait freeze 175ms).
+// Retry singkat utk kontensi SQLite transien saat beberapa sub-agent menulis
+// bersamaan — SQLITE_BUSY + kontensi WAL lintas-proses Windows (lihat
+// isSqliteContention). P0.2: async + Bun.sleep agar tidak block event-loop
+// (sebelumnya Atomics.wait freeze 175ms).
 async function withBusyRetry<T>(fn: () => T, attempts = 3): Promise<T> {
   let last: unknown
   for (let i = 0; i < attempts; i++) {
     try {
       return fn()
     } catch (e) {
-      const msg = String((e as Error).message ?? e)
-      if (!msg.includes("SQLITE_BUSY") && !msg.includes("database is locked")) throw e
+      if (!isSqliteContention(e)) throw e
       last = e
       await Bun.sleep(25 * 2 ** i)
     }

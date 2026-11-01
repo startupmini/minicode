@@ -73,18 +73,36 @@ function dbInitBackoffMs(attempt: number): number {
   return base + ((attempt * 7919 + 3) % Math.max(1, Math.floor(base * 0.2)))
 }
 
+// [Phase 12.2] Predikat kontensi SQLite transien lintas-proses (buka/WAL di
+// Windows). Sebelumnya hanya SQLITE_BUSY/"database is locked" yang di-retry; di
+// Windows, dua proses yang membuka WAL bersamaan di bawah beban disk tinggi juga
+// melempar SQLITE_IOERR_TRUNCATE / SQLITE_IOERR_SHMOPEN / SQLITE_IOERR_LOCK /
+// SQLITE_PROTOCOL / SQLITE_LOCKED — semuanya transien (kompetisi lock), bukan
+// korupsi, dan AMAN di-retry. Bun menaruh kode simbolik di `error.code` dan teks
+// manusiawi di `error.message` (mis. SQLITE_BUSY = "database is locked",
+// SQLITE_IOERR_* = "disk I/O error" atau kode extended), jadi keduanya diperiksa.
+// SENGAJA TIDAK di-retry: SQLITE_CORRUPT / SQLITE_NOTADB / constraint error — retry
+// buta hanya menyembunyikan korupsi skema/data yang nyata.
+const SQLITE_CONTENTION_RE =
+  /SQLITE_BUSY|database is locked|database table is locked|SQLITE_LOCKED|SQLITE_PROTOCOL|SQLITE_IOERR_TRUNCATE|SQLITE_IOERR_SHMOPEN|SQLITE_IOERR_LOCK|disk I\/O error/i
+
+function isSqliteContention(e: unknown): boolean {
+  const code = (e as { code?: unknown } | null)?.code
+  if (typeof code === "string" && SQLITE_CONTENTION_RE.test(code)) return true
+  const msg = e instanceof Error ? String(e.message ?? e) : String(e)
+  return SQLITE_CONTENTION_RE.test(msg)
+}
+
 export function withBusyRetrySync<T>(fn: () => T, attempts = DB_INIT_ATTEMPTS): T | null {
   let last: unknown
   for (let i = 0; i < attempts; i++) {
     try {
       return fn()
     } catch (e) {
-      const msg = String((e as Error).message ?? e)
-      // Hanya retry pada SQLITE_BUSY/locked — kompetisi lock antar-proses yang
-      // persis merupakan penyebab temuan Live #1. Error lain (disk I/O, schema)
-      // dilempar terus karena retry buta tidak akan menyelesaikannya dan hanya
-      // menutupi kegagalan asli (kebijakan yang sama dengan store.ts).
-      if (!msg.includes("SQLITE_BUSY") && !msg.includes("database is locked")) throw e
+      // [Phase 12.2] Retry hanya pada kontensi SQLite transien (lihat
+      // isSqliteContention); korupsi (SQLITE_CORRUPT/NOTADB), constraint, dan
+      // error non-kontensi lain dilempar segera.
+      if (!isSqliteContention(e)) throw e
       last = e
       // Backoff sinkron eksponensial + jitter kecil (lihat dbInitBackoffMs).
       Bun.sleepSync(dbInitBackoffMs(i))
@@ -971,8 +989,7 @@ export async function withBusyRetry<T>(fn: () => T, attempts = 3): Promise<T> {
     try {
       return fn()
     } catch (e) {
-      const msg = String((e as Error).message ?? e)
-      if (!msg.includes("SQLITE_BUSY") && !msg.includes("database is locked")) throw e
+      if (!isSqliteContention(e)) throw e
       last = e
       await Bun.sleep(25 * 2 ** i)
     }

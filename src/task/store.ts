@@ -75,14 +75,25 @@ const MAX_PARENT = 64
 const TASK_DATA_VERSION = 1
 
 /** Bounded schema-DDL retry. Matches the Phase 0C contract: at most `attempts`
- *  tries, only `SQLITE_BUSY` / "database is locked" is retried, every other
- *  error propagates immediately, and exhaustion yields `null` so the caller
- *  raises its own domain error. */
+ *  tries, only transient SQLite contention is retried, every other error
+ *  (corruption, constraint, …) propagates immediately, and exhaustion yields
+ *  `null` so the caller raises its own domain error.
+ *
+ *  [Phase 12.2] Dibanding Phase 0C, predikat kontensi diperluas dari hanya
+ *  SQLITE_BUSY/"database is locked" → mencakup kontensi WAL lintas-proses Windows
+ *  (SQLITE_IOERR_TRUNCATE / SHMOPEN / LOCK / PROTOCOL / LOCKED), yang transien dan
+ *  aman di-retry. Bun menaruh kode simbolik di `error.code`, teks di `error.message`. */
 const SCHEMA_ATTEMPTS = 8
 const SCHEMA_BACKOFF_MS = 25
 
-function isBusyError(message: string): boolean {
-  return /SQLITE_BUSY|database is locked/i.test(message)
+const SQLITE_CONTENTION_RE =
+  /SQLITE_BUSY|database is locked|database table is locked|SQLITE_LOCKED|SQLITE_PROTOCOL|SQLITE_IOERR_TRUNCATE|SQLITE_IOERR_SHMOPEN|SQLITE_IOERR_LOCK|disk I\/O error/i
+
+function isSqliteContention(e: unknown): boolean {
+  const code = (e as { code?: unknown } | null)?.code
+  if (typeof code === "string" && SQLITE_CONTENTION_RE.test(code)) return true
+  const msg = e instanceof Error ? String(e.message ?? e) : String(e)
+  return SQLITE_CONTENTION_RE.test(msg)
 }
 
 function withBusyRetrySync<T>(fn: () => T, attempts = SCHEMA_ATTEMPTS): T | null {
@@ -90,8 +101,7 @@ function withBusyRetrySync<T>(fn: () => T, attempts = SCHEMA_ATTEMPTS): T | null
     try {
       return fn()
     } catch (e) {
-      const message = (e as Error).message
-      if (!isBusyError(message)) throw e
+      if (!isSqliteContention(e)) throw e
       if (i === attempts) return null
       sleepSync(SCHEMA_BACKOFF_MS * 2 ** (i - 1))
     }

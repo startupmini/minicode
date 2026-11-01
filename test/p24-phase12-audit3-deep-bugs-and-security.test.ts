@@ -190,4 +190,31 @@ describe("p24: Audit #3 deep bugs & security", () => {
     expect(isPathWithinWorkspace("D:\\workspace", "../outside")).toBe(false)
     expect(isPathWithinWorkspace("/workspace", "/etc/passwd")).toBe(false)
   })
+
+  test("RT-1: withBusyRetrySync me-retry SQLITE_IOERR_TRUNCATE, bukan SQLITE_CORRUPT", () => {
+    const { withBusyRetrySync } =
+      require("../src/session/persistence.ts") as typeof import("../src/session/persistence.ts")
+
+    // Positif: kontensi WAL transien (kode extended di `code`, teks di `message`)
+    // di-retry → operasi berhasil pada percobaan berikutnya.
+    let calls = 0
+    const ok = withBusyRetrySync(() => {
+      calls++
+      if (calls === 1) {
+        throw Object.assign(new Error("disk I/O error"), { code: "SQLITE_IOERR_TRUNCATE" })
+      }
+      return "ok"
+    }, 3)
+    expect(ok).toBe("ok")
+    expect(calls).toBe(2)
+
+    // Negatif: korupsi TIDAK di-retry — langsung dilempar, bukan ditelan.
+    expect(() =>
+      withBusyRetrySync(() => {
+        throw Object.assign(new Error("database disk image is malformed"), {
+          code: "SQLITE_CORRUPT",
+        })
+      }, 3),
+    ).toThrow()
+  })
 })

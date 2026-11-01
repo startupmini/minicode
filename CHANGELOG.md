@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.0] - 2026-11-01
+
+### Frontier Harness — 6 dimensi frontier terintegrasi penuh (Fase 1–12)
+
+- Integrasi penuh keenam dimensi Frontier Harness — **LOOP**, **TOOL**, **MEMORY**, **CONTEXT**, **CONTROL**, dan **ACE-Lite** — lengkap dengan sakelar rollback `MINICODE_ACE_ENABLED` dan evaluator ablasi **ACE-4** untuk membandingkan precondition klasik dengan ACE-Lite secara setara.
+
+### Keamanan
+
+- Penguatan normalizers `bash-guard` (line-continuation, ANSI-C, env-dump, redirect, powershell), pinning fingerprint skema MCP, pagar output tool tak-terpercaya, dan pemetaan standar **OWASP Agentic 2026** / **NIST AI RMF** / **MITRE ATLAS**.
+
+### Ketahanan penyimpanan & performa
+
+- Memory provenance & temporal supersession, matriks otoritas penyimpanan `STORAGE_AUTHORITY_MATRIX`, akuntansi delta token streaming, gating DDL, dan ketahanan kontensi Windows WAL lewat predikat `isSqliteContention`.
+
 ## [Unreleased]
 
 ### Added — P12 S2.2 WorkMode: ceiling izin, visibilitas tool, dan kontrol runtime

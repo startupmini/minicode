@@ -960,19 +960,20 @@ describe("J. migration, legacy, static architecture", () => {
       }
     }
     await walk(join(root, "src"))
+    // [Fase 12.1] Baca SEJAJAR (bukan serial) agar I/O banyak file tak antre di
+    // belakang 359 test saat gate:coverage menyibukkan disk.
+    const contents = await Promise.all(files.map((f) => readFile(f, "utf8")))
     const users: string[] = []
-    for (const f of files) {
+    contents.forEach((text, i) => {
       // Comments may legitimately name the columns to explain the invariant;
       // what must be unique is the module that WRITES them.
-      const text = (await readFile(f, "utf8"))
-        .replace(/\/\*[\s\S]*?\*\//g, " ")
-        .replace(/\/\/[^\n]*/g, " ")
-      if (text.includes("exec_generation") || text.includes("attempt_generation")) {
-        users.push(f.replace(`${root}\\`, "").replace(/\//g, "\\"))
+      const code = text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ")
+      if (code.includes("exec_generation") || code.includes("attempt_generation")) {
+        users.push(files[i]!.replace(`${root}\\`, "").replace(/\//g, "\\"))
       }
-    }
+    })
     expect(users).toEqual(["src\\task\\store.ts"])
-  })
+  }, 60_000)
 
   test("J7. production constructs a Scheduler in exactly ONE gated place", async () => {
     // [PHASE 6U] The invariant CHANGED, and deliberately.
@@ -996,14 +997,15 @@ describe("J. migration, legacy, static architecture", () => {
       }
     }
     await walk(join(root, "src"))
+    // [Fase 12.1] Baca SEJAJAR + timeout eksplisit: pattern yang sama dengan J6.
+    const contents = await Promise.all(files.map((f) => readFile(f, "utf8")))
     const offenders: string[] = []
-    for (const f of files) {
-      const rel = f.replace(`${root}\\`, "").replace(/\//g, "\\")
-      if (rel === "src\\task\\scheduler.ts") continue
-      const text = await readFile(f, "utf8")
+    contents.forEach((text, i) => {
+      const rel = files[i]!.replace(`${root}\\`, "").replace(/\//g, "\\")
+      if (rel === "src\\task\\scheduler.ts") return
       const code = text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ")
       if (/new\s+Scheduler\s*\(/.test(code)) offenders.push(rel)
-    }
+    })
     // Exactly one construction site in the whole of src/, and it is the
     // composition root this phase added.
     expect(offenders).toEqual(["src\\task\\production-scheduler.ts"])
@@ -1018,5 +1020,5 @@ describe("J. migration, legacy, static architecture", () => {
       construct: construct >= 0,
       gated: gate >= 0 && construct > gate,
     }).toEqual({ gate: true, construct: true, gated: true })
-  })
+  }, 60_000)
 })

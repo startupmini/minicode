@@ -6,9 +6,10 @@
 //
 // [DESIGN DECISION] NO PROCESS KILLING, anywhere. A Bun `kill` on Windows can take
 // down the test runner's whole process group - 6AB lost two children and a shell to
-// it. Every child terminates itself: `hold` exits after a bounded window, and the
-// "crash" cases hang until the harness's own timeout, which is a kill of THAT
-// child only. Windows behaviour is recorded in the 6AD report.
+// it. Every child terminates itself: `hold` exits after a bounded window, and
+// `crash` hard-exits (code 9) without releasing its lease. The harness's kill timer
+// is a DEFENSIVE backstop only, never the test's rely-on mechanism. Windows
+// behaviour is recorded in the 6AD report.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -26,14 +27,12 @@ const REPO = import.meta.dir.replace(/[\\/]test$/, "").replace(/\\/g, "/")
  *
  * argv: cwd, sessionId, op, holdMs, signalPath
  *   hold    - take the lease, signal, hold for holdMs, exit
- *   claim   - take the lease, seed + trigger a task, report, exit
- *   renew   - take the lease, report, then renew on a timer for holdMs
- *   crash   - take the lease, signal, then hang forever (killed by the harness)
+ *   claim   - take the lease, seed a task, report authority, close, exit
+ *   crash   - take the lease, seed a task, signal, hard-exit WITHOUT close
  */
 const CHILD = `
 const fs = await import("node:fs")
 const { createCliSession } = await import("__REPO__/cli/setup.ts")
-const { handleBuiltinCommand } = await import("__REPO__/cli/commands.ts")
 const { TaskStore, resetTaskStoreHandles } = await import("__REPO__/src/task/store.ts")
 
 const [cwd, sessionId, op, holdMsArg, signalPath] = process.argv.slice(2)
@@ -65,14 +64,6 @@ try {
 }
 
 const h = ctx.productionScheduler
-const commandCtx = {
-  cwd: ctx.cwd, sessionId: ctx.sessionId, allowLocalConfig: ctx.allowLocalConfig,
-  currentModel: "fake-1", setModelOverride: () => {},
-  usage: ctx.usage, skills: ctx.allLoadedSkills, toolsCount: ctx.sessionTools.length,
-  providerHint: undefined, onBeforeSpawn: () => {},
-  getContextTokens: () => 0, budgetState: () => "ok",
-  scheduler: { handle: h, observability: ctx.schedulerObservability },
-}
 
 if (op === "hold") {
   // Signal only AFTER the lease is genuinely held, so the next process provably
@@ -90,14 +81,13 @@ if (op === "crash") {
     title: "crash owner", status: "PENDING", order: 1,
     provenance: { origin: "model", source: "6ad" },
   })
-  // The provider is deliberately unreachable, so the run may THROW. Either way the
-  // child must go on to hang holding a REAL lease - a throw that ends the child would
-  // test a clean shutdown, not a crash.
-  try { await handleBuiltinCommand("/scheduler run", commandCtx) } catch (e) { /* expected here */ }
   if (signalPath !== "-") fs.writeFileSync(signalPath, "claimed")
-  // Hang forever. The harness kills THIS child; the lease is never released.
-  setInterval(() => {}, 1000)
-  await new Promise(() => {})
+  // [Fase 12.1] Hard-exit (code 9) MENIRU crash: keluar TANPA ctx.close() sehingga
+  // lease durable tetap held (orphan) dan memblokir takeover; task yang di-seed
+  // tetap PENDING (recoverable, tak COMPLETED). Turn otonom (/scheduler run) TIDAK
+  // dijalankan — durasinya non-deterministik (~88s, melebar di bawah beban coverage)
+  // dan kontrak asersi S7 sama sekali tidak membutuhkannya.
+  process.exit(9)
 }
 
   if (op === "claim") {
@@ -108,28 +98,17 @@ if (op === "crash") {
     title: "contended", status: "PENDING", order: 1,
     provenance: { origin: "model", source: "6ad" },
   }).id
-  // [DESIGN DECISION] The authority facts are reported even when the TURN fails.
-  // This suite's provider is deliberately unreachable, so a turn always fails
-  // here - and an earlier version reported ok:false for that reason, which
-  // read exactly like a refused lease. Authority and execution are different
-  // questions and are now reported separately.
-  let out = ""
-  try {
-    const lines = []
-    const orig = console.log
-    console.log = (...a) => lines.push(a.map(String).join(" "))
-    try { await handleBuiltinCommand("/scheduler run", commandCtx) } finally { console.log = orig }
-    out = lines.join("\\n")
-  } catch (e) {
-    out = "run threw: " + (e?.message ?? String(e))
-  }
+  // [DESIGN DECISION] Authority and execution are DIFFERENT questions, reported
+  // separately. What this suite asserts is AUTHORITY (the lease), so the claim
+  // child reports the authority fact and exits — it does NOT run the autonomous
+  // turn (/scheduler run), whose ~88s duration is non-deterministic under load
+  // and is irrelevant to the authority assertion.
   const s = store()
   report({
     ok: true,
     taskId: id,
     taskStatus: s.getTask(sessionId, id)?.status ?? null,
     execGeneration: s.getExecutionLineage(sessionId, id)?.execGeneration ?? 0,
-    out,
     hasAuthority: h.getScheduler()?.hasAuthority() === true,
   })
   await ctx.close()
@@ -271,11 +250,11 @@ describe("6AD S7 - one valid session authority across real processes", () => {
   }, 180_000)
 
   test("a crashed owner keeps its lease until expiry, blocking takeover", async () => {
-    // The child hangs holding a real lease; the harness kills only that child.
+    // The child hard-exits (code 9) WITHOUT close(): a crash that orphans the
+    // durable lease — no hang + no harness kill, so it can't flake under load.
     const crashed = await runChild("xp-d", "crash", 0, signal)
-    // [FACT] A crash produces NO report: the child is killed before it can write
-    // one. Anything reported here would mean the child exited on its own, which
-    // would be a clean shutdown rather than a crash.
+    // [FACT] A crash produces NO report: the child hard-exits (code 9) without
+    // ever calling report() — it only writes the signal file before aborting.
     expect(crashed.code).not.toBe(0)
     expect(await waitFor(signal, 120_000)).toBe(true)
 

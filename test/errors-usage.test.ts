@@ -71,6 +71,12 @@ test("friendlyError: string bergaya AgentError", () => {
   expect(friendlyError("timeout: run exceeded 600000ms").message).toContain("timeout")
   expect(friendlyError("max_steps_exceeded: 50 steps").message).toContain("Tool step limit")
   expect(friendlyError("budget exceeded").message.toLowerCase()).toContain("budget")
+  // [Live Hardening 0.13.x] kind budget_exceeded dengan pesan jendela konteks
+  // HARUS jatuh ke branch context, bukan catch-all "budget" (saran --budget
+  // menyesatkan untuk masalah jendela konteks; uji live tiprouter).
+  expect(
+    friendlyError("budget_exceeded: context window exceeded after compaction").message,
+  ).toContain("Context window exceeded")
 })
 
 // ── Regresi dari uji live OpenRouter ────────────────────────────────────────

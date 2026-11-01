@@ -82,11 +82,30 @@ export function createCalibratedEstimator(opts: { maxFactor?: number } = {}): Ca
   // (estimer vs provider aktual). Idempoten dan konservatif: factor tidak
   // pernah < 1, sehingga estimasi lokal tidak pernah dilemahkan; hanya naik
   // proporsional saat aktual > estimasi (mencegah under-budget kompaksi).
+  //
+  // [Live Hardening 0.13.x] Gerbang anti-sampel in-flight: selama turn berjalan
+  // host-visible `state.history` SENGAJA basi (kernel menulis ke turnStore
+  // privat dan menggabungkannya saat turn selesai), sementara beberapa gateway
+  // mengirim `usage` progresif-kumulatif per-chunk SSE. Sampel "actual naik,
+  // local beku" adalah artefak penghitungan intra-request — bukan drift
+  // tokenizer — dan sampel jauh di atas baseline lokal yang beku (actual >
+  // local × 3) bisa membangkaskan factor secara global (uji live tiprouter:
+  // local=5026 beku sementara input merambat 6413 → 28024 = 5.58× → seluruh
+  // estimasi konteks terinflasi → kompaksi palsu → turn dibunuh
+  // `context window exceeded after compaction`). Sampel demikian DIKIP yang
+  // merusak factor; drift nyata lintas-turn (local berubah setelah merge) dan
+  // drift CJK/tokenizer kecil (≤ ~2.5×, contoh pin: 100→180) tetap
+  // terkalibrasi normal. Batas cap 64 DIPERTAHANKAN (kontrak pin p15
+  // CTX-03: factor butuh headroom hingga ~33× bila estimasi lokal jauh
+  // lebih kecil dari prompt nyata system+schema).
   const applyCalibration = (local: number, actual: number): void => {
+    // Sampel dikhianati bila local TIDAK bergerak antar sampel (artefak
+    // in-flight) DAN actual melampaui 3× baseline lokal yang beku.
+    const inFlightSample = lastLocal !== null && local === lastLocal && actual > lastLocal * 3
     lastLocal = local > 0 ? Math.ceil(local) : null
     lastActual = actual > 0 ? Math.ceil(actual) : null
     drift = (lastActual ?? 0) - (lastLocal ?? 0)
-    if (local > 0 && actual > 0) {
+    if (local > 0 && actual > 0 && !inFlightSample) {
       const observedRatio = actual / local
       factor = Math.min(maxFactor, Math.max(1, observedRatio))
     }

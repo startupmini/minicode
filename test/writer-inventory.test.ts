@@ -116,7 +116,13 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // with cli/index.ts. A silently ignored `--ratelimit abc` would produce a
   // broken rate-limiter (NaN); a warning keeps machine-output honest while
   // stdout stays pure JSONL. Declared, not absorbed.
-  "cli/commands/exec.ts": { max: 11, owner: "machine" },
+  // [Live Hardening 0.13.x] 11 -> 15 for exactly FOUR writers: the
+  // `--max-steps`, `--context-window`, `--timeout`, and
+  // `MINICODE_COMPACT_KEEP_TURNS` invalid-value warnings, added for parity
+  // with cli/index.ts parsing. Fix live UAT: exec sebelumnya menyaring nilai
+  // flag ini dari prompt tetapi tidak pernah menerapkannya — tanpa warning,
+  // batas yang diminta operator diam-diam diabaikan. Declared, not absorbed.
+  "cli/commands/exec.ts": { max: 15, owner: "machine" },
   "cli/commands/mcp.ts": { max: 2, owner: "human-cmd" },
   "cli/commands/memory.ts": { max: 11, owner: "human-cmd" },
   // [P14.4] 0 -> 8 for the openwork command's writers, per the terminal

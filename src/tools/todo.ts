@@ -681,6 +681,8 @@ export const todoWriteTool: Tool = {
       )
     }
 
+    // Simpan isi file todo SEBELUM sinkronisasi TaskStore: urutan ini adalah
+    // kontrak 4A.4 (durabel dulu, plan publish tertahan bila sync gagal).
     await saveTodos(sessionId, list, cwd)
     // PHASE 4A.4 - canonical TaskStore synchronization (NEW ARCHITECTURE).
     //
@@ -739,13 +741,21 @@ export const todoWriteTool: Tool = {
         })
         if (sync.assignment && sync.assignment.length > 0) assignment = sync.assignment
       } catch (e) {
-        // DIVERGENCE, made visible rather than silent: the JSON file is already
-        // committed, TaskStore rolled back. Surfacing the code keeps the failure
-        // machine-checkable while the message states the real state of the world.
+        // DIVERGENCE, made visible rather than silent - AND made actionable.
+        // The JSON file keeps the declared list while TaskStore rolled back;
+        // that pairing is the documented 4A.4 divergence (pin: test N), so the
+        // file is deliberately NOT rolled back. Live UAT (tiprouter 0.13.x)
+        // menunjukkan pesan lama ("...the two are now out of step") membuat
+        // model mengulang payload identik tanpa memperbaiki apa pun — pesan
+        // kini membawa panduan pemulihan eksplisit (perbaiki taskId atau
+        // kirim ulang tanpa taskId untuk item yang memang baru).
         const err = e as TaskError
         throw new TaskError(
           err.code ?? "TASK_PERSISTENCE_FAILURE",
-          `canonical task sync failed (${err.message}); the todo JSON file was already written, TaskStore rolled back - the two are now out of step`,
+          `canonical task sync failed (${err.message}); TaskStore rolled back and the todo JSON file keeps the ` +
+            `declared list (documented divergence - todo_read may show tasks TaskStore does not know). ` +
+            `If the failed items are genuinely NEW tasks, re-send them WITHOUT taskId (omit the field entirely); ` +
+            `only reuse a taskId that todo_read returned for an EXISTING task.`,
         )
       }
     }

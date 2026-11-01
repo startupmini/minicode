@@ -29,6 +29,7 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | Variabel | Fungsi |
 |---|---|
 | `MINICODE_LANG` | `en`/`id` → bahasa UI (prioritas lengkap di kontrak terminal §i18n: `/lang` > env ini > state.json > locale OS > en) |
+| `MINICODE_DEBUG_BUS` | `1` → cetak satu baris diagnosis event bus per turn ke stderr (`src/ui/runtime/bus-debug.ts`; diagnostik saja, bukan perilaku) |
 | `MINICODE_DEBUG_STARTUP` | `1` → cetak durasi tiap tahap setup sesi ke stderr (diagnosis startup lambat; diagnostik saja, bukan perilaku) |
 | `MINICODE_MINIMIZE_ANSWER` | set (nilai apa pun) → JANGAN auto-minimize section jawaban model (nilai unset = minimize default) |
 | `MINICODE_KEYSTORE_DISABLE` | `1` → matikan keystore OS seluruhnya (jatuh ke penyimpanan file; untuk CI/headless yang tak punya keychain/DPAPI) |

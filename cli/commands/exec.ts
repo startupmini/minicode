@@ -1,5 +1,8 @@
 import { resolve as resolvePath } from "node:path"
 import { NoProviderError } from "../../src/app/provider-layer.ts"
+// F3.2 parity: exec ikut menghormati MINICODE_COMPACT_KEEP_TURNS, sama seperti
+// jalur one-shot (cli/index.ts) — sebelumnya env ini hanya berlaku di REPL.
+import { parseCompactKeepTurns } from "../../src/policy/compaction.ts"
 import { createRateLimiter } from "../../src/policy/ratelimit.ts"
 import { resolveSandbox, sandboxRefusalReason } from "../../src/policy/sandbox-policy.ts"
 import { scrubSecrets } from "../../src/policy/scrub.ts"
@@ -121,6 +124,46 @@ export async function handleExec(
     }
   }
 
+  // Live Hardening 0.13.x — parity flag runtime dengan jalur one-shot
+  // (cli/index.ts): --max-steps, --context-window, --timeout, dan env
+  // MINICODE_COMPACT_KEEP_TURNS kini diteruskan ke sesi. Sebelumnya exec
+  // menyaring nilai flag ini dari prompt tetapi tidak pernah menerapkannya —
+  // operator mengira batas aktif padahal sesi berjalan dengan default kernel
+  // (silently ignored). Parsing + warn tiruan persis jalur one-shot.
+  const maxStepsRaw = getArg("--max-steps")
+  let maxSteps = maxStepsRaw ? Number(maxStepsRaw) : undefined
+  if (maxStepsRaw && (!Number.isFinite(maxSteps) || (maxSteps as number) <= 0)) {
+    process.stderr.write(
+      `[warn] --max-steps requires a positive number, ignoring "${maxStepsRaw}"\n`,
+    )
+    maxSteps = undefined
+  }
+  const ctxWindowRaw = getArg("--context-window")
+  let contextWindowTokens = ctxWindowRaw ? Number(ctxWindowRaw) : undefined
+  if (
+    ctxWindowRaw &&
+    (!Number.isFinite(contextWindowTokens) || (contextWindowTokens as number) <= 0)
+  ) {
+    process.stderr.write(
+      `[warn] --context-window requires a positive number, ignoring "${ctxWindowRaw}"\n`,
+    )
+    contextWindowTokens = undefined
+  }
+  const keepTurnsRaw = (process.env.MINICODE_COMPACT_KEEP_TURNS ?? "").trim()
+  const keepRecentTurns = parseCompactKeepTurns(keepTurnsRaw || undefined)
+  if (keepTurnsRaw && keepRecentTurns === undefined)
+    process.stderr.write(
+      `[warn] MINICODE_COMPACT_KEEP_TURNS requires an integer >= 1, ignoring "${keepTurnsRaw}"\n`,
+    )
+  const timeoutRaw = getArg("--timeout")
+  let timeoutMs = timeoutRaw ? Number(timeoutRaw) : undefined
+  if (timeoutRaw && (!Number.isFinite(timeoutMs) || (timeoutMs as number) < 0)) {
+    process.stderr.write(
+      `[warn] --timeout requires a non-negative number, ignoring "${timeoutRaw}"\n`,
+    )
+    timeoutMs = undefined
+  }
+
   const effectivePrompt = prompt.trim()
   if (!effectivePrompt) {
     console.error(
@@ -158,6 +201,12 @@ export async function handleExec(
     budget,
     budgetStrict,
     toolScope,
+    // Live Hardening 0.13.x — parity runtime-limit one-shot (lihat blok parse
+    // di atas); undefined = default kernel, perilaku lama tak berubah.
+    ...(maxSteps ? { maxSteps } : {}),
+    ...(contextWindowTokens && contextWindowTokens > 0 ? { contextWindowTokens } : {}),
+    ...(keepRecentTurns ? { keepRecentTurns } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     // P12 S2.2 — WorkMode efektif (sudah di-resolve, default EXECUTE).
     workMode,
     rateLimiter,

@@ -247,6 +247,14 @@ export function friendlyError(raw: string): FriendlyError {
       message: t("err.steps"),
       fix: t("err.stepsFix"),
     }
+  // [Live Hardening 0.13.x] Satu-satunya throw kernel ber-kind budget_exceeded
+  // tanpa flag operator adalah kehabisan jendela konteks SETELAH kompaksi
+  // ("context window exceeded after compaction", vendor loop). Catch-all
+  // "budget" di bawah memmask pesan itu menjadi "Session budget exceeded"
+  // dan menyarankan --budget — saran yang salah total (uji live tiprouter:
+  // riwayat membengkak ~72k token hingga critical). Kenali lebih dulu.
+  if (lower.includes("context window"))
+    return { message: t("err.context"), fix: t("err.contextFix") }
   if (lower.includes("budget")) return { message: t("err.budget"), fix: t("err.budgetFix") }
   if (lower.includes("busy")) return { message: t("err.busy"), fix: t("err.busyFix") }
   if (lower.includes("aborted")) return { message: t("err.aborted") }

@@ -506,40 +506,44 @@ describe("audit #12: git behavior", () => {
     }
   })
 
-  test.skipIf(!gitAvailable)("gated commit headless: deny + denial terlihat (§24)", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "beh-"))
-    try {
-      await gitRepo(dir, { "A.txt": "a1\n" })
-      await writeFile(join(dir, "A.txt"), "a2\n", "utf8")
-      const provider = new FakeProvider([
-        {
-          events: [
-            toolCall("git_commit", { message: "x", paths: ["A.txt"] }),
-            finish("tool_calls"),
-          ],
-        },
-        { events: [text("denied"), finish("stop")] },
-      ])
-      const session = await createMinicodeSession({
-        provider,
-        tools: [gitCommitTool],
-        permissionMode: "auto",
-        cwd: dir,
-      })
-      const calls: string[] = []
-      session.events.on("execution:started", (e) => calls.push(e.execution.call.name))
-      await session.run("commit", {})
-      // Non-TTY: gated tool ditolak sebelum efek apa pun. A.txt tetap
-      // termodifikasi TAK TER-STAGE (` M`, bukan `M `) dan HEAD utuh.
-      expect(calls).toEqual([])
-      const log = spawnSync("git", ["log", "--oneline"], { cwd: dir, encoding: "utf8" })
-      expect((log.stdout ?? "").trim().split("\n")).toHaveLength(1)
-      expect(porcelain(dir)).toBe(" M A.txt|")
-      expect(reqText(provider.requests[1])).toMatch(/denied|deny|approv/i)
-    } finally {
-      await cleanup(dir)
-    }
-  })
+  test.skipIf(!gitAvailable)(
+    "gated commit headless (ASK): deny + denial terlihat (§24)",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "beh-"))
+      try {
+        await gitRepo(dir, { "A.txt": "a1\n" })
+        await writeFile(join(dir, "A.txt"), "a2\n", "utf8")
+        const provider = new FakeProvider([
+          {
+            events: [
+              toolCall("git_commit", { message: "x", paths: ["A.txt"] }),
+              finish("tool_calls"),
+            ],
+          },
+          { events: [text("denied"), finish("stop")] },
+        ])
+        const session = await createMinicodeSession({
+          provider,
+          tools: [gitCommitTool],
+          // [mode-architecture] ASK = commit tetap gated (butuh izin manusia).
+          permissionMode: "ask",
+          cwd: dir,
+        })
+        const calls: string[] = []
+        session.events.on("execution:started", (e) => calls.push(e.execution.call.name))
+        await session.run("commit", {})
+        // Non-TTY: gated tool ditolak sebelum efek apa pun. A.txt tetap
+        // termodifikasi TAK TER-STAGE (` M`, bukan `M `) dan HEAD utuh.
+        expect(calls).toEqual([])
+        const log = spawnSync("git", ["log", "--oneline"], { cwd: dir, encoding: "utf8" })
+        expect((log.stdout ?? "").trim().split("\n")).toHaveLength(1)
+        expect(porcelain(dir)).toBe(" M A.txt|")
+        expect(reqText(provider.requests[1])).toMatch(/denied|deny|approv/i)
+      } finally {
+        await cleanup(dir)
+      }
+    },
+  )
 })
 
 // ── §13/§14 bash behavior ──
@@ -730,7 +734,8 @@ describe("audit #12: delegation behavior", () => {
     Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true })
     const r = await runScenario("delegatedeny", {
       tools: [delegateTaskTool],
-      mode: "auto",
+      // [mode-architecture] ASK = delegate_task tetap gated (butuh izin).
+      mode: "ask",
       ask: async () => "allow",
       script: [
         {

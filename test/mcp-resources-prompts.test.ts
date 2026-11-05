@@ -329,11 +329,13 @@ describe("MCP resources/prompts: permission", () => {
   > & { __setMode(m: "auto" | "plan" | "readonly" | "allowlist"): void }
   const check = (name: string) => h.check({ id: "1", name, args: {} } as never, {} as never)
 
-  test("mcp_read dan mcp_prompt di-gate meski read-only", async () => {
-    // Keduanya menarik konten dari server pihak ketiga langsung ke konteks
-    // model — jalur prompt-injection. Non-TTY (test/CI) → deny.
-    expect(await check("mcp_read")).toBe("deny")
-    expect(await check("mcp_prompt")).toBe("deny")
+  test("mcp_read dan mcp_prompt authorized di AUTO (ASK tetap gated)", async () => {
+    // [mode-architecture] AUTO = otonomi penuh: mcp_read/prompt authorized
+    // (server terkonfigurasi divalidasi tool). Jalur prompt-injection dari
+    // konten pihak ketiga kini jadi keputusan capability, bukan prompt gate —
+    // ASK masih menahan (lihat permission-matrix), readonly/plan/allowlist deny.
+    expect(await check("mcp_read")).toBe("allow")
+    expect(await check("mcp_prompt")).toBe("allow")
   })
 
   test("mcp_list tetap READONLY (hanya metadata server yang user daftarkan)", async () => {

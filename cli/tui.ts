@@ -36,7 +36,7 @@ import { c } from "../src/ui/render/theme.ts"
 import { defaultUiState, type UiSessionState } from "../src/ui/session-state.ts"
 import { TuiApp, type TuiHost } from "../src/ui/tui/app.ts"
 import { Transcript } from "../src/ui/tui/transcript.ts"
-import { parseWorkModeValue } from "./args.ts"
+import { displayWorkMode, parseWorkModeValue } from "./args.ts"
 import {
   BUILTIN_COMMANDS,
   type CommandContext,
@@ -47,7 +47,11 @@ import {
 } from "./commands.ts"
 import type { CliSession } from "./setup.ts"
 
-const MODES = ["auto", "ask", "plan", "allowlist", "allow-all"] as const
+// [mode-architecture] Approval axis (PermissionMode) = AUTO/ASK; operating axis
+// (WorkMode) = DISCUSS/PLAN/BUILD, dikelola terpisah via /work-mode. Nilai
+// internal tetap lowercase (auto/ask) dan EXECUTE (identitas BUILD).
+const PERMISSION_MODES = ["auto", "ask"] as const
+const WORK_MODE_CYCLE = ["DISCUSS", "PLAN", "EXECUTE"] as const
 // /expand [id]: tanpa arg = semua entry store; dengan id = satu tool.
 const DRIVER_COMMANDS = [
   "/compact",
@@ -215,11 +219,12 @@ export async function runTui(ctx: CliSession): Promise<void> {
     skills: allLoadedSkills,
     toolsCount: sessionTools.length,
     // P1.2: dua dimensi selalu terbaca live di /status — bukan snapshot boot.
+    // [mode-architecture] /status memakai nilai PRODUK (BUILD/AUTO/ASK).
     get workMode() {
-      return workModeControl?.getWorkMode() ?? "EXECUTE"
+      return displayWorkMode(workModeControl?.getWorkMode() ?? "EXECUTE")
     },
     get permissionMode() {
-      return permissions?.getMode() ?? mode
+      return (permissions?.getMode() ?? mode).toUpperCase()
     },
     providerHint: cfg.providers[0]?.providerHint,
     setModelOverride: (m) => persistModelChoice(m, modelRef),
@@ -263,14 +268,24 @@ export async function runTui(ctx: CliSession): Promise<void> {
     return all.filter((t) => t.startsWith(line))
   }
 
-  const cycleMode = (dir: 1 | -1): void => {
-    const idx = (MODES as readonly string[]).indexOf(mode)
-    // allow-all hanya via flag --allow-all (paritas REPL).
-    let next = MODES[(idx + dir + MODES.length) % MODES.length]!
-    if (next === "allow-all") next = MODES[(idx + dir * 2 + MODES.length * 2) % MODES.length]!
+  // Tab: cycle WorkMode (DISCUSS → PLAN → BUILD → DISCUSS). Hanya command ini
+  // (beserta /work-mode) yang menggeser operating mode — TIDAK permission mode.
+  const cycleWorkMode = (dir: 1 | -1): void => {
+    if (!workModeControl) return // policy terinjeksi = tanpa kontrol (fail-closed)
+    const current = workModeControl.getWorkMode() ?? "EXECUTE"
+    const idx = (WORK_MODE_CYCLE as readonly string[]).indexOf(current)
+    if (idx === -1) return
+    const next = WORK_MODE_CYCLE[(idx + dir + WORK_MODE_CYCLE.length) % WORK_MODE_CYCLE.length]!
+    workModeControl.setWorkMode(next)
+  }
+
+  // Shift+Tab: toggle PermissionMode (AUTO ↔ ASK). Tidak ada privilege change
+  // diam — hanya sumbu persetujuan.
+  const togglePermissionMode = (): void => {
+    if (!permissions) return
+    const next = permissions.getMode() === "ask" ? "auto" : "ask"
+    permissions.setMode(next)
     mode = next
-    if (permissions) permissions.setMode(mode as (typeof MODES)[number])
-    else mode = permissionMode ?? mode
   }
 
   async function runBuiltin(
@@ -444,33 +459,35 @@ export async function runTui(ctx: CliSession): Promise<void> {
       app.clearView()
       return
     }
+    // [mode-architecture] /mode = PermissionMode (persetujuan AUTO/ASK) SAJA.
     if (name === "mode") {
       if (args) {
-        if (!(MODES as readonly string[]).includes(args)) {
-          transcript.pushInfo([c.muted(t("tui.unknownMode", { a: args, modes: MODES.join(", ") }))])
+        const norm = args.toLowerCase()
+        if (!(PERMISSION_MODES as readonly string[]).includes(norm)) {
+          transcript.pushInfo([c.muted(t("tui.unknownMode", { a: args, modes: "AUTO, ASK" }))])
           return
         }
-        mode = args
-        permissions?.setMode(args as (typeof MODES)[number])
+        mode = norm
+        permissions?.setMode(norm as (typeof PERMISSION_MODES)[number])
       } else {
-        cycleMode(1)
+        togglePermissionMode()
       }
-      transcript.pushInfo([c.muted(t("tui.modeLine", { m: mode }))])
+      transcript.pushInfo([c.muted(t("tui.modeLine", { m: mode.toUpperCase() }))])
       return
     }
-    // P12 S2.2 Slice 5 - WorkMode (lapis intent di ATAS permission mode).
-    // Aksi operator EKSPLISIT: hanya command ini yang menggeser WorkMode.
-    // Tab/Shift+Tab dan `/mode` tetap khusus permission mode.
+    // [mode-architecture] /work-mode = WorkMode (operating mode) SAJA.
+    // Aksi operator EKSPLISIT untuk operating mode; Tab/Shift+Tab = pintasan.
     if (name === "work-mode") {
       const current = workModeControl?.getWorkMode() ?? "EXECUTE"
+      const currentDisplay = displayWorkMode(current)
       if (!args) {
-        transcript.pushInfo([c.muted(t("tui.workModeUsage", { m: current }))])
+        transcript.pushInfo([c.muted(t("tui.workModeUsage", { m: currentDisplay }))])
         return
       }
       const next = parseWorkModeValue(args)
       if (!next) {
         transcript.pushInfo([
-          c.muted(t("tui.workModeUnknown", { a: args, modes: "DISCUSS, PLAN, EXECUTE" })),
+          c.muted(t("tui.workModeUnknown", { a: args, modes: "DISCUSS, PLAN, BUILD" })),
         ])
         return
       }
@@ -481,7 +498,7 @@ export async function runTui(ctx: CliSession): Promise<void> {
         return
       }
       workModeControl.setWorkMode(next)
-      transcript.pushInfo([c.muted(t("tui.workModeLine", { m: next }))])
+      transcript.pushInfo([c.muted(t("tui.workModeLine", { m: displayWorkMode(next) }))])
       return
     }
     if (name === "lang") {
@@ -656,8 +673,11 @@ export async function runTui(ctx: CliSession): Promise<void> {
     abort: () => {
       abort?.abort()
     },
-    cycleMode: (dir) => {
-      cycleMode(dir)
+    cycleWorkMode: (dir) => {
+      cycleWorkMode(dir)
+    },
+    togglePermissionMode: () => {
+      togglePermissionMode()
     },
     toggleCompact: () => {
       const compact = ui.setCompactMode()

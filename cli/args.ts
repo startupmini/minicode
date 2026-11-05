@@ -106,13 +106,26 @@ export type CliWorkMode = "DISCUSS" | "PLAN" | "EXECUTE"
 
 /**
  * P12 S2.2 — Parse nilai WorkMode dari argumen operator (command `/work-mode`).
- * Murni + diekspor untuk test. Hanya tiga nilai yang sah; nilai lain = tak
- * dikenal (undefined) agar pemanggil bisa menolak tanpa mengubah state.
+ * Murni + diekspor untuk test. Tiga nilai sah + alias produk `BUILD` (→ EXECUTE
+ * internal); nilai lain = tak dikenal (undefined) agar pemanggil bisa menolak
+ * tanpa mengubah state.
  */
 export function parseWorkModeValue(raw: string): CliWorkMode | undefined {
   const norm = raw.trim().toUpperCase()
+  // Alias produk: BUILD == identitas runtime/persistence EXECUTE (satu identitas,
+  // dua ejaan — bukan enum kedua).
+  if (norm === "BUILD") return "EXECUTE"
   if (norm === "DISCUSS" || norm === "PLAN" || norm === "EXECUTE") return norm
   return undefined
+}
+
+/**
+ * Nama produk WorkMode untuk antarmuka pengguna: identitas internal `EXECUTE`
+ * ditampilkan sebagai `BUILD`. Dipakai footer, /status, help, dan i18n agar
+ * semua permukaan konsisten, tanpa mengubah identitas runtime/persistence.
+ */
+export function displayWorkMode(workMode: CliWorkMode): "DISCUSS" | "PLAN" | "BUILD" {
+  return workMode === "EXECUTE" ? "BUILD" : workMode
 }
 
 /**
@@ -138,7 +151,7 @@ export function resolveWorkModeFlag(getArg: (n: string) => string | undefined): 
   return {
     workMode: "EXECUTE",
     explicit: true,
-    warning: `--work-mode requires DISCUSS|PLAN|EXECUTE, ignoring "${raw}" (using EXECUTE)`,
+    warning: `--work-mode requires DISCUSS|PLAN|BUILD, ignoring "${raw}" (using BUILD/EXECUTE)`,
   }
 }
 

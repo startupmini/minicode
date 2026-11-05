@@ -28,7 +28,8 @@ function setup() {
     submit: async () => {},
     copySelection: () => true,
     abort: () => {},
-    cycleMode: () => {},
+    cycleWorkMode: () => {},
+    togglePermissionMode: () => {},
     toggleCompact: () => {},
     toggleReasoning: () => {},
   }
@@ -52,7 +53,7 @@ describe("popup komposit", () => {
     expect(suspendOutput).toContain("\x1b[?1000h")
     const dimmedFrame = tty!.screen()
     expect(dimmedFrame[dimmedFrame.length - 2]).toBe("")
-    expect(dimmedFrame[dimmedFrame.length - 1]).toContain("auto")
+    expect(dimmedFrame[dimmedFrame.length - 1]).toContain("AUTO")
     let picked = ""
     let cancelled = false
     const p = runPicker({

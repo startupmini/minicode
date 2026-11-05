@@ -42,7 +42,8 @@ function setup(opts: { columns?: number; rows?: number } = {}) {
     },
     copySelection: () => true,
     abort: () => {},
-    cycleMode: () => {},
+    cycleWorkMode: () => {},
+    togglePermissionMode: () => {},
     toggleCompact: () => {},
     toggleReasoning: () => {},
   }

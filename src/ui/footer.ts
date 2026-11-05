@@ -48,8 +48,8 @@ export interface FooterStatus {
   timerHighlight?: TimerHighlight
 }
 
-/** Lebar tetap kolom mode — `allowlist`/`allow-all` (9) adalah yang terpanjang. */
-const MODE_WIDTH = 9
+/** Lebar tetap kolom mode — muat label terpanjang "DISCUSS · AUTO". */
+const MODE_WIDTH = 14
 
 /** Buang prefix provider (`acme::deepseek-v4` → `deepseek-v4`). */
 export function shortModel(id: string): string {
@@ -57,25 +57,30 @@ export function shortModel(id: string): string {
   return i >= 0 ? id.slice(i + 2) : id
 }
 
+/** Label permission (AUTO/ASK) — legacy profile warisan di-uppercase saja. */
+function permissionLabel(mode: string): string {
+  return (mode || "").toUpperCase()
+}
+
 /**
  * Warna + PAD token mode. Padding dilakukan sebelum pewarnaan supaya lebar
  * kolom mode tetap sama untuk semua mode (anti-geser), sementara warna tetap
  * dipilih dari nama mode asli.
  *
- * P12 S2.2 Slice 5 - WorkMode non-EXECUTE digabung ke label (`PLAN·auto`):
- * dua lapis intent/permission dibedakan dalam satu token. Warna mengikuti
- * lapis yang lebih ketat (WorkMode DISCUSS/PLAN -> warning seperti plan PM).
+ * [mode-architecture] Selalu tampilkan KEDUA lapis sebagai `<WorkMode> ·
+ * <PermissionMode>` (mis. `BUILD · AUTO`, `PLAN · ASK`). Identitas internal
+ * `EXECUTE` ditampilkan sebagai produk `BUILD`. EXECUTE/default tak lagi
+ * disembunyikan. Warna mengikuti lapis yang lebih ketat: DISCUSS/PLAN warning,
+ * ASK info, AUTO success.
  */
 export function paintFooterMode(mode: string, workMode?: string): string {
-  const restrictive = workMode === "DISCUSS" || workMode === "PLAN"
-  const label = restrictive ? `${workMode}·${mode}` : mode
-  // Padding per KOLOM (bukan padEnd karakter): CJK/emoji = 2 kolom, dan
-  // displayWidth sudah dipakai di bawah — konsisten satu penggaris.
-  // Mode satu-baris: newline dari input tak terpercaya wajib dibuang agar tak
-  // memecah frame lengket 2-baris chrome.ts.
+  const wm = !workMode || workMode === "EXECUTE" ? "BUILD" : workMode.toUpperCase()
+  const pm = permissionLabel(mode)
+  const restrictive = wm === "DISCUSS" || wm === "PLAN"
+  const label = `${wm} · ${pm}`
   const padded = padToWidth(sanitizeAnsiLine(label), MODE_WIDTH)
   if (restrictive) return c.warning(padded)
-  return mode === "plan" ? c.warning(padded) : mode === "ask" ? c.info(padded) : c.success(padded)
+  return pm === "ASK" ? c.info(padded) : c.success(padded)
 }
 
 /** Spark glyph: redup saat idle, pulse putih↔abu saat busy (frame genap/ganjil). */

@@ -241,10 +241,11 @@ test("delegate: enforcement anak = kolom auto; MCP/ask mati, tulis/bash hidup", 
     const h = createPermissionHandler({ mode: "auto", root: dir })
     const check = (name: string, args: Record<string, unknown> = {}) =>
       h.check({ name, args } as never, {} as never)
-    // Mati di anak (gated tanpa ask): MCP + ask_user.
-    expect(await check("mcp_call", { server: "s", tool: "t" })).toBe("deny")
-    expect(await check("mcp_read", { server: "s", uri: "u" })).toBe("deny")
-    expect(await check("mcp_prompt", { server: "s", name: "n" })).toBe("deny")
+    // [mode-architecture] AUTO = otonomi penuh: mcp_call/read/prompt authorized;
+    // ask_user deterministic-blocked; dotted MCP (tanpa authorizedTools) deny.
+    expect(await check("mcp_call", { server: "s", tool: "t" })).toBe("allow")
+    expect(await check("mcp_read", { server: "s", uri: "u" })).toBe("allow")
+    expect(await check("mcp_prompt", { server: "s", name: "n" })).toBe("allow")
     expect(await check("ask_user", { question: "q?" })).toBe("deny")
     expect(await check("srv.tool", {})).toBe("deny")
     // Hidup di anak plan: tulis file + bash guard-only.
@@ -598,12 +599,14 @@ test("delegate: child plan tanpa git_commit; MCP/code_run ikut gate global", asy
     await delegateTaskTool.execute({ prompt: "x", mode: "plan" }, ctxFor(dir, "auto"))
     const names = new Set(seen[0]!.tools.map((t) => t.name))
     expect(names.has("git_commit")).toBe(false)
-    expect(names.has("mcp_call")).toBe(true) // ada, tetapi gated→deny tanpa ask
+    expect(names.has("mcp_call")).toBe(true) // ada; authorized di AUTO, gated di ASK
     const h = createPermissionHandler({ mode: "auto", root: dir })
     const check = (name: string, args: Record<string, unknown> = {}) =>
       h.check({ name, args } as never, {} as never)
-    expect(await check("mcp_call", { server: "s", tool: "t" })).toBe("deny")
-    expect(await check("git_commit", { message: "m" })).toBe("deny")
+    // [mode-architecture] git_commit & mcp_call authorized di AUTO (otonomi penuh);
+    // code_run tanpa sandbox tetap deny.
+    expect(await check("git_commit", { message: "m" })).toBe("allow")
+    expect(await check("mcp_call", { server: "s", tool: "t" })).toBe("allow")
     expect(await check("code_run", { lang: "node", code: "1" })).toBe("deny")
   } finally {
     todoSession.id = prevTodo

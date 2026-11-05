@@ -11,8 +11,13 @@
 // menduplikasi READONLY_TOOLS atau membangun engine kedua.
 
 import type { PermissionHandler, ToolCall } from "#minicore"
-import { createPermissionHandler, type PermissionMode } from "./permission.ts"
-import { NETWORK_READ_TOOL_NAMES } from "./tool-contract.ts"
+import type { PermissionMode } from "./permission.ts"
+import {
+  LOCAL_READONLY_TOOL_NAMES,
+  NETWORK_READ_TOOL_NAMES,
+  PLAN_EXTRA_TOOL_NAMES,
+  READONLY_TOOL_NAMES,
+} from "./tool-contract.ts"
 
 export type WorkMode = "DISCUSS" | "PLAN" | "EXECUTE"
 
@@ -76,6 +81,24 @@ function ceilingFor(workMode: RestrictiveWorkMode, baseMode: PermissionMode): "r
   return baseMode === "allowlist" || baseMode === "readonly" ? "readonly" : "plan"
 }
 
+// Tool Access Policy — ceiling capability WorkMode dihitung LANGSUNG dari
+// registry kontrak tool (satu sumber), bukan lewat handler PermissionMode
+// `readonly`/`plan` (yang dulunya diduplikasi sebagai primitif ceiling).
+//
+// - DISCUSS → tepat 16 `LOCAL_READONLY_TOOL_NAMES` (network read ditolak
+//   terpisah di check() dengan alasan khusus).
+// - PLAN    → 18 `READONLY_TOOL_NAMES` (+ `PLAN_EXTRA_TOOL_NAMES`), atau
+//   read-only saja bila PM sudah `readonly`/`allowlist` (lebih ketat).
+function ceilingAllows(
+  name: string,
+  workMode: RestrictiveWorkMode,
+  baseMode: PermissionMode,
+): boolean {
+  if (workMode === "DISCUSS") return LOCAL_READONLY_TOOL_NAMES.includes(name)
+  if (baseMode === "readonly" || baseMode === "allowlist") return READONLY_TOOL_NAMES.has(name)
+  return READONLY_TOOL_NAMES.has(name) || PLAN_EXTRA_TOOL_NAMES.has(name)
+}
+
 export function createWorkModePermissionHandler(opts: {
   workMode: WorkMode
   base: PermissionHandler
@@ -86,15 +109,26 @@ export function createWorkModePermissionHandler(opts: {
   // mengkonsultasi handler per tool call, jadi __setWorkMode runtime menggeser
   // ceiling tanpa mengganti handler. EXECUTE = delegasi base (perilaku identik).
   let wm: WorkMode = opts.workMode
-  const ceilings = {
-    readonly: createPermissionHandler({
-      mode: "readonly",
-      root: opts.root,
-    }) as unknown as PermissionHandler,
-    plan: createPermissionHandler({
-      mode: "plan",
-      root: opts.root,
-    }) as unknown as PermissionHandler,
+  // Handler deny ceiling — hanya untuk seam describeDenial (alasan yang sama
+  // dengan perilaku lama: "read-only mode" / "plan mode"). Tidak ada lagi
+  // handler PermissionMode `readonly`/`plan` sebagai primitif ceiling.
+  const ceilingDenyHandlers: Record<"readonly" | "plan", PermissionHandler> = {
+    readonly: {
+      async check() {
+        return "deny"
+      },
+      describeDenial() {
+        return "read-only mode"
+      },
+    },
+    plan: {
+      async check() {
+        return "deny"
+      },
+      describeDenial() {
+        return "plan mode"
+      },
+    },
   }
   const discussNetworkDeny: PermissionHandler = {
     async check() {
@@ -157,12 +191,12 @@ export function createWorkModePermissionHandler(opts: {
       // (PLAN × allowlist/readonly = read-only), bukan membekukan yang lama.
       // Baca WorkMode sekarang (`wm` mutable) — __setWorkMode runtime menggeser
       // ceiling DISCUSS↔PLAN.
-      const ceiling = ceilings[ceilingFor(wm, ctrl.__getMode())]
-      // Ceiling DULU: operasi di luar ceiling tak boleh memicu prompt base
-      // (requirement S2.1 #1) — ceiling readonly/plan tak pernah prompt.
-      const ceilingDecision = await ceiling.check(call, _deps as never)
-      if (ceilingDecision !== "allow") {
-        rememberDeny(call, ceiling)
+      const baseMode = ctrl.__getMode()
+      const ceilingKind = ceilingFor(wm, baseMode)
+      // Ceiling DULU (Tool Access Policy): operasi di luar ceiling tak boleh
+      // memicu prompt base (requirement S2.1 #1) — ceiling tak pernah prompt.
+      if (!ceilingAllows(call.name, wm, baseMode)) {
+        rememberDeny(call, ceilingDenyHandlers[ceilingKind])
         return "deny"
       }
       // Di dalam ceiling: keputusan mutlak handler PM asli (termasuk prompt

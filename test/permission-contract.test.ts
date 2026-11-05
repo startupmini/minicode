@@ -93,7 +93,8 @@ describe("contract A — approval tak tersedia & abort", () => {
     try {
       let prompts = 0
       const h = reasoned({
-        mode: "auto",
+        // [mode-architecture] delegate_task tetap gated di ASK (bukan AUTO).
+        mode: "ask",
         root,
         ask: async () => {
           prompts++

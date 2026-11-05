@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.14.1] - 2026-11-05
+
+### Mode Architecture Migration — WorkMode / PermissionMode / Tool Access Policy
+
+Pemisahan tiga tanggung jawab yang sebelumnya tercampur pada union `PermissionMode` enam nilai. Audit + laporan migrasi: `docs/audit/MODE_ARCHITECTURE_RECONCILIATION_AUDIT_2026-11-05.md` dan `docs/audit/MODE_ARCHITECTURE_MIGRATION_REPORT_2026-11-05.md`.
+
+- **WorkMode** (`DISCUSS` / `PLAN` / `BUILD`): *bagaimana* agent bekerja. `BUILD` adalah nama produk untuk identitas internal `EXECUTE` (alias input + display; persistensi tetap `EXECUTE`). Ceiling kini dibaca langsung dari registry kontrak tool (`ceilingAllows`), bukan lagi dari handler `readonly`/`plan`.
+- **PermissionMode** (`AUTO` / `ASK`): *apakah* butuh izin manusia. `AUTO` = otonomi penuh — capability yang authorized (termasuk `git_commit`, `delegate_task`, `mcp_*`) berjalan tanpa henti persetujuan rutin; `ask_user` ditolak deterministik. `ASK` = pengawasan manusia.
+- **Tool Access Policy**: capability set (`READONLY_TOOL_NAMES`, `LOCAL_READONLY_TOOL_NAMES`, `PLAN_EXTRA_TOOL_NAMES`, bash allowlist, kelas gated) dikonsolidasi pada `src/policy/tool-contract.ts` tanpa registry kedua. `--allowlist`/`--allow-all` tetap sebagai profil akses warisan (deprecated).
+- **Hard security tetap**: jail path, berkas sensitif, owned-state, bash-guard, approval-binding, dan injected `AutonomousPermissionHandler` (batas scheduler) tidak berubah.
+- **TUI/footer/CLI**: `Tab` siklus WorkMode, `Shift+Tab` toggle PermissionMode; footer selalu `BUILD · AUTO`; `--plan` → `WorkMode PLAN` (dengan notice deprecation + **kini dipersist** di `work_mode`).
+
+### Keterbatasan
+
+- `git_commit all:true` tetap bisa men-stage perubahan *tracked* lain di workspace dalam satu commit — presisi "perubahan milik task" dijaga oleh `paths` eksplisit + jail, bukan diff-scope tracker.
+- Legacy `--allow-all`/`--allowlist` masih mengalir lewat string `permissionMode`; type `ToolAccessProfile` terpisah ditunda.
+- Resume stderr masih mengeja identitas internal `EXECUTE` (footer/`/status`/help memakai `BUILD`).
+
 ## [0.14.0] - 2026-11-05
 
 ### WorkMode, observability, reliability & repository consolidation (P0–P2 + P2.3)

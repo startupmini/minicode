@@ -5,6 +5,7 @@ import { connectAll as mcpConnectAll } from "../mcp/client.ts"
 import {
   EXPLORE_TOOL_NAMES,
   LOCAL_READONLY_TOOL_NAMES,
+  PLAN_EXTRA_TOOL_NAMES,
   READONLY_TOOL_NAMES,
 } from "../policy/tool-contract.ts"
 import { isMcpToolName } from "../presentation/label.ts"
@@ -17,7 +18,6 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 export type ToolScope = "full" | "explore"
 
-const PLAN_EXTRA = new Set(["todo_write", "delegate_task", "submit_result"])
 const LOCAL_READONLY_SET: ReadonlySet<string> = new Set(LOCAL_READONLY_TOOL_NAMES)
 
 // WorkMode ceiling (P12 S2.2 + P0.2) — lapisan intent di ATAS permission mode.
@@ -42,11 +42,12 @@ export function workModeVisible(
     if (permissionMode === "readonly" || permissionMode === "allowlist") {
       return READONLY_TOOL_NAMES.has(name)
     }
-    return READONLY_TOOL_NAMES.has(name) || PLAN_EXTRA.has(name)
+    return READONLY_TOOL_NAMES.has(name) || PLAN_EXTRA_TOOL_NAMES.has(name)
   }
   // EXECUTE = tanpa ceiling WorkMode tambahan; hormati filter PermissionMode.
   if (permissionMode === "readonly") return READONLY_TOOL_NAMES.has(name)
-  if (permissionMode === "plan") return READONLY_TOOL_NAMES.has(name) || PLAN_EXTRA.has(name)
+  if (permissionMode === "plan")
+    return READONLY_TOOL_NAMES.has(name) || PLAN_EXTRA_TOOL_NAMES.has(name)
   return true
 }
 

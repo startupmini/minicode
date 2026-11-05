@@ -146,9 +146,13 @@ function expected(mode: PermissionMode, ask: boolean, name: string): "allow" | "
     if (GATED.has(name)) return ask && TTY ? "allow" : "deny" // promptAskOr butuh TTY
     return ask ? "allow" : "deny" // file/internal/code_run perlu prompt
   }
-  // auto headless, tanpa MINICODE_SANDBOX
+  // auto = AUTO (otonomi penuh) headless, tanpa MINICODE_SANDBOX.
+  // [mode-architecture] `gatedByDefault` TIDAK lagi berarti "auto prompt":
+  // capability gated (git_commit, delegate_task, mcp_call/read/prompt) JALAN
+  // di AUTO bila authorized. ask_user deterministik BLOCKED (deny) di AUTO.
   if (READONLY.has(name)) return "allow"
-  if (GATED.has(name) || isMcpToolName(name)) return "deny"
+  if (name === "ask_user") return "deny"
+  if (GATED.has(name)) return "allow"
   if (FILE_WRITE.has(name) || INTERNAL_WRITE.has(name)) return "allow"
   if (name === "code_run") return "deny"
   if (name === "bash") return "allow"
@@ -186,10 +190,11 @@ test("matriks ask + auto dengan ask=allow (TTY tersimulasikan)", async () => {
       const gotAsk = await decide("ask", root, name, allow)
       if (gotAsk !== expected("ask", true, name))
         throw new Error(`ask+allow × ${name}: got ${gotAsk}`)
-      // auto memakai jalur prompt yang sama untuk gated (butuh TTY juga)
+      // auto = otonomi penuh: capability gated authorized JALAN tanpa prompt
+      // (kecuali ask_user yang deterministic-blocked di AUTO).
       if (GATED.has(name)) {
         const gotAuto = await decide("auto", root, name, allow)
-        const wantAuto = TTY ? "allow" : "deny"
+        const wantAuto = name === "ask_user" ? "deny" : "allow"
         if (gotAuto !== wantAuto) throw new Error(`auto+allow × ${name}: got ${gotAuto}`)
       }
     }

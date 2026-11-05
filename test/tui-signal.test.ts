@@ -33,7 +33,8 @@ function bootApp() {
     submit: async () => undefined,
     copySelection: () => true,
     abort: () => {},
-    cycleMode: () => {},
+    cycleWorkMode: () => {},
+    togglePermissionMode: () => {},
     toggleCompact: () => {},
     toggleReasoning: () => {},
   }

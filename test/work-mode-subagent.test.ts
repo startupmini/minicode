@@ -197,7 +197,7 @@ describe("child menerapkan ceiling WorkMode PLAN — operasi tulis ditolak", () 
     }
   })
 
-  test("workMode PLAN × PM auto headless: delegate_task deny tanpa prompt (gated approval unavailable)", async () => {
+  test("workMode PLAN × PM auto: delegate_task ALLOW otonom (tak lagi gated di AUTO)", async () => {
     const dir = tmpRoot()
     dirs.push(dir)
     const restoreTty = forceNonTty()
@@ -217,10 +217,11 @@ describe("child menerapkan ceiling WorkMode PLAN — operasi tulis ditolak", () 
     }) as unknown as {
       check(c: ToolCall, d: unknown): Promise<"allow" | "deny">
     }
-    // Headless (tanpa TTY) — approval tidak tersedia, TIDAK boleh diloloskan.
+    // [mode-architecture] delegate_task authorized di ceiling PLAN; AUTO = full
+    // autonomy → allow tanpa prompt (anak dipaksa explore via warisan WorkMode).
     const c: ToolCall = { id: "g1", name: "delegate_task", args: { prompt: "x" } }
     try {
-      expect(await h.check(c, {})).toBe("deny")
+      expect(await h.check(c, {})).toBe("allow")
       expect(prompts).toBe(0)
     } finally {
       restoreTty()

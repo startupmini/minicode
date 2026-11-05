@@ -57,8 +57,10 @@ export interface TuiHost {
   /** Batalkan turn yang berjalan (Esc saat busy). */
   abort(): void
   copySelection(text: string): boolean
-  /** Putar mode permission (Tab / Shift+Tab). */
-  cycleMode(dir: 1 | -1): void
+  /** Putar WorkMode DISCUSS→PLAN→BUILD (Tab). */
+  cycleWorkMode(dir: 1 | -1): void
+  /** Toggle PermissionMode AUTO↔ASK (Shift+Tab). */
+  togglePermissionMode(): void
   /** Toggle compact / reasoning (Ctrl+O / Ctrl+T). */
   toggleCompact(): void
   toggleReasoning(): void
@@ -601,12 +603,12 @@ export class TuiApp {
       return
     }
     if (key.type === "tab") {
-      this.host.cycleMode(1)
+      this.host.cycleWorkMode(1)
       this.paintCurrent()
       return
     }
     if (key.type === "shift-tab") {
-      this.host.cycleMode(-1)
+      this.host.togglePermissionMode()
       this.paintCurrent()
       return
     }

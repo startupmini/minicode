@@ -88,7 +88,7 @@ describe("cli/setup: permissionMode & timeout & budget", () => {
     await s.close()
   })
 
-  test("plan -> plan", async () => {
+  test("plan -> WorkMode PLAN (permission tetap auto)", async () => {
     const cwd = makeWorkspace()
     const s = await createCliSession({
       cwd,
@@ -103,7 +103,9 @@ describe("cli/setup: permissionMode & timeout & budget", () => {
       allowlist: false,
       verify: false,
     })
-    expect(s.permissionMode).toBe("plan")
+    // [mode-architecture] --plan legacy → WorkMode PLAN (bukan permission mode).
+    expect(s.permissionMode).toBe("auto")
+    expect(s.workMode).toBe("PLAN")
     await s.close()
   })
 

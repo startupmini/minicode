@@ -978,9 +978,21 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   }
   // P0.2 (Q5): saat `--resume` tanpa sinyal WorkMode eksplisit, pulihkan
   // WorkMode tersimpan dari metadata sesi (NULL legacy → default EXECUTE).
+  //
+  // [mode-architecture] --plan = alias warisan WorkMode PLAN (bukan permission
+  // mode). Dilipat di sini (satu titik untuk semua pemanggil: index/exec/acp).
   const persistedWorkMode = identity.resumed ? loadSessionWorkMode(sessionId, cwd) : undefined
+  const planAsWorkMode =
+    plan && !workModeExplicit && workMode === "EXECUTE" ? ("PLAN" as const) : workMode
+  if (plan && !workModeExplicit && workMode === "EXECUTE") {
+    process.stderr.write(
+      `${c.dim("[deprecated] --plan is now WorkMode PLAN; use --work-mode PLAN\n")}`,
+    )
+  }
   const effectiveWorkMode: "DISCUSS" | "PLAN" | "EXECUTE" =
-    identity.resumed && !workModeExplicit ? (persistedWorkMode ?? "EXECUTE") : workMode
+    identity.resumed && !workModeExplicit && !plan
+      ? (persistedWorkMode ?? "EXECUTE")
+      : planAsWorkMode
   // P0.2 (Q4): tolak startup (fail-closed) bila `--verify` digabung dengan
   // WorkMode DISCUSS atau PLAN (baik dari flag/env maupun pulihan `--resume`).
   if (verify && effectiveWorkMode !== "EXECUTE") {
@@ -1145,15 +1157,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           return rc.signal
         })()
 
-  const permissionMode = allowAll
-    ? "allow-all"
-    : ask
-      ? "ask"
-      : plan
-        ? "plan"
-        : allowlist
-          ? "allowlist"
-          : "auto"
+  // [mode-architecture] `--plan` legacy bukan lagi permission mode — pemetaannya
+  // ke WorkMode PLAN terjadi di effectiveWorkMode (di atas). Sisa profil warisan
+  // (allow-all/allowlist) tetap tersedia sebagai tool-access profile.
+  const permissionMode = allowAll ? "allow-all" : ask ? "ask" : allowlist ? "allowlist" : "auto"
 
   // Home guard: sesi dibuka di home berisiko (glob rame, write berbahaya).
   // Standar industri: percaya-tapi-ingatkan, jangan tolak diam-diam maupun
@@ -1220,12 +1227,12 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       cfg,
       prompt,
       cwd,
-      // RAG retrieval tak boleh menulis access_count di mode tanpa-mutasi
-      // (PermissionMode readonly/plan maupun WorkMode DISCUSS/PLAN).
-      trackAccess:
-        (permissionMode as string) !== "readonly" &&
-        permissionMode !== "plan" &&
-        effectiveWorkMode === "EXECUTE",
+      // RAG retrieval tak boleh menulis access_count di mode tanpa-mutasi.
+      // [mode-architecture] PermissionMode readonly/plan tak lagi ada sebagai sumbu
+      // persetujuan; ceiling tanpa-mutasi kini diekspresikan via WorkMode
+      // DISCUSS/PLAN (effectiveWorkMode). Profil warisan allowlist/allow-all
+      // tetap menulis (bukan read-only).
+      trackAccess: effectiveWorkMode === "EXECUTE",
     }),
   )
 

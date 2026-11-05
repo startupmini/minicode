@@ -426,28 +426,19 @@ async function runGateProbe(opts: {
   `)
 }
 
-describe("PLAN × auto/ask — gerbang approval delegate_task dipertahankan", () => {
-  test("PLAN × auto headless: deny tanpa prompt, alasan dari base PM", async () => {
-    const r = await runGateProbe({ mode: "auto", tty: false, answer: "allow" })
-    expect(r.decision).toBe("deny")
-    expect(r.asks).toBe(0)
-    // Ceiling plan ALLOW (delegate ada di set plan) tetapi base auto deny —
-    // bukti ceiling tidak menggantikan keputusan base (requirement 8).
-    expect(r.reason1).toBe("gated approval unavailable")
-    expect(r.reason2).toBeUndefined()
+describe("PLAN × auto/ask — delegate_task: AUTO otonom, ASK tetap gated", () => {
+  test("PLAN × auto: delegate_task ALLOW tanpa prompt (otonomi penuh, tak gated)", async () => {
+    // [mode-architecture] delegate_task authorized di ceiling PLAN; AUTO tidak
+    // lagi menahan tool gated — anak dipaksa explore via warisan WorkMode.
+    const headless = await runGateProbe({ mode: "auto", tty: false, answer: "allow" })
+    expect(headless.decision).toBe("allow")
+    expect(headless.asks).toBe(0)
+    const tty = await runGateProbe({ mode: "auto", tty: true, answer: "deny" })
+    expect(tty.decision).toBe("allow")
+    expect(tty.asks).toBe(0)
   })
 
-  test("PLAN × auto TTY: prompt dipanggil; allow/deny user dihormati", async () => {
-    const allow = await runGateProbe({ mode: "auto", tty: true, answer: "allow" })
-    expect(allow.decision).toBe("allow")
-    expect(allow.asks).toBe(1)
-    const deny = await runGateProbe({ mode: "auto", tty: true, answer: "deny" })
-    expect(deny.decision).toBe("deny")
-    expect(deny.asks).toBe(1)
-    expect(deny.reason1).toBe("declined by user")
-  })
-
-  test("PLAN × ask headless: deny tanpa prompt", async () => {
+  test("PLAN × ask headless: delegate_task deny tanpa prompt (gated)", async () => {
     const r = await runGateProbe({ mode: "ask", tty: false, answer: "allow" })
     expect(r.decision).toBe("deny")
     expect(r.asks).toBe(0)
@@ -461,6 +452,7 @@ describe("PLAN × auto/ask — gerbang approval delegate_task dipertahankan", ()
     const deny = await runGateProbe({ mode: "ask", tty: true, answer: "deny" })
     expect(deny.decision).toBe("deny")
     expect(deny.asks).toBe(1)
+    expect(deny.reason1).toBe("declined by user")
   })
 })
 
@@ -498,12 +490,14 @@ describe("runtime mode — WorkMode tidak bocor; ceiling tak bisa dicabut", () =
     expect(await h.check(call("rt-p2", "todo_write", { todos: [] }), {} as never)).toBe("deny")
     h.__setMode("auto")
     // Ceiling plan bertahan (write tetap ditolak), ekstra plan kembali terbuka,
-    // dan gerbang base auto tetap berlaku (delegate headless deny).
+    // dan delegate_task authorized di AUTO (tak lagi gated headless deny).
     expect(
       await h.check(call("rt-p3", "write_file", { path: "p.txt", content: "x" }), {} as never),
     ).toBe("deny")
     expect(await h.check(call("rt-p4", "todo_write", { todos: [] }), {} as never)).toBe("allow")
-    expect(await h.check(call("rt-p5", "delegate_task", { prompt: "x" }), {} as never)).toBe("deny")
+    expect(await h.check(call("rt-p5", "delegate_task", { prompt: "x" }), {} as never)).toBe(
+      "allow",
+    )
   })
 })
 
@@ -521,9 +515,11 @@ describe("describeDenial — alasan dari handler yang memutuskan", () => {
 
   test("base deny di dalam ceiling: alasan base, bukan alasan ceiling", async () => {
     tty = installFakeTty({ isTTY: false })
-    const root = tmpRoot("dd-base")
+    const root = tmpRoot("dd-net")
     const h = wrap("auto", "PLAN", root)
-    const c = call("dd-b", "delegate_task", { prompt: "x" })
+    // Network read di PLAN melewati gerbang __promptGated SETELAH base allow
+    // (web_fetch ∈ READONLY). Headless = deny dgn alasan gated, bukan ceiling.
+    const c = call("dd-n", "web_fetch", { url: "https://example.com" })
     expect(await h.check(c, {} as never)).toBe("deny")
     expect(h.describeDenial(c)).toBe("gated approval unavailable")
     expect(h.describeDenial(c)).toBeUndefined()

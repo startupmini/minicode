@@ -139,13 +139,13 @@ async function runIsolated(script: string): Promise<Record<string, unknown>> {
   }
 }
 
-describe("R1 — resume: mode dari flag invokasi, bukan state sesi (detektor M6)", () => {
-  test("sesi plan → resume tanpa flag = auto; resume dengan --plan tetap plan", async () => {
+describe("R1 — resume: WorkMode PLAN (dari --plan) DIPERSIST & dipulihkan; permission auto/ask re-derived", () => {
+  test("sesi plan → resume memulihkan WorkMode PLAN; override --work-mode BUILD membuka kembali", async () => {
     const ws = makeWorkspace()
     const sid = "s-perm-life"
     const base = ["--cwd", ws.dir, "--model", "gpt-4o-mini", "--allow-local-config"]
     try {
-      // Run A — premis: sesi lahir di plan mode; tulis ditolak, berkas tak ada.
+      // Run A — premis: sesi lahir di WorkMode PLAN (dari --plan); tulis ditolak.
       const pA = startFakeProvider([
         { kind: "tool", name: "write_file", args: { path: "rA.txt", content: "x" } },
         { kind: "text", text: "rencana" },
@@ -159,9 +159,9 @@ describe("R1 — resume: mode dari flag invokasi, bukan state sesi (detektor M6)
         pA.close()
       }
 
-      // Run B — inti M6: resume TANPA flag mode. Bila mode lama (plan)
-      // direstorasi dari state sesi alih-alih dihitung ulang, write_file
-      // tetap ditolak → berkas tak pernah dibuat → assertion gagal.
+      // Run B — [mode-architecture] --plan kini = WorkMode PLAN yang DIPERSIST:
+      // resume tanpa flag memulihkan PLAN → tulis tetap ditolak. (Berbeda dari
+      // PermissionMode yang re-derived; permission auto/ask tetap re-derived.)
       const pB = startFakeProvider([
         { kind: "tool", name: "write_file", args: { path: "rB.txt", content: "x" } },
         { kind: "text", text: "selesai" },
@@ -170,25 +170,30 @@ describe("R1 — resume: mode dari flag invokasi, bukan state sesi (detektor M6)
         writeProviderConfig(ws, pB.baseUrl)
         const b = await runCli(ws, ["--resume", sid, ...base, "tulis rB.txt"])
         expect(b.code).toBe(0)
-        // Premis jalur resume benar-benar aktif (bukan sesi baru senyap).
         expect(b.stderr).toContain(`resumed session ${sid}`)
-        // Mode auto (default) → tulis diizinkan.
-        expect(existsSync(join(ws.dir, "rB.txt"))).toBe(true)
+        expect(b.stderr).toContain("[resume] WorkMode PLAN restored")
+        expect(existsSync(join(ws.dir, "rB.txt"))).toBe(false)
       } finally {
         pB.close()
       }
 
-      // Run C — kontrol arah sebaliknya: flag pada invokasi resume tetap
-      // dihormati, jadi bukan "resume selalu auto" maupun carry-over run B.
+      // Run C — override eksplisit membuka kembali: resume + --work-mode BUILD.
       const pC = startFakeProvider([
         { kind: "tool", name: "write_file", args: { path: "rC.txt", content: "x" } },
-        { kind: "text", text: "rencana" },
+        { kind: "text", text: "selesai" },
       ])
       try {
         writeProviderConfig(ws, pC.baseUrl)
-        const c = await runCli(ws, ["--resume", sid, "--plan", ...base, "tulis rC.txt"])
+        const c = await runCli(ws, [
+          "--resume",
+          sid,
+          "--work-mode",
+          "BUILD",
+          ...base,
+          "tulis rC.txt",
+        ])
         expect(c.code).toBe(0)
-        expect(existsSync(join(ws.dir, "rC.txt"))).toBe(false)
+        expect(existsSync(join(ws.dir, "rC.txt"))).toBe(true)
       } finally {
         pC.close()
       }

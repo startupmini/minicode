@@ -63,7 +63,7 @@ describe("resolveWorkModeFlag — flag vs env vs default", () => {
   test("nilai invalid → EXECUTE + warning (fail-closed, tidak melebar)", () => {
     const r = resolveWorkModeFlag(getFrom(["--work-mode", "YOLO"]))
     expect(r.workMode).toBe("EXECUTE")
-    expect(r.warning).toContain("DISCUSS|PLAN|EXECUTE")
+    expect(r.warning).toContain("DISCUSS|PLAN|BUILD")
   })
 })
 

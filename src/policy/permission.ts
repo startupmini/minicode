@@ -27,9 +27,40 @@ import {
 } from "./jail.ts"
 import { scrubSecrets } from "./scrub.ts"
 // [Fase 2 / TOOL-01] Diimpor dari registry kontrak tool (satu sumber).
-import { contractForTool, GATED_TOOLS, READONLY_TOOL_NAMES } from "./tool-contract.ts"
+import {
+  contractForTool,
+  GATED_TOOLS,
+  PLAN_EXTRA_TOOL_NAMES,
+  READONLY_TOOL_NAMES,
+} from "./tool-contract.ts"
 
-export type PermissionMode = "auto" | "readonly" | "plan" | "allow-all" | "ask" | "allowlist"
+/**
+ * Approval policy — DUA nilai yang berhadapan dengan pengguna.
+ *
+ * `auto` (AUTO) = eksekusi otonom penuh: selama capability & scope diizinkan,
+ *     aksi berjalan TANPA henti persetujuan rutin. Bukan "izinkan semuanya" —
+ *     hard-deny (jail/owned-state/bash-guard) tetap berlaku di atasnya.
+ * `ask` (ASK)  = pengawasan manusia: aksi yang dicakup kebijakan persetujuan
+ *     meminta izin sebelum jalan. Hard-deny tetap tak bisa di-override.
+ *
+ * Ejaan lowercase dipertahankan sebagai identitas internal/kompatibilitas
+ * untuk AUTO/ASK (persistence & ToolContext memakai nilai ini).
+ */
+export type ApprovalMode = "auto" | "ask"
+
+/**
+ * Union kompatibilitas selama migrasi arsitektur mode.
+ *
+ * HANYA `"auto"`/`"ask"` adalah kebijakan persetujuan. Sisanya adalah profil
+ * capability WARISAN yang kini menjadi tanggung jawab Tool Access Policy:
+ *   - `"readonly"`   → capability read-only internal (bukan permukaan; batas
+ *                      scheduler adalah injected AutonomousPermissionHandler,
+ *                      BUKAN nilai ini).
+ *   - `"plan"`       → ceiling WorkMode PLAN (perencanaan user-facing = PLAN).
+ *   - `"allowlist"`  → kebijakan akses bash/tool (flag warisan --allowlist).
+ *   - `"allow-all"`  → profil akses privileged (flag warisan --allow-all).
+ */
+export type PermissionMode = ApprovalMode | "readonly" | "plan" | "allow-all" | "allowlist"
 
 /**
  * View persetujuan yang di-inject dari composition root (cli/setup.ts memakai
@@ -303,6 +334,14 @@ export function createPermissionHandler(
      * Tanpa store = perilaku lama persis (tanpa verifikasi tambahan).
      */
     approvalBindings?: ApprovalBindingStore
+    /**
+     * Tool Access Policy — set nama tool yang DIOTORISASI sesi ini (tool yang
+     * terlihat/terdaftar, termasuk MCP runtime `server.tool` yang servernya
+     * terkonfigurasi). Dipakai `auto` untuk membedakan MCP terotorisasi dari
+     * MCP tak-dikenal/tak-terkonfigurasi: hanya nama bertitik yang ADA di set
+     * ini yang boleh auto-allow. Absen = fail-closed (semua MCP bertitik deny).
+     */
+    authorizedTools?: ReadonlySet<string> | null
   } = {},
 ): PermissionHandler {
   const state = { mode: (opts.mode ?? "auto") as PermissionMode }
@@ -310,6 +349,7 @@ export function createPermissionHandler(
   const approvalBindings = opts.approvalBindings
   const askUser = opts.ask
   const allowLocal = opts.allowLocalConfig === true
+  const authorizedTools = opts.authorizedTools
   let allowlistCache: string[] | null = null
   // Persetujuan "always" sesi ini — in-memory, bukan dari disk. Tanpa ini,
   // jawaban always yang baru disimpan ke berkas lokal tak terlihat saat local
@@ -418,17 +458,13 @@ export function createPermissionHandler(
     "allow-all": async () => "allow",
     readonly: async (call) =>
       READONLY_TOOLS.has(call.name) ? "allow" : deny(call, "read-only mode"),
-    // Plan = readonly + tiga perkecualian aman: todo_write (artefak rencana
-    // .minicode/plans, bukan file workspace), delegate_task (penelahan
-    // rencana, bukan eksekusi — dipaksa explore/read-only di task.ts bila
-    // parent plan/readonly, permission hanya membuka gerbangnya), dan
-    // submit_result (singleton memori-proses untuk exec --json, tanpa tulis
-    // file/state sesi; terlihat di PLAN_EXTRA tool-layer jadi harus boleh).
+    // Plan = readonly + tiga perkecualian aman (PLAN_EXTRA_TOOL_NAMES):
+    // todo_write (artefak rencana .minicode/plans, bukan file workspace),
+    // delegate_task (penelahan rencana, bukan eksekusi — dipaksa explore/
+    // read-only di task.ts bila parent plan/readonly, permission hanya membuka
+    // gerbangnya), dan submit_result (singleton memori-proses untuk exec --json).
     plan: async (call) =>
-      READONLY_TOOLS.has(call.name) ||
-      call.name === "todo_write" ||
-      call.name === "delegate_task" ||
-      call.name === "submit_result"
+      READONLY_TOOLS.has(call.name) || PLAN_EXTRA_TOOL_NAMES.has(call.name)
         ? "allow"
         : deny(call, "plan mode"),
     allowlist: async (call, args) => {
@@ -480,10 +516,33 @@ export function createPermissionHandler(
       }
       return ans === "allow" ? "allow" : "deny"
     },
-    auto: async (call, args, signal) => {
+    // AUTO = otonomi penuh. Selama tool diotorisasi oleh Tool Access Policy dan
+    // scope mengizinkan, jalankan TANPA prompt persetujuan rutin. Ini berbeda
+    // dari `ask` (di bawah) yang menahan tulis/eksekusi untuk izin manusia.
+    //
+    // Keputusan desain (mode-architecture recon): `gatedByDefault` TIDAK lagi
+    // berarti "auto wajib prompt". Tool gated (git_commit, delegate_task,
+    // mcp_call/read/prompt) adalah capability yang WAJIB Otorisasi — di ASK
+    // mereka butuh izin manusia, tetapi di AUTO mereka jalan bila authorized.
+    // Hard-deny (jail/owned-state/bash-guard) tetap berlaku di semua jalur.
+    auto: async (call, args, _signal) => {
       if (READONLY_TOOLS.has(call.name)) return "allow"
-      if (isGated(call.name))
-        return await promptAskOr(call, () => deny(call, "gated approval unavailable"), signal)
+      // ask_user = interaksi-user, bukan eksekusi. Di AUTO dilarang deterministik
+      // (BLOCKED) supaya model memakai asumsi default sendiri — jangan biarkan
+      // pergantian tanya-jawab rutin mengubah AUTO jadi ASK.
+      if (call.name === "ask_user")
+        return deny(call, "ask_user unavailable in AUTO (autonomous mode)")
+      // Tool MCP bertitik: hanya diotorisasi bila terdaftar di sesi (server
+      // terkonfigurasi). Tak dikenal/tak terkonfigurasi = deny, bukan prompt
+      // (AUTO tak boleh bertanya sebagai jalan pintas hard-restriction).
+      if (isMcpToolName(call.name)) {
+        if (authorizedTools?.has(call.name)) return "allow"
+        return deny(call, "MCP tool not configured/authorized")
+      }
+      // Capability gated (git_commit, delegate_task, mcp_call/read/prompt):
+      // otonom di AUTO bila authorized. Scope dijaga tool-nya sendiri + jail
+      // (git_commit: path/staged dijail; delegate: anak ter-ceiling WorkMode).
+      if (GATED_TOOLS.has(call.name)) return "allow"
       if (FILE_WRITE_TOOLS.has(call.name)) return "allow"
       if (INTERNAL_WRITE_TOOLS.has(call.name)) return "allow"
       if (call.name === "code_run") {
@@ -498,7 +557,7 @@ export function createPermissionHandler(
         if (br) return deny(call, `bash-guard: ${br}`)
         return "allow"
       }
-      return "deny"
+      return deny(call, "not authorized in AUTO mode")
     },
   }
 

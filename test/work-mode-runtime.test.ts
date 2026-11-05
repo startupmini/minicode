@@ -307,21 +307,21 @@ describe("5. hooks mengikuti WorkMode AKTIF, bukan snapshot", () => {
 })
 
 describe("6. footer mencerminkan kombinasi WorkMode + permission mode", () => {
-  test("EXECUTE: label permission mode seperti sebelumnya", () => {
-    expect(paintFooterMode("auto", "EXECUTE")).toContain("auto")
+  test("EXECUTE → BUILD: selalu tampil dua lapis", () => {
+    expect(paintFooterMode("auto", "EXECUTE")).toContain("BUILD · AUTO")
     expect(paintFooterMode("auto", "EXECUTE")).not.toContain("EXECUTE")
-    expect(paintFooterMode("auto")).toContain("auto")
+    expect(paintFooterMode("auto")).toContain("BUILD · AUTO")
   })
   test("DISCUSS/PLAN: label dibedakan", () => {
-    expect(paintFooterMode("auto", "DISCUSS")).toContain("DISCUSS·auto")
-    expect(paintFooterMode("auto", "PLAN")).toContain("PLAN·auto")
-    expect(paintFooterMode("readonly", "PLAN")).toContain("PLAN·readonly")
+    expect(paintFooterMode("auto", "DISCUSS")).toContain("DISCUSS · AUTO")
+    expect(paintFooterMode("auto", "PLAN")).toContain("PLAN · AUTO")
+    expect(paintFooterMode("ask", "PLAN")).toContain("PLAN · ASK")
   })
-  test("renderFooter menyertakan label WorkMode", () => {
-    const line = renderFooter({ mode: "auto", workMode: "PLAN", model: "m1", cwd: "cwd" }, 80)[0]!
-    expect(line).toContain("PLAN·auto")
-    const plain = renderFooter({ mode: "auto", model: "m1", cwd: "cwd" }, 80)[0]!
-    expect(plain).not.toContain("PLAN")
+  test("renderFooter selalu menyertakan label WorkMode produk (BUILD)", () => {
+    const line = renderFooter({ mode: "auto", workMode: "PLAN", model: "m1", cwd: "cwd" }, 90)[0]!
+    expect(line).toContain("PLAN · AUTO")
+    const plain = renderFooter({ mode: "auto", model: "m1", cwd: "cwd" }, 90)[0]!
+    expect(plain).toContain("BUILD · AUTO")
   })
 })
 
@@ -577,7 +577,7 @@ describe("7. command /work-mode (TUI end-to-end)", () => {
     await runP
   })
 
-  test("/work-mode DISCUSS dan EXECUTE mengubah WorkMode aktif", async () => {
+  test("/work-mode DISCUSS dan BUILD mengubah WorkMode aktif", async () => {
     const control = makeControl("EXECUTE")
     tty = installFakeTty({ columns: 80, rows: 24 })
     const runP = runTui(fakeSession(control))
@@ -587,9 +587,10 @@ describe("7. command /work-mode (TUI end-to-end)", () => {
     await tty.send(KEY.enter)
     await tty.waitForOutput((o) => o.includes("work mode: DISCUSS"))
     expect(control.getWorkMode()).toBe("DISCUSS")
-    await tty.send("/work-mode EXECUTE")
+    // BUILD alias diterima → identitas internal EXECUTE, ditampil BUILD.
+    await tty.send("/work-mode BUILD")
     await tty.send(KEY.enter)
-    await tty.waitForOutput((o) => o.includes("work mode: EXECUTE"))
+    await tty.waitForOutput((o) => o.includes("work mode: BUILD"))
     expect(control.getWorkMode()).toBe("EXECUTE")
     await tty.send("/exit")
     await tty.send(KEY.enter)
@@ -619,25 +620,31 @@ describe("7. command /work-mode (TUI end-to-end)", () => {
     await tty.waitForOutput((o) => o.includes("00.00.00"))
     await tty.send("/work-mode")
     await tty.send(KEY.enter)
-    await tty.waitForOutput((o) => o.includes("/work-mode <DISCUSS|PLAN|EXECUTE>"))
+    await tty.waitForOutput((o) => o.includes("/work-mode <DISCUSS|PLAN|BUILD>"))
     expect(control.getWorkMode()).toBe("PLAN")
     await tty.send("/exit")
     await tty.send(KEY.enter)
     await runP
   })
 
-  test("/mode dan Shift+Tab hanya mengubah permission mode", async () => {
+  test("/mode = PermissionMode (AUTO/ASK), tak mengubah WorkMode; Shift+Tab = toggle", async () => {
     const control = makeControl("PLAN")
     tty = installFakeTty({ columns: 80, rows: 24 })
     const runP = runTui(fakeSession(control))
     await tty.ready()
     await tty.waitForOutput((o) => o.includes("00.00.00"))
-    // /mode = permission mode.
+    // /mode = permission mode (AUTO/ASK saja; nilai lain "unknown mode").
+    await tty.send("/mode ask")
+    await tty.send(KEY.enter)
+    await tty.waitForOutput((o) => o.includes("mode: ASK"))
+    expect(control.getWorkMode()).toBe("PLAN")
+    // Nilai legacy (readonly) tak lagi diterima sebagai permission mode.
     await tty.send("/mode readonly")
     await tty.send(KEY.enter)
-    await tty.waitForOutput((o) => o.includes("mode: readonly"))
+    await tty.waitForOutput((o) => o.includes("unknown mode"))
     expect(control.getWorkMode()).toBe("PLAN")
-    // Shift+Tab = siklus permission mode (WorkMode tak ikut).
+    // Shift+Tab = toggle PermissionMode (WorkMode tak ikut; no crash walau
+    // session fixture tanpa permissions control).
     await tty.send(KEY.shiftTab)
     expect(control.getWorkMode()).toBe("PLAN")
     await tty.send("/exit")

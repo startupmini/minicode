@@ -43,10 +43,10 @@ Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `s
 | `--budget <usd>` | Batas biaya sesi; warn 80%, exit/break bila lewat; cost tak dikenal + pemakaian = over (fail-closed default) |
 | `--budget-strict` | Penegasan eksplisit fail-closed di atas (back-compat) |
 | `--tool-scope <s>` | `full` (default) \| `explore` = subset read-only 12 tool |
-| `--plan` | Read-only plan mode |
-| `--allowlist` | Bash hanya perintah aman |
-| `--ask` | Tanya persetujuan setiap tool |
-| `--allow-all` | Nonaktifkan semua sandbox (path jail tetap aktif) |
+| `--plan` | **Deprecated** — alias untuk `--work-mode PLAN` (read-only planning) |
+| `--allowlist` | Bash hanya perintah aman (tool-access policy warisan) |
+| `--ask` | Tanya persetujuan setiap tool (human-supervised) |
+| `--allow-all` | Profil akses privileged (path jail + bash-guard tetap aktif) |
 | `--model <name>` | Override model (`providerId::model` paksa provider) |
 | `--provider <id>` | Paksa provider id agnostik |
 | `--resume <id>` | Lanjutkan sesi (full history, bukan dump teks) |
@@ -56,21 +56,21 @@ Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `s
 | `--max-steps <n>` | Batas langkah tool (default 50) |
 | `--context-window <n>` | Ukuran jendela konteks (token) |
 | `--session <id>` | ID sesi (default random, disanitasi) |
-| `--work-mode <m>` | `DISCUSS` \| `PLAN` \| `EXECUTE` (default). **Lapis intent di atas** permission mode: `DISCUSS` = read-only penuh, `PLAN` = hanya tool rencana, `EXECUTE` = tanpa ceiling tambahan. Tidak pernah memperluas kewenangan permission mode; permission mode tetap yang memutuskan allow/deny per tool. Lihat [TUI](repl.md) untuk `/work-mode` (aksi operator saat sesi berjalan) |
+| `--work-mode <m>` | `DISCUSS` \| `PLAN` \| `BUILD` (default). **Operating mode**: `DISCUSS` = investigasi read-only, `PLAN` = analisis/planning, `BUILD` = implementasi (identitas internal `EXECUTE`). Persetujuan (`AUTO`/`ASK`) dipisah; tool availability mengikuti ceiling WorkMode. Lihat [TUI](repl.md) untuk `/work-mode` |
 | `--enable-scheduler` | Opt-in scheduler otonom (default **off**). Tanpa flag ini, scheduler tidak dibangun sama sekali dan `/scheduler` menjawab "not enabled". Eksekusi manual saja lewat `/scheduler run` — tidak ada timer; turn otonom bersifat read-only. Lihat `/scheduler status` dan `/scheduler stop` |
 | `--runtime <mode>` | `off` (default) \| `constructed` \| `owned`. Arsitektur eksekusi: `off` = perilaku sekarang, tak berubah; `constructed` = runtime + jurnal durable dibangun, turn masih jalan jalur lama; `owned` = setiap turn di-admit lewat runtime (kernel + jurnal durable) dan admission yang ditolak menjalankan tak apa pun. Nilai tak dikenal = `off` |
 
-Di TUI, **Shift+Tab** memutar permission (`auto` → `ask` → `plan` → `allowlist`) dan benar-benar mengubah keputusan, bukan label. Di baris kosong, **Tab** juga memutar mode (`auto` → `ask` → `plan` → `allowlist`). Shift+Tab **tidak** memutar WorkMode — itu lapis intent terpisah (`/work-mode`).
+Di TUI, **Tab** memutar WorkMode (`DISCUSS` → `PLAN` → `BUILD`) dan **Shift+Tab** meng-toggle PermissionMode (`AUTO` ↔ `ASK`). `/mode <AUTO|ASK>` mengubah persetujuan; `/work-mode <DISCUSS|PLAN|BUILD>` mengubah operating mode. Footer selalu menampilkan kedua lapis (`BUILD · AUTO`).
 
 ## Kapan memakai apa
 
 | Tujuan | Pakai |
 |---|---|
-| Kerja harian biasa | Default (`auto`) — tulis aman langsung jalan, yang berisiko minta izin |
-| Repo asing / perintah belum dipahami | `--ask`, jawab `always` hanya untuk pasangan tool+args yang sudah dinilai |
-| Review tanpa eksekusi | `--plan` (+ `--tool-scope explore` bila ingin subset baca 12 tool) |
-| CI tanpa manusia | `exec --json` + `--budget`/`--max-steps`; hindari prompt yang butuh klarifikasi |
-| Otonom penuh di mesin sendiri | `--allow-all` + `--sandbox docker` (atau OS) + `--budget` |
+| Kerja harian biasa | Default (`BUILD` + `AUTO`) — tulis/eksekusi/commit/delegasi jalan otonom bila authorized |
+| Repo asing / perintah belum dipahami | `--ask` (`BUILD` + `ASK`), jawab `always` hanya untuk pasangan tool+args yang sudah dinilai |
+| Review/analisis tanpa eksekusi | `--work-mode PLAN` (atau `--work-mode DISCUSS` untuk investigasi read-only murni) |
+| CI tanpa manusia | `exec --json` + `--budget`/`--max-steps`; `AUTO` menolak `ask_user` deterministik |
+| Otonom penuh di mesin sendiri | Default `BUILD`+`AUTO`; isolasi tambahan `--sandbox docker` (atau OS) + `--budget` |
 | Model mahal tak terkendali | `--budget 0.50` + `--budget-strict` + `pricing sync` |
 
 Detail alasan tiap mode di [Memilih Mode](choosing-mode.md).

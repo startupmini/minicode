@@ -57,19 +57,25 @@ test("permission readonly denies delegate/mcp/lsp write tools", async () => {
   ).toBe("deny")
 })
 
-test("auto gates delegate_task/mcp_call without TTY (sub-agent policy)", async () => {
+test("auto allows delegate_task/mcp_call (full autonomy); ask_user blocked", async () => {
+  // [mode-architecture] AUTO = otonomi penuh: capability gated (delegate/mcp)
+  // authorized ⇒ allow tanpa prompt; ask_user deterministic-BLOCKED. Containment
+  // sub-agent (delegate_task dibuang dari set tool anak) jadi batas sebenarnya.
   const h = createPermissionHandler({ mode: "auto" })
   expect(
     await h.check(
       { id: "1", name: "delegate_task", args: { prompt: "explore src" } } as never,
       {} as never,
     ),
-  ).toBe("deny")
+  ).toBe("allow")
   expect(
     await h.check(
       { id: "1", name: "mcp_call", args: { server: "x", tool: "y" } } as never,
       {} as never,
     ),
+  ).toBe("allow")
+  expect(
+    await h.check({ id: "1", name: "ask_user", args: { question: "q?" } } as never, {} as never),
   ).toBe("deny")
 })
 
@@ -78,12 +84,17 @@ test("auto gates unknown dotted MCP tool (wildcard bypass closed)", async () => 
   expect(await h.check({ id: "1", name: "evil.tool", args: {} } as never, {} as never)).toBe("deny")
 })
 
-test("auto gates REGISTERED dotted MCP tools too (no wildcard auto-allow)", async () => {
-  // Nama apapun yang bertitik kini gated — non-TTY → promptAskOr menolak.
-  // Menutup celah: server jahat terdaftar tidak lagi otomatis "allow" semua toolnya.
-  const h = createPermissionHandler({ mode: "auto" })
-  expect(await h.check({ id: "1", name: "fs.read", args: {} } as never, {} as never)).toBe("deny")
+test("auto authorizes ONLY configured dotted MCP tools (no wildcard auto-allow)", async () => {
+  // [mode-architecture] Dotted MCP hanya authorized bila terdaftar di
+  // authorizedTools (server terkonfigurasi). Menutup celah: server jahat
+  // tak-terdaftar tetap deny, dan tanpa authorizedTools = fail-closed deny.
+  const h = createPermissionHandler({ mode: "auto", authorizedTools: new Set(["fs.read"]) })
+  expect(await h.check({ id: "1", name: "fs.read", args: {} } as never, {} as never)).toBe("allow")
   expect(await h.check({ id: "1", name: "anything.at.all", args: {} } as never, {} as never)).toBe(
+    "deny",
+  )
+  const hNoAuth = createPermissionHandler({ mode: "auto" })
+  expect(await hNoAuth.check({ id: "1", name: "fs.read", args: {} } as never, {} as never)).toBe(
     "deny",
   )
 })

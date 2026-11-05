@@ -52,7 +52,12 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // ceiling would read as "permission denied" with no indication the mode is
   // active. EXECUTE (default) emits nothing, so there is no flood. Declared,
   // not absorbed, per the rule above.
-  "cli/index.ts": { max: 31, owner: "human-cmd" },
+  // [mode-architecture] 31 -> 33 for exactly TWO writers: the `--allow-all` and
+  // `--allowlist` deprecation notices (legacy access profiles). Explicit
+  // compatibility handling per the migration contract; the operator must see the
+  // deprecated flag rather than have it silently reinterpreted. Declared, not
+  // absorbed, per the rule above.
+  "cli/index.ts": { max: 33, owner: "human-cmd" },
   "cli/model-manager.ts": { max: 2, owner: "human-cmd" },
   "cli/provider-manager.ts": { max: 3, owner: "human-cmd" },
   // [P2.1] 26 -> 27 for exactly ONE writer: the canonical identity line
@@ -105,7 +110,11 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // transparency notice (`[resume] WorkMode <MODE> restored from session...` or
   // legacy fallback/explicit override). Any WorkMode state on resume is surfaced
   // on one visible stderr line, never silently altered. Declared, not absorbed.
-  "cli/setup.ts": { max: 42, owner: "diagnostic" },
+  // [mode-architecture] 42 -> 43 for exactly ONE writer: the `--plan` deprecation
+  // notice (`[deprecated] --plan is now WorkMode PLAN`). Explicit compatibility
+  // handling: the operator sees that the legacy permission flag now maps to
+  // WorkMode PLAN instead of being silently reinterpreted. Declared.
+  "cli/setup.ts": { max: 43, owner: "diagnostic" },
   "cli/tui.ts": { max: 9, owner: "screen" },
   // [P2.2] 3 -> 4 for exactly ONE writer: the stale-writer durability
   // diagnostic after a headless run persisted. The ACP success envelope is
@@ -150,7 +159,11 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // cli/index.ts §8.3), preventing `minicode exec "task" --work-mode DISCUSS`
   // from silently swallowing `--work-mode` into prompt text and running EXECUTE
   // without warning. Declared, not absorbed, per the rule above.
-  "cli/commands/exec.ts": { max: 17, owner: "machine" },
+  // [mode-architecture] 17 -> 19 for exactly TWO writers: the `--allow-all` and
+  // `--allowlist` deprecation notices on the exec machine path (parity with
+  // cli/index.ts). Explicit compatibility handling; stdout stays pure JSONL.
+  // Declared, not absorbed.
+  "cli/commands/exec.ts": { max: 19, owner: "machine" },
   "cli/commands/mcp.ts": { max: 2, owner: "human-cmd" },
   "cli/commands/memory.ts": { max: 11, owner: "human-cmd" },
   // [P14.4] 0 -> 8 for the openwork command's writers, per the terminal

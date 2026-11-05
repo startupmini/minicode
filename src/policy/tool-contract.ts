@@ -576,6 +576,23 @@ export const NETWORK_READ_TOOL_NAMES: ReadonlySet<string> = new Set(
 )
 
 /**
+ * Derivasi Tool Access Policy: tool ekstra yang diizinkan pada ceiling PLAN
+ * (di atas 18 `READONLY_TOOL_NAMES`). Tiga artefak perencanaan yang aman:
+ *   - `todo_write`     → artefak rencana `.minicode/plans` (bukan file workspace)
+ *   - `delegate_task`  → penelahan rencana (dipaksa explore/read-only di task.ts
+ *                        bila parent PLAN — permission hanya membuka gerbangnya)
+ *   - `submit_result`  → singleton memori-proses (exec --json) tanpa tulis file
+ *
+ * Satu sumber untuk ceiling WorkMode PLAN (`work-mode.ts`), visibilitas tool
+ * (`tool-layer.ts`), dan handler PermissionMode `plan` warisan (`permission.ts`).
+ */
+export const PLAN_EXTRA_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "todo_write",
+  "delegate_task",
+  "submit_result",
+])
+
+/**
  * Derivasi klasifikasi jurnal. Tool tak dikenal = "unknown", dan pemanggil
  * (`isMutationTool`) memperlakukannya sebagai mutasi (fail-closed).
  */

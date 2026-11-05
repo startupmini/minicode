@@ -188,8 +188,8 @@ describe("app handler reasons", () => {
     }
   })
 
-  test("gated headless → alasan approval, bukan deny buta", async () => {
-    const h = handler("auto")
+  test("gated headless (ASK) → alasan approval, bukan deny buta", async () => {
+    const h = handler("ask")
     const { decision, reason } = await reasoned(h, "delegate_task", { prompt: "x" })
     expect(decision).toBe("deny")
     expect(reason).toBe("gated approval unavailable")

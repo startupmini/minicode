@@ -66,9 +66,9 @@ Options:
   --model <name>      override model (provider::model)
   --provider <id>     force provider id
   --session <id>      session id (default random)
-  --allow-all         allow all tools
-  --ask               ask per tool (y/n/a)
-  --plan              read-only mode (no writes, bash, or sub-agents)
+  --allow-all         allow all tools (privileged access profile; hard jail/guard still apply)
+  --ask               ask per tool (y/n/a) — human-supervised execution
+  --plan              deprecated: alias for --work-mode PLAN (read-only planning)
   --allowlist         bash allowlist only (see MINICODE_BASH_ALLOWLIST)
   --max-steps <n>     max tool steps (default 50)
   --context-window <n> context window tokens
@@ -80,8 +80,8 @@ Options:
   --budget <usd>      session cost limit
   --budget-strict     unknown cost + spend counts as over budget (fail-closed default)
   --tool-scope <s>    full (default) | explore (read-only subset)
-  --work-mode <m>     DISCUSS | PLAN | EXECUTE (default). Intent layer above the
-                      permission mode: DISCUSS = read-only, PLAN = plan tools only.
+  --work-mode <m>     DISCUSS | PLAN | BUILD (default). Operating mode: DISCUSS =
+                      read-only investigation, PLAN = planning, BUILD = implementation.
   --tui               deprecated no-op (interactive mode is always the fullscreen TUI)
   --enable-scheduler  EXPERIMENTAL: opt in to the autonomous scheduler (default: off).
                       Manual only - run /scheduler run. No timer; autonomous turns are
@@ -93,7 +93,7 @@ Options:
                       admission runs nothing. Unknown value = off.
 
 TUI: /help /provider /model /sync /status /sessions /init /exit /mode /work-mode /undo /redo /clear /copy /history /compact /thinking /minimize
-Keys: Enter submit · Tab/Shift+Tab mode · Up/Down history · Mouse wheel/PgUp/PgDn scroll (Shift = half page)
+Keys: Enter submit · Tab work-mode · Shift+Tab permission · Up/Down history · Mouse wheel/PgUp/PgDn scroll (Shift = half page)
       Home/End jump to transcript top/tail · Ctrl+R search · Esc abort turn (twice = quit) · Ctrl+D exit
 Subcommand flags (config/mcp/sessions/skills/exec/...): see 'minicode <cmd> --help'.
 `
@@ -244,9 +244,9 @@ if (args.includes("-h") || args.includes("--help")) {
             flag: "--timeout <ms>",
             desc: "hard deadline per run (default 900000 = 15min; 0 = Infinity)",
           },
-          { flag: "--allow-all", desc: "allow all tools (no sandbox)" },
-          { flag: "--ask", desc: "ask per tool" },
-          { flag: "--plan", desc: "read-only plan mode" },
+          { flag: "--allow-all", desc: "allow all tools (privileged access profile)" },
+          { flag: "--ask", desc: "ask per tool (human-supervised)" },
+          { flag: "--plan", desc: "deprecated: alias for --work-mode PLAN" },
           { flag: "--allowlist", desc: "bash allowlist only" },
           { flag: "--interactive", desc: "interactive TUI" },
           { flag: "--verify", desc: "auto-verify + self-heal" },
@@ -256,8 +256,8 @@ if (args.includes("-h") || args.includes("--help")) {
           { flag: "--budget-strict", desc: "unknown cost + spend counts as over budget (default)" },
           { flag: "--tool-scope <full|explore>", desc: "tool subset (explore = read-only)" },
           {
-            flag: "--work-mode <DISCUSS|PLAN|EXECUTE>",
-            desc: "intent layer: DISCUSS (read-only), PLAN (plan tools only), EXECUTE (default)",
+            flag: "--work-mode <DISCUSS|PLAN|BUILD>",
+            desc: "operating mode: DISCUSS (read-only), PLAN (planning), BUILD (default)",
           },
           { flag: "--json", desc: "JSON output (help/exec)" },
           { flag: "--tui", desc: "deprecated no-op (interactive is always the fullscreen TUI)" },
@@ -277,6 +277,16 @@ const ask = hasFlag(args, "--ask")
 const interactive = hasFlag(args, "--interactive")
 const plan = hasFlag(args, "--plan") || process.env.MINICODE_PLAN === "1"
 const allowlist = hasFlag(args, "--allowlist") || process.env.MINICODE_PERMISSION === "allowlist"
+// [mode-architecture] Deprecation notice utk profil warisan — jangan dihapus
+// diam-diam; peta kompatibilitas di MODE_ARCHITECTURE_MIGRATION_REPORT.
+if (allowAll)
+  process.stderr.write(
+    `[deprecated] --allow-all is a privileged access profile (hard jail/guard still apply); treat it as an explicit override, not ordinary AUTO\n`,
+  )
+if (allowlist)
+  process.stderr.write(
+    `[deprecated] --allowlist is a bash/tool access policy; the persistent approval grants remain in ~/.minicode/allowlist.json (unrenamed)\n`,
+  )
 const verify = hasFlag(args, "--verify")
 const cwdRaw = getArg("--cwd")
 const cwd = cwdRaw ? resolvePath(cwdRaw) : undefined

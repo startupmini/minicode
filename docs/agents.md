@@ -5,14 +5,14 @@
 
 Sub-agent = instans agent dengan **context terpisah** dari parent: memory, signal, dan budget sendiri. Pool concurrency 3 — maksimum 3 sub-agent hidup sekaligus — dan abort-aware (mewarisi AbortSignal parent; parent batal → anak berhenti).
 
-Approval: `delegate_task` di-gate — TTY meminta persetujuan sekali per delegasi; non-TTY menolak. **Satu approval = delegasi ini saja**, tidak melebar ke delegasi lain.
+Approval: `delegate_task` di-**ASK** di-gate — TTY meminta persetujuan sekali per delegasi; non-TTY menolak. Di **AUTO**, delegasi berjalan otonom bila authorized (anak tetap ter-ceiling WorkMode parent, dipaksa explore read-only bila parent non-BUILD). **Satu approval = delegasi ini saja**, tidak melebar ke delegasi lain.
 
 ## Mode anak: `explore` / `plan`
 
 | Mode anak | Kemampuan |
 |---|---|
 | `explore` | Subset read-only (12 tool) — cari/pahami kode, kembalikan temuan |
-| `plan` | Selalu tanpa `todo_write`/mutasi memory/commit/nesting. **Jika parent ber-WorkMode/PM ketat** (`PLAN`/`DISCUSS`/`readonly`/`plan`/`ask`): subset read-only 12 tool, sama seperti `explore`. **Jika parent `EXECUTE`×auto/allow-all**: tool dasar parent (read + file-write + `bash`/`code_run`), minus MCP runtime, `git_commit`, memory-tulis, todo-tulis, dan job background |
+| `plan` | Selalu tanpa `todo_write`/mutasi memory/commit/nesting. **Jika parent ber-WorkMode ketat** (`PLAN`/`DISCUSS`): subset read-only 12 tool, sama seperti `explore`. **Jika parent `BUILD`×AUTO**: tool dasar parent (read + file-write + `bash`/`code_run`), minus MCP runtime, `git_commit`, memory-tulis, todo-tulis, dan job background |
 
 Restriksi anak yang **selalu** berlaku: anak **tidak** bisa bersarang (`delegate_task` dibuang), tidak bisa `git_commit`, tidak menulis memory/todo, tidak memakai `bash_output`/`bash_kill` (job milik parent). Tool MCP runtime (`server.tool`) hanya muncul pada anak `plan` di bawah parent `EXECUTE`; pada `explore` maupun parent non-`EXECUTE`, daftar anak dibatasi ke `EXPLORE_TOOL_NAMES`. Plan-parent dipaksa explore saat mendelegasi.
 

@@ -286,6 +286,11 @@ export async function createMinicodeSession(
   // menggeser EXECUTE→DISCUSS/PLAN di sesi yang sama. Wrapper EXECUTE
   // mendelegasikan keputusan ke base apa adanya (perilaku identik) tetapi
   // tetap menyediakan __setWorkMode.
+  //
+  // Tool Access Policy: set tool terotorisasi = tool yang terlihat/terdaftar
+  // (termasuk MCP runtime dari server terkonfigurasi). Dipakai `auto` untuk
+  // membedakan MCP sah dari MCP tak-terkonfigurasi (fail-closed deny).
+  const authorizedTools = new Set((rest.tools ?? []).map((t) => t.name))
   const permissions =
     opts.permissionHandler ??
     createWorkModePermissionHandler({
@@ -296,6 +301,7 @@ export async function createMinicodeSession(
         ask,
         allowLocalConfig,
         onApprovalEvent,
+        authorizedTools,
         // [Area B · PROMPT 06] Store per-sesi: persetujuan dari sesi A tak
         // bisa dipakai sebagai bukti di sesi B.
         approvalBindings,

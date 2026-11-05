@@ -89,6 +89,15 @@ export async function handleExec(
   if (sandbox.mode === "none") delete process.env.MINICODE_SANDBOX
   else process.env.MINICODE_SANDBOX = sandbox.mode
   const allowlist = allowlistFlag || sandbox.fallbackPermission === "allowlist"
+  // [mode-architecture] Deprecation notice utk profil warisan (paritas jalur utama).
+  if (allowAll)
+    console.error(
+      `[deprecated] --allow-all is a privileged access profile (hard jail/guard still apply); treat it as an explicit override, not ordinary AUTO`,
+    )
+  if (allowlist)
+    console.error(
+      `[deprecated] --allowlist is a bash/tool access policy; persistent grants remain in ~/.minicode/allowlist.json`,
+    )
   // Audit #07 P0: local config repo tak dipercaya kecuali operator opt-in.
   const allowLocal = allowLocalConfig(subArgs)
   const budgetRaw = getArg("--budget")

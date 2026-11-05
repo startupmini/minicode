@@ -425,10 +425,11 @@ describe("git_commit: permission", () => {
   const check = (args: Record<string, unknown> = {}) =>
     h.check({ id: "1", name: "git_commit", args } as never, {} as never)
 
-  test("auto: di-gate (tanpa TTY → deny), bukan auto-allow", async () => {
-    // Di lingkungan test stdin bukan TTY, jadi tool gated ditolak — itu
-    // memang perilaku yang diinginkan untuk CI/headless.
-    expect(await check({ message: "x", all: true })).toBe("deny")
+  test("auto: git_commit authorized (otonomi penuh; bukan gate)", async () => {
+    // [mode-architecture] AUTO = otonomi penuh: git_commit (capability gated)
+    // authorized ⇒ allow tanpa prompt, bahkan headless. Path/staged jail tetap
+    // berlaku di jalur universal check (lihat "path sensitif" di bawah).
+    expect(await check({ message: "x", all: true })).toBe("allow")
   })
 
   test("path sensitif ditolak sebelum sampai ke gate", async () => {

@@ -394,13 +394,13 @@ test("jail argumen: git paths, lsp file, bash cwd di luar root ditolak", async (
     expect(await check("auto", root, "git_commit", { message: "m", paths: ["/etc/passwd"] })).toBe(
       "deny",
     )
-    // git_commit = GATED: paths di dalam root lolos JAIL tetapi tetap perlu
-    // approval — headless (tanpa ask fn) = deny. Dua gerbang independen.
+    // git_commit authorized di AUTO → allow (otonomi penuh, tanpa gate approval).
+    // Path di luar root tetap dijail (baris di atas). Ini membuktikan dua
+    // gerbang independen: jail (deny) vs authorization (allow di AUTO).
     const allowAsk = async () => "allow" as const
-    const gatedDenyNoTty = !process.stdin.isTTY
     expect(
       await check("auto", root, "git_commit", { message: "m", paths: ["a.txt"] }, allowAsk),
-    ).toBe(gatedDenyNoTty ? "deny" : "allow")
+    ).toBe("allow")
     expect(await check("auto", root, "lsp_definition", { file: "/etc/passwd" })).toBe("deny")
     expect(await check("auto", root, "bash", { cmd: "echo hi", cwd: "/.." })).toBe("deny")
     expect(await check("auto", root, "glob", { pattern: "*.ts", cwd: "/.." })).toBe("deny")

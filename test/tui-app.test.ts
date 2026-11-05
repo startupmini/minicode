@@ -63,7 +63,8 @@ function setup(opts: { columns?: number; rows?: number; isTTY?: boolean } = {}) 
       return true
     },
     abort: () => {},
-    cycleMode: () => {},
+    cycleWorkMode: () => {},
+    togglePermissionMode: () => {},
     toggleCompact: () => {},
     toggleReasoning: () => {},
   }
@@ -223,7 +224,9 @@ describe("TuiApp", () => {
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     const frame = tty!.screen()
     const last = frame[frame.length - 1]!
-    expect(last).toContain("auto")
+    // [mode-architecture] footer selangkup: "BUILD · AUTO".
+    expect(last).toContain("AUTO")
+    expect(last).toContain("BUILD")
     expect(last).toContain("test-model")
     expect(last).toContain("1k")
     expect(frame[frame.length - 2]).toBe("")
@@ -555,7 +558,7 @@ describe("TuiApp", () => {
     expect(app.isSuspended()).toBe(true)
     const dimmedFrame = tty!.screen()
     expect(dimmedFrame[dimmedFrame.length - 2]).toBe("")
-    expect(dimmedFrame[dimmedFrame.length - 1]).toContain("auto")
+    expect(dimmedFrame[dimmedFrame.length - 1]).toContain("AUTO")
     // Backdrop redup tertulis sebagai frame (bukan hitam polos).
     expect(tty!.all()).toContain("\x1b[2m")
     // Ketikan selama suspend TIDAK masuk baris input (anti double-handling

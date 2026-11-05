@@ -73,6 +73,14 @@ function isolateHome(dir: string): void {
     envBackup.set(key, process.env[key])
     process.env[key] = home
   }
+  // Hermetik penuh: lapisan provider punya fallback env-var (OPENAI_API_KEY /
+  // AGENT_API_KEY / ANTHROPIC_API_KEY) yang membuat provider dari env bocor.
+  // Tanpa dibersihkan, "tanpa config → NoProviderError" jadi tak-deterministik
+  // (bergantung env runner CI). Back up + hapus agar premis "setup gagal" pasti.
+  for (const key of ["OPENAI_API_KEY", "AGENT_API_KEY", "ANTHROPIC_API_KEY"]) {
+    envBackup.set(key, process.env[key])
+    delete process.env[key]
+  }
 }
 
 function restoreHome(): void {

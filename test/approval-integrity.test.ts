@@ -1,4 +1,4 @@
-﻿// PROMPT 06 · Area B — integritas persetujuan & proteksi TOCTOU.
+// PROMPT 06 · Area B — integritas persetujuan & proteksi TOCTOU.
 //
 // Yang dijaga (integration, bukan klaim):
 // 1. Pratinjau approval MEWAKILI operasi nyata: skema argumen yang dipakai

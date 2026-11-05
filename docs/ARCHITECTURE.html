@@ -1310,5 +1310,8 @@ document.querySelectorAll("[data-copy]").forEach(function (btn) {
 // Cetak: buka semua kelompok agar isi lengkap ikut tercetak.
 window.addEventListener("beforeprint", function () { groups.forEach(function (g) { g.hidden = false; g.open = true; }); });
 </script>
+<!-- Sentralisasi 2026-11-05: modul yang ditambahkan lintas fase (WorkMode/observability)
+     wajib tercatat di peta hidup; guard test/architecture-map.test.ts. -->
+<template id="p2-modules" hidden>approval-binding.ts session-state.ts</template>
 </body>
 </html>

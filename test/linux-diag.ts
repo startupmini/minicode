@@ -3,53 +3,68 @@ import { spawn } from "node:child_process"
 import { createHostBackend } from "../src/runtime/execution-backend.ts"
 
 const NODE = JSON.stringify(process.execPath)
-console.log("execPath=", JSON.stringify(process.execPath))
-console.log("platform=", process.platform, "version=", process.version)
-
-// 1) Direct spawn (NO shell): does bun -e 'process.on SIGTERM' survive SIGTERM?
-function probe(label: string, script: string): Promise<void> {
-  return new Promise((resolve) => {
-    const p = spawn(process.execPath, ["-e", script], { stdio: "ignore" })
-    let alive = true
-    p.once("exit", (code, sig) => {
-      console.log(`[${label}] process exited after SIGTERM: code=${code} sig=${sig}`)
-      alive = false
-      resolve()
-    })
-    setTimeout(() => {
-      p.kill("SIGTERM")
-      setTimeout(() => {
-        console.log(`[${label}] alive-after-SIGTERM=${alive}`)
-        if (alive) {
-          p.kill("SIGKILL")
-        }
-        resolve()
-      }, 800)
-    }, 300)
-  })
-}
+const sleeper = (ms: number) => `${NODE} -e "setTimeout(()=>{},${ms})"`
+const ignorer = (ms: number) => `${NODE} -e "process.on('SIGTERM',()=>{});setTimeout(()=>{},${ms})"`
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 async function main() {
-  await probe("bun-ignore-sigterm-direct", "process.on('SIGTERM',()=>{});setTimeout(()=>{},30000)")
-  await probe("bun-sleeper-direct", "setTimeout(()=>{},30000)")
-
-  // 2) Via createHostBackend (shell:true + detached) on Linux.
   const backend = createHostBackend()
-  const started = await backend.start({ cmd: `${NODE} -e "process.on('SIGTERM',()=>{});setTimeout(()=>{},30000)"` })
-  console.log("backend.start.started=", started.started, started.started ? "" : started.reason)
-  if (started.started) {
-    const c = backend.cancel(started.handle, "diag")
-    console.log("cancel=", JSON.stringify(c))
-    const afterCancel = await backend.wait(started.handle, 4000)
-    console.log("waitAfterCancel=", JSON.stringify(afterCancel))
-    const obs = backend.observe(started.handle)
-    console.log("observe-after-cancel=", JSON.stringify(obs))
-    const t = backend.terminate(started.handle, "diag")
-    console.log("terminate=", JSON.stringify(t))
-    const afterTerm = await backend.wait(started.handle, 4000)
-    console.log("waitAfterTerminate=", JSON.stringify(afterTerm))
-    backend.dispose(started.handle)
+
+  // Case B9: sleeper (no SIGTERM handler) via backend → cancel → wait.
+  {
+    const s = await backend.start({ cmd: sleeper(30_000) })
+    console.log("[B9-sleeper] started=", s.started)
+    if (s.started) {
+      const c = backend.cancel(s.handle, "diag")
+      console.log("[B9-sleeper] cancel=", JSON.stringify(c))
+      const t0 = Date.now()
+      const w = await backend.wait(s.handle, 3000)
+      console.log("[B9-sleeper] waitAfterCancel=", JSON.stringify(w), "elapsed=", Date.now() - t0)
+      backend.dispose(s.handle)
+    }
   }
+
+  // Case S7 race: ignorer via backend, IMMEDIATE cancel (no settle).
+  {
+    const s = await backend.start({ cmd: ignorer(20_000) })
+    console.log("[S7-immediate] started=", s.started)
+    if (s.started) {
+      const c = backend.cancel(s.handle, "diag")
+      console.log("[S7-immediate] cancel=", JSON.stringify(c))
+      const w = await backend.wait(s.handle, 1000)
+      console.log("[S7-immediate] waitAfterCancel=", JSON.stringify(w))
+      backend.dispose(s.handle)
+    }
+  }
+
+  // Case S7 de-raced: ignorer via backend, settle 250ms FIRST, then cancel.
+  {
+    const s = await backend.start({ cmd: ignorer(20_000) })
+    console.log("[S7-settled] started=", s.started)
+    if (s.started) {
+      await sleep(250)
+      const c = backend.cancel(s.handle, "diag")
+      console.log("[S7-settled] cancel=", JSON.stringify(c))
+      const w = await backend.wait(s.handle, 1000)
+      console.log("[S7-settled] waitAfterCancel=", JSON.stringify(w))
+      backend.dispose(s.handle)
+    }
+  }
+
+  // Raw spawn (NO shell, NO detached): does sleeper die from SIGTERM?
+  await new Promise<void>((resolve) => {
+    const p = spawn(process.execPath, ["-e", "setTimeout(()=>{},30000)"], { stdio: "ignore" })
+    p.once("exit", (code, sig) => { console.log("[raw-sleeper] exit code=", code, "sig=", sig); resolve() })
+    setTimeout(() => p.kill("SIGTERM"), 200)
+  })
+
+  // Raw spawn with detached:true (NO shell): does sleeper die from SIGTERM?
+  await new Promise<void>((resolve) => {
+    const p = spawn(process.execPath, ["-e", "setTimeout(()=>{},30000)"], { stdio: "ignore", detached: true })
+    p.once("exit", (code, sig) => { console.log("[raw-sleeper-detached] exit code=", code, "sig=", sig); resolve() })
+    setTimeout(() => p.kill("SIGTERM"), 200)
+  })
+
   process.exit(0)
 }
 

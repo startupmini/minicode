@@ -38,7 +38,14 @@
 // ATURAN: jangan menaikkan lagi tanpa BUKTI BARU + persetujuan owner.
 // Batas ini adalah alarm regresi (node_modules/test ikut terbawa), bukan
 // target ukuran yang perlu dikejar.
-export const PACK_SIZE_BUDGET_KIB = 3840
+//
+// [RE-BASELINE 3,83 MiB — disetujui owner 2026-11-05, rilis v0.14.0]
+// Pertumbuhan sah P0–P2 + P2.3 (WorkMode contract, memory supersession,
+// approval binding, observability, MCP reliability, daemon control, serta
+// dokumen kontrak) menaikkan `unpackedSize` ke 3.996.231 B = 3902,6 KiB.
+// `gate:pack` lolos 22/23 cek (hanya ukuran over); tidak ada node_modules/
+// test/artefak basi yang ikut. Re-baseline ke 3.920 KiB memberi ~17 KiB ruang.
+export const PACK_SIZE_BUDGET_KIB = 3920
 
 /**
  * True bila ukuran paket (KiB) masih di dalam budget.

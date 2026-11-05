@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.14.0] - 2026-11-05
+
+### WorkMode, observability, reliability & repository consolidation (P0–P2 + P2.3)
+
+Integrasi tahap **P0–P2** dan penutupan **P2.3**, lalu **Final Integration & Repository Consolidation**. Detail stage-scoped per subfase ada di `docs/audit/` (P0_FOUNDATION…, P1_…, P2_OPERATIONAL_…, P2_3_OPERATIONAL_…, FINAL_INTEGRATION_…).
+
+- **P0 — Kontrak WorkMode** (`DISCUSS`/`PLAN`/`EXECUTE`, lapis intent terpisah dari PermissionMode): registry/dispatch selaras agar tool yang terlihat = yang dapat dieksekusi; network read dilarang di `DISCUSS` dan butuh approval di `PLAN`; hooks/verify digerbangi WorkMode; persistensi & resume WorkMode; parity `daemon`/`ACP`/`exec`.
+- **P1 — Correctness & operator UX**: validasi `supersedes_id` + tombstone dua-arah seluruh chunk memori (tanpa resurrection via reconcile); machine/task observability dengan identitas child-session/run; ACE/verification/denial visibility di TUI; context occupancy ≠ session spend; approval binding dua lapis + `always` hanya bila dapat dipersist; proyeksi error context-window dan peringatan flag setelah prompt.
+- **P2 — State/type & performance**: decoder durable ber-versi `v:1` (fail-safe untuk versi masa depan/payload rusak); keputusan single-session; katalog ownership state; MCP schema-pin **persisten** + pagination + multi-session refcount; daemon `run.interrupt/cancel` nyata + replay backpressure resumable; cache proyeksi transkrip (25–140×) dan index `order` reducer (~30×).
+- **P2.3 — Lifecycle closure**: MCP **bounded reconnect** (retry limit/backoff/jitter/single-flight; pin diverifikasi ulang, drift tetap fail-closed); status recovery daemon untuk run yatim (`INTERRUPTED`/`UNKNOWN`, tanpa auto-resume); producer transisi task **authoritative** (create/update/claim/merge-cancel); guard **single-session** di boundary run; quarantine (bukan fuzzy delete) untuk baris memori legacy yang ambigu.
+- **Feature gates/bench**: audit harness, gate bash, benchmark smoke/render, dan PTY suite tetap hijau. **Keterbatasan terdokumentasi**: subscriptions/notifications MCP belum didukung; `FAILED`/`RETRYING` belum punya producer (keputusan produk); daemon tidak auto-resume; manual TUI UAT & gateway cache UNVERIFIED.
+- **Budget ukuran paket** re-baseline **3.840 → 3.920 KiB** (ukuran aktual 3.902,6 KiB, 22/23 cek `gate:pack` lolos tanpa node_modules/test/secret ikut).
+
+### Konsolidasi repository
+
+- Peta dokumen kanonik + status fase aktif di `AGENTS.md`; koreksi budget & semantik sub-agent agar dokumen = implementasi; hapus artefak generated/temp (128 path) tanpa menghapus file historis/user-owned.
+
 ## [0.13.1] - 2026-11-01
 
 ### Fixed — bin distribusi `minicode`

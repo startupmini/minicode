@@ -113,10 +113,10 @@ bun x tsc --noEmit && bun run lint && bun test && bun run gate:coverage && bun r
 
 Coverage naik → naikkan juga minimum di `scripts/coverage-gate.ts` (per 2026-10-25:
 `MIN_FUNCS` 87 / `MIN_LINES` 86 + 19 lantai per-berkas modul kritis; funcs
-dinaikkan 86 → 87 pada P13.5). Budget ukuran paket = **3.840 KiB (3,75 MiB)**,
+dinaikkan 86 → 87 pada P13.5). Budget ukuran paket = **3.920 KiB (3,83 MiB)**,
 satu sumber di `scripts/pack-budget.ts` (`PACK_SIZE_BUDGET_KIB`) — jangan
-menaikkan tanpa bukti baru + persetujuan pemilik. (Angka `3,5 MiB` adalah
-budget historis pra-P13; dikoreksi 2026-11-05 saat consolidasi.)
+menaikkan tanpa bukti baru + persetujuan pemilik. (Re-baseline 3.840 → 3.920
+KiB disetujui owner 2026-11-05 untuk rilis v0.14.0; ukuran aktual 3.902,6 KiB.)
 
 Status roadmap & next action arsitektur: [ROADMAP.md](ROADMAP.md).
 Audit dokumentasi terakhir (snapshot, bukan sumber roadmap):

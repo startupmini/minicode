@@ -12,4 +12,4 @@ jobs:
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
-      - run: bun test test/phase6f-attempt-recovery.test.ts test/runtime-composition.test.ts test/new-tools.test.ts test/supervisor.test.ts test/execution-backend.test.ts test/phase6y-process-lease.test.ts test/bash-guard-redirect-escape.test.ts test/p13-daemon-lifecycle.test.ts
+      - run: bun test

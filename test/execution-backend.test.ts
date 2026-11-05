@@ -149,7 +149,11 @@ test("B9 race: start→cancel→wait tanpa hang", async () => {
   const t0 = Date.now()
   const c = backend.cancel(started.handle, "race")
   expect(c.status).toBe("cancel-requested")
-  const end = await backend.wait(started.handle, 8000)
+  // POSIX + shell:true: SIGTERM mendarat di shell, bukan proses anak; sleeper
+  // (tanpa handler, tapi tak pernah menerima SIGTERM) tetap hidup → wait return
+  // "timeout" pada bound-nya. Bound dibuat < 5 detik (default timeout bun) agar
+  // uji "tanpa hang" tidak ikut menggantung.
+  const end = await backend.wait(started.handle, 2000)
   expect(Date.now() - t0).toBeLessThan(15_000)
   expect(["proven-dead", "completed", "timeout"]).toContain(end.status)
   backend.dispose(started.handle)
@@ -158,6 +162,9 @@ test("B9 race: start→cancel→wait tanpa hang", async () => {
 // B10 — Eskalasi: cancel → timeout → terminate → wait.
 test("B10 escalation: non-kooperatif naik ke terminate + terbukti", async () => {
   const { backend, handle } = await startedHost(sigtermIgnorer(30_000))
+  // Beri shell waktu startup (sama seperti S6/S7) agar SIGTERM tidak mendarat
+  // saat shell masih inisialisasi.
+  await Bun.sleep(200)
   backend.cancel(handle, "step-1")
   const afterCancel = await backend.wait(handle, 400)
   if (process.platform !== "win32") {
@@ -348,10 +355,12 @@ test("B-abcd: empat level terbukti terpisah", async () => {
   expect("via" in termRes).toBe(true)
   // D: hanya wait sesudah kill + close yang terobservasi.
   expect(await backend.wait(t.handle, 8000)).toEqual({
+    // POSIX: pid dibunuh via SIGKILL (grup) → exitCode null (no normal exit);
+    // win32: taskkill memberi exit code. Jangan pin exitCode selain status.
     status: "proven-dead",
-    exitCode: expect.anything(),
+    exitCode: process.platform === "win32" ? expect.anything() : null,
   } as never)
-  await backend.wait(a.handle, 8000)
+  await backend.wait(a.handle, 200)
   backend.dispose(a.handle)
   backend.dispose(t.handle)
 }, 30000)

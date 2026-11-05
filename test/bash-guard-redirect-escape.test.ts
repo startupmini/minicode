@@ -41,9 +41,7 @@ const ESCAPES: [string, string][] = [
   ["echo x >'../evil.txt'", "parent, kutip tunggal"],
   ['echo x >>"../evil.txt"', "append parent, kutip ganda"],
   ['echo x >"../../evil.txt"', "parent dua tingkat, kutip ganda"],
-  ['echo x >"..\\evil.txt"', "parent gaya Windows, kutip ganda"],
   ['echo x >"/etc/passwd"', "path absolut, kutip ganda"],
-  ['echo x >"C:\\Windows\\evil.txt"', "path absolut Windows, kutip ganda"],
   ['cat <"../secret.txt"', "redirect baca parent, kutip ganda"],
   // Target BERKUTIP dengan spasi: path shell adalah satu kata, dan ".."
   // di dalamnya tetap di luar workspace.
@@ -57,6 +55,17 @@ const ESCAPES: [string, string][] = [
   ['echo x >"`pwd`/evil.txt"', "command substitution backtick"],
   ['echo x >"~/evil.txt"', "ekspansi home ~"],
 ]
+
+// Escapes yang hanya bermakna di Windows: backslash = pemisah path di sana,
+// tapi di POSIX ia bagian dari NAMA BERKAS (relatif dalam workspace) sehingga
+// jangan diasersikan ditolak di Linux — akan over-block yang sah.
+const ESCAPES_WINDOWS_ONLY: [string, string][] = [
+  ['echo x >"..\\evil.txt"', "parent gaya Windows, kutip ganda"],
+  ['echo x >"C:\\Windows\\evil.txt"', "path absolut Windows, kutip ganda"],
+]
+
+const escapesForPlatform = (): [string, string][] =>
+  process.platform === "win32" ? [...ESCAPES, ...ESCAPES_WINDOWS_ONLY] : ESCAPES
 
 const SAFE: [string, string][] = [
   ["echo x > out.txt", "relatif dalam workspace"],
@@ -73,14 +82,14 @@ const SAFE: [string, string][] = [
 describe("bash-guard: target redirect berkutip tak boleh melewati jail", () => {
   test("target kutip yang keluar workspace DITOLAK (dengan cwd)", () => {
     const ws = makeWorkspace()
-    for (const [cmd, label] of ESCAPES) {
+    for (const [cmd, label] of escapesForPlatform()) {
       const v = inspectBashCommand(cmd, ws)
       expect(v.denied, `${label}: ${cmd} → ${v.reason ?? "ALLOW"}`).toBe(true)
     }
   })
 
   test("target kutip yang keluar workspace DITOLAK (tanpa cwd, heuristik)", () => {
-    for (const [cmd, label] of ESCAPES) {
+    for (const [cmd, label] of escapesForPlatform()) {
       const v = inspectBashCommand(cmd)
       expect(v.denied, `${label}: ${cmd} → ${v.reason ?? "ALLOW"}`).toBe(true)
     }

@@ -154,10 +154,16 @@ function runSpawn(
     // F-23: bin di-resolve absolut dari PATH terpercaya di sini (satu titik
     // untuk seatbelt/bwrap) — spawn dengan cwd workspace di Windows bisa
     // mengeksekusi <bin>.bat repo bila hanya nama telanjang.
+    // detached:true → bwrap/sandbox-exec menjadi process-group leader, sehingga
+    // timeout bisa membunuh SELURUH pohon (runner + child command) via group kill,
+    // bukan hanya pemimpinnya. Tanpa ini, p.kill("SIGKILL") hanya membunuh bwrap;
+    // child `node -e 'while(true){}'` tetap hidup mewarisi stdio pipe sehingga
+    // event `close` tak pernah menyala → hang + proses bocor (test code_run loop).
     const p = spawn(resolveTrustedExecutable(bin), args, {
       cwd,
       env,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
     })
     const OUT_CAP = LIMITS.DOCKER_OUTPUT_MAX_CHARS
     let out = ""
@@ -178,7 +184,18 @@ function runSpawn(
     }
     p.stdout.on("data", (d) => appendCapped("out", d))
     p.stderr.on("data", (d) => appendCapped("err", d))
-    const t = setTimeout(() => p.kill("SIGKILL"), timeoutMs)
+    const t = setTimeout(() => {
+      // SIGKILL ke seluruh process group (bwrap + child command). Fallback ke
+      // kill tunggal bila pid tak tersedia (spawn gagal sinkron).
+      try {
+        if (p.pid !== undefined) process.kill(-p.pid, "SIGKILL")
+        else p.kill("SIGKILL")
+      } catch {
+        try {
+          p.kill("SIGKILL")
+        } catch {}
+      }
+    }, timeoutMs)
     p.on("error", (e) => {
       clearTimeout(t)
       resolveResult({ code: null, output: `[os-sandbox] ${e.message}` })

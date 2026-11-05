@@ -122,6 +122,11 @@ test("S6 escalation: cancel→wait→terminate→wait bounded", async () => {
   const backend = createHostBackend()
   const started = await backend.start({ cmd: sigtermIgnorer(30_000) })
   if (!started.started) throw new Error("setup failed")
+  // Beri shell (rec.proc, karena backend spawn dengan shell:true) waktu selesai
+  // startup. Tanpa ini SIGTERM bisa sampai saat shell masih inisialisasi → shell
+  // mati seketika → "proven-dead" palsu, bukan "timeout" yang seharusnya membuktikan
+  // bahwa PROSES (yang mengabaikan SIGTERM) tetap hidup selama fase cancel.
+  await Bun.sleep(200)
   const { sup } = supervised()
   const t0 = Date.now()
   const res = await sup.escalate(started.handle, "test", { backend, waitMs: 400 })
@@ -147,6 +152,9 @@ test("S7 non-cooperative: cancel tak membunuh (POSIX) + eskalasi menutup", async
   const backend = createHostBackend()
   const started = await backend.start({ cmd: sigtermIgnorer(20_000) })
   if (!started.started) throw new Error("setup failed")
+  // Sama seperti S6: beri shell waktu startup agar SIGTERM tidak mendarat saat
+  // shell masih inisialisasi (yang akan tampak sebagai "proven-dead" palsu).
+  await Bun.sleep(200)
   const { sup } = supervised()
   expect(sup.classify({ cancelRequestedButAlive: true })).toBe("backend-noncooperative")
   const res = await sup.escalate(started.handle, "test", { backend, waitMs: 300 })

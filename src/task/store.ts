@@ -54,6 +54,37 @@ import type { SessionAuthority } from "./session-authority.ts"
 
 const TASK_DB_FILENAME = "tasks.db"
 
+/**
+ * P2.3 (Session 4): satu sink transisi process-wide. `src/task` tidak boleh
+ * mengimpor presentation; composition root memasang sink untuk memproyeksikan
+ * transisi AUTHORITATIVE (setelah commit DB) menjadi event `task.status`.
+ * Satu sesi agent per proses (lihat guard single-session), jadi sink tunggal
+ * cukup dan tidak membocorkan lintas sesi.
+ */
+export type TaskTransitionKind = "created" | "updated" | "claimed"
+export interface TaskTransition {
+  kind: TaskTransitionKind
+  task: Task
+  previousStatus: TaskStatus | null
+}
+
+let taskTransitionSink: ((transition: TaskTransition) => void) | null = null
+
+export function setTaskTransitionSink(sink: ((transition: TaskTransition) => void) | null): void {
+  taskTransitionSink = sink
+}
+
+/** Emit SETELAH commit; kegagalan observer tak boleh menggagalkan transisi. */
+function emitTaskTransition(
+  kind: TaskTransitionKind,
+  task: Task,
+  previousStatus: TaskStatus | null,
+): void {
+  try {
+    taskTransitionSink?.({ kind, task, previousStatus })
+  } catch {}
+}
+
 /** Bounds so the JSON columns cannot grow without limit. */
 const MAX_DEPENDS_ON = 32
 const MAX_EVIDENCE = 32
@@ -1120,7 +1151,7 @@ export class TaskStore {
     }
     const db = handle(this.cwd)
     const id = this.nextId(sessionId)
-    return db.transaction(() => {
+    const created = db.transaction(() => {
       // `nextId` is recomputed INSIDE the transaction so two concurrent writers
       // cannot be handed the same id.
       const chosen = db
@@ -1162,6 +1193,8 @@ export class TaskStore {
       }
       return this.getTask(sessionId, chosen)!
     })()
+    emitTaskTransition("created", created, null)
+    return created
   }
 
   /**
@@ -1201,9 +1234,11 @@ export class TaskStore {
     // passing `expectedRevision` that loses the race gets TASK_STALE_REVISION
     // and writes nothing, and even a caller that passes no revision cannot
     // silently overwrite a row whose revision moved underneath the read.
-    return db.transaction(() => {
+    let transitionPrevious: TaskStatus | null = null
+    const patched = db.transaction(() => {
       const current = this.getTask(sessionId, taskId)
       if (!current) throw new TaskError("TASK_NOT_FOUND", `no task ${taskId} in ${sessionId}`)
+      transitionPrevious = current.status
       if (opts.expectedRevision !== undefined && opts.expectedRevision !== current.revision) {
         throw new TaskError(
           "TASK_STALE_REVISION",
@@ -1311,6 +1346,9 @@ export class TaskStore {
       }
       return this.getTask(sessionId, taskId)!
     })()
+    // Emit setelah commit: event mencerminkan baris yang benar-benar durable.
+    emitTaskTransition("updated", patched, transitionPrevious)
+    return patched
   }
   /** Readable alias for the layer above. */
   updateTask(sessionId: string, taskId: string, patch: TaskPatch, opts: PatchOptions = {}): Task {
@@ -1508,9 +1546,11 @@ export class TaskStore {
 
     if (result.changes === 1) {
       const lineage = this.getExecutionLineage(sessionId, taskId)
+      const claimed = this.getTask(sessionId, taskId)
+      emitTaskTransition("claimed", claimed!, "PENDING")
       return {
         outcome: "CLAIM_ACCEPTED",
-        task: this.getTask(sessionId, taskId),
+        task: claimed,
         execGeneration: lineage?.execGeneration ?? 0,
         // [PHASE 6Q] Read inside the same call so the Scheduler can present this
         // incarnation back at lineage-write time. A deletion between claim and

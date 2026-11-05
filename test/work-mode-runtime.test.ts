@@ -27,6 +27,7 @@ import { createMinicodeSession } from "../src/app/session.ts"
 import { setupToolLayer } from "../src/app/tool-layer.ts"
 import { shouldRunHooks } from "../src/hooks/run.ts"
 import { createPermissionHandler, type PermissionMode } from "../src/policy/permission.ts"
+import { LOCAL_READONLY_TOOL_NAMES } from "../src/policy/tool-contract.ts"
 import { createWorkModePermissionHandler, type WorkMode } from "../src/policy/work-mode.ts"
 import {
   clearSubAgentSessionFactory,
@@ -179,8 +180,8 @@ describe("3. tool visibility mengikuti WorkMode aktif (daftar yang dilihat kerne
     expect(setWorkMode).toBeDefined()
     setWorkMode!("DISCUSS")
     // Array yang sama (identitas objek) — kernel menyimpan referensi ini.
-    expect(sessionTools.length).toBeLessThan(full)
-    for (const n of sessionTools.map((t) => t.name)) expect(EXPLORE_TOOL_NAMES).toContain(n)
+    expect(sessionTools.length).toBe(16)
+    for (const n of sessionTools.map((t) => t.name)) expect(LOCAL_READONLY_TOOL_NAMES).toContain(n)
     setWorkMode!("PLAN")
     expect(sessionTools.length).toBeLessThan(full)
     expect(sessionTools.map((t) => t.name)).toContain("todo_write")
@@ -295,22 +296,14 @@ describe("4. delegasi mewarisi WorkMode parent yang AKTIF", () => {
 })
 
 describe("5. hooks mengikuti WorkMode AKTIF, bukan snapshot", () => {
-  test("predicate mengikuti handle kontrol yang berubah", () => {
+  test("predicate mengikuti handle kontrol yang berubah (Q3=A3: PLAN juga menahan)", () => {
     let wm: WorkMode = "EXECUTE"
     expect(shouldRunHooks("auto", wm)).toBe(true)
     wm = "DISCUSS"
     expect(shouldRunHooks("auto", wm)).toBe(false)
     wm = "PLAN"
-    expect(shouldRunHooks("auto", wm)).toBe(true)
+    expect(shouldRunHooks("auto", wm)).toBe(false)
   })
-
-  // Bukti perilaku (bukan grep sumber): `test/work-mode-hooks.test.ts`
-  // menjalankan jalur production `createCliSession` → `runPromptWithVerify` →
-  // `runHooksGated` → hook Node yang menulis marker, lalu menurunkan WorkMode
-  // ke DISCUSS pada SESI YANG SAMA dan membuktikan hook berikutnya dilewati.
-  // Assertion bentuk (membaca sumber `cli/setup.ts`) sengaja dihapus: grep
-  // sumber jadi basi begitu kode diperbaiki (Prinsip 1 PLAN.md) dan tidak
-  // membuktikan apa pun soal perilaku.
 })
 
 describe("6. footer mencerminkan kombinasi WorkMode + permission mode", () => {
@@ -332,7 +325,7 @@ describe("6. footer mencerminkan kombinasi WorkMode + permission mode", () => {
   })
 })
 
-describe("8. jalur produksi createCliSession — wiring composition root", () => {
+describe("8. jalur produksi createCliSession — wiring composition root, G1, & G-MEM-TRACK", () => {
   test("perubahan WorkMode live/updating tool visibility sesi nyata", async () => {
     const { startFakeProvider } = await import("./helpers/fake-provider.ts")
     const { writeFileSync, mkdirSync } = await import("node:fs")
@@ -363,21 +356,169 @@ describe("8. jalur produksi createCliSession — wiring composition root", () =>
       workMode: "EXECUTE",
     })
     try {
-      // Handle kontrol runtime tersedia di composition root.
       expect(ctx.workModeControl).toBeDefined()
       expect(ctx.workModeControl!.getWorkMode()).toBe("EXECUTE")
+      expect(ctx.workMode).toBe("EXECUTE")
       const full = ctx.sessionTools.length
-      expect(full).toBeGreaterThan(EXPLORE_TOOL_NAMES.length)
-      // Transisi operator: tool yang terlihat menyusut pada SESI YANG SAMA.
+      expect(full).toBeGreaterThan(LOCAL_READONLY_TOOL_NAMES.length)
+      // Transisi operator: tool yang terlihat menyusut tepat ke 16 LOCAL_READONLY_TOOL_NAMES.
       ctx.workModeControl!.setWorkMode("DISCUSS")
       expect(ctx.workModeControl!.getWorkMode()).toBe("DISCUSS")
-      expect(ctx.sessionTools.length).toBeLessThan(full)
-      for (const n of ctx.sessionTools.map((t) => t.name)) expect(EXPLORE_TOOL_NAMES).toContain(n)
+      expect(ctx.workMode).toBe("DISCUSS")
+      expect(ctx.sessionTools).toHaveLength(16)
+      for (const n of ctx.sessionTools.map((t) => t.name)) {
+        expect(LOCAL_READONLY_TOOL_NAMES).toContain(n)
+      }
       // Kembali ke EXECUTE: daftar penuh kembali.
       ctx.workModeControl!.setWorkMode("EXECUTE")
       expect(ctx.sessionTools.length).toBe(full)
     } finally {
       await ctx.close()
+      provider.close()
+    }
+  })
+
+  test("G1 tertutup: sesi mulai DISCUSS → naik ke EXECUTE mampu dispatch write_file; turun lagi ke DISCUSS menolak write_file", async () => {
+    const { startFakeProvider } = await import("./helpers/fake-provider.ts")
+    const { existsSync, mkdirSync, readFileSync, writeFileSync } = await import("node:fs")
+    const cwd = mkdtempSync(join(tmpdir(), "mc-wm-g1-"))
+    const home = mkdtempSync(join(tmpdir(), "mc-wm-g1home-"))
+    roots.push(cwd, home)
+    const savedMinicodeHome = process.env.MINICODE_HOME
+    process.env.MINICODE_HOME = home
+    mkdirSync(join(cwd, ".minicode"), { recursive: true })
+    const provider = startFakeProvider([
+      // Turn 1 (setelah naik ke EXECUTE): model memanggil write_file → HARUS berhasil.
+      { kind: "tool", id: "c1", name: "write_file", args: { path: "g1-ok.txt", content: "hidup" } },
+      { kind: "text", text: "berhasil ditulis" },
+      // Turn 2 (setelah turun ke DISCUSS): model mencoba write_file → HARUS ditolak/unknown.
+      {
+        kind: "tool",
+        id: "c2",
+        name: "write_file",
+        args: { path: "g1-blocked.txt", content: "bocor" },
+      },
+      { kind: "text", text: "ditolak" },
+    ])
+    writeFileSync(
+      join(cwd, ".minicode", "config.json"),
+      JSON.stringify({
+        providers: [{ id: "fake", baseUrl: provider.baseUrl, apiKey: "sk-test", models: ["m"] }],
+      }),
+      "utf8",
+    )
+    const { createCliSession } = await import("../cli/setup.ts")
+    const ctx = await createCliSession({
+      cwd,
+      allowLocalConfig: true,
+      sessionId: "g1-session",
+      prompt: "mulai",
+      enterRepl: false,
+      verbose: false,
+      allowAll: false,
+      ask: false,
+      plan: false,
+      allowlist: false,
+      verify: false,
+      workMode: "DISCUSS",
+      workModeExplicit: true,
+    })
+    try {
+      expect(ctx.sessionTools.map((t) => t.name)).not.toContain("write_file")
+      // Naik ke EXECUTE di tengah sesi: liveRegistry harus menemukan write_file!
+      ctx.workModeControl!.setWorkMode("EXECUTE")
+      await ctx.runPromptWithVerify("tulis g1-ok.txt")
+      expect(readFileSync(join(cwd, "g1-ok.txt"), "utf8")).toBe("hidup")
+
+      // Turun kembali ke DISCUSS: write_file disembunyikan & ditolak.
+      ctx.workModeControl!.setWorkMode("DISCUSS")
+      await ctx.runPromptWithVerify("coba tulis lagi")
+      expect(existsSync(join(cwd, "g1-blocked.txt"))).toBe(false)
+    } finally {
+      await ctx.close()
+      provider.close()
+      if (savedMinicodeHome === undefined) delete process.env.MINICODE_HOME
+      else process.env.MINICODE_HOME = savedMinicodeHome
+    }
+  })
+
+  test("G-MEM-TRACK tertutup: read_memory pada DISCUSS × auto dan PLAN × auto TIDAK menaikkan access_count di SQLite", async () => {
+    const { Database } = await import("bun:sqlite")
+    const { mkdirSync, writeFileSync } = await import("node:fs")
+    const { addMemory, tripEmbeddingCircuitForTest } = await import("../src/memory/vector.ts")
+    const { startFakeProvider } = await import("./helpers/fake-provider.ts")
+    const { createCliSession } = await import("../cli/setup.ts")
+
+    const cwd = mkdtempSync(join(tmpdir(), "mc-wm-mem-"))
+    const home = mkdtempSync(join(tmpdir(), "mc-wm-memhome-"))
+    roots.push(cwd, home)
+    const savedMinicodeHome = process.env.MINICODE_HOME
+    process.env.MINICODE_HOME = home
+    mkdirSync(join(cwd, ".minicode"), { recursive: true })
+    tripEmbeddingCircuitForTest("https://api.openai.com/v1", undefined, "test")
+    await addMemory("rahasia kontrak P0 memori", { cwd, category: "fact" })
+
+    const provider = startFakeProvider([
+      { kind: "tool", id: "m1", name: "read_memory", args: { query: "rahasia" } },
+      { kind: "text", text: "dibaca di DISCUSS" },
+      { kind: "tool", id: "m2", name: "read_memory", args: { query: "rahasia" } },
+      { kind: "text", text: "dibaca di PLAN" },
+      { kind: "tool", id: "m3", name: "read_memory", args: { query: "rahasia" } },
+      { kind: "text", text: "dibaca di EXECUTE" },
+    ])
+    writeFileSync(
+      join(cwd, ".minicode", "config.json"),
+      JSON.stringify({
+        providers: [{ id: "fake", baseUrl: provider.baseUrl, apiKey: "sk-test", models: ["m"] }],
+      }),
+      "utf8",
+    )
+    tripEmbeddingCircuitForTest(provider.baseUrl, undefined, "test")
+
+    const readAccessCount = (): number => {
+      const db = new Database(join(cwd, ".minicode", "vector.db"), { readonly: true })
+      try {
+        const row = db
+          .query("SELECT access_count FROM memory WHERE text LIKE '%rahasia kontrak P0 memori%'")
+          .get() as { access_count: number } | null
+        return row?.access_count ?? -1
+      } finally {
+        db.close()
+      }
+    }
+
+    const ctx = await createCliSession({
+      cwd,
+      allowLocalConfig: true,
+      sessionId: "mem-session",
+      prompt: "baca",
+      enterRepl: false,
+      verbose: false,
+      allowAll: false,
+      ask: false,
+      plan: false,
+      allowlist: false,
+      verify: false,
+      workMode: "DISCUSS",
+      workModeExplicit: true,
+    })
+    try {
+      expect(readAccessCount()).toBe(0)
+      await ctx.runPromptWithVerify("cari di DISCUSS")
+      expect(readAccessCount()).toBe(0)
+
+      ctx.workModeControl!.setWorkMode("PLAN")
+      await ctx.runPromptWithVerify("cari di PLAN")
+      expect(readAccessCount()).toBe(0)
+
+      ctx.workModeControl!.setWorkMode("EXECUTE")
+      await ctx.runPromptWithVerify("cari di EXECUTE")
+      expect(readAccessCount()).toBeGreaterThanOrEqual(1)
+    } finally {
+      await ctx.close()
+      provider.close()
+      if (savedMinicodeHome === undefined) delete process.env.MINICODE_HOME
+      else process.env.MINICODE_HOME = savedMinicodeHome
     }
   })
 })

@@ -142,6 +142,9 @@ export interface UiPresentationActivity {
   denyReason?: string
   receipt?: UiPresentationReceipt
   parentToolCallId?: string
+  /** F-AGENT-1: identitas sub-agent (session anak + run kanonik). */
+  childSessionId?: string
+  runId?: string
   supersedes?: string
   expandRef?: { toolCallId: string; idx: number }
   verification?: UiVerificationDisplay
@@ -181,6 +184,12 @@ export interface UiPresentationSystem {
   text: string
   reason?: string
   severity: "info" | "warning" | "error" | "critical"
+  /** F-TASK-1: field terstruktur status task (absen untuk notice lain). */
+  taskId?: string
+  taskStatus?: string
+  parentId?: string
+  dependsOn?: string[]
+  revision?: number
 }
 
 export interface UiPresentationPlan {
@@ -192,6 +201,10 @@ export interface UiPresentationPlan {
     stepId: string
     title?: string
     status: "pending" | "active" | "completed" | "cancelled" | "blocked"
+    /** F-TASK-1: identitas task kanonik (`t<n>`) bila resolusi total. */
+    taskId?: string
+    /** F-TASK-1: posisi tampil (bukan identitas). */
+    ordinal?: number
   }>
 }
 
@@ -308,9 +321,18 @@ export interface UiPresentationEvent {
     | "diagnostic.raised"
     | "checkpoint.created"
     | "verification.observed"
+    | "consequence.decided"
+    | "context.window"
+    | "context.cutoff"
+    | "task.status"
   seq?: number
   turnId?: number
   stepId?: number
+  /** P1.6: session pemilik event (anak untuk event forward), bukan selalu induk. */
+  sessionId?: string
+  /** P1.6: identitas sub-agent yang membedakan session vs run vs taut pemanggil. */
+  childSessionId?: string
+  runId?: string
   toolCallId?: string
   approvalId?: string
   name?: string
@@ -353,6 +375,30 @@ export interface UiPresentationEvent {
     stepId: string
     title?: string
     status: "pending" | "active" | "completed" | "cancelled" | "blocked"
+    /** F-TASK-1: identitas task kanonik (`t<n>`). */
+    taskId?: string
+    /** F-TASK-1: posisi tampil (bukan identitas). */
+    ordinal?: number
   }>
   evidence?: string[]
+  // ── P1 Observability & Interaction (aditif) ──
+  verdict?: string
+  failureClass?: string
+  nextAction?: string
+  newEvidenceSinceLastAttempt?: boolean
+  riskTier?: string
+  diffPreview?: string
+  schemaDrift?: { serverId: string; toolName: string }
+  taskId?: string
+  taskStatus?: string
+  parentId?: string
+  dependsOn?: string[]
+  revision?: number
+  /** P1.5: COMPLETED + bukan `passed` = unverified (bukan PASS). */
+  taskVerification?: { verdict: "passed" | "failed" | "unverified"; checkedAt?: string }
+  usedTokens?: number
+  windowTokens?: number
+  percent?: number
+  costUsd?: number
+  providerModel?: string
 }

@@ -3,9 +3,11 @@ import type {
   ContentRef,
   DenyReason,
   FailCause,
+  McpSchemaDrift,
   PlanStep,
   Receipt,
   SemanticSeverity,
+  SideEffectTierDisplay,
   ToolIdentity,
   TurnSummary,
   VerificationDisplay,
@@ -26,6 +28,20 @@ export interface ActivityEntry {
   toolCallId: string
   sessionId: string
   parentToolCallId?: string
+  /**
+   * F-AGENT-1: identitas session anak (`sub_*`) untuk tool yang berjalan di
+   * dalam sub-agent. Berbeda dari `sessionId`? Tidak — untuk event anak,
+   * `sessionId` SUDAH id anak; field ini menyimpan makna yang sama secara
+   * eksplisit di jalur yang memisahkan parent/child lewat parentToolCallId.
+   * Disimpan agar snapshot UI dapat membedakan child tanpa menebak dari prefix.
+   */
+  childSessionId?: string
+  /**
+   * F-AGENT-1: id Run kanonik anak — identitas eksekusi (bukan identity session
+   * `childSessionId`, bukan taut `parentToolCallId`). Satu delegate_task punya
+   * satu run anak; retry = run baru.
+   */
+  runId?: string
   identity: ToolIdentity
   target?: string
   status: ToolStatus
@@ -44,6 +60,8 @@ export interface ActivityEntry {
   incomplete?: boolean
   /** Observasi verifikasi terakhir (last-wins); absen = UNKNOWN. */
   verification?: VerificationDisplay
+  /** F-TOOL-1: drift skema MCP terstruktur (absen = bukan drift). */
+  schemaDrift?: McpSchemaDrift
 }
 
 export interface TurnEntry {
@@ -71,6 +89,10 @@ export interface ApprovalEntry {
   identity: ToolIdentity
   state: "requested" | "settled"
   outcome?: ApprovalOutcome
+  /** F-APPROVAL-1: tier risiko efek samping (dari kontrak tool). */
+  riskTier?: SideEffectTierDisplay
+  /** F-APPROVAL-1: pratinjau diff ringkas (sudah di-scrub secret). */
+  diffPreview?: string
 }
 
 export interface ConversationEntry {
@@ -107,6 +129,16 @@ export interface SystemEntry {
   text: string
   reason?: string
   severity: SemanticSeverity
+  /**
+   * F-TASK-1: transisi status task kanonik disimpan TERSTRUKTUR, bukan hanya
+   * dirangkai ke `text`. Snapshot/proyeksi butuh id/parent/DAG/revisi tanpa
+   * mem-parse teks tampilan (renderer dilarang mem-parse).
+   */
+  taskId?: string
+  taskStatus?: string
+  parentId?: string
+  dependsOn?: string[]
+  revision?: number
 }
 
 export interface PlanEntry {
@@ -156,6 +188,10 @@ export interface DiagnosticEntry {
   message: string
   cause?: string
   action?: string
+  /** F-CTRL-1: verdict consequence terstruktur (absen = bukan consequence). */
+  verdict?: string
+  /** F-CTRL-2: ada bukti baru sejak percobaan terakhir (alasan VERIFYING/Tamper Guard). */
+  newEvidenceSinceLastAttempt?: boolean
 }
 
 export type PresentationEntry =
@@ -277,6 +313,7 @@ export function cloneState(s: PresentationState): PresentationState {
           identity: { ...v.identity },
           ...(v.error ? { error: { ...v.error } } : {}),
           ...(v.expandRef ? { expandRef: copyRef(v.expandRef) } : {}),
+          ...(v.schemaDrift ? { schemaDrift: { ...v.schemaDrift } } : {}),
           receipt: copyReceipt(v.receipt),
         },
       ]),

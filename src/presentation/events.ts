@@ -67,7 +67,17 @@ export type ApprovalOutcome =
   | {
       decision: "deny"
       by: "user" | "system"
-      reason?: "declined" | "headless" | "no-ask" | "no-view" | "prompt-error" | "parent-aborted"
+      // [Area B · PROMPT 06] "approval-stale" = user menyetujui, tapi target
+      // file berubah selama prompt ⇒ fail-closed (additive, tak mengubah
+      // makna reason yang sudah ada).
+      reason?:
+        | "declined"
+        | "headless"
+        | "no-ask"
+        | "no-view"
+        | "prompt-error"
+        | "parent-aborted"
+        | "approval-stale"
     }
   | {
       decision: "cancelled"
@@ -122,13 +132,29 @@ export interface ChildSessionLink {
   parentToolCallId: string
   childSessionId: string
   parentSessionId?: string
+  /**
+   * F-AGENT-1: id Run kanonik anak (`allocateRunId`) — identitas eksekusi yang
+   * membedakan penyelesaian/retry anak, BUKAN childSessionId (identity session)
+   * maupun parentToolCallId (taut ke pemanggil). Absen = jalur lama belum
+   * membawanya (tetap sah, hanya tanpa identitas run anak).
+   */
+  runId?: string
 }
+
+/**
+ * P1.6: versi skema event durable. Additive: event lama tanpa `v` dibaca sebagai
+ * v1 (decoder tidak mensyaratkan field ini), sehingga penambahan field opsional
+ * tetap kompatibel. Naikkan hanya bila field wajib berubah/bermakna baru.
+ */
+export const EVENT_SCHEMA_VERSION = 1
 
 interface Base {
   eventSeq: number
   ts: number
   sessionId: string
   turnId: number
+  /** Versi skema durable; absen = v1 (kompatibilitas replay lama). */
+  v?: number
   // M1 correlator (ADR-002, additive-optional): korelasi execution tanpa
   // mengganti domain identity. Absent = event legacy / jalur belum wiring
   // (M10 yang memasang penuh); parser lama tetap membaca (decode hanya
@@ -218,6 +244,12 @@ export interface ToolFailedEvent extends Base {
   hint?: string
   expandRef: ContentRef
   parentLink?: ChildSessionLink
+  /**
+   * F-TOOL-1: drift skema MCP terstruktur (bukan `message` yang mengandung
+   * string error mentah). Absen = kegagalan bukan drift skema (atau jalur
+   * legacy yang belum mendeteksinya).
+   */
+  schemaDrift?: McpSchemaDrift
 }
 export interface ToolDeniedEvent extends Base {
   type: "tool.denied"
@@ -240,6 +272,13 @@ export interface ApprovalRequestedEvent extends Base {
   identity: ToolIdentity
   argsSummary: ArgsSummary
   via: "prompt" | "system"
+  /** F-APPROVAL-1: tier risiko efek samping tool (dari kontrak tool). */
+  riskTier?: SideEffectTierDisplay
+  /**
+   * F-APPROVAL-1: pratinjau diff ringkas untuk preview persetujuan (satu baris,
+   * sudah di-scrub secret). Absen = tidak ada diff yang tersedia/tidak relevan.
+   */
+  diffPreview?: string
 }
 export interface ApprovalSettledEvent extends Base {
   type: "approval.settled"
@@ -355,6 +394,66 @@ export interface CheckpointCreatedEvent extends Base {
  * `verification` untuk display. `evidenceReference` TIDAK dibawa ke sini
  * (tetap di jurnal); yang dibawa hanya identitas + verdict + metode.
  */
+// ── Literal tampilan (didefinisikan ulang di sini) ──
+//
+// Lapisan presentasi TIDAK mengimpor `src/policy`/`src/task` untuk keputusan
+// semantik: literal-literal ini adalah salinan ringkas dari kosakata domain
+// yang hanya untuk display (pola yang sama dengan `VerificationDisplayVerdict`).
+// Renderer memakai nilai final dari proyeksi; definisi ulang ini memutus
+// dependensi lapisan tanpa mengarang nilai baru.
+
+/** Verdict consequence (F-CTRL-1) — cermin `AceVerdict` di policy. */
+export type ConsequenceVerdict = "PASS" | "FAIL" | "BLOCKED" | "INCONCLUSIVE"
+
+/** Kelas kegagalan consequence — cermin `AceFailureClass`. */
+export type ConsequenceFailureClass =
+  | "NONE"
+  | "TRANSIENT_ENV"
+  | "FUNCTIONAL_TEST_FAIL"
+  | "REGRESSION_DETECTED"
+  | "REPEATED_NO_EVIDENCE"
+  | "INSUFFICIENT_EVIDENCE"
+  | "PERMISSION_OR_EXTERNAL_BLOCKER"
+  | "EVALUATOR_TAMPER_ATTEMPT"
+
+/** Aksi lanjut consequence — cermin `AceNextAction`. */
+export type ConsequenceNextAction =
+  | "COMPLETE_AFTER_VERIFICATION"
+  | "RETRY_TRANSIENT"
+  | "ANALYZE_FAILURE"
+  | "REVISE_HYPOTHESIS"
+  | "GATHER_EVIDENCE"
+  | "CHANGE_STRATEGY"
+  | "REQUEST_HUMAN"
+  | "STOP_AND_REPORT"
+
+/** Tier efek samping untuk approval (F-APPROVAL-1) — cermin `SideEffectTier`. */
+export type SideEffectTierDisplay =
+  | "PURE_READ"
+  | "WORKSPACE_MUTATION"
+  | "LOCAL_ENV_MUTATION"
+  | "EXTERNAL_IRREVERSIBLE"
+  | "UNKNOWN"
+
+/** Status task kanonik (F-TASK-1) — cermin `TaskStatus` di `src/task`. */
+export type TaskStatusDisplay =
+  | "PENDING"
+  | "IN_PROGRESS"
+  | "VERIFYING"
+  | "BLOCKED"
+  | "FAILED"
+  | "RETRYING"
+  | "COMPLETED"
+  | "CANCELLED"
+
+/** Drift skema MCP terstruktur (F-TOOL-1) — BUKAN string error mentah. */
+export interface McpSchemaDrift {
+  /** Id server MCP (`srv` pada `srv.search`). */
+  serverId: string
+  /** Nama tool lokal (`search`). */
+  toolName: string
+}
+
 export type VerificationDisplayVerdict = "present" | "absent" | "inconclusive"
 
 /** Tampilan verifikasi per activity — observasi, bukan otoritas efek. */
@@ -374,6 +473,67 @@ export interface VerificationObservedEvent extends Base {
   observedAt: number
   /** Forward anak: taut ke delegate_task pemanggil (absen = observasi sesi biasa). */
   parentLink?: ChildSessionLink
+}
+
+/**
+ * F-CTRL-1/F-CTRL-2: keputusan consequence terstruktur (ACE) — BUKAN string
+ * stderr. Diterjemahkan dari `ConsequenceDecision` di policy ke literal display
+ * yang stabil. `newEvidenceSinceLastAttempt` membawa alasan "VERIFYING / Tamper
+ * Guard" yang tadinya hanya terlihat di stderr.
+ */
+export interface ConsequenceDecidedEvent extends Base {
+  type: "consequence.decided"
+  verdict: ConsequenceVerdict
+  failureClass: ConsequenceFailureClass
+  nextAction: ConsequenceNextAction
+  rationale: string
+  /** Bukti baru sejak percobaan terakhir (F-CTRL-2); absen = tidak dilacak. */
+  newEvidenceSinceLastAttempt?: boolean
+}
+
+/**
+ * F-CTX-1: meter jendela konteks live — NON-durable (tidak pernah dipersist),
+ * hanya untuk footer/machine. `percent` dihitung pemanggil dari angka nyata;
+ * `costUsd`/`providerModel` opsional karena pricing model bisa tak dikenal.
+ */
+export interface ContextWindowEvent extends Base {
+  type: "context.window"
+  usedTokens: number
+  windowTokens: number
+  /** 0–100 (boleh desimal); absen = tidak dapat dihitung (window tak dikenal). */
+  percent?: number
+  costUsd?: number
+  providerModel?: string
+}
+
+/**
+ * F-CTX-2: pemotongan mi-stream dari `watchContextWindowLimit`/`watchBudgetLimit`
+ * yang DURABLE — masuk transkrip, bukan hanya stderr, agar operator tahu persis
+ * di mana stream dipangkas saat replay.
+ */
+export interface ContextCutoffEvent extends Base {
+  type: "context.cutoff"
+  reason: string
+  usedTokens?: number
+  windowTokens?: number
+}
+
+/**
+ * F-TASK-1: transisi status task kanonik (`t<n>`) + DAG (parent/dependsOn).
+ * Id/status dibawa apa adanya dari TaskStore; renderer hanya menampilkan.
+ */
+export interface TaskStatusEvent extends Base {
+  type: "task.status"
+  taskId: string
+  status: TaskStatusDisplay
+  parentId?: string
+  dependsOn?: string[]
+  revision?: number
+  /**
+   * P1.5: bukti verifikasi yang menempel pada task. `COMPLETED` tanpa
+   * `verdict=passed` BUKAN "PASS" — UI wajib menandainya unverified.
+   */
+  verification?: { verdict: "passed" | "failed" | "unverified"; checkedAt: string }
 }
 
 export type DomainEvent =
@@ -403,6 +563,10 @@ export type DomainEvent =
   | DiagnosticRaisedEvent
   | CheckpointCreatedEvent
   | VerificationObservedEvent
+  | ConsequenceDecidedEvent
+  | ContextWindowEvent
+  | ContextCutoffEvent
+  | TaskStatusEvent
 
 export type DomainEventType = DomainEvent["type"]
 
@@ -436,6 +600,10 @@ export const DURABILITY: Record<DomainEventType, { durable: boolean; replayable:
   "diagnostic.raised": { durable: true, replayable: true },
   "checkpoint.created": { durable: true, replayable: true },
   "verification.observed": { durable: true, replayable: true },
+  "consequence.decided": { durable: true, replayable: true },
+  "context.window": { durable: false, replayable: false },
+  "context.cutoff": { durable: true, replayable: true },
+  "task.status": { durable: true, replayable: true },
 }
 
 /**
@@ -464,6 +632,10 @@ export type ApprovalHookEvent =
       approvalId: string
       call: ApprovalPromptCall
       via: "prompt" | "system"
+      /** F-APPROVAL-1: tier risiko efek samping (dihitung pemanggil dari kontrak). */
+      riskTier?: SideEffectTierDisplay
+      /** F-APPROVAL-1: pratinjau diff ringkas (sudah di-scrub secret). */
+      diffPreview?: string
     }
   | {
       kind: "settled"

@@ -14,6 +14,8 @@ export type CounterName =
   | "events.delivered"
   | "events.replayed"
   | "events.dropped.overflow"
+  | "replay.paused"
+  | "replay.resumed"
   | "ack.accepted"
   | "ack.rejected"
   | "control.executed"
@@ -35,6 +37,8 @@ const COUNTERS: readonly CounterName[] = [
   "events.delivered",
   "events.replayed",
   "events.dropped.overflow",
+  "replay.paused",
+  "replay.resumed",
   "ack.accepted",
   "ack.rejected",
   "control.executed",

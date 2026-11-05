@@ -36,6 +36,9 @@ export interface CommandContext {
   skills: Skill[]
   toolsCount: number
   providerHint?: string
+  /** P1.2: WorkMode adalah lapis intent, TERPISAH dari permission mode. */
+  workMode?: string
+  permissionMode?: string
   setModelOverride: (model: string) => void
   /** Dipanggil sebelum spawn anak stdio-inherit — composition root (tui.ts)
    * mengisinya (saat ini no-op; DECSTBM tak pernah dipakai lagi). Tanpa
@@ -212,6 +215,8 @@ function statusLines(ctx: CommandContext): string[] {
     t("st.model", { v: ctx.currentModel ?? "default" }),
     t("st.provider", { v: provider }),
     t("st.tools", { v: ctx.toolsCount }),
+    t("st.workMode", { v: ctx.workMode ?? "EXECUTE" }),
+    t("st.permissionMode", { v: ctx.permissionMode ?? "auto" }),
     t("st.context", { v: ctx.getContextTokens().toLocaleString() }),
     t("st.turn", { v: last.totalTokens.toLocaleString() }),
     t("st.input", { v: u.inputTokens.toLocaleString() }),

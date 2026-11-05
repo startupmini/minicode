@@ -4,7 +4,7 @@ import { existsSync } from "node:fs"
 import { LIMITS } from "../constants.ts"
 import { resolveDbPath, resolveLocalDbPath } from "../lib/db-path.ts"
 import { scrubSecrets } from "../policy/scrub.ts"
-import { type DomainEvent, DURABILITY } from "../presentation/events.ts"
+import { type DomainEvent, DURABILITY, EVENT_SCHEMA_VERSION } from "../presentation/events.ts"
 
 // `local=true` = SELALU `<cwd>/.minicode/sessions.db`, tanpa fallback ke
 // `~/.minicode` global. Fallback global itu benar untuk histori lintas-repo,
@@ -34,7 +34,9 @@ const migratedSessionPaths = new Set<string>()
 function daemonApprovalsMigrated(db: Database): boolean {
   try {
     const cols = db.prepare("PRAGMA table_info(daemon_approvals)").all() as { name: string }[]
-    return cols.some((c) => c.name === "invocation_id")
+    if (!cols.some((c) => c.name === "invocation_id")) return false
+    const sessCols = db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]
+    return sessCols.some((c) => c.name === "work_mode")
   } catch {
     return false
   }
@@ -180,7 +182,7 @@ function open(cwd?: string, local = false): Database {
       // gagal di statement berikutnya dengan pesan yang lebih jelas.
       withBusyRetrySync(() => {
         db.exec(`
-    CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, created_at INTEGER, cwd TEXT, system TEXT, writer_epoch INTEGER NOT NULL DEFAULT 0, default_thread_id TEXT NULL);
+    CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, created_at INTEGER, cwd TEXT, system TEXT, writer_epoch INTEGER NOT NULL DEFAULT 0, default_thread_id TEXT NULL, work_mode TEXT NULL);
     CREATE TABLE IF NOT EXISTS messages (session_id TEXT, seq INTEGER, role TEXT, content TEXT, toolCalls TEXT, toolCallId TEXT, name TEXT, reasoning TEXT, is_error INTEGER, ts INTEGER, thread_id TEXT NULL, event_id TEXT NULL, run_id TEXT NULL, migrated INTEGER NOT NULL DEFAULT 0, migrated_compacted INTEGER NOT NULL DEFAULT 0, projection_note TEXT NULL, PRIMARY KEY(session_id, seq));
     CREATE TABLE IF NOT EXISTS turns (session_id TEXT, turn_idx INTEGER, usage TEXT, ts INTEGER, PRIMARY KEY(session_id, turn_idx));
     CREATE TABLE IF NOT EXISTS presentation_events (
@@ -213,6 +215,11 @@ function open(cwd?: string, local = false): Database {
         }
         if (!cols.some((c) => c.name === "parent_run_id")) {
           db.exec("ALTER TABLE sessions ADD COLUMN parent_run_id TEXT NULL")
+        }
+        // P0.2 (Q5): persistensi WorkMode di metadata sesi lintas `--resume`.
+        // NULL = sesi legacy pra-P0.2 (resume fallback ke default EXECUTE).
+        if (!cols.some((c) => c.name === "work_mode")) {
+          db.exec("ALTER TABLE sessions ADD COLUMN work_mode TEXT NULL")
         }
         db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id)`)
       } catch (e) {
@@ -692,11 +699,47 @@ function isValidPlanStep(s: unknown): boolean {
 
 const PLAN_STEP_STATUSES = new Set(["pending", "active", "completed", "cancelled", "blocked"])
 const PLAN_STATUSES = new Set(["open", "completed", "cancelled"])
+// F-TASK-1: status task kanonik (cermin local dari events.ts — persistence tidak
+// mengimpor src/ui; literal display distabilkan di sini untuk validasi shape).
+const TASK_STATUS_DISPLAY = new Set([
+  "PENDING",
+  "IN_PROGRESS",
+  "VERIFYING",
+  "BLOCKED",
+  "FAILED",
+  "RETRYING",
+  "COMPLETED",
+  "CANCELLED",
+])
+
+/** P2.1: boundary validation untuk link anak (opsional tetapi shape-nya ketat). */
+function isValidParentLink(value: unknown): boolean {
+  if (value === undefined) return true
+  if (!value || typeof value !== "object") return false
+  const link = value as Record<string, unknown>
+  if (typeof link.parentToolCallId !== "string" || typeof link.childSessionId !== "string")
+    return false
+  for (const key of ["parentSessionId", "runId"]) {
+    if (link[key] !== undefined && typeof link[key] !== "string") return false
+  }
+  return true
+}
+
+function isValidTaskVerification(value: unknown): boolean {
+  if (value === undefined) return true
+  if (!value || typeof value !== "object") return false
+  const v = value as Record<string, unknown>
+  return (
+    (v.verdict === "passed" || v.verdict === "failed" || v.verdict === "unverified") &&
+    typeof v.checkedAt === "string"
+  )
+}
 
 function isValidEventShape(value: Record<string, unknown>): boolean {
   const isStr = (k: string): boolean => typeof value[k] === "string"
   const isNum = (k: string): boolean => typeof value[k] === "number"
   const isArr = (k: string): boolean => Array.isArray(value[k])
+  if (!isValidParentLink(value.parentLink)) return false
   switch (value.type) {
     case "plan.updated":
       return (
@@ -705,8 +748,19 @@ function isValidEventShape(value: Record<string, unknown>): boolean {
         isArr("steps") &&
         (value.steps as unknown[]).every(isValidPlanStep)
       )
-    case "tool.started":
-      return isStr("toolCallId") && isNum("stepId") && !!value.identity && !!value.argsSummary
+    case "tool.started": {
+      const identity = value.identity as { name?: unknown; qualified?: unknown } | undefined
+      const argsSummary = value.argsSummary as { target?: unknown } | undefined
+      return (
+        isStr("toolCallId") &&
+        isNum("stepId") &&
+        !!identity &&
+        typeof identity.name === "string" &&
+        typeof identity.qualified === "string" &&
+        !!argsSummary &&
+        typeof argsSummary === "object"
+      )
+    }
     case "tool.progress":
     case "tool.completed":
     case "tool.failed":
@@ -752,8 +806,21 @@ function isValidEventShape(value: Record<string, unknown>): boolean {
       return isStr("resultId") && !!value.status
     case "diagnostic.raised":
       return isStr("category") && isStr("message")
+    case "consequence.decided":
+      return isStr("verdict") && isStr("failureClass") && isStr("nextAction") && isStr("rationale")
+    case "context.cutoff":
+      return isStr("reason")
+    case "task.status":
+      return (
+        isStr("taskId") &&
+        isStr("status") &&
+        TASK_STATUS_DISPLAY.has(value.status as string) &&
+        isValidTaskVerification(value.verification)
+      )
     default:
-      return true
+      // P2.1: fail-safe. Tipe durable baru wajib punya validator eksplisit;
+      // default-true membuat payload rusak dari versi lain lolos ke reducer.
+      return false
   }
 }
 
@@ -774,6 +841,17 @@ function decodePresentationEvent(payload: string): DomainEvent | null {
     // Stub hasil truncate (`encodePresentationEvent`) hanya punya Base +
     // `truncated`. Tolak eksplisit supaya tidak pernah sampai ke `reduce`.
     if ((value as { truncated?: unknown }).truncated === true) return null
+    // P2.1: versi skema. Absen = v1 (kompatibilitas replay lama); versi masa
+    // depan ditolak fail-safe, bukan dibaca dengan cast yang berasumsi shape.
+    const version = (value as { v?: unknown }).v
+    if (
+      version !== undefined &&
+      (typeof version !== "number" ||
+        !Number.isInteger(version) ||
+        version < 1 ||
+        version > EVENT_SCHEMA_VERSION)
+    )
+      return null
     if (!isValidEventShape(value as unknown as Record<string, unknown>)) return null
     return value as DomainEvent
   } catch {
@@ -1032,7 +1110,11 @@ export async function saveSession(
   // legacy/test tanpa epoch memakai jalur tak-berpagar (tercatat di guard).
   // P2.6: runId opsional — baris BARU (bukan adopsi) dicap milik run ini dan
   // kursor run maju ke head dalam txn yang SAMA (atomik histori+kursor).
-  opts?: { expectedEpoch?: number; runId?: string },
+  opts?: {
+    expectedEpoch?: number
+    runId?: string
+    workMode?: "DISCUSS" | "PLAN" | "EXECUTE"
+  },
 ) {
   const db = open(cwd)
   const now = Date.now()
@@ -1048,8 +1130,8 @@ export async function saveSession(
     // P2.2: upsert MEMPERTAHANKAN writer_epoch. INSERT OR REPLACE menghapus
     // lalu menyisipkan ulang (epoch kembali 0!) — dilarang untuk baris sesi.
     db.prepare(
-      "INSERT INTO sessions (id, created_at, updated_at, cwd, system, writer_epoch) VALUES (?, ?, ?, ?, ?, COALESCE((SELECT writer_epoch FROM sessions WHERE id = ?), 0)) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, cwd = excluded.cwd, system = excluded.system",
-    ).run(id, createdAt, now, cwd ?? "", system ?? "", id)
+      "INSERT INTO sessions (id, created_at, updated_at, cwd, system, writer_epoch, work_mode) VALUES (?, ?, ?, ?, ?, COALESCE((SELECT writer_epoch FROM sessions WHERE id = ?), 0), ?) ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at, cwd = excluded.cwd, system = excluded.system, work_mode = COALESCE(excluded.work_mode, sessions.work_mode)",
+    ).run(id, createdAt, now, cwd ?? "", system ?? "", id, opts?.workMode ?? null)
     // P2.4: histori dimiliki default Thread — ensure atomik dalam txn yang
     // sama (sesi + thread tak pernah terpisah; tak ada sesi threadless yang
     // durable). Backfill NULL aditif; archived menolak tulis (dorman).
@@ -1368,16 +1450,69 @@ function decodeMessageRows(rows: StoredMessageRow[]): unknown[] {
   })
 }
 
+function parseStoredWorkMode(raw: unknown): "DISCUSS" | "PLAN" | "EXECUTE" | undefined {
+  if (raw === "DISCUSS" || raw === "PLAN" || raw === "EXECUTE") return raw
+  return undefined
+}
+
+export function loadSessionWorkMode(
+  id: string,
+  cwd?: string,
+): "DISCUSS" | "PLAN" | "EXECUTE" | undefined {
+  const db = open(cwd)
+  try {
+    const row = db.prepare("SELECT work_mode FROM sessions WHERE id = ?").get(id) as {
+      work_mode?: string | null
+    } | null
+    return parseStoredWorkMode(row?.work_mode)
+  } finally {
+    db.close()
+  }
+}
+
+export function saveSessionWorkMode(
+  id: string,
+  workMode: "DISCUSS" | "PLAN" | "EXECUTE",
+  cwd?: string,
+  opts?: { expectedEpoch?: number },
+): void {
+  const db = open(cwd)
+  try {
+    const txn = db.transaction(() => {
+      const existing = db.prepare("SELECT id FROM sessions WHERE id = ?").get(id) as {
+        id: string
+      } | null
+      if (!existing) return
+      if (opts?.expectedEpoch !== undefined) assertWriterEpochInTxn(db, id, opts.expectedEpoch)
+      db.prepare("UPDATE sessions SET work_mode = ?, updated_at = ? WHERE id = ?").run(
+        workMode,
+        Date.now(),
+        id,
+      )
+    })
+    txn()
+  } finally {
+    db.close()
+  }
+}
+
 export function loadSession(
   id: string,
   cwd?: string,
-): { messages: unknown[]; system?: string; cwd?: string; turnCount?: number } | null {
+): {
+  messages: unknown[]
+  system?: string
+  cwd?: string
+  turnCount?: number
+  workMode?: "DISCUSS" | "PLAN" | "EXECUTE"
+} | null {
   const db = open(cwd)
   try {
     const sess = db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as {
       system: string
       cwd: string
       default_thread_id: string | null
+      work_mode?: string | null
     } | null
     if (!sess) {
       return null
@@ -1395,7 +1530,14 @@ export function loadSession(
       .prepare("SELECT MAX(turn_idx) as m FROM turns WHERE session_id = ?")
       .get(id) as { m: number | null } | null
     const turnCount = turnRow?.m != null ? turnRow.m + 1 : 0
-    return { messages, system: sess.system, cwd: sess.cwd, turnCount }
+    const workMode = parseStoredWorkMode(sess.work_mode)
+    return {
+      messages,
+      system: sess.system,
+      cwd: sess.cwd,
+      turnCount,
+      ...(workMode ? { workMode } : {}),
+    }
   } finally {
     db.close()
   }

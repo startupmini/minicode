@@ -19,6 +19,36 @@ import { getApprovalSink } from "../tui/transcript.ts"
 export interface ApprovalRequest {
   name: string
   args?: unknown
+  /** F-APPROVAL-1: tier risiko efek samping (dari policy, sudah dikanonkan). */
+  riskTier?: string
+  /** F-APPROVAL-1: pratinjau diff ringkas (dari policy, sudah di-scrub secret). */
+  diffPreview?: string
+  /**
+   * P1.2: apakah `always` benar-benar dapat dipersist untuk call ini. Policy
+   * menolak menyimpan args > 2 KB (allowlist tidak boleh menjadi blanket-allow);
+   * UI wajib menyembunyikan opsi yang no-op.
+   */
+  canAlways?: boolean
+}
+
+// F-APPROVAL-1: label tier risiko yang terlokalisasi — view TIDAK import policy,
+// jadi cuma memetakan string tier kanonik → kunci i18n. Tier tak dikenal =
+// undefined (tidak menebak label palsu; baris risiko dihilangkan).
+function tierLabel(riskTier?: string): string | undefined {
+  switch (riskTier) {
+    case "PURE_READ":
+      return t("appr.tier.pure")
+    case "WORKSPACE_MUTATION":
+      return t("appr.tier.workspace")
+    case "LOCAL_ENV_MUTATION":
+      return t("appr.tier.localenv")
+    case "EXTERNAL_IRREVERSIBLE":
+      return t("appr.tier.external")
+    case "UNKNOWN":
+      return t("appr.tier.unknown")
+    default:
+      return undefined
+  }
 }
 
 export async function promptAsk(call: ApprovalRequest): Promise<"allow" | "deny" | "always"> {
@@ -58,11 +88,20 @@ export async function promptAsk(call: ApprovalRequest): Promise<"allow" | "deny"
   }
   actionSummary = sanitizeAnsiLine(actionSummary)
 
+  // F-APPROVAL-1: bila policy sudah memberi pratinjau diff yang representatif +
+  // dibasuh secret, tampilkan itu sebagai baris "apa yang akan terjadi" —
+  // lebih jujur dari ringkasan args. Fallback ringkasan args (di atas) tetap
+  // dipakai untuk jalur tanpa diff (mis. promptAsk dipanggil langsung/test).
+  // Diff juga input tak terpercaya (bisa memuat ANSI dari path/konten) → sanitasi.
+  const diffPreview = call.diffPreview ? sanitizeAnsiLine(call.diffPreview) : ""
+  const riskText = tierLabel(call.riskTier)
+
   const block = [
     ``,
     `${c.warning(c.bold(t("appr.title")))}`,
     `  ${c.bold(t("appr.tool"))} ${c.info(toolName)}`,
-    `  ${actionSummary}`,
+    ...(riskText ? [`  ${c.dim(t("appr.risk"))} ${c.info(riskText)}`] : []),
+    `  ${diffPreview ? `${t("appr.diff")} ${diffPreview}` : actionSummary}`,
   ]
   if (sink) {
     sink.pushBlock(block)
@@ -76,7 +115,10 @@ export async function promptAsk(call: ApprovalRequest): Promise<"allow" | "deny"
     for (const l of block) process.stdout.write(`${l}\n`)
   }
 
-  const promptText = `${c.bold(t("appr.allowOnce"))}  ${c.bold(t("appr.always"))}  ${c.bold(t("appr.deny"))}: `
+  const alwaysAvailable = call.canAlways !== false
+  const promptText = alwaysAvailable
+    ? `${c.bold(t("appr.allowOnce"))}  ${c.bold(t("appr.always"))}  ${c.bold(t("appr.deny"))}: `
+    : `${c.bold(t("appr.allowOnce"))}  ${c.bold(t("appr.deny"))}: `
   let ans: string | null
   try {
     ans = (await askLine({ prompt: promptText })) ?? ""
@@ -87,12 +129,15 @@ export async function promptAsk(call: ApprovalRequest): Promise<"allow" | "deny"
   // Terima jawaban dwibahasa (prompt tampil per locale): y/yes/ya,
   // n/no/tidak/t, a/always/selalu/s. Selain itu = deny (fail-closed).
   const a = ans.trim().toLowerCase()
-  const decisionKey =
-    a === "a" || a === "always" || a === "selalu" || a === "s"
+  const wantsAlways = a === "a" || a === "always" || a === "selalu" || a === "s"
+  const decisionKey = wantsAlways
+    ? // Opsi yang tidak ditampilkan tidak boleh diterima diam-diam; fail-closed.
+      alwaysAvailable
       ? ("appr.decAlways" as const)
-      : a === "y" || a === "yes" || a === "ya"
-        ? ("appr.decAllow" as const)
-        : ("appr.decDeny" as const)
+      : ("appr.decDeny" as const)
+    : a === "y" || a === "yes" || a === "ya"
+      ? ("appr.decAllow" as const)
+      : ("appr.decDeny" as const)
   const decision = t(decisionKey)
   // Keputusan dicatat di transkrip (jejak audit); warisan mengandalkan
   // scrollback askLine yang terhapus repaint.

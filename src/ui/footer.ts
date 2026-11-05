@@ -31,6 +31,12 @@ export interface FooterStatus {
   /** Jumlah konteks polos (mis. "14.2k"). Kosong = tak ditampilkan. */
   context?: string
   /**
+   * F-CTX-1: metrik usage (biaya + window %), sudah diformat pemanggil
+   * (mis. "$0.0601 42%"). Kosong = tak ditampilkan. Render hanya meletakkan;
+   * angka dihitung di lapisan cli (bukan di sini) agar tak ada estimasi.
+   */
+  metrics?: string
+  /**
    * Frame animasi spark: 0 = idle (spark redup statis), >0 = busy (pulse
    * putih↔abu). Chrome yang menaikkan frame saat turn berjalan; render hanya
    * memetakan frame → glyph berwarna.
@@ -136,7 +142,10 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
 
   const target = Math.max(4, cols - 1)
   const ctx = s.context ? sanitizeAnsiLine(s.context) : ""
-  const ctxW = ctx ? displayWidth(ctx) : 0
+  const metrics = s.metrics ? sanitizeAnsiLine(s.metrics) : ""
+  // F-CTX-1: metrik usage menempel di kiri blok konteks (satu blok rata kanan).
+  const rightTxt = [ctx, metrics].filter(Boolean).join("  ")
+  const rightW = displayWidth(rightTxt)
 
   // Rata kanan: konteks didorong ke kolom `target` dengan gap ideal ≥6
   // agar rapi dan tidak mepet (keluhan: terlalu rapat → 1→2→4→6).
@@ -144,10 +153,10 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
   // tangga di bawah, bukan konteks yang dilepas.
   const align = (left: string): string => {
     const lw = displayWidth(left)
-    if (!ctx) return left
-    if (lw + ctxW + 2 > target) return left
-    const gap = Math.max(6, target - lw - ctxW)
-    return `${left}${" ".repeat(gap)}${c.gray(ctx)}`
+    if (!rightTxt) return left
+    if (lw + rightW + 2 > target) return left
+    const gap = Math.max(6, target - lw - rightW)
+    return `${left}${" ".repeat(gap)}${c.gray(rightTxt)}`
   }
 
   // Tangga prioritas buang saat sempit: cwd penuh → cwd diperpendek → model

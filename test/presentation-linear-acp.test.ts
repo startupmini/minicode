@@ -387,6 +387,85 @@ describe("P6 ACP extended lifecycle + persist", () => {
   })
 })
 
+describe("Area D: task.status di renderer linear + ACP", () => {
+  test("linear (non-TTY) merender baris ledger status task + dedup event identik", () => {
+    setSessionLocale("en")
+    const { bus, detach, emitPresentation, out } = linearSetup()
+    const event: UiPresentationEvent = {
+      type: "task.status",
+      seq: 9,
+      turnId: 1,
+      taskId: "t1",
+      taskStatus: "COMPLETED",
+      parentId: "t0",
+      dependsOn: ["t0", "t2"],
+      revision: 2,
+    }
+    emitPresentation(event)
+    emitPresentation(event)
+    // Event rusak (tanpa id/status) diabaikan, bukan crash / baris kosong.
+    emitPresentation({ type: "task.status", seq: 10, turnId: 1 })
+    bus.emit("turn:completed", {})
+    detach()
+    const text = out()
+    expect(text).toContain("t1 completed")
+    expect(text).toContain("parent=t0")
+    expect(text).toContain("dependsOn=[t0,t2]")
+    expect(text).toContain("r2")
+    expect(text.match(/t1 completed/g)).toHaveLength(1)
+  })
+
+  test("ACP memproyeksikan task.status (tidak lagi ditelan)", async () => {
+    const out: string[] = []
+    let presentationHandler: ((event: UiPresentationEvent) => void) | undefined
+    const session = {
+      session: { events: { on: () => () => {} }, state: { stepCount: 0, turnCount: 1 } },
+      usage: { getSession: () => ({ inputTokens: 0, outputTokens: 0, totalTokens: 0 }) },
+      modelRef: { current: "fake::m" },
+      onPresentationEvent: (handler: (event: UiPresentationEvent) => void) => {
+        presentationHandler = handler
+        return () => {
+          presentationHandler = undefined
+        }
+      },
+      runPromptWithVerify: async () => {
+        presentationHandler?.({
+          type: "task.status",
+          seq: 5,
+          turnId: 1,
+          taskId: "t3",
+          taskStatus: "BLOCKED",
+          parentId: "t1",
+          dependsOn: ["t1", "t2"],
+          revision: 4,
+        })
+      },
+      persistCurrent: async () => {},
+      close: async () => {},
+    }
+    await runAcpSession(
+      41,
+      { prompt: "x" },
+      {
+        write: (line) => out.push(line),
+        onDone: () => {},
+        startFlight: () => {},
+        shouldExit: () => false,
+        exit: () => {},
+        createSession: (async () => session) as never,
+      },
+    )
+    const notes = out.map((line) => JSON.parse(line) as Record<string, unknown>)
+    expect(notes.find((n) => n.type === "task.status")).toMatchObject({
+      taskId: "t3",
+      status: "BLOCKED",
+      parentId: "t1",
+      dependsOn: ["t1", "t2"],
+      revision: 4,
+    })
+  })
+})
+
 describe("P6 ACP lifecycle projection", () => {
   test("tool, approval, turn lifecycle terstruktur tanpa response ganda", async () => {
     const f = acpSetup()

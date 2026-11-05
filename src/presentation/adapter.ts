@@ -23,15 +23,21 @@ import type {
   ArgsSummary,
   CancelReason,
   ChildSessionLink,
+  ConsequenceFailureClass,
+  ConsequenceNextAction,
+  ConsequenceVerdict,
   DomainEvent,
   EventBusLike,
   FailCause,
+  McpSchemaDrift,
   PlanStep,
   SemanticSeverity,
+  TaskStatusDisplay,
   ToolIdentity,
   TurnSummary,
   VerificationDisplayVerdict,
 } from "./events.ts"
+import { EVENT_SCHEMA_VERSION } from "./events.ts"
 import { type ContentStore, MAX_SECTION_CHARS } from "./store.ts"
 
 export interface AdapterDiagnostics {
@@ -125,6 +131,41 @@ export interface PresentationAdapter {
     turnId?: number
     parentLink?: ChildSessionLink
   }): void
+  /** F-CTRL-1: terbitkan `consequence.decided` dari keputusan ACE (policy). */
+  noteConsequenceDecided(info: {
+    verdict: ConsequenceVerdict
+    failureClass: ConsequenceFailureClass
+    nextAction: ConsequenceNextAction
+    rationale: string
+    newEvidenceSinceLastAttempt?: boolean
+    turnId?: number
+  }): void
+  /** F-CTX-1: meter jendela konteks live (non-durable). */
+  noteContextWindow(info: {
+    usedTokens: number
+    windowTokens: number
+    percent?: number
+    costUsd?: number
+    providerModel?: string
+    turnId?: number
+  }): void
+  /** F-CTX-2: pemotongan mi-stream yang durable (masuk transkrip). */
+  noteContextCutoff(info: {
+    reason: string
+    usedTokens?: number
+    windowTokens?: number
+    turnId?: number
+  }): void
+  /** F-TASK-1: transisi status task kanonik + DAG. */
+  noteTaskStatus(info: {
+    taskId: string
+    status: TaskStatusDisplay
+    parentId?: string
+    dependsOn?: string[]
+    revision?: number
+    verification?: { verdict: "passed" | "failed" | "unverified"; checkedAt: string }
+    turnId?: number
+  }): void
   setTurnSummaryProvider(provider: TurnSummaryProvider | undefined): void
   getDiagnostics(): AdapterDiagnostics
   dispose(): void
@@ -192,6 +233,18 @@ function mapToolFailCause(content: unknown): FailCause {
   // Sebab provider tak terdeteksi andal dari teks hasil tool — Fase 1 tidak
   // mengarangnya (documented gap; provider cause hanya dari AgentError turn).
   return "exec"
+}
+
+/**
+ * F-TOOL-1: deteksi drift skema MCP dari marker error terstruktur
+ * (`mcpSchemaDriftError` di `src/mcp/client.ts`) menjadi `McpSchemaDrift`
+ * terstruktur — BUKAN string mentah. Balanced, bukan menebak teks bebas.
+ */
+function detectSchemaDrift(content: unknown): McpSchemaDrift | undefined {
+  const text = typeof content === "string" ? content : contentText(content)
+  const m = /MCP_SCHEMA_DRIFT_DETECTED:\s*tool\s+"([^"]+)\.([^"]+)"/.exec(text)
+  if (!m) return undefined
+  return { serverId: m[1]!, toolName: m[2]! }
 }
 
 /**
@@ -344,6 +397,7 @@ export function createPresentationAdapter(
     ts: Date.now(),
     sessionId,
     turnId,
+    v: EVENT_SCHEMA_VERSION,
     executionId: `exec_${Date.now()}:${rootExecutionId || ""}:${Math.random().toString(36).slice(2, 8)}`,
     ...(rootExecutionId ? { rootExecutionId } : {}),
   })
@@ -358,6 +412,7 @@ export function createPresentationAdapter(
     ts: Date.now(),
     sessionId: childId,
     turnId,
+    v: EVENT_SCHEMA_VERSION,
     ...(parentLink ? { parentLink } : {}),
     ...(rootExecutionId ? { rootExecutionId } : {}),
     parentExecutionId: `exec_${Date.now()}:${rootExecutionId || ""}:${Math.random().toString(36).slice(2, 8)}`, // PSEUDO-UPPER: actual parent will be set by caller
@@ -556,9 +611,14 @@ export function createPresentationAdapter(
    * Pasangkan forward anak dengan induk: tepat SATU call delegate_task pending
    * → taut; nol = orphan; >1 = paralel ambigu → tanpa taut (jangan tebak).
    */
-  const resolveChildLink = (childId: string): ChildSessionLink | undefined => {
+  const resolveChildLink = (childId: string, runId?: string): ChildSessionLink | undefined => {
     const hit = childLinks.get(childId)
-    if (hit) return hit
+    if (hit) {
+      // F-AGENT-1: completed may carry the runId too; fill it if the started
+      // event predated the enrichment (defensive backfill, idempotent).
+      if (runId && !hit.runId) hit.runId = runId
+      return hit
+    }
     if (pendingDelegateCalls.length !== 1) {
       diag.orphanChild++
       return undefined
@@ -567,6 +627,7 @@ export function createPresentationAdapter(
       parentToolCallId: pendingDelegateCalls[0]!,
       childSessionId: childId,
       parentSessionId: sessionId,
+      ...(runId ? { runId } : {}),
     }
     childLinks.set(childId, link)
     return link
@@ -575,6 +636,12 @@ export function createPresentationAdapter(
   const extractForward = (e: unknown): string | undefined => {
     const f = (e as { forwardedChild?: unknown } | null)?.forwardedChild
     return typeof f === "string" && f ? f : undefined
+  }
+
+  /** F-AGENT-1: id Run anak dari event forward (dipasang delegate_task). */
+  const extractForwardRunId = (e: unknown): string | undefined => {
+    const r = (e as { childRunId?: unknown } | null)?.childRunId
+    return typeof r === "string" && r ? r : undefined
   }
 
   const cascadeOpenTools = (reason: CancelReason): void => {
@@ -629,13 +696,18 @@ export function createPresentationAdapter(
   }
 
   const unsubs: (() => void)[] = []
-  const sub = (type: string, fn: (e: any) => void): void => {
+  // [F-TYPE-1] `any` dikesampingkan. Payload tiap call-site sudah dianotasi
+  // (lihat 9 pemanggil di bawah); `sub` generik menjaga anotasi itu — E diinfer
+  // dari handler — sementara bus kernel tetap `unknown` di tepi (EventBusLike.on).
+  // Satu-satunya cast `e as E` menandai perpindahan unknown → bentuk yang
+  // dideklarasikan call-site (bukan lagi melunturkan semuanya ke `any`).
+  const sub = <E = unknown>(type: string, fn: (e: E) => void): void => {
     try {
       unsubs.push(
-        source.on(type, (e: any) => {
+        source.on(type, (e: unknown) => {
           diag.eventsIn++
           try {
-            fn(e)
+            fn(e as E)
           } catch {
             diag.errors++
           }
@@ -737,6 +809,7 @@ export function createPresentationAdapter(
       openTools.delete(id)
       toolStarts.delete(id)
       counts.failed++
+      const drift = detectSchemaDrift(r.content)
       publish({
         ...base(currentTurn),
         type: "tool.failed",
@@ -745,6 +818,7 @@ export function createPresentationAdapter(
         cause: "exec",
         message: firstLine(r.content, 200),
         expandRef: { toolCallId: id, idx: 0 },
+        ...(drift ? { schemaDrift: drift } : {}),
       })
     }
   })
@@ -762,7 +836,8 @@ export function createPresentationAdapter(
       const call = e.execution.call
       const childId = extractForward(e)
       noteDelegateStarted(call.id, call.name, childId)
-      const parentLink = childId ? resolveChildLink(childId) : undefined
+      const childRunId = extractForwardRunId(e)
+      const parentLink = childId ? resolveChildLink(childId, childRunId) : undefined
       toolStarts.set(call.id, Date.now())
       openTools.set(call.id, {
         name: call.name,
@@ -810,8 +885,10 @@ export function createPresentationAdapter(
       const result = e.execution.result
       const childId = extractForward(e)
       noteDelegateSettled(call.id, call.name, childId)
+      const childRunId = extractForwardRunId(e)
       const meta = openTools.get(call.id)
-      const parentLink = meta?.parentLink ?? (childId ? resolveChildLink(childId) : undefined)
+      const parentLink =
+        meta?.parentLink ?? (childId ? resolveChildLink(childId, childRunId) : undefined)
       const t0 = toolStarts.get(call.id)
       const durationMs = t0 !== undefined ? Math.max(0, Date.now() - t0) : 0
       if (!markTerminal(call.id)) return
@@ -928,6 +1005,7 @@ export function createPresentationAdapter(
         return
       }
       if (count) counts.failed++
+      const drift = detectSchemaDrift(result.content)
       publish(
         withLink({
           ...nextBase(),
@@ -937,6 +1015,7 @@ export function createPresentationAdapter(
           cause: mapToolFailCause(result.content),
           message: firstLine(result.content, 200),
           expandRef: { toolCallId: call.id, idx: 0 },
+          ...(drift ? { schemaDrift: drift } : {}),
         }),
       )
     },
@@ -1018,6 +1097,8 @@ export function createPresentationAdapter(
           identity,
           argsSummary,
           via: e.via,
+          ...(e.riskTier ? { riskTier: e.riskTier } : {}),
+          ...(e.diffPreview ? { diffPreview: e.diffPreview } : {}),
         }
         if (toolCallId !== undefined) out.toolCallId = toolCallId
         publish(out)
@@ -1081,6 +1162,71 @@ export function createPresentationAdapter(
         method: info.method,
         observedAt: info.observedAt,
         ...(info.parentLink ? { parentLink: info.parentLink } : {}),
+      })
+    } catch {
+      diag.errors++
+    }
+  }
+
+  const noteConsequenceDecided: PresentationAdapter["noteConsequenceDecided"] = (info) => {
+    try {
+      publish({
+        ...base(info.turnId ?? currentTurn),
+        type: "consequence.decided",
+        verdict: info.verdict,
+        failureClass: info.failureClass,
+        nextAction: info.nextAction,
+        rationale: info.rationale,
+        ...(info.newEvidenceSinceLastAttempt !== undefined
+          ? { newEvidenceSinceLastAttempt: info.newEvidenceSinceLastAttempt }
+          : {}),
+      })
+    } catch {
+      diag.errors++
+    }
+  }
+
+  const noteContextWindow: PresentationAdapter["noteContextWindow"] = (info) => {
+    try {
+      publish({
+        ...base(info.turnId ?? currentTurn),
+        type: "context.window",
+        usedTokens: info.usedTokens,
+        windowTokens: info.windowTokens,
+        ...(info.percent !== undefined ? { percent: info.percent } : {}),
+        ...(info.costUsd !== undefined ? { costUsd: info.costUsd } : {}),
+        ...(info.providerModel ? { providerModel: info.providerModel } : {}),
+      })
+    } catch {
+      diag.errors++
+    }
+  }
+
+  const noteContextCutoff: PresentationAdapter["noteContextCutoff"] = (info) => {
+    try {
+      publish({
+        ...base(info.turnId ?? currentTurn),
+        type: "context.cutoff",
+        reason: info.reason,
+        ...(info.usedTokens !== undefined ? { usedTokens: info.usedTokens } : {}),
+        ...(info.windowTokens !== undefined ? { windowTokens: info.windowTokens } : {}),
+      })
+    } catch {
+      diag.errors++
+    }
+  }
+
+  const noteTaskStatus: PresentationAdapter["noteTaskStatus"] = (info) => {
+    try {
+      publish({
+        ...base(info.turnId ?? currentTurn),
+        type: "task.status",
+        taskId: info.taskId,
+        status: info.status,
+        ...(info.parentId ? { parentId: info.parentId } : {}),
+        ...(info.dependsOn ? { dependsOn: [...info.dependsOn] } : {}),
+        ...(info.revision !== undefined ? { revision: info.revision } : {}),
+        ...(info.verification ? { verification: info.verification } : {}),
       })
     } catch {
       diag.errors++
@@ -1184,6 +1330,10 @@ export function createPresentationAdapter(
     noteTestCompleted,
     noteVerificationObserved,
     noteCheckpoint,
+    noteConsequenceDecided,
+    noteContextWindow,
+    noteContextCutoff,
+    noteTaskStatus,
     notePlanReconciled(info) {
       const owner = info.sessionId ?? sessionId
       const plan = planFromTodos({ todos: info.todos }, owner)

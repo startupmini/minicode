@@ -9,7 +9,12 @@
 import { connect, type Socket } from "node:net"
 import { type DiscoveryResult, discover, readEndpoint } from "./discovery.ts"
 import { encodeFrame, FrameDecoder } from "./framing.ts"
-import { DAEMON_PROTOCOL, type ServerMessage, type SubscribeFrom } from "./protocol.ts"
+import {
+  DAEMON_PROTOCOL,
+  type DaemonStreamPhase,
+  type ServerMessage,
+  type SubscribeFrom,
+} from "./protocol.ts"
 
 export interface ConnectTarget {
   host: string
@@ -96,6 +101,14 @@ export class DaemonClient {
   #closed = false
   welcome: Extract<ServerMessage, { t: "welcome" }> | null = null
   #pendingControl = new Map<string, (msg: ServerMessage) => void>()
+  /**
+   * [Area C · PROMPT 06] Fase stream per-sesi, dilacak dari wire.
+   *
+   * Sumber: `subscribed.phase` (fase awal) lalu `tail_marker.phase` (fase
+   * live). Tanpa pelacakan ini, konsumen tak bisa menampilkan badge
+   * replay→live tanpa harus menebak dari urutan pesan.
+   */
+  readonly #phases = new Map<string, DaemonStreamPhase>()
 
   private constructor(sock: Socket) {
     this.#sock = sock
@@ -113,6 +126,9 @@ export class DaemonClient {
       for (const raw of msgs) {
         if (!raw || typeof raw !== "object" || !("t" in raw)) continue
         const msg = raw as ServerMessage
+        // [Area C] Latch fase stream per-sesi (sumber: wire, bukan tebakan).
+        if (msg.t === "subscribed") this.#phases.set(msg.sid, msg.phase)
+        else if (msg.t === "tail_marker") this.#phases.set(msg.sid, msg.phase)
         if (msg.t === "control_result") {
           const waiter = this.#pendingControl.get(msg.idem)
           if (waiter) {
@@ -207,6 +223,36 @@ export class DaemonClient {
     this.#send({ t: "subscribe", sid, from, consumer: this.welcome?.consumer ?? "" })
   }
 
+  /**
+   * [Area C · PROMPT 06] Fase stream terakhir yang diketahui untuk satu sesi
+   * (`replay` sebelum `tail_marker`, `live` sesudahnya). `undefined` = belum
+   * subscribe / belum ada fase yang dilaporkan.
+   */
+  phaseOf(sid: string): DaemonStreamPhase | undefined {
+    return this.#phases.get(sid)
+  }
+
+  /**
+   * Mapping EKPLISIT dari kosakata wire daemon ke kosakata provenance
+   * TAMPILAN (`live`/`replay`, lowercase — `src/presentation/projection.ts`).
+   *
+   * Dua kosakata itu sengaja terpisah (lihat catatan di `protocol.ts`):
+   * provenance wire = "dari mana event dibaca"; provenance tampilan = "status
+   * rebuild terhadap watershed". Yang dipetakan di sini adalah FASE stream,
+   * yang happens punya nilai yang sama — tapi mappingnya tetap ditulis
+   * eksplisit supaya tak ada perbandingan diam-diam antar kosakata.
+   *
+   * Badge yang dirender memakai penanda provenans yang SUDAH ada di lapisan
+   * presentasi (`provenanceMark`): fase "replay" → " [replay]", fase "live" →
+   * tanpa badge (live tak pernah diberi badge).
+   */
+  streamProvenance(sid: string): "live" | "replay" | undefined {
+    const phase = this.#phases.get(sid)
+    if (phase === "replay") return "replay"
+    if (phase === "live") return "live"
+    return undefined
+  }
+
   ack(sid: string, seq: number): void {
     this.#send({ t: "ack", sid, seq, consumer: this.welcome?.consumer ?? "" })
   }
@@ -247,6 +293,10 @@ export class DaemonClient {
     if (this.#closed) return
     this.#send({ t: "goodbye" })
     this.#closed = true
+    // [Area C] Fase stream tak boleh bertahan hidup setelah socket tutup —
+    // consumer yang masih memegang klien tak boleh menampilkan "replay"
+    // untuk stream yang sudah mati.
+    this.#phases.clear()
     try {
       this.#sock.end()
     } catch {

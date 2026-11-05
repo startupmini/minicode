@@ -482,6 +482,8 @@ test("todo_write memancarkan plan.updated SETELAH tool sukses", () => {
   expect(events.find((event) => event.type === "plan.updated")).toBeUndefined()
   bus.emit("execution:completed", { execution: { call, result: { content: "ok" } } })
   expect(events.find((event) => event.type === "plan.updated")).toMatchObject({
+    // P1.6: event durable membawa versi skema (aditif; replay lama tanpa `v` sah).
+    v: 1,
     status: "open",
     steps: [
       { stepId: "1", status: "active" },
@@ -772,6 +774,98 @@ test("permission: abort di tengah prompt → cancelled + deny (late approval ter
     by: "system",
     reason: "parent-aborted",
   })
+})
+
+// ── F-APPROVAL-1: preview diff policy (dibasuh secret + representatif) + tier risiko ──
+
+test("permission: gatedPrompt emits diffPreview ter-scrub + riskTier dari kontrak (F-APPROVAL-1)", async () => {
+  setTty(true)
+  const events: ApprovalHookEvent[] = []
+  const secret = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+  const h = createPermissionHandler({
+    mode: "ask",
+    root: process.cwd(),
+    ask: async () => "allow",
+    onApprovalEvent: (e) => events.push(e),
+  })
+  await h.check(
+    {
+      id: "w1",
+      name: "write_file",
+      args: { path: "a.txt", content: `const TOKEN = "${secret}"` },
+    } as never,
+    {} as never,
+  )
+  const req = events.find((e) => e.kind === "requested")
+  expect(req?.kind).toBe("requested")
+  if (req?.kind !== "requested") throw new Error("requested tak terbit")
+  // Tier risiko berasal dari kontrak tool (WORKSPACE_MUTATION), bukan tebakan.
+  expect(req.riskTier).toBe("WORKSPACE_MUTATION")
+  // Diff representatif: memuat target path + isi baru…
+  expect(req.diffPreview).toContain("a.txt")
+  expect(req.diffPreview).toContain("const TOKEN")
+  // …dan secret SUDAH dibasuh — token mentah tak pernah bocor ke preview.
+  expect(req.diffPreview).toContain("[REDACTED]")
+  expect(req.diffPreview).not.toContain(secret)
+})
+
+test("permission: ask (view) menerima riskTier + diffPreview yang sama (F-APPROVAL-1)", async () => {
+  setTty(true)
+  const events: ApprovalHookEvent[] = []
+  const seen: { riskTier?: string; diffPreview?: string } = {}
+  const h = createPermissionHandler({
+    mode: "ask",
+    root: process.cwd(),
+    ask: async (call) => {
+      seen.riskTier = call.riskTier
+      seen.diffPreview = call.diffPreview
+      return "allow"
+    },
+    onApprovalEvent: (e) => events.push(e),
+  })
+  await h.check(
+    { id: "c1", name: "git_commit", args: { message: "feat: init" } } as never,
+    {} as never,
+  )
+  // View menerima bukti yang SAMA dengan yang di-emit (bukan ringkasan terpisah
+  // yang bisa menyimpang dari operasi yang benar dieksekusi).
+  expect(seen.riskTier).toBe("EXTERNAL_IRREVERSIBLE")
+  expect(seen.diffPreview).toBe("commit feat: init")
+})
+
+test("permission: tool tanpa kontrak → riskTier UNKNOWN + preview generic ter-scrub (F-APPROVAL-1)", async () => {
+  setTty(true)
+  const events: ApprovalHookEvent[] = []
+  const h = createPermissionHandler({
+    mode: "ask",
+    root: process.cwd(),
+    ask: async () => "allow",
+    onApprovalEvent: (e) => events.push(e),
+  })
+  // Tool non-MCP yang sama sekali tak dikenal (tanpa kontrak + tanpa titik):
+  // riskTier UNKNOWN (jelas, bukan tebakan) + preview generic ter-scrub —
+  // keputusan gate tak berubah.
+  await h.check({ id: "m1", name: "mystery_tool", args: { query: "hi" } } as never, {} as never)
+  const req = events.find((e) => e.kind === "requested")
+  expect(req?.kind === "requested" && req.riskTier).toBe("UNKNOWN")
+})
+
+test("permission: bash preview dibasuh — perintah rahasia tak bocor (F-APPROVAL-1)", async () => {
+  setTty(true)
+  const events: ApprovalHookEvent[] = []
+  const secret = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+  const h = createPermissionHandler({
+    mode: "ask",
+    root: process.cwd(),
+    ask: async () => "allow",
+    onApprovalEvent: (e) => events.push(e),
+  })
+  await h.check({ id: "b1", name: "bash", args: { cmd: `echo ${secret}` } } as never, {} as never)
+  const req = events.find((e) => e.kind === "requested")
+  const dp = req?.kind === "requested" ? req.diffPreview : undefined
+  expect(dp).toContain("$ echo")
+  expect(dp).toContain("[REDACTED]")
+  expect(dp).not.toContain(secret)
 })
 
 // ── Integrasi ask_user (setAskApprovalHook) ──

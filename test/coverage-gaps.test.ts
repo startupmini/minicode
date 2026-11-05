@@ -103,6 +103,21 @@ describe("memory tools: file lokal", () => {
     await expect(writeMemoryTool.execute({ text: "  " }, ctx)).rejects.toThrow()
     await expect(forgetMemoryTool.execute({ query: "" }, ctx)).rejects.toThrow()
   })
+
+  test("write_memory menolak supersedes_id tak dikenal dengan error actionable (§7.5)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mc-supersede-"))
+    const c = { signal: new AbortController().signal, cwd: dir } as never
+    try {
+      // id yang jelas tak ada → error actionable, bukan tombstone no-op.
+      await expect(
+        writeMemoryTool.execute({ text: "port baru 9090", supersedes_id: "tidak-ada" }, c),
+      ).rejects.toThrow(/supersedes_id not found/)
+    } finally {
+      try {
+        rmSync(dir, { recursive: true, force: true })
+      } catch {}
+    }
+  })
 })
 
 describe("web_fetch / web_search: validasi argumen", () => {

@@ -7,7 +7,7 @@
 // tak bisa dipegang. Batas + overflow eksplisit menjadikannya penolakan yang
 // terlihat (QUEUE_OVERFLOW) alih-alih memori yang meledak.
 
-import { MAX_QUEUE_PER_CONN } from "./protocol.ts"
+import { type DaemonStreamPhase, MAX_QUEUE_PER_CONN } from "./protocol.ts"
 import { readConsumerOffset, resetConsumerOffset, writeConsumerOffset } from "./store.ts"
 
 export interface PendingEvent {
@@ -72,6 +72,12 @@ export interface SubscriptionInit {
   fromSeq: number
   maxQueue?: number
   /**
+   * F-DAEMON-1: fase awal stream. `replay` bila masih ada event durable yang
+   * akan dibaca (fromSeq <= head); `live` bila tak ada replay. Server memanggil
+   * `markLive()` saat mengirim `tail_marker`. Absen = "live" (default aman).
+   */
+  phase?: DaemonStreamPhase
+  /**
    * Workspace pemilik offset. TANPA ini ack jatuh ke `process.cwd()` daemon —
    * padahal offset adalah milik SATU workspace; menulisnya ke tempat lain
    * membuat reconnect "berhasil" tapi melanjutkan dari nol.
@@ -97,6 +103,13 @@ export class Subscription {
   /** true saat antrean pernah penuh — konsumen wajib reconnect + mulai ulang. */
   overflowed = false
   closed = false
+  /**
+   * F-DAEMON-1: fase stream per-konsumen (bukan global). `replay` sampai
+   * `tail_marker` dikirim, lalu `markLive()` memutarnya ke `live`. Memakai
+   * field per-`Subscription`, bukan flag global daemon, supaya dua konsumen
+   * yang mulai pada titik berbeda tak saling menimpa fase.
+   */
+  phase: DaemonStreamPhase
   readonly queue: BoundedQueue<PendingEvent>
   readonly cwd: string | undefined
 
@@ -106,9 +119,18 @@ export class Subscription {
     this.sid = init.sid
     this.startSeq = init.fromSeq
     this.cwd = init.cwd
+    this.phase = init.phase ?? "live"
     // Cursor awal = satu sebelum seq pertama yang akan dikirim.
     this.cursor = init.fromSeq - 1
     this.queue = new BoundedQueue<PendingEvent>(init.maxQueue ?? MAX_QUEUE_PER_CONN)
+  }
+
+  /**
+   * F-DAEMON-1: tandai transisi REPLAY→LIVE. Dipanggil server tepat setelah
+   * `tail_marker`; idempoten (memanggil dua kali = tetap live).
+   */
+  markLive(): void {
+    this.phase = "live"
   }
 
   /** Antre event. false = overflow (pemanggil mengirim halte + memutus). */
@@ -217,6 +239,8 @@ export class SubscriptionRegistry {
       ...(init.offsetConsumerId !== undefined ? { offsetConsumerId: init.offsetConsumerId } : {}),
       sid: init.sid,
       fromSeq,
+      // F-DAEMON-1: fase awal — replay hanya bila ada event durable untuk dibaca.
+      phase: fromSeq <= init.head ? "replay" : "live",
       ...(init.maxQueue !== undefined ? { maxQueue: init.maxQueue } : {}),
       ...(init.cwd !== undefined ? { cwd: init.cwd } : {}),
     })

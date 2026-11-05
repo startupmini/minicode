@@ -198,3 +198,7 @@ Catatan lingkungan:
 **MIT License.** Bebas pakai, modifikasi, distribusi — lihat [LICENSE](LICENSE). Copyright (c) 2026 startupmini.
 
 Lihat `docs/ARCHITECTURE.html` + `docs/HARNESS.md` + `ROADMAP.md` (roadmap arsitektur aktif) + `PLAN.md` (ledger legacy).
+
+## Status proyek
+
+Fase aktif: **Final Integration & Repository Consolidation** — P0–P2 dan penutupan P2.3 berada pada **stage-scoped closure** (tidak ada fase produk P3). Ringkasan kesehatan repository, temuan integrasi, cleanup, dan limitasi: `docs/audit/FINAL_INTEGRATION_AND_REPOSITORY_CONSOLIDATION_REPORT_2026-11-05.md`. Aturan agent dan peta dokumen kanonik: `AGENTS.md` (keduanya di repository, tidak ikut paket npm).

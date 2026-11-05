@@ -141,6 +141,14 @@ describe("konsistensi bahasa keluaran", () => {
     expect(teks).toContain("Budget:")
   })
 
+  test("/status membedakan WorkMode (intent) vs PermissionMode (otoritas)", async () => {
+    const teks = (await run("/status")).join("\n")
+    expect(teks).toContain("WorkMode:")
+    expect(teks).toContain("(intent layer)")
+    expect(teks).toContain("Permission:")
+    expect(teks).toContain("(allow/deny authority)")
+  })
+
   test("/status Provider = efektif, lalu pin, terakhir hint wire", async () => {
     // Regresi: sesi opencode-zen selalu tampil "Provider: openai" karena
     // yang dicetak hint wire, bukan provider yang dipakai.

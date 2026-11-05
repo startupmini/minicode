@@ -33,7 +33,7 @@ import {
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { flagNameOf, valueFlags } from "../cli/args.ts"
-import { loadSession } from "../src/session/persistence.ts"
+import { loadPresentationEventsWithStats, loadSession } from "../src/session/persistence.ts"
 import { resetTaskStoreHandles, TaskStore } from "../src/task/store.ts"
 import { type FakeReply, startFakeProvider } from "./helpers/fake-provider.ts"
 
@@ -337,7 +337,70 @@ describe("cli: exec --json machine envelope", () => {
     }
     const last = records[records.length - 1]!
     expect(last).toMatchObject({ schema: "minicode.output.v1", type: "summary", ok: true })
+    // P1.4: occupancy konteks terpisah dari session spend (`usage`).
+    expect(typeof last.contextTokens).toBe("number")
+    expect(last).not.toHaveProperty("contextWindowTokens") // unset → tidak dikarang
     expect(String(r.stdout)).not.toContain(ESC)
+  })
+})
+
+// ── F-DISCUSS-4: WorkMode terlihat di one-shot/exec (bukan hanya TUI/ACP).
+// One-shot & exec non-JSON = linear manusia → SATU baris stderr [work-mode] saat
+// mode ≠ EXECUTE (EXECUTE = default, tanpa baris). exec --json = field terstruktur.
+describe("cli: WorkMode surfacing (F-DISCUSS-4)", () => {
+  test("one-shot --work-mode DISCUSS → stderr [work-mode] DISCUSS (read-only)", async () => {
+    const { run: r } = await runWithProvider(
+      [{ kind: "text", text: "ok" }],
+      ["naikkan coverage", "--work-mode", "DISCUSS"],
+    )
+    expect(r.code).toBe(0)
+    expect(r.stderr).toContain("[work-mode] DISCUSS (read-only)")
+  })
+
+  test("one-shot --work-mode PLAN → stderr [work-mode] PLAN (read-only planning)", async () => {
+    const { run: r } = await runWithProvider(
+      [{ kind: "text", text: "ok" }],
+      ["rencana", "--work-mode", "PLAN"],
+    )
+    expect(r.stderr).toContain("[work-mode] PLAN (read-only planning)")
+  })
+
+  test("one-shot tanpa --work-mode → tanpa baris [work-mode] (default EXECUTE)", async () => {
+    const { run: r } = await runWithProvider([{ kind: "text", text: "ok" }], ["biasa saja"])
+    expect(r.code).toBe(0)
+    expect(r.stderr).not.toContain("[work-mode]")
+  })
+
+  test("exec non-JSON --work-mode DISCUSS → stderr [work-mode] DISCUSS (read-only)", async () => {
+    const { run: r } = await runWithProvider(
+      [{ kind: "text", text: "ok" }],
+      ["exec", "--work-mode", "DISCUSS", "baca a.ts"],
+    )
+    expect(r.code).toBe(0)
+    expect(r.stderr).toContain("[work-mode] DISCUSS (read-only)")
+  })
+
+  test("exec --json --work-mode PLAN → summary.workMode === 'PLAN' (terstruktur)", async () => {
+    const { run: r } = await runWithProvider(
+      [{ kind: "text", text: "ok" }],
+      ["exec", "--json", "--work-mode", "PLAN", "baca a.ts"],
+    )
+    expect(r.code).toBe(0)
+    const lines = r.stdout.split("\n").filter(Boolean)
+    const summary = JSON.parse(lines[lines.length - 1]!) as Record<string, unknown>
+    expect(summary.type).toBe("summary")
+    expect(summary.workMode).toBe("PLAN")
+  })
+
+  test("exec --json default → summary.workMode === 'EXECUTE' (selalu hadir)", async () => {
+    const { run: r } = await runWithProvider(
+      [{ kind: "text", text: "ok" }],
+      ["exec", "--json", "baca a.ts"],
+    )
+    expect(r.code).toBe(0)
+    const lines = r.stdout.split("\n").filter(Boolean)
+    const summary = JSON.parse(lines[lines.length - 1]!) as Record<string, unknown>
+    expect(summary.workMode).toBe("EXECUTE")
   })
 })
 
@@ -762,6 +825,12 @@ describe("cli: --resume", () => {
         "mulai",
       ])
       expect(first.code).toBe(0)
+      // P1.6: transisi task kanonik dipancarkan pada todo_write, bukan hanya
+      // setelah verify-settle. Id/status berasal dari TaskStore nyata.
+      const loaded = loadPresentationEventsWithStats("s-task", ws.dir)
+      const taskEvents = loaded.events.filter((e) => e.type === "task.status")
+      expect(taskEvents.length).toBeGreaterThan(0)
+      expect(taskEvents.map((e) => (e as { status?: string }).status)).toContain("IN_PROGRESS")
     } finally {
       p1.close()
     }

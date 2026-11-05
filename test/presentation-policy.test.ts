@@ -152,6 +152,14 @@ describe("selectNodes", () => {
       base({ type: "result.produced", resultId: "r1", status: "completed", summary: "ok" }),
       base({ type: "diagnostic.raised", category: "c", severity: "info", message: "m" }),
       base({
+        type: "task.status",
+        taskId: "t1",
+        status: "COMPLETED",
+        parentId: "t0",
+        dependsOn: ["t0"],
+        revision: 3,
+      }),
+      base({
         type: "approval.requested",
         approvalId: "a1",
         identity: { origin: "builtin", name: "bash", qualified: "bash" },
@@ -171,6 +179,20 @@ describe("selectNodes", () => {
     expect(kinds).not.toContain("reasoning")
     expect(kinds).not.toContain("approval")
     expect(kinds).not.toContain("diagnostic")
+  })
+
+  test("notice status task tetap terlihat di normal + field terstruktur utuh", () => {
+    const state = richState()
+    const node = selectNodes(state, "normal").find((n) => n.kind === "system")
+    expect(node).toBeDefined()
+    expect(node!.data).toMatchObject({
+      systemKind: "notice",
+      taskId: "t1",
+      taskStatus: "COMPLETED",
+      parentId: "t0",
+      dependsOn: ["t0"],
+      revision: 3,
+    })
   })
 
   test("verbose/debug membuka reasoning/approval/diagnostic", () => {
@@ -304,6 +326,17 @@ describe("machineError", () => {
     expect(machineError({ kind: "budget_exceeded", message: "budget exceeded" }).category).toBe(
       "USER_ERROR",
     )
+    // [Live Hardening 0.13.x §8.1] budget_exceeded yang sebenarnya kehabisan jendela
+    // konteks diberi saran sesi-baru/model-jendela-besar, bukan --budget.
+    expect(
+      machineError({
+        kind: "budget_exceeded",
+        message: "context window exceeded after compaction",
+      }),
+    ).toMatchObject({
+      category: "USER_ERROR",
+      action: "start a new session or use a model with a larger context window",
+    })
     expect(machineError({ kind: "timeout", message: "timed out" })).toMatchObject({
       category: "AGENT_ERROR",
     })

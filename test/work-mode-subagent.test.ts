@@ -272,3 +272,43 @@ describe("interleaving dua parent — WorkMode dibaca LIVE per delegate (bukan s
     }
   })
 })
+
+describe("child explore murni baca — read_memory tidak menaikkan access_count (Invariant #5)", () => {
+  test("sesi anak dengan tool subset EXPLORE_TOOL_NAMES + PM auto memaksa read_memory non-mutating", async () => {
+    const { Database } = await import("bun:sqlite")
+    const { FakeProvider, finish, text, toolCall } = await import("#minicore/test/fakes.ts")
+    const { createMinicodeSession } = await import("../src/app/session.ts")
+    const { addMemory, tripEmbeddingCircuitForTest } = await import("../src/memory/vector.ts")
+    const { allTools } = await import("../src/tools/index.ts")
+    const dir = tmpRoot()
+    dirs.push(dir)
+    tripEmbeddingCircuitForTest("https://api.openai.com/v1", undefined, "test")
+    await addMemory("invarian child explore P0", { cwd: dir, category: "fact" })
+
+    const exploreTools = allTools.filter((t) => EXPLORE_TOOL_NAMES.includes(t.name))
+    const provider = new FakeProvider([
+      { events: [toolCall("read_memory", { query: "invarian" }, "c1"), finish("tool_calls")] },
+      { events: [text("selesai"), finish("stop")] },
+    ])
+    setSubAgentWorkMode(() => "EXECUTE")
+    const child = await createMinicodeSession({
+      provider,
+      tools: exploreTools,
+      cwd: dir,
+      permissionMode: "auto",
+      workMode: "EXECUTE",
+    })
+    await child.run("cari memori")
+
+    const db = new Database(join(dir, ".minicode", "vector.db"), { readonly: true })
+    try {
+      const row = db
+        .query("SELECT access_count FROM memory WHERE text LIKE '%invarian child explore P0%'")
+        .get() as { access_count: number } | null
+      expect(row).not.toBeNull()
+      expect(row!.access_count).toBe(0)
+    } finally {
+      db.close()
+    }
+  })
+})

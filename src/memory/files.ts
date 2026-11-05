@@ -91,12 +91,24 @@ async function withMemLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export async function appendMemory(text: string, cwd = process.cwd()): Promise<string> {
+export async function appendMemory(
+  text: string,
+  cwd = process.cwd(),
+  tags?: readonly string[],
+): Promise<string> {
   const path = resolve(cwd, LOCAL_MEM)
   return withMemLock(path, async () => {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 }).catch(() => {})
-    const clean = scrubSecrets(text.trim().slice(0, 1000))
-    const entry = `- ${new Date().toISOString().slice(0, 10)} ${clean}\n`
+    // [Area E / D5] JANGAN potong per-entri di sini. Batas 1000 karakter lama
+    // membuat MEMORY.md lebih pendek daripada chunk vektor (2000) sehingga
+    // reconcile menganggap chunk ekor "vector-only" dan menghapusnya. Batas
+    // ukuran total berkas tetap dijaga MAX_MEMORY_FILE_BYTES di bawah.
+    const clean = scrubSecrets(text.trim())
+    // [Area E / D2] Provenance (MEM-01) benar-benar ditulis ke berkas — tanpa
+    // tag ini jalur revoke-by-provenance tidak punya bukti di sisi file dan
+    // gagal-closed (atau, pada versi lama, menghapus SEMUA baris tanpa tag).
+    const meta = tags && tags.length > 0 ? ` [tags: ${JSON.stringify(tags)}]` : ""
+    const entry = `- ${new Date().toISOString().slice(0, 10)} ${clean}${meta}\n`
     // atomic append — no read+write race
     await appendFile(path, entry, "utf8").catch(async () => {
       // fallback if file not exists
@@ -122,6 +134,60 @@ export async function appendMemory(text: string, cwd = process.cwd()): Promise<s
 
 export async function readMemoryFile(cwd = process.cwd()): Promise<string> {
   return await loadMemoryFiles(cwd)
+}
+
+/**
+ * [Area E / D6] Ambil teks entri dari satu baris MEMORY.md — buang prefix
+ * tanggal dan metadata `[tags: ...]`. Dipakai supersession untuk mencocokkan
+ * baris lama tanpa bergantung pada posisi/urutan.
+ */
+export function memoryLineText(line: string): string {
+  const match = line.match(/^-\s+\d{4}-\d{2}-\d{2}(?:T\S+)?\s+(.+)$/)
+  const body = match
+    ? match[1]!
+    : line
+        .trim()
+        .replace(/^-\s+\S+\s+/, "")
+        .trim()
+  const tagMatch = body.match(/\[tags:\s*[^\]]+\]/)
+  return (tagMatch ? body.slice(0, tagMatch.index!) : body).trim()
+}
+
+/**
+ * [Area E / D6] Hapus SATU entri MEMORY.md lokal berdasarkan teksnya.
+ *
+ * `target` boleh berupa teks utuh (entri pendek) atau prefix chunk pertama
+ * (entri multi-chunk yang tersimpan utuh di berkas). `startsWith` diperlukan
+ * karena baris lama yang panjang tidak lagi dipotong saat append.
+ *
+ * Fail-closed: berkas tak ada / tak ada baris yang cocok → `false`, bukan
+ * menulis ulang berkas tanpa perubahan.
+ */
+export async function deleteMemoryEntry(target: string, cwd = process.cwd()): Promise<boolean> {
+  const needle = target.trim()
+  if (!needle) return false
+  const path = resolve(cwd, LOCAL_MEM)
+  return withMemLock(path, async () => {
+    let txt: string
+    try {
+      txt = await readFile(path, "utf8")
+    } catch {
+      return false
+    }
+    const lines = txt.split("\n")
+    let removed = 0
+    const kept = lines.filter((line) => {
+      if (!line.startsWith("- ")) return true
+      const text = memoryLineText(line)
+      const hit = text === needle || text.startsWith(needle)
+      if (hit) removed++
+      return !hit
+    })
+    if (removed === 0) return false
+    const { atomicWriteText } = await import("../lib/atomic-write.ts")
+    await atomicWriteText(path, kept.join("\n"))
+    return true
+  })
 }
 
 /**

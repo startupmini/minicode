@@ -26,11 +26,13 @@ import { join } from "node:path"
 import { FakeProvider } from "#minicore/test/fakes.ts"
 import { createMinicodeSession } from "../src/app/session.ts"
 import { createPermissionHandler, type PermissionMode } from "../src/policy/permission.ts"
+import { LOCAL_READONLY_TOOL_NAMES, NETWORK_READ_TOOL_NAMES } from "../src/policy/tool-contract.ts"
 import {
   composeWorkModePermissionHandler,
   createWorkModePermissionHandler,
   type WorkMode,
 } from "../src/policy/work-mode.ts"
+import { allTools } from "../src/tools/index.ts"
 import { readFileTool } from "../src/tools/read_file.ts"
 import type { ToolCall } from "../vendor/minicore/src/core/types.ts"
 import { type FakeTty, installFakeTty } from "./helpers/tui-harness.ts"
@@ -230,11 +232,30 @@ describe("EXECUTE — identitas keenam PermissionMode", () => {
   })
 })
 
-// ── Requirement 2: DISCUSS = ceiling read-only ──
+// ── Requirement 2: DISCUSS = ceiling read-only lokal tanpa network read (Q1=A1, Q2=A2) ──
 
-describe("DISCUSS — ceiling read-only", () => {
+describe("DISCUSS — ceiling read-only lokal (16 tool, tanpa network read)", () => {
+  const LOCAL_READ_ARGS: Record<string, Record<string, unknown>> = {
+    read_file: { path: "probe.txt" },
+    read_image: { path: "probe.png" },
+    glob: { pattern: "*.ts" },
+    grep: { pattern: "foo" },
+    list_dir: { path: "." },
+    git_status: {},
+    git_diff: {},
+    git_log: {},
+    lsp_diagnostics: { path: "probe.ts" },
+    lsp_definition: { path: "probe.ts", line: 1, character: 1 },
+    lsp_references: { path: "probe.ts", line: 1, character: 1 },
+    lsp_hover: { path: "probe.ts", line: 1, character: 1 },
+    lsp_symbols: { path: "probe.ts" },
+    read_memory: { query: "x" },
+    mcp_list: {},
+    task_output: { task_id: "t1" },
+  }
+
   for (const mode of ALL_MODES) {
-    test(`DISCUSS × ${mode}: luar ceiling deny tanpa prompt; dalam ceiling allow`, async () => {
+    test(`DISCUSS × ${mode}: tulis & network read deny tanpa prompt; 16 local read allow`, async () => {
       // TTY + ask capaz-allow: kalau ceiling bocor ke base (mis. ask/auto),
       // prompt pasti terpanggil — assertion prompts=0 membuktikannya tidak.
       tty = installFakeTty({ isTTY: true })
@@ -248,11 +269,21 @@ describe("DISCUSS — ceiling read-only", () => {
         const c = call(`disc-${mode}-${name}`, name, ARGS[name] ?? {})
         expect(await h.check(c, {} as never)).toBe("deny")
       }
+      // Q2=A2: web_fetch & web_search DITOLAK di DISCUSS pada seluruh 6 PM tanpa prompt.
+      for (const net of NETWORK_READ_TOOL_NAMES) {
+        const c = call(`disc-net-${mode}-${net}`, net, { url: "https://example.com", query: "x" })
+        expect(await h.check(c, {} as never)).toBe("deny")
+        expect(h.describeDenial(c)).toBe("work-mode DISCUSS: network read disabled")
+      }
       expect(prompts).toBe(0)
-      // Dalam ceiling: base tetap memutuskan (semua PM allow read-only).
-      for (const name of ["read_file", "web_fetch", "web_search"]) {
+      // Q1=A1: Ke-16 LOCAL_READONLY_TOOL_NAMES diizinkan tanpa prompt di seluruh 6 PM.
+      expect(LOCAL_READONLY_TOOL_NAMES).toHaveLength(16)
+      for (const name of LOCAL_READONLY_TOOL_NAMES) {
         expect(
-          await h.check(call(`disc-in-${mode}-${name}`, name, ARGS[name] ?? {}), {} as never),
+          await h.check(
+            call(`disc-in-${mode}-${name}`, name, LOCAL_READ_ARGS[name] ?? {}),
+            {} as never,
+          ),
         ).toBe("allow")
       }
       expect(prompts).toBe(0)
@@ -611,9 +642,160 @@ describe("createMinicodeSession — wiring S2.1 (handler-layer saja)", () => {
 
 // Fixture dipakai juga sebagai lookup eksplisit agar drift tabel ketahuan di
 // dua sumbu: data fixture vs perilaku produksi.
-test("fixture: sel PLAN × auto/ask ber-ceiling plan (gerbang base dipertahankan)", () => {
+test("fixture: sel PLAN × auto/ask ber-ceiling plan; DISCUSS ber-ceiling discuss-local", () => {
   expect(cellOf("PLAN", "auto").ceiling).toBe("plan")
   expect(cellOf("PLAN", "ask").ceiling).toBe("plan")
   expect(cellOf("PLAN", "allowlist").ceiling).toBe("readonly")
-  expect(cellOf("DISCUSS", "allow-all").ceiling).toBe("readonly")
+  expect(cellOf("DISCUSS", "allow-all").ceiling).toBe("discuss-local")
+  expect(cellOf("DISCUSS", "auto").networkRead).toBe("deny")
+  expect(cellOf("PLAN", "allow-all").networkRead).toBe("prompt")
+  expect(cellOf("PLAN", "auto").hooks).toBe("blocked")
+})
+
+describe("PLAN × 6 PM — network read wajib approval prompt (Q2=A2)", () => {
+  test("headless: web_fetch & web_search ditolak di seluruh 6 PM tanpa prompt", async () => {
+    const root = tmpRoot("plan-net-headless")
+    const r = await runIsolated(`
+      ${childPrelude}
+      Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true })
+      const root = ${JSON.stringify(root)}
+      const MODES = ${JSON.stringify(ALL_MODES)}
+      const NET = ${JSON.stringify([...NETWORK_READ_TOOL_NAMES])}
+      const rows = []
+      for (const mode of MODES) {
+        let asks = 0
+        const base = createPermissionHandler({ mode, root, ask: async () => { asks++; return "allow" } })
+        const h = createWorkModePermissionHandler({ workMode: "PLAN", base, root })
+        for (const name of NET) {
+          const c = { id: "pn-h-" + mode + "-" + name, name, args: { url: "https://example.com", query: "x" } }
+          const d = await h.check(c, {})
+          rows.push({ mode, name, d, asks, reason: h.describeDenial(c) })
+        }
+      }
+      emit({ rows })
+    `)
+    const rows = r.rows as Array<{
+      mode: string
+      name: string
+      d: string
+      asks: number
+      reason?: string
+    }>
+    expect(rows).toHaveLength(12)
+    for (const row of rows) {
+      expect(row.d).toBe("deny")
+      expect(row.asks).toBe(0)
+      expect(row.reason).toBe("gated approval unavailable")
+    }
+  })
+
+  test("TTY + ask: web_fetch & web_search wajib prompt di seluruh 6 PM (termasuk allow-all & readonly)", async () => {
+    const root = tmpRoot("plan-net-tty")
+    const r = await runIsolated(`
+      ${childPrelude}
+      Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true })
+      const root = ${JSON.stringify(root)}
+      const MODES = ${JSON.stringify(ALL_MODES)}
+      const NET = ${JSON.stringify([...NETWORK_READ_TOOL_NAMES])}
+      const rows = []
+      for (const mode of MODES) {
+        for (const answer of ["allow", "deny"]) {
+          let asks = 0
+          const base = createPermissionHandler({ mode, root, ask: async () => { asks++; return answer } })
+          const h = createWorkModePermissionHandler({ workMode: "PLAN", base, root })
+          for (const name of NET) {
+            const c = { id: "pn-t-" + mode + "-" + answer + "-" + name, name, args: { url: "https://example.com", query: "x" } }
+            const d = await h.check(c, {})
+            rows.push({ mode, answer, name, d, asks, reason: h.describeDenial(c) })
+          }
+        }
+      }
+      emit({ rows })
+    `)
+    const rows = r.rows as Array<{
+      mode: string
+      answer: string
+      name: string
+      d: string
+      asks: number
+      reason?: string
+    }>
+    expect(rows).toHaveLength(24)
+    for (const row of rows) {
+      if (row.answer === "allow") {
+        expect(row.d).toBe("allow")
+      } else {
+        expect(row.d).toBe("deny")
+        expect(row.reason).toBe("declined by user")
+      }
+      expect(row.asks).toBeGreaterThanOrEqual(1)
+    }
+  })
+})
+
+describe("Invariant #1 — 18 sel × seluruh tool bawaan: WorkMode tak pernah memperluas PermissionMode", () => {
+  test("untuk setiap PM dan setiap tool, allow di DISCUSS/PLAN menyiratkan allow di EXECUTE", async () => {
+    const root = tmpRoot("mono-18")
+    const toolNames = allTools.map((t) => t.name)
+    const r = await runIsolated(`
+      ${childPrelude}
+      Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true })
+      const root = ${JSON.stringify(root)}
+      const MODES = ${JSON.stringify(ALL_MODES)}
+      const TOOLS = ${JSON.stringify(toolNames)}
+      const SAMPLE_ARGS = {
+        read_file: { path: "probe.txt" },
+        read_image: { path: "probe.png" },
+        write_file: { path: "probe.txt", content: "x" },
+        edit: { path: "probe.txt", old_string: "a", new_string: "b" },
+        apply_patch: { patch: "" },
+        move_file: { from: "a.txt", to: "b.txt" },
+        delete_file: { path: "a.txt" },
+        list_dir: { path: "." },
+        glob: { pattern: "*.ts" },
+        grep: { pattern: "x" },
+        bash: { cmd: "echo ok" },
+        code_run: { lang: "node", code: "1" },
+        web_fetch: { url: "https://example.com" },
+        web_search: { query: "x" },
+        todo_write: { todos: [] },
+        delegate_task: { prompt: "x" },
+        submit_result: { result: {} },
+        write_memory: { text: "x" },
+        forget_memory: { id: "1" },
+        read_memory: { query: "x" },
+        git_commit: { message: "m" },
+        mcp_call: { server: "s", tool: "t" },
+        mcp_read: { server: "s", uri: "u" },
+        mcp_prompt: { server: "s", name: "p" },
+        ask_user: { question: "q" },
+        lsp_diagnostics: { path: "probe.ts" },
+        lsp_definition: { path: "probe.ts", line: 1, character: 1 },
+        lsp_references: { path: "probe.ts", line: 1, character: 1 },
+        lsp_hover: { path: "probe.ts", line: 1, character: 1 },
+        lsp_symbols: { path: "probe.ts" },
+        task_output: { task_id: "t1" },
+      }
+      const violations = []
+      for (const pm of MODES) {
+        for (const wm of ["DISCUSS", "PLAN"]) {
+          const baseExec = createPermissionHandler({ mode: pm, root })
+          const execH = composeWorkModePermissionHandler({ workMode: "EXECUTE", base: baseExec, root })
+          const baseWm = createPermissionHandler({ mode: pm, root })
+          const wmH = composeWorkModePermissionHandler({ workMode: wm, base: baseWm, root })
+          for (const t of TOOLS) {
+            const args = SAMPLE_ARGS[t] ?? {}
+            const dExec = await execH.check({ id: "m-ex-" + pm + "-" + t, name: t, args }, {})
+            const dWm = await wmH.check({ id: "m-wm-" + wm + "-" + pm + "-" + t, name: t, args }, {})
+            if (dWm === "allow" && dExec === "deny") {
+              violations.push(wm + " × " + pm + " × " + t)
+            }
+          }
+        }
+      }
+      emit({ violations, count: TOOLS.length })
+    `)
+    expect(r.count).toBe(allTools.length)
+    expect(r.violations).toEqual([])
+  })
 })

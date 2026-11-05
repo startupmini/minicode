@@ -10,6 +10,7 @@
 import type {
   PresentationPolicy,
   UiBus,
+  UiPresentationActivity,
   UiPresentationEvent,
   UiPresentationSnapshot,
   UiToolStatus,
@@ -17,11 +18,11 @@ import type {
 import { t } from "../i18n/locale.ts"
 import { parseFence, renderInline } from "../render/markdown.ts"
 import { type MarkdownTable, parseMarkdownBlocks } from "../render/markdown-table.ts"
-import { reasoning } from "../render/reasoning.ts"
 import { sanitizeAnsi, sanitizeAnsiLine, stripSgr } from "../render/sanitize.ts"
 import { renderMarkdownTable } from "../render/table-grid.ts"
 import { c, glyphs } from "../render/theme.ts"
 import { chunkByWidth, displayWidth, truncateToWidth } from "../render/width.ts"
+import { defaultUiState, type UiSessionState } from "../session-state.ts"
 
 /** Cap memori: baris logis tertua dibuang diam-diam (kontrak I12). */
 export const TRANSCRIPT_CAP = 5000
@@ -70,6 +71,12 @@ export interface TranscriptOptions {
   /** Kebijakan kanonik dari composition root; absen = logika inline legacy. */
   policy?: PresentationPolicy
   maxPendingChars?: number
+  /**
+   * [Area A · PROMPT 06] State UI milik SESI ini (visibility reasoning).
+   * Absen = instance default modul. Permukaan produksi wajib mengoper state
+   * sesinya supaya dua sesi dalam satu proses tak saling menimpa.
+   */
+  uiState?: UiSessionState
 }
 
 export interface TranscriptPoint {
@@ -91,6 +98,19 @@ export interface TranscriptViewport {
   rows: TranscriptRow[]
   firstIndex: number
   totalRows: number
+}
+
+/** P2.2: hasil proyeksi satu baris logis + input yang memengaruhinya. */
+interface ProjectedLineCache {
+  width: number
+  id: number
+  raw: string
+  assistant: boolean
+  source: string
+  prefix: string
+  table: MarkdownTable | null
+  fenceState: FenceState
+  rows: TranscriptRow[]
 }
 
 function formatElapsed(ms: number): string {
@@ -141,6 +161,13 @@ function offsetAtColumn(text: string, start: number, end: number, column: number
 export class Transcript {
   private lines: string[] = []
   private tables: (MarkdownTable | null)[] = []
+  /**
+   * P2.2: cache proyeksi PER BARIS logis. Transkrip append-only, jadi baris
+   * lama tidak perlu di-wrap/markdown ulang setiap frame. Cache di-key oleh
+   * semua input yang memengaruhi hasil (width, teks, source, prefix, tabel,
+   * fence state) dan dibuang saat eviction (index bergeser) atau clear.
+   */
+  private rowCache = new Map<number, ProjectedLineCache>()
   private ids: number[] = []
   private sourcePrefixes: string[] = []
   private sourceTexts = new Map<number, string>()
@@ -163,6 +190,8 @@ export class Transcript {
   private hasEvictMarker = false
   private getSnapshot: (() => UiPresentationSnapshot | null) | undefined
   private policy: PresentationPolicy | undefined
+  // [Area A · PROMPT 06] State UI sesi ini; default = instance modul.
+  private uiState: UiSessionState
   private presentationUnsub: (() => void) | null = null
   private presentedTerminals = new Set<string>()
   private presentedVerifications = new Set<string>()
@@ -172,6 +201,7 @@ export class Transcript {
   constructor(bus: UiBus, opts: TranscriptOptions = {}) {
     this.getSnapshot = opts.getSnapshot
     this.policy = opts.policy
+    this.uiState = opts.uiState ?? defaultUiState
     this.maxPendingChars = Math.max(1, opts.maxPendingChars ?? TRANSCRIPT_TEXT_MAX_CHARS)
     // Gagal subscribe = transcript mati total; biarkan throw (fail-closed).
     this.unsubs = [
@@ -224,7 +254,7 @@ export class Transcript {
     const text = (e.data as { text?: string } | null)?.text ?? ""
     if (!text) return
     const clean = sanitizeAnsi(text)
-    if (reasoning.visible) {
+    if (this.uiState.reasoningVisible) {
       // Expanded: alir redup per baris (line-buffered, ekor hidup).
       this.thinkingTail += clean
       const parts = this.thinkingTail.split("\n")
@@ -291,6 +321,7 @@ export class Transcript {
   /** Kosongkan transkrip (`/clear`): viewport kembali ke layar kosong. */
   clear(): void {
     this.lines = []
+    this.rowCache.clear()
     this.tables = []
     this.ids = []
     this.sourcePrefixes = []
@@ -446,25 +477,43 @@ export class Transcript {
     const rows: TranscriptRow[] = []
     const committedFence = this.fenceTracker()
     for (let i = 0; i < this.lines.length; i++) {
-      const table = this.tables[i]
+      const table = this.tables[i] ?? null
       const id = this.ids[i] ?? -1
       const raw = this.lines[i] ?? ""
       const assistant = this.meta[i]?.kind === "assistant"
       const fenceState = assistant ? committedFence(raw) : "outside"
-      if (table) rows.push(...this.projectTable(table, id, w))
-      else
-        rows.push(
-          ...this.projectText(
-            raw,
-            this.sourceTexts.get(id) ?? "",
-            id,
-            w,
-            true,
-            this.sourcePrefixes[i] ?? "",
-            assistant,
-            fenceState,
-          ),
-        )
+      const source = this.sourceTexts.get(id) ?? ""
+      const prefix = this.sourcePrefixes[i] ?? ""
+      const cached = this.rowCache.get(i)
+      if (
+        cached &&
+        cached.width === w &&
+        cached.id === id &&
+        cached.raw === raw &&
+        cached.assistant === assistant &&
+        cached.source === source &&
+        cached.prefix === prefix &&
+        cached.table === table &&
+        cached.fenceState === fenceState
+      ) {
+        rows.push(...cached.rows)
+        continue
+      }
+      const produced = table
+        ? this.projectTable(table, id, w)
+        : this.projectText(raw, source, id, w, true, prefix, assistant, fenceState)
+      this.rowCache.set(i, {
+        width: w,
+        id,
+        raw,
+        assistant,
+        source,
+        prefix,
+        table,
+        fenceState,
+        rows: produced,
+      })
+      rows.push(...produced)
     }
     if (this.pending) {
       const pendingFence = this.fenceTracker()
@@ -648,6 +697,29 @@ export class Transcript {
       this.turnSummary(event.summary, event)
       return
     }
+    // F-TASK-1: status task kanonik (t<n>) + DAG dirender sebagai baris ledger,
+    // bukan ditelan — event ini sebelumnya hanya hidup di machine envelope.
+    if (event.type === "task.status") {
+      this.taskStatusLedger(event)
+      return
+    }
+    // P1.6: event observability non-tool yang sebelumnya diblokir oleh guard
+    // `!event.type.startsWith("tool.")` — consequence, context, verification
+    // kini dirender sebagai baris ledger informatif.
+    if (event.type === "consequence.decided") {
+      this.consequenceLedger(event)
+      return
+    }
+    if (event.type === "context.cutoff" || event.type === "context.window") {
+      this.contextLedger(event)
+      return
+    }
+    // P1.5: observasi verifikasi bukan `tool.*`, jadi sebelumnya ditelan guard
+    // di bawah dan `verificationLedger` menjadi kode mati. Render sebelum guard.
+    if (event.type === "verification.observed") {
+      this.verificationLedger(event)
+      return
+    }
     if (!event.type.startsWith("tool.")) return
     if (event.type === "tool.started") {
       this.commit()
@@ -698,7 +770,16 @@ export class Transcript {
       this.presentedTerminals.add(event.toolCallId)
     }
     const activity = this.snapshotActivity(event.toolCallId)
-    if (activity?.parentToolCallId) return
+    // F-AGENT-1: baris per-run HANYA bila activity membawa identitas run anak
+    // (childSessionId/runId — data nyata dari ChildSessionLink). Tool anak yang
+    // cuma punya `parentToolCallId` (jalur grouping legacy) tetap SEPENUHNYA
+    // ditelan hitungan induk "n child tools" — kontrak P5 satu baris ledger
+    // induk. `parentToolCallId` = taut ke pemanggil, BUKAN identitas run; jangan
+    // disamakan dengan childSessionId/runId.
+    if (activity?.parentToolCallId) {
+      if (activity.childSessionId || activity.runId) this.childLedger(event, activity)
+      return
+    }
     this.commit()
     const snapshot = this.presentationSnapshot()
     const children = activity
@@ -732,9 +813,16 @@ export class Transcript {
         : provenance === "replay"
           ? " [replay]"
           : ""
-    const message =
-      status === "failed" && event.message
-        ? `: ${truncateToWidth(sanitizeAnsi(String(event.message)), 200, "…").split("\n")[0] ?? ""}`
+    // Denial reason wajib terlihat di TUI: linear + machine sudah menampilkannya,
+    // dan operator butuh tahu MENGAPA tool ditolak tanpa membaca log.
+    const denyReason =
+      status === "denied"
+        ? (desc?.denyReason ?? activity?.denyReason ?? (event.reason ? String(event.reason) : ""))
+        : ""
+    const message = event.message
+      ? `: ${truncateToWidth(sanitizeAnsi(String(event.message)), 200, "…").split("\n")[0] ?? ""}`
+      : denyReason
+        ? `: ${truncateToWidth(sanitizeAnsi(denyReason), 200, "…").split("\n")[0] ?? ""}`
         : ""
     const line = `  ${this.statusGlyph(status)} ${name}${targetText} ${this.statusWord(status)}${retry}${child}${verificationMark}${provenanceMark}${message}`
     this.append(this.statusPaint(status, line), {
@@ -744,6 +832,43 @@ export class Transcript {
       ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
       status,
       ...(activity?.expandRef ? { expandRef: activity.expandRef } : {}),
+    })
+  }
+
+  /** F-AGENT-1: label run pendek stabil (`run_<8>` | `sub_<8>`) — identitas anak. */
+  private runMarker(activity: UiPresentationActivity): string {
+    const id = activity.runId ?? activity.childSessionId
+    if (!id) return ""
+    const prefix = id.startsWith("run_") ? "run_" : id.startsWith("sub_") ? "sub_" : ""
+    const bare = id.slice(prefix.length).replace(/-/g, "")
+    return prefix + bare.slice(0, 8)
+  }
+
+  /**
+   * F-AGENT-1: baris terminal tool anak — identitas run + tool + status.
+   * Paralel dipisah via runMarker (data aktual runId/childSessionId), bukan
+   * hitungan "n tool anak" yang menyatukan run berbeda.
+   */
+  private childLedger(event: UiPresentationEvent, activity: UiPresentationActivity): void {
+    this.commit()
+    const marker = this.runMarker(activity)
+    const name = sanitizeAnsiLine(activity.name ?? event.name ?? "tool")
+    const target = activity.target ?? event.target
+    const targetText = target ? ` ${truncateToWidth(sanitizeAnsiLine(target), 120, "")}` : ""
+    const status = activity.status ?? event.status ?? "completed"
+    const message =
+      status === "failed" && event.message
+        ? `: ${truncateToWidth(sanitizeAnsi(String(event.message)), 200, "…").split("\n")[0] ?? ""}`
+        : ""
+    const markerText = marker ? `${marker} ` : ""
+    const line = `    ↳ ${markerText}${name}${targetText} ${this.statusWord(status)}${message}`
+    this.append(this.statusPaint(status, line), {
+      kind: "activity",
+      ...(event.seq !== undefined ? { seq: event.seq } : {}),
+      ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+      ...(event.toolCallId ? { toolCallId: event.toolCallId } : {}),
+      status,
+      ...(activity.expandRef ? { expandRef: activity.expandRef } : {}),
     })
   }
 
@@ -771,6 +896,111 @@ export class Transcript {
         status: activity?.status ?? "completed",
       },
     )
+  }
+
+  /**
+   * P1.6: baris ledger consequence.decided — menampilkan verdict ACE/policy
+   * agar operator tahu keputusan yang diambil runtime (PASS/FAIL/BLOCKED/
+   * INCONCLUSIVE). Sebelumnya diblokir oleh guard `!startsWith("tool.")`.
+   */
+  private consequenceLedger(event: UiPresentationEvent): void {
+    this.commit()
+    const verdict = String(event.verdict ?? "UNKNOWN")
+    const rule = event.failureClass ? ` class=${sanitizeAnsiLine(String(event.failureClass))}` : ""
+    const rationale = event.message ?? event.reason
+    const reason = rationale
+      ? `: ${truncateToWidth(sanitizeAnsiLine(String(rationale)), 200, "…")}`
+      : ""
+    const next = event.nextAction ? ` next=${sanitizeAnsiLine(String(event.nextAction))}` : ""
+    const glyph =
+      verdict === "PASS"
+        ? glyphs.check
+        : verdict === "FAIL" || verdict === "BLOCKED"
+          ? glyphs.cross
+          : "?"
+    const line = `  ${glyph} consequence ${sanitizeAnsiLine(verdict)}${rule}${next}${reason}`
+    const paint =
+      verdict === "FAIL" || verdict === "BLOCKED"
+        ? c.error(line)
+        : verdict === "PASS"
+          ? c.success(line)
+          : c.warning(line)
+    this.append(paint, {
+      kind: "activity",
+      ...(event.seq !== undefined ? { seq: event.seq } : {}),
+      ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+    })
+  }
+
+  /**
+   * P1.6: baris ledger context.cutoff / context.window — memberitahu operator
+   * saat konteks dipotong (compaction) atau mendekati batas jendela.
+   * Sebelumnya diblokir oleh guard `!startsWith("tool.")`.
+   */
+  private contextLedger(event: UiPresentationEvent): void {
+    this.commit()
+    if (event.type === "context.cutoff") {
+      const reason = event.reason ? `: ${sanitizeAnsiLine(String(event.reason))}` : ""
+      const line = `  ▪ context cutoff${reason}`
+      this.append(c.warning(line), {
+        kind: "system",
+        ...(event.seq !== undefined ? { seq: event.seq } : {}),
+        ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+      })
+    } else {
+      // context.window — occupancy aktual vs kapasitas (bukan session spend).
+      const used = event.usedTokens
+      const window = event.windowTokens
+      const pct = event.percent != null ? ` ${Math.round(event.percent)}%` : ""
+      const tokens =
+        used != null
+          ? ` ${used.toLocaleString()}${window ? `/${window.toLocaleString()}` : ""} tokens`
+          : ""
+      const line = `  ▪ context window${tokens}${pct}`
+      this.append(c.muted(line), {
+        kind: "system",
+        ...(event.seq !== undefined ? { seq: event.seq } : {}),
+        ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+      })
+    }
+  }
+
+  /**
+   * F-TASK-1: baris ledger status task kanonik (`t<n>`) + DAG. Id/status/parent/
+   * dependsOn dibawa apa adanya dari TaskStore; tak ada status yang diarang.
+   */
+  private taskStatusLedger(event: UiPresentationEvent): void {
+    const id = event.taskId
+    const raw = event.taskStatus
+    if (id === undefined || raw === undefined) return
+    this.commit()
+    const status = sanitizeAnsiLine(String(raw).toLowerCase())
+    const parent = event.parentId ? ` parent=${sanitizeAnsiLine(event.parentId)}` : ""
+    const deps = event.dependsOn?.length
+      ? ` dependsOn=[${event.dependsOn.map((d) => sanitizeAnsiLine(d)).join(",")}]`
+      : ""
+    const rev = event.revision !== undefined ? ` r${event.revision}` : ""
+    // P1.5: COMPLETED tanpa verification passed bukan PASS. Tandai eksplisit.
+    const verify =
+      raw === "COMPLETED"
+        ? event.taskVerification?.verdict === "passed"
+          ? " [verified]"
+          : ` [${event.taskVerification?.verdict ?? "unverified"}]`
+        : ""
+    const line = `  ▪ ${sanitizeAnsiLine(id)} ${status}${parent}${deps}${rev}${verify}`
+    const paint =
+      raw === "FAILED"
+        ? c.error(line)
+        : raw === "BLOCKED"
+          ? c.warning(line)
+          : raw === "COMPLETED"
+            ? c.success(line)
+            : c.muted(line)
+    this.append(paint, {
+      kind: "activity",
+      ...(event.seq !== undefined ? { seq: event.seq } : {}),
+      ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+    })
   }
 
   private turnSummary(summary: UiPresentationEvent["summary"], event: UiPresentationEvent): void {
@@ -816,8 +1046,7 @@ export class Transcript {
     if (!snapshot) return []
     const running = snapshot.activities.filter((a) => a.status === "running")
     const roots = running.filter((a) => !a.parentToolCallId)
-    const rootIds = new Set(roots.map((a) => a.toolCallId))
-    const row = (activity: (typeof running)[number], child: boolean): string => {
+    const row = (activity: (typeof running)[number], child: boolean, marker: string): string => {
       const name = sanitizeAnsiLine(activity.name)
       const target = activity.target
         ? ` ${truncateToWidth(sanitizeAnsiLine(activity.target), 120, "")}`
@@ -828,17 +1057,27 @@ export class Transcript {
         : elapsed >= 2000
       const elapsedText = showElapsed ? ` (${formatElapsed(elapsed)})` : ""
       const retry = activity.supersedes ? ` ${t("ts.retry")}` : ""
+      const markerText = marker ? `${marker} ` : ""
       const prefix = child ? "    ↳ " : `  ${glyphs.arrow} `
-      return c.info(`${prefix}${name}${target} … ${t("ts.statusRunning")}${elapsedText}${retry}`)
+      return c.info(
+        `${prefix}${markerText}${name}${target} … ${t("ts.statusRunning")}${elapsedText}${retry}`,
+      )
     }
-    const out = roots.map((activity) => {
-      const childCount = running.filter((a) => a.parentToolCallId === activity.toolCallId).length
-      const suffix = childCount > 0 ? ` ${t("ts.childGroup", { n: childCount })}` : ""
-      return `${row(activity, false)}${suffix}`
-    })
+    // F-AGENT-1: tiap run anak = baris sendiri, bukan hitungan "n tool anak".
+    const out: string[] = []
+    for (const activity of roots) {
+      out.push(row(activity, false, ""))
+      for (const child of running.filter((a) => a.parentToolCallId === activity.toolCallId))
+        out.push(row(child, true, this.runMarker(child)))
+    }
+    // Anak yatim (parent tak lagi running/root): tetap tampil, jangan hilang.
     for (const activity of running) {
-      if (!activity.parentToolCallId || rootIds.has(activity.parentToolCallId)) continue
-      out.push(row(activity, true))
+      if (
+        !activity.parentToolCallId ||
+        roots.some((r) => r.toolCallId === activity.parentToolCallId)
+      )
+        continue
+      out.push(row(activity, true, this.runMarker(activity)))
     }
     return out
   }
@@ -890,6 +1129,7 @@ export class Transcript {
       this.tables.splice(0, overflow)
       this.sourcePrefixes.splice(0, overflow)
       this.meta.splice(0, overflow)
+      this.rowCache.clear() // index bergeser setelah eviction
       this.evicted += overflow
       this.lines.unshift(c.muted(t("ts.evictMarker", { n: this.evicted })))
       this.tables.unshift(null)
@@ -910,6 +1150,7 @@ export class Transcript {
       this.tables.splice(1, overflow)
       this.sourcePrefixes.splice(1, overflow)
       this.meta.splice(1, overflow)
+      this.rowCache.clear() // index bergeser setelah eviction
       this.evicted += overflow
       this.lines[0] = c.muted(t("ts.evictMarker", { n: this.evicted }))
     }

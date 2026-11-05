@@ -6,6 +6,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { attachSimpleLogger } from "../src/ui/assistant/simple.ts"
 import { attachTurnStatus, type TurnStatusHandle } from "../src/ui/assistant/turn-status.ts"
+import { setSectionMinimized } from "../src/ui/render/collapse.ts"
 import { setCompactMode } from "../src/ui/render/detail.ts"
 import { setReasoningVisible } from "../src/ui/render/reasoning.ts"
 import { createFakeBus, type FakeTty, installFakeTty } from "./helpers/tui-harness.ts"
@@ -20,8 +21,8 @@ afterEach(() => {
   status = null
   setCompactMode(false)
   setReasoningVisible(false)
-  delete process.env.MINICODE_MINIMIZE_TOOL
-  delete process.env.MINICODE_MINIMIZE_ANSWER
+  setSectionMinimized("tool", false)
+  setSectionMinimized("answer", false)
   tty?.restore()
   tty = undefined
 })

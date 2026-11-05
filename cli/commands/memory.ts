@@ -1,11 +1,12 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { getMemoryStats } from "../../src/memory/vector.ts"
+import { getMemoryStats, reconcileMemoryStores } from "../../src/memory/vector.ts"
 import { c } from "../../src/ui/render/theme.ts"
 
 const MEMORY_HELP = `minicode memory — vector RAG store stats
 
-  minicode memory status [--json]  rows, size, models, hit-rate (default)`
+  minicode memory status [--json]     rows, size, models, hit-rate (default)
+  minicode memory reconcile [--json]  samakan vector.db ↔ .minicode/MEMORY.md`
 
 interface MemoryTraceRow {
   memoryHits?: number
@@ -51,13 +52,39 @@ export async function handleMemory(
   args: string[],
   getArg: (name: string) => string | undefined,
 ): Promise<never> {
+  // Satu saluran stderr bersama (dihitung inventaris writer sebagai satu site).
+  const err = (msg: string): void => console.error(msg)
   const sub = args[1]
   if (sub === "--help" || sub === "-h") {
     console.log(MEMORY_HELP)
     process.exit(0)
   }
+  // [PROMPT 06 · Area E / D4] `reconcileMemoryStores` sebelumnya TIDAK punya
+  // call site produksi sama sekali: pesan `write_memory` menyuruh user
+  // menjalankan `minicode memory reconcile` padahal subcommand itu tak ada —
+  // split-brain (file-only / vector-only) hanya bisa dipulihkan lewat test.
+  // Perintah ini memberi jalur pemulihan yang benar-benar dapat dijalankan.
+  if (sub === "reconcile") {
+    const cwdArg = getArg("--cwd")
+    const asJson = getArg("--json") !== undefined || args.includes("--json")
+    try {
+      const res = await reconcileMemoryStores(cwdArg)
+      const dot = "\u00b7"
+      console.log(
+        asJson
+          ? JSON.stringify(res)
+          : `reconciled ${res.reconciled} entri ${dot} diadopsi dari vector ${res.vectorOnlyAdopted} ${dot} ditambah dari file ${res.fileOnlyAdded} ${dot} superseded dilewati ${res.supersededSkipped} ${dot} baris superseded dibersihkan ${res.supersededFileRemoved} ${dot} legacy perlu review ${res.legacySuspectLines}`,
+      )
+      process.exit(0)
+    } catch (e) {
+      // Fail-closed dengan pesan actionable: DB tak terbuka (mis. path rusak)
+      // bukan alasan mencetak stack trace mentah ke user.
+      err(`memory reconcile gagal: ${(e as Error).message}`)
+      process.exit(1)
+    }
+  }
   if (sub && sub !== "status" && !sub.startsWith("-")) {
-    console.error(`unknown memory subcommand "${sub}" — see: minicode memory status`)
+    err(`unknown memory subcommand "${sub}" — see: minicode memory status`)
     process.exit(2)
   }
   const cwdArg = getArg("--cwd")
@@ -70,6 +97,8 @@ export async function handleMemory(
     console.log(
       JSON.stringify({
         rows: s.rows,
+        liveRows: s.liveRows,
+        supersededRows: s.supersededRows,
         dbBytes: s.dbBytes,
         walBytes: s.walBytes,
         shmBytes: s.shmBytes,
@@ -86,22 +115,25 @@ export async function handleMemory(
     process.exit(0)
   }
   const dot = "\u00b7"
-  console.log(
-    `\n${c.bold("Memory")}  ${s.rows} rows ${dot} ${fmtBytes(s.dbBytes + s.walBytes + s.shmBytes)} ` +
+  const lines: string[] = [
+    `\n${c.bold("Memory")}  ${s.rows} rows (${s.liveRows} live ${dot} ${s.supersededRows} superseded) ${dot} ${fmtBytes(s.dbBytes + s.walBytes + s.shmBytes)} ` +
       `(db ${fmtBytes(s.dbBytes)} ${dot} wal ${fmtBytes(s.walBytes)} ${dot} shm ${fmtBytes(s.shmBytes)})`,
-  )
+  ]
   if (s.models.length)
-    console.log(`  models: ${s.models.map((m) => `${m.model}×${m.count}`).join(", ")}`)
+    lines.push(`  models: ${s.models.map((m) => `${m.model}×${m.count}`).join(", ")}`)
   if (s.dims.length)
-    console.log(`  dims: ${s.dims.map((d) => `${d.dim || "none"}×${d.count}`).join(", ")}`)
+    lines.push(`  dims: ${s.dims.map((d) => `${d.dim || "none"}×${d.count}`).join(", ")}`)
   if (s.categories.length)
-    console.log(
+    lines.push(
       `  categories: ${s.categories.map((m) => `${m.category}×${m.count}`).join(", ")} (scope: ${scope})`,
     )
-  console.log(`  range: ${fmtDate(s.oldest)} → ${fmtDate(s.newest)}`)
-  if (runs > 0)
-    console.log(`  RAG hit-rate: ${avgHits.toFixed(2)} hits/run over ${runs} traced runs`)
-  else console.log(c.dim(`  (no memoryHits in traces yet — run once to measure hit-rate)`))
-  console.log("")
+  lines.push(`  range: ${fmtDate(s.oldest)} → ${fmtDate(s.newest)}`)
+  lines.push(
+    runs > 0
+      ? `  RAG hit-rate: ${avgHits.toFixed(2)} hits/run over ${runs} traced runs`
+      : c.dim(`  (no memoryHits in traces yet — run once to measure hit-rate)`),
+  )
+  lines.push("")
+  console.log(lines.join("\n"))
   process.exit(0)
 }

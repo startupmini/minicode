@@ -47,6 +47,7 @@ import {
   runVerify,
   runWithSelfHeal,
 } from "../src/policy/verifier.ts"
+import { VerifyWorkModeConflictError } from "../src/policy/work-mode.ts"
 import { createPresentationAdapter, type PresentationAdapter } from "../src/presentation/adapter.ts"
 import { type DomainEvent, DURABILITY } from "../src/presentation/events.ts"
 import { createInitialState, type PresentationState } from "../src/presentation/model.ts"
@@ -156,10 +157,12 @@ import {
   loadPresentationEvents,
   loadSession,
   loadSessionUsageSummary,
+  loadSessionWorkMode,
   loadThreadHistoryWithSeq,
   type PresentationPersistStats,
   RefusedHistoryRewriteError,
   saveSession,
+  saveSessionWorkMode,
   shrinkThreadHistory,
   ThreadArchivedError,
   terminalizeChildRuns,
@@ -183,6 +186,7 @@ import {
 } from "../src/task/production-scheduler.ts"
 import { SchedulerObservability } from "../src/task/scheduler-observability.ts"
 import { SESSION_RENEW_INTERVAL_MS } from "../src/task/session-authority.ts"
+import { setTaskTransitionSink, TaskStore } from "../src/task/store.ts"
 import { createTaskIdentityResolver, settleSessionVerifyingTasks } from "../src/task/sync.ts"
 import {
   classifyToolResult,
@@ -221,7 +225,42 @@ import type {
   UiTurnSummary,
 } from "../src/ui/contract.ts"
 import { c } from "../src/ui/render/theme.ts"
+// [Area A · PROMPT 06] State UI per-sesi. Satu instance per `createCliSession`.
+import { UiSessionState } from "../src/ui/session-state.ts"
 import { runSetupWizard } from "./wizard.ts"
+
+/**
+ * P2.3 (Session 4): kontrak runtime single-session ditegakkan di boundary RUN,
+ * bukan hanya didokumentasikan. Satu proses hanya boleh menjalankan SATU sesi
+ * agent pada satu waktu. Konstruksi dua sesi tetap boleh (mis. UI isolation
+ * test), dan daemon multi-consumer tetap berjalan karena hanya ada satu sesi.
+ * Sesi berikutnya boleh berjalan setelah sesi aktif selesai/ditutup.
+ */
+let activeAgentSessionId: string | null = null
+
+/**
+ * Seam uji deterministik untuk memegang guard tanpa menjalankan provider.
+ * Produksi TIDAK pernah memanggil ini; hanya test yang menggunakannya agar
+ * tidak bergantung pada timing abort provider nyata.
+ */
+export function __setActiveAgentSessionForTest(sessionId: string | null): void {
+  activeAgentSessionId = sessionId
+}
+
+export function __getActiveAgentSessionForTest(): string | null {
+  return activeAgentSessionId
+}
+
+export class ConcurrentAgentSessionError extends Error {
+  readonly code = "CONCURRENT_SESSION"
+  constructor(active: string, attempted: string) {
+    super(
+      `[runtime] CONCURRENT_SESSION: session ${active} is already running in this process; ` +
+        `session ${attempted} refused (one agent session per process)`,
+    )
+    this.name = "ConcurrentAgentSessionError"
+  }
+}
 
 export interface CliSessionOptions {
   cwd?: string
@@ -266,6 +305,15 @@ export interface CliSessionOptions {
    * setupToolLayer (visibilitas) dan createMinicodeSession (handler ceiling).
    */
   workMode?: "DISCUSS" | "PLAN" | "EXECUTE"
+  /**
+   * P12 S2.2 (D-2) — transparansi resume. Benar bila operator memberi sinyal
+   * WorkMode eksplisit (--work-mode / MINICODE_WORK_MODE). WorkMode TIDAK
+   * dipersist antar-sesi; saat resume tanpa sinyal eksplisit, WorkMode kembali
+   * ke EXECUTE. Bila scope ini `false` DAN identitas sesi `resumed`, composition
+   * root menulis SATU baris stderr human-facing (bukan output machine) agar
+   * transisi tidak terjadi diam-diam.
+   */
+  workModeExplicit?: boolean
   /**
    * [PHASE 6U] Opt-in autonomous Scheduler. DEFAULT OFF - `undefined` and
    * `false` behave identically, and for both the composition root is never called.
@@ -361,14 +409,32 @@ export interface CliSession {
   usage: ReturnType<typeof createUsageCollector>
   budget?: number
   budgetStrict?: boolean
+  /** F-CTX-1: jendela konteks yang dipakai footer TUI (window %) — flag --context-window. */
+  contextWindowTokens?: number
   /** Flag opt-in local config sesi ini — dipakai perintah REPL (/sync,
    * /provider, /model) agar konsisten dengan provider/tool yang aktif. */
   allowLocalConfig: boolean
   /** P2.3: jumlah hit RAG memory yang di-inject ke system prompt sesi ini. */
   memoryHits: number
   detachSimple: () => void
+  /**
+   * [Area A · PROMPT 06] State UI milik SESI ini (collapse/detail/reasoning +
+   * buffer /copy + error tertunda). SATU instance per sesi; TUI dan printer
+   * linier sesi yang sama berbagi instance ini, sedangkan sesi lain di proses
+   * yang sama punya instance sendiri — dua sesi tak saling menimpa.
+   */
+  uiState: UiSessionState
   persistCurrent: (usageData: unknown) => Promise<void>
   runPromptWithVerify: (prompt: string, signal?: AbortSignal) => Promise<void>
+  /**
+   * P2.3 daemon: identitas/status run LIVE untuk operator control. runId
+   * berasal dari jurnal Run kanonik (bukan id sintetis daemon); status
+   * RUNNING selama turn belum terminal. Absen = belum ada run di sesi ini.
+   */
+  runState: () => {
+    runId: string | null
+    status: "RUNNING" | "COMPLETED" | "FAILED" | "INTERRUPTED" | null
+  }
   /**
    * P11.1 — ringkasan hasil verify terakhir, read-only untuk summary mesin
    * (`exec --json`). Null bila verify belum pernah jalan di sesi ini.
@@ -448,7 +514,7 @@ export interface CliSession {
   adoption: AdoptionResult | null
 }
 
-export function toPresentationEvent(event: DomainEvent): UiPresentationEvent | null {
+function mapPresentationEvent(event: DomainEvent): UiPresentationEvent | null {
   switch (event.type) {
     case "user.message":
       return {
@@ -575,6 +641,7 @@ export function toPresentationEvent(event: DomainEvent): UiPresentationEvent | n
         message: event.message,
         cause: event.cause,
         ...(event.hint ? { hint: event.hint } : {}),
+        ...(event.schemaDrift ? { schemaDrift: event.schemaDrift } : {}),
         expandRef: event.expandRef,
         ...(event.parentLink ? { parentToolCallId: event.parentLink.parentToolCallId } : {}),
       }
@@ -610,6 +677,8 @@ export function toPresentationEvent(event: DomainEvent): UiPresentationEvent | n
         qualified: event.identity.qualified,
         target: event.argsSummary.target,
         via: event.via,
+        ...(event.riskTier ? { riskTier: event.riskTier } : {}),
+        ...(event.diffPreview ? { diffPreview: event.diffPreview } : {}),
       }
     case "approval.settled":
       return {
@@ -713,11 +782,76 @@ export function toPresentationEvent(event: DomainEvent): UiPresentationEvent | n
         checkpointId: event.checkpointId,
         paths: event.paths,
       }
+    case "consequence.decided":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        verdict: event.verdict,
+        failureClass: event.failureClass,
+        nextAction: event.nextAction,
+        message: event.rationale,
+        severity: event.verdict === "FAIL" || event.verdict === "BLOCKED" ? "error" : "warning",
+        ...(event.newEvidenceSinceLastAttempt !== undefined
+          ? { newEvidenceSinceLastAttempt: event.newEvidenceSinceLastAttempt }
+          : {}),
+      }
+    case "context.window":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        usedTokens: event.usedTokens,
+        windowTokens: event.windowTokens,
+        ...(event.percent !== undefined ? { percent: event.percent } : {}),
+        ...(event.costUsd !== undefined ? { costUsd: event.costUsd } : {}),
+        ...(event.providerModel ? { providerModel: event.providerModel } : {}),
+      }
+    case "context.cutoff":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        reason: event.reason,
+        message: event.reason,
+        severity: "warning",
+        ...(event.usedTokens !== undefined ? { usedTokens: event.usedTokens } : {}),
+        ...(event.windowTokens !== undefined ? { windowTokens: event.windowTokens } : {}),
+      }
+    case "task.status":
+      return {
+        type: event.type,
+        seq: event.eventSeq,
+        turnId: event.turnId,
+        taskId: event.taskId,
+        taskStatus: event.status,
+        ...(event.parentId ? { parentId: event.parentId } : {}),
+        ...(event.dependsOn ? { dependsOn: [...event.dependsOn] } : {}),
+        ...(event.revision !== undefined ? { revision: event.revision } : {}),
+        ...(event.verification ? { taskVerification: event.verification } : {}),
+      }
     default: {
       const exhaustive: never = event
       void exhaustive
       return null
     }
+  }
+}
+
+/**
+ * P1.6: proyeksi UI membawa identitas session/child-run tanpa mengulang setiap
+ * case. `sessionId` DomainEvent adalah session pemilik event (anak untuk forward),
+ * `parentLink` adalah taut ke pemanggil — tiga makna yang tidak boleh disamakan.
+ */
+export function toPresentationEvent(event: DomainEvent): UiPresentationEvent | null {
+  const mapped = mapPresentationEvent(event)
+  if (!mapped) return null
+  const link = (event as { parentLink?: { childSessionId?: string; runId?: string } }).parentLink
+  return {
+    ...mapped,
+    sessionId: event.sessionId,
+    ...(link?.childSessionId ? { childSessionId: link.childSessionId } : {}),
+    ...(link?.runId ? { runId: link.runId } : {}),
   }
 }
 
@@ -766,6 +900,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     adoptTask,
     allowLocalConfig,
     workMode = "EXECUTE",
+    workModeExplicit = false,
     maxSteps,
     contextWindowTokens,
     keepRecentTurns,
@@ -773,6 +908,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     rateLimiter,
     sandboxNotice,
   } = opts
+  // [Area A · PROMPT 06] State UI milik SESI ini. Dibuat SEKALI per sesi dan
+  // dipakai bersama oleh TUI (Transcript) + printer linier sesi yang sama.
+  // Env hanya jadi nilai awal; sesi lain di proses yang sama punya state
+  // sendiri sehingga tak saling menimpa collapse/compact/reasoning.
+  const uiState = new UiSessionState()
   const modelRef = { current: modelOverride }
   // P2.1 — SATU-SATUNYA keputusan identitas sesi. Sesudah baris ini,
   // `sessionId` adalah identitas kanonik durable; id volatil hanya `bootId`
@@ -835,6 +975,17 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     process.stderr.write(
       `${c.dim(`[adopt] ADOPTED ${adoptTask.taskId} ${adoptTask.sourceSessionId} -> ${sessionId} revision=${moved?.revision ?? "?"} status=${moved?.status ?? "?"} exec=${adoption.transfer?.execGeneration ?? "?"}${adoption.fencedFormerOwner ? " (former owner fenced)" : ""}\n`)}`,
     )
+  }
+  // P0.2 (Q5): saat `--resume` tanpa sinyal WorkMode eksplisit, pulihkan
+  // WorkMode tersimpan dari metadata sesi (NULL legacy → default EXECUTE).
+  const persistedWorkMode = identity.resumed ? loadSessionWorkMode(sessionId, cwd) : undefined
+  const effectiveWorkMode: "DISCUSS" | "PLAN" | "EXECUTE" =
+    identity.resumed && !workModeExplicit ? (persistedWorkMode ?? "EXECUTE") : workMode
+  // P0.2 (Q4): tolak startup (fail-closed) bila `--verify` digabung dengan
+  // WorkMode DISCUSS atau PLAN (baik dari flag/env maupun pulihan `--resume`).
+  if (verify && effectiveWorkMode !== "EXECUTE") {
+    releaseSessionWriter(sessionId, writerToken, cwd)
+    throw new VerifyWorkModeConflictError(effectiveWorkMode)
   }
   // P2.6 — kubur residu crash: RUNNING tanpa holder hidup (admission di atas
   // membuktikan tak ada penulis hidup) → INTERRUPTED/UNKNOWN. BUKAN
@@ -1069,9 +1220,12 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       cfg,
       prompt,
       cwd,
-      // RAG retrieval tak boleh menulis access_count di mode tanpa-mutasi.
-      // "readonly" hanya ada via runtime __setMode (union startup tak memuatnya).
-      trackAccess: (permissionMode as string) !== "readonly" && permissionMode !== "plan",
+      // RAG retrieval tak boleh menulis access_count di mode tanpa-mutasi
+      // (PermissionMode readonly/plan maupun WorkMode DISCUSS/PLAN).
+      trackAccess:
+        (permissionMode as string) !== "readonly" &&
+        permissionMode !== "plan" &&
+        effectiveWorkMode === "EXECUTE",
     }),
   )
 
@@ -1106,6 +1260,18 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // kanonik — jadi persist harus menyusun ulang: baseline ++ ekor baru.
   let contextCanonicalBaseline: readonly unknown[] | undefined
   if (identity.resumed) {
+    // P0.2 (Q5 / Invariant #6) — transparansi resume: WorkMode dipulihkan dari
+    // metadata sesi bila operator tidak memberi sinyal eksplisit (NULL legacy
+    // kembali ke default EXECUTE). Satu baris stderr human-facing memastikan
+    // otoritas sesi hasil resume selalu terlihat eksplisit.
+    const resumeNotice = !workModeExplicit
+      ? persistedWorkMode !== undefined
+        ? `[resume] WorkMode ${effectiveWorkMode} restored from session; pass --work-mode DISCUSS|PLAN|EXECUTE to override\n`
+        : `[resume] WorkMode default EXECUTE (legacy session without saved workMode); pass --work-mode DISCUSS|PLAN to change\n`
+      : persistedWorkMode !== undefined && persistedWorkMode !== effectiveWorkMode
+        ? `[resume] WorkMode ${effectiveWorkMode} (overriding saved ${persistedWorkMode})\n`
+        : ""
+    if (resumeNotice) process.stderr.write(resumeNotice)
     // P2.4: aktivasi default Thread SEBELUM seed kernel — backfill aditif
     // berpagar (konten/seq tak tersentuh). Basi di sini = gagal loud
     // (dunia bergerak pasca-admission); warn-swallow di bawah tak berlaku.
@@ -1463,6 +1629,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           }
         : {}),
       ...(a.parentToolCallId ? { parentToolCallId: a.parentToolCallId } : {}),
+      ...(a.childSessionId ? { childSessionId: a.childSessionId } : {}),
+      ...(a.runId ? { runId: a.runId } : {}),
       ...(a.supersedes ? { supersedes: a.supersedes } : {}),
       ...(a.expandRef
         ? { expandRef: { toolCallId: a.expandRef.toolCallId, idx: a.expandRef.idx } }
@@ -1509,6 +1677,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       text: entry.text,
       ...(entry.reason ? { reason: entry.reason } : {}),
       severity: entry.severity,
+      ...(entry.taskId ? { taskId: entry.taskId } : {}),
+      ...(entry.taskStatus ? { taskStatus: entry.taskStatus } : {}),
+      ...(entry.parentId ? { parentId: entry.parentId } : {}),
+      ...(entry.dependsOn?.length ? { dependsOn: [...entry.dependsOn] } : {}),
+      ...(entry.revision !== undefined ? { revision: entry.revision } : {}),
     }))
     const plans: UiPresentationPlan[] = [...shadowState.plans.values()].map((entry) => ({
       planId: entry.planId,
@@ -1602,6 +1775,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
                 inputTokens: u.inputTokens,
                 outputTokens: u.outputTokens,
                 totalTokens: u.totalTokens,
+                // P1.4: atribusi biaya compaction memakai model yang benar-benar
+                // dipakai (deepseek-chat), bukan model utama sesi.
+                model: "deepseek-chat",
               },
             })
           } catch {}
@@ -1612,6 +1788,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     sessionTools,
     evidenceMode,
     setWorkMode: setToolWorkMode,
+    setPermissionMode: setToolPermissionMode,
   } = await startupPhase("tool-layer", () =>
     setupToolLayer(
       cfg,
@@ -1625,8 +1802,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       // F-03 (P5 §C2): background bash job diikat ke sid kanonik sesi ini —
       // instance yang diikat sid tidak pernah dipasok lewat argumen tool.
       sessionId,
-      // P12 S2.2: ceiling WorkMode untuk visibilitas tool (DISCUSS/PLAN).
-      workMode,
+      // P12 S2.2 + P0.2: ceiling WorkMode efektif (termasuk hasil pulihan resume).
+      effectiveWorkMode,
+      // P2.3: pin skema MCP per-workspace.
+      cwd,
     ),
   )
 
@@ -1663,7 +1842,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // saat itu — bukan snapshot lama. Tanpa ini ToolContext.permissionMode
   // (hanya PM, bukan WorkMode) membuat delegate_task melahirkan anak tanpa
   // ceiling WorkMode.
-  setSubAgentWorkMode(() => workModeControl?.getWorkMode() ?? "EXECUTE")
+  setSubAgentWorkMode(() => workModeControl?.getWorkMode() ?? effectiveWorkMode)
 
   let permissions: PermissionControl | undefined
   let noProgressDetector: NoProgressDetector | null = null
@@ -1687,11 +1866,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       cwd,
       permissionMode,
       allowLocalConfig,
-      // P12 S2.2 — WorkMode efektif sesi ini (default EXECUTE). Sesi dengan
-      // workMode non-EXECUTE dipasangi ceiling handler di session.ts; sesi
-      // yang memakai permissionHandler terinjeksi (6S/autonomous) akan
-      // di-reject oleh fail-closed di sana (tak pernah melewati ceiling).
-      workMode,
+      // P12 S2.2 + P0.2 — WorkMode efektif sesi ini (termasuk pulihan resume).
+      workMode: effectiveWorkMode,
       // [Fase 4 / LOOP-13, LOOP-INV-16] Header operasional deterministik di
       // system prompt = buffer kedua yang selalu dikirim dan tak pernah
       // dikompaksi; tidak pernah masuk histori kanonik. Absen = perilaku lama.
@@ -1713,19 +1889,27 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         if (journalHandle !== null) await journalHandle.preflightIntent(call)
       },
       onPermissions: (ctl) => {
-        permissions = ctl
+        permissions = {
+          setMode: (m) => {
+            ctl.setMode(m)
+            setToolPermissionMode?.(m)
+          },
+          getMode: () => ctl.getMode(),
+        }
       },
       // P12 S2.2 Slice 5 — handle kontrol WorkMode runtime. Setelah sesi
       // dibangun, handle ini di-warisi ke sub-agent/hooks/footer sehingga
       // transisi operator berlaku pada sesi yang sedang berjalan.
       onWorkMode: (ctl) => {
-        // P12 S2.2 Slice 5 - SATU sumber state: handler WorkMode (ctl).
-        // Visibilitas tool DITURUNKAN dari state yang sama (bukan state
-        // terpisah) supaya ceiling dan daftar tool tak bisa berbeda.
+        // P12 S2.2 Slice 5 + P0.2 - SATU sumber state: handler WorkMode (ctl).
+        // Visibilitas tool + metadata sesi durable diturunkan dari state sama.
         workModeControl = {
           setWorkMode: (m) => {
             ctl.setWorkMode(m)
             setToolWorkMode?.(m)
+            try {
+              saveSessionWorkMode(sessionId, m, cwd, { expectedEpoch })
+            } catch {}
           },
           getWorkMode: () => ctl.getWorkMode(),
         }
@@ -1771,6 +1955,55 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     // of emitting a false payloadVersion 2.
     taskIdentityProvider: createTaskIdentityResolver(cwd ?? process.cwd()),
     ...(shadowState ? { initialSeq: shadowState.seq, initialTurn, initialTurnStartTs } : {}),
+  })
+  // P1.6: lifecycle task kanonik dipancarkan pada transisi nyata (bukan hanya
+  // setelah verify-settle). Dedupe per (id,status,revision) agar tidak
+  // double-report saat verify menyelesaikan task yang sama.
+  const taskStatusSeen = new Map<string, string>()
+  const emitTaskStatuses = (): void => {
+    try {
+      // Sinkron: one-shot/exec dapat keluar tepat setelah turn selesai; dynamic
+      // import async bisa tidak sempat berjalan sebelum proses berhenti.
+      const tasks = new TaskStore(cwd ?? process.cwd()).listTasks(sessionId)
+      for (const task of tasks) {
+        const key = `${task.status}:${task.revision}`
+        if (taskStatusSeen.get(task.id) === key) continue
+        taskStatusSeen.set(task.id, key)
+        presentation?.noteTaskStatus({
+          taskId: task.id,
+          status: task.status,
+          ...(task.parentId ? { parentId: task.parentId } : {}),
+          ...(task.dependsOn?.length ? { dependsOn: [...task.dependsOn] } : {}),
+          revision: task.revision,
+          verification: task.verification
+            ? { verdict: task.verification.verdict, checkedAt: task.verification.checkedAt }
+            : { verdict: "unverified", checkedAt: "" },
+          turnId: session.state.turnCount,
+        })
+      }
+    } catch {}
+  }
+  session.events.on("execution:completed", (e) => {
+    const call = (e as { execution?: { call?: { name?: unknown } } }).execution?.call
+    if (call?.name === "todo_write") emitTaskStatuses()
+  })
+  // P2.3: transisi AUTHORITATIVE (claim/verify/merge/cancel/fail) diproyeksikan
+  // setelah commit DB oleh sink TaskStore — bukan ditebak dari perubahan teks.
+  setTaskTransitionSink(({ task }) => {
+    const key = `${task.status}:${task.revision}`
+    if (taskStatusSeen.get(task.id) === key) return
+    taskStatusSeen.set(task.id, key)
+    presentation?.noteTaskStatus({
+      taskId: task.id,
+      status: task.status,
+      ...(task.parentId ? { parentId: task.parentId } : {}),
+      ...(task.dependsOn?.length ? { dependsOn: [...task.dependsOn] } : {}),
+      revision: task.revision,
+      verification: task.verification
+        ? { verdict: task.verification.verdict, checkedAt: task.verification.checkedAt }
+        : { verdict: "unverified", checkedAt: "" },
+      turnId: session.state.turnCount,
+    })
   })
   try {
     if (!shadowState) shadowState = createInitialState(sessionId)
@@ -2158,7 +2391,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     exitCode: number
   } | null = null
   setCompletionEvidence(() => {
-    if (!verifyActive) return { verdict: "unverified" }
+    const liveWm = workModeControl?.getWorkMode() ?? effectiveWorkMode
+    const livePm = permissions?.getMode() ?? permissionMode
+    if (!verifyActive || liveWm !== "EXECUTE" || livePm === "readonly" || livePm === "plan") {
+      return { verdict: "unverified" }
+    }
     // [Fase 3 / LOOP-INV-12, LOOP-G20] Saat `--verify` aktif tetapi verifier
     // belum menghasilkan verdict pertama, tandai `requireVerified: true` agar
     // klaim `completed` ditahan di `VERIFYING` (bukan diloloskan fail-open).
@@ -2260,6 +2497,17 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         insufficientEvidence: !effectiveOk && effectiveOutput.trim().length === 0,
         baselineContentChanged: false,
       })
+      // F-CTRL-1/F-CTRL-2: keputusan consequence terstruktur masuk observability
+      // (bukan hanya stderr). VERIFYING / Tamper Guard kini terlihat lewat
+      // `newEvidenceSinceLastAttempt` + `failureClass`/`nextAction`.
+      presentation?.noteConsequenceDecided({
+        verdict: lastAceDecision.verdict,
+        failureClass: lastAceDecision.failureClass,
+        nextAction: lastAceDecision.nextAction,
+        rationale: lastAceDecision.rationale,
+        newEvidenceSinceLastAttempt: lastAceDecision.newEvidenceSinceLastAttempt,
+        turnId: session.state.turnCount,
+      })
       if (lastAceDecision && lastAceDecision.verdict === "BLOCKED") {
         process.stderr.write(
           c.dim(
@@ -2292,6 +2540,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         summary: effectiveOutput.slice(0, 300) || verifyCommand,
         integrityOk: integrityOk && !tampered,
       })
+      // F-TASK-1/P1.6: status task kanonik (t<n>) + DAG diamati sebagai event,
+      // bukan hanya efek samping TaskStore. Dedupe yang sama dengan jalur
+      // todo_write agar satu transisi tidak dilaporkan dua kali.
+      emitTaskStatuses()
     } catch {}
     const evidence = parseVerifyTestEvidence(verifyCommand, effectiveOutput)
     if (evidence) {
@@ -2321,25 +2573,44 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // `hooksAllowed` saat session dibuat) supaya transisi WorkMode operator
   // berlaku pada sesi yang sedang berjalan.
   let hooksSkippedNotice = false
+  let verifySkippedNotice = false
   const runHooksGated = async (
     phase: "pre" | "post",
     ctx: { phase: "pre" | "post"; prompt: string; cwd?: string; result?: unknown },
     signal?: AbortSignal,
   ): Promise<void> => {
-    const liveWorkMode = workModeControl?.getWorkMode() ?? "EXECUTE"
-    if (!shouldRunHooks(permissionMode, liveWorkMode)) {
+    const liveWorkMode = workModeControl?.getWorkMode() ?? effectiveWorkMode
+    const livePm = permissions?.getMode() ?? permissionMode
+    if (!shouldRunHooks(livePm, liveWorkMode)) {
       if (!hooksSkippedNotice) {
         hooksSkippedNotice = true
-        process.stderr.write(
-          c.dim(`[hooks] skipped in ${permissionMode} mode (read-only contract)\n`),
-        )
+        const reasonLabel =
+          liveWorkMode !== "EXECUTE" ? `work-mode ${liveWorkMode}` : `${livePm} mode`
+        process.stderr.write(c.dim(`[hooks] skipped in ${reasonLabel} (read-only contract)\n`))
       }
       return
     }
     await runRunHooks(phase, ctx, signal)
   }
 
+  /**
+   * Guard single-session: tolak run kedua dari sesi lain sebelum menyentuh
+   * provider/jurnal. Release di finally — termasuk saat turn melempar.
+   */
   async function runPromptWithVerify(p: string, signal?: AbortSignal): Promise<void> {
+    if (activeAgentSessionId !== null && activeAgentSessionId !== sessionId) {
+      throw new ConcurrentAgentSessionError(activeAgentSessionId, sessionId)
+    }
+    const previous = activeAgentSessionId
+    activeAgentSessionId = sessionId
+    try {
+      return await runPromptWithVerifyImpl(p, signal)
+    } finally {
+      if (activeAgentSessionId === sessionId) activeAgentSessionId = previous ?? null
+    }
+  }
+
+  async function runPromptWithVerifyImpl(p: string, signal?: AbortSignal): Promise<void> {
     // [Fase 7 / Live #3] Root wall-clock: kalau timeout CLI sudah lewat saat
     // turn mau mulai (setup/retry memakan seluruh budget), tolak langsung
     // dengan alasan jelas — jangan biarkan turn baru melebihi deadline total.
@@ -2435,6 +2706,20 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         getTokens: () => usage.getSession().totalTokens,
         getTurns: () => session.state.turnCount,
         onOver: (st, cost) => {
+          // F-CTX-2: pemotongan mi-stream yang durable → masuk transkrip.
+          presentation?.noteContextCutoff({
+            reason:
+              st === "max-turns"
+                ? `max turns (${effectiveMaxTurns}) reached`
+                : st === "over" && cost != null && budget != null
+                  ? `budget exceeded: ${formatUsd(cost)} > ${formatUsd(budget)}`
+                  : "budget exceeded: cost unknown (model without pricing)",
+            // Occupancy konteks (bukan spend sesi) — budget cutoff adalah
+            // peristiwa berbeda; field tetap konsisten dengan meter context.
+            usedTokens: session.contextTokens,
+            windowTokens: contextWindowTokens ?? 0,
+            turnId: session.state.turnCount,
+          })
           process.stderr.write(
             st === "max-turns"
               ? `[budget] max turns (${effectiveMaxTurns}) reached - stopping turn.\n`
@@ -2465,6 +2750,26 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         getInputTokens: () => usage.get().inputTokens,
         getOutputTokens: () => usage.get().outputTokens,
         onOver: (allowed, actual) => {
+          const windowTokens = contextWindowTokens ?? 0
+          // F-CTX-1 + P1.4: meter occupancy konteks (bukan output cutoff).
+          // `actual` adalah token output yang memicu cutoff; occupancy adalah
+          // ukuran konteks saat ini dari kernel. Dua angka ini tidak boleh
+          // saling menggantikan.
+          const occupancy = session.contextTokens
+          presentation?.noteContextWindow({
+            usedTokens: occupancy,
+            windowTokens,
+            percent: windowTokens > 0 ? Math.min(100, (occupancy / windowTokens) * 100) : undefined,
+            costUsd: usage.getSession().cost,
+            turnId: session.state.turnCount,
+          })
+          // F-CTX-2: pemotongan mi-stream yang durable → masuk transkrip.
+          presentation?.noteContextCutoff({
+            reason: `context window exceeded: output ${actual} > allowance ${allowed} (window ${windowTokens})`,
+            usedTokens: actual,
+            windowTokens,
+            turnId: session.state.turnCount,
+          })
           process.stderr.write(
             `[context] stream truncated: context-window limit reached (output ${actual} > allowance ${allowed} of window ${contextWindowTokens})\n`,
           )
@@ -2516,7 +2821,19 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         turnStatus?.endTurn()
       }
     }
-    if (!verifyActive) {
+    const liveWm = workModeControl?.getWorkMode() ?? effectiveWorkMode
+    const livePm = permissions?.getMode() ?? permissionMode
+    const verifyRunnableNow =
+      verifyActive && liveWm === "EXECUTE" && livePm !== "readonly" && livePm !== "plan"
+    if (!verifyRunnableNow) {
+      // P0.2 (Q4 / Invariant #8): bila operator menurunkan WorkMode ke DISCUSS/
+      // PLAN (atau PM ke readonly/plan) di tengah sesi TUI, lewati baseline
+      // shell verify, self-heal, dan auto-memory write secara otomatis.
+      if (verifyActive && !verifySkippedNotice) {
+        verifySkippedNotice = true
+        const modeLabel = liveWm !== "EXECUTE" ? `work-mode ${liveWm}` : `${livePm} mode`
+        warnLine(`verify skipped in ${modeLabel} (read-only contract)`)
+      }
       await runOnce(p, signal)
       await runHooksGated(
         "post",
@@ -2638,6 +2955,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       quiet: enterRepl === true || machineOutput,
       getSnapshot: getPresentationSnapshot,
       onPresentationEvent,
+      // [Area A · PROMPT 06] State sesi — buffer /copy & error tertunda
+      // bertahan lintas re-attach per turn dan tak bocor ke sesi lain.
+      uiState,
       policy: {
         describeActivity,
         matchTurn: matchTurnBySummary,
@@ -2714,6 +3034,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       try {
         await saveSession(sessionId, cwd, undefined, durableHistory, usageData, {
           expectedEpoch,
+          workMode: workModeControl?.getWorkMode() ?? effectiveWorkMode,
           ...(currentRunId ? { runId: currentRunId } : {}),
         })
       } catch (e) {
@@ -3141,6 +3462,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     } catch {}
     presentation = null
     setAskApprovalHook(undefined)
+    // P2.3: lepas sink transisi task milik sesi ini (single-session).
+    setTaskTransitionSink(null)
     // background job harus mati bersama CLI — jangan tinggalkan proses yatim
     killAllBackgroundJobs()
     await mcpCloseAll()
@@ -3213,7 +3536,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     effectiveInitialModel,
     effectiveTimeoutMs,
     permissionMode,
-    workMode,
+    get workMode() {
+      return workModeControl?.getWorkMode() ?? effectiveWorkMode
+    },
     workModeControl,
     allowLocalConfig: allowLocalConfig === true,
     sessionTools,
@@ -3221,10 +3546,26 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     usage,
     budget,
     budgetStrict,
+    contextWindowTokens,
     memoryHits,
     detachSimple: () => detachUI(),
+    // [Area A · PROMPT 06] State UI sesi ini (lihat interface CliSession).
+    uiState,
     persistCurrent,
     runPromptWithVerify,
+    runState: () => ({
+      runId: currentRunId,
+      status:
+        currentRunId === null
+          ? null
+          : lastTurnOutcome === "completed"
+            ? "COMPLETED"
+            : lastTurnOutcome === "failed"
+              ? "FAILED"
+              : lastTurnOutcome === "interrupted"
+                ? "INTERRUPTED"
+                : "RUNNING",
+    }),
     // P11.1 — baca TERAKHIR-menang: self-heal menimpa lastVerify tiap
     // siklus, jadi yang terbaca di sini selalu hasil final. Salin nilai
     // (bukan referensi) agar summary mesin tak bisa memutasi state sesi.

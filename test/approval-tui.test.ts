@@ -139,4 +139,29 @@ describe("approval sink TUI", () => {
       Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true })
     }
   })
+  test("riskTier + diffPreview dirender di kartu approval (F-APPROVAL-1)", async () => {
+    tty = installFakeTty({ columns: 80, rows: 24 })
+    const blocks: string[][] = []
+    setApprovalSink({
+      pushBlock: (lines) => blocks.push(lines),
+      repaint: () => {},
+      suspend: () => {},
+      resume: () => {},
+    })
+    const p = promptAsk({
+      name: "delete_file",
+      args: { path: "secret.txt" },
+      riskTier: "EXTERNAL_IRREVERSIBLE",
+      diffPreview: "- secret.txt",
+    })
+    await tty.ready()
+    await tty.send("n")
+    await tty.send(KEY.enter)
+    expect(await p).toBe("deny")
+    const q = stripAnsi(blocks[0]!.join("\n"))
+    expect(q).toContain("Risk:")
+    expect(q).toContain("irreversible external effect")
+    expect(q).toContain("Diff:")
+    expect(q).toContain("- secret.txt")
+  })
 })

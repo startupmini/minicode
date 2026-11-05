@@ -13,7 +13,12 @@ Retensi hierarkis per kategori: `fact`/`decision`/`preference` 180 hari, `summar
 
 ```bash
 minicode memory status [--json]   # rows, bytes DB/WAL/SHM, sebaran model/dim, hit-rate RAG
+minicode memory reconcile [--json] [--cwd PATH]   # samakan vector.db <-> MEMORY.md
 ```
+
+`reconcile` mengadopsi entri vector-only ke `MEMORY.md` dan menambah baris file-only
+ke index (tidak menghapus fakta); jalankan bila `write_memory` melaporkan
+"vector index unavailable".
 
 Auto-simpan: summary persist + snippet verify sukses. Opt-out `MINICODE_AUTO_MEMORY=0`.
 

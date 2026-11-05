@@ -7,6 +7,7 @@ import { createRateLimiter } from "../../src/policy/ratelimit.ts"
 import { resolveSandbox, sandboxRefusalReason } from "../../src/policy/sandbox-policy.ts"
 import { scrubSecrets } from "../../src/policy/scrub.ts"
 import { budgetStatus } from "../../src/policy/usage.ts"
+import { VerifyWorkModeConflictError } from "../../src/policy/work-mode.ts"
 import {
   MACHINE_SCHEMA,
   machineError,
@@ -19,6 +20,7 @@ import { formatUsd } from "../../src/ui/render/money.ts"
 import { cleanUntrusted } from "../../src/ui/render/sanitize.ts"
 import {
   allowLocalConfig,
+  flagsAfterPromptBoundary,
   hasFlag,
   promptFromArgs,
   getArg as rawGetArg,
@@ -111,6 +113,15 @@ export async function handleExec(
   const workModeResolved = resolveWorkModeFlag(getArg)
   const workMode = workModeResolved.workMode
   if (workModeResolved.warning) console.error(`[warn] ${workModeResolved.warning}`)
+  // P12 S2.2 (F-DISCUSS-4): exec non-JSON = linear manusia tanpa footer TUI.
+  // Mode non-EXECUTE ditulis SATU baris stderr human-facing agar ceiling
+  // read-only/rencana terlihat, bukan diam-diam. JSON memakai field terstruktur
+  // (summary.workMode) — bukan teks dekoratif. EXECUTE = default = tanpa baris.
+  if (!jsonMode && workMode !== "EXECUTE") {
+    process.stderr.write(
+      `[work-mode] ${workMode}${workMode === "PLAN" ? " (read-only planning)" : " (read-only)"}\n`,
+    )
+  }
   const ratelimitRaw = getArg("--ratelimit")
   let rateLimiter: ReturnType<typeof createRateLimiter> | undefined
   if (ratelimitRaw) {
@@ -164,10 +175,17 @@ export async function handleExec(
     timeoutMs = undefined
   }
 
+  const ignoredFlags = flagsAfterPromptBoundary(subArgs)
+  if (ignoredFlags.length > 0) {
+    process.stderr.write(
+      `[warn] ignored flag(s) after the prompt: ${ignoredFlags.join(", ")} — put flags before the prompt (e.g. minicode exec ${ignoredFlags.join(" ")} "your prompt")\n`,
+    )
+  }
+
   const effectivePrompt = prompt.trim()
   if (!effectivePrompt) {
     console.error(
-      'usage: minicode exec "prompt" [--json] [--cwd <dir>] [--model <m>] [--sandbox docker|os]',
+      'usage: minicode exec [--json] [--work-mode DISCUSS|PLAN|EXECUTE] [--cwd <dir>] [--model <m>] [--sandbox docker|os] "prompt"',
     )
     if (jsonMode)
       writeMachineLine(
@@ -209,17 +227,28 @@ export async function handleExec(
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     // P12 S2.2 — WorkMode efektif (sudah di-resolve, default EXECUTE).
     workMode,
+    workModeExplicit: workModeResolved.explicit,
     rateLimiter,
     // Notice hanya bila user eksplisit meminta mode (daemon mati / tak dikenal).
     sandboxNotice: requestedSandbox ? sandbox.notice : undefined,
   }).catch((e) => {
-    // Setup gagal SEBELUM envelope JSON dipasang (tanpa provider): mode
-    // mesin tetap pulang membawa satu baris summary agar pipeline CI tak
-    // menerima stream kosong — stderr manusia + exit 1 tidak berubah.
-    if (e instanceof NoProviderError) {
-      if (jsonMode) writeMachineLine(JSON.stringify(machineFailure(effectivePrompt, e)))
+    // Setup gagal SEBELUM envelope JSON dipasang (tanpa provider / salah pakai):
+    // mode mesin tetap pulang membawa satu baris summary agar pipeline CI tak
+    // menerima stream kosong — stderr manusia + exit code jujur (2 usage, 1 runtime).
+    if (e instanceof NoProviderError || e instanceof VerifyWorkModeConflictError) {
+      if (jsonMode) {
+        const payload =
+          e instanceof VerifyWorkModeConflictError
+            ? machineSummary(false, {
+                prompt: effectivePrompt,
+                workMode,
+                error: { category: "USER_ERROR", message: e.message },
+              })
+            : machineFailure(effectivePrompt, e)
+        writeMachineLine(JSON.stringify(payload))
+      }
       console.error(e.message)
-      process.exit(1)
+      process.exit(e instanceof VerifyWorkModeConflictError ? 2 : 1)
     }
     // Setup lain yang gagal (config rusak, dsb.): mesin tetap pulang membawa
     // envelope terminal agar stream tidak kosong, lalu error asli dilempar
@@ -292,7 +321,17 @@ export async function handleExec(
         steps: ctx.session.state.stepCount,
         turns: ctx.session.state.turnCount,
         usage: ue,
+        // P1.4: context occupancy/capacity adalah angka berbeda dari session
+        // spend (`usage`). Machine consumer harus bisa membedakannya.
+        contextTokens: ctx.session.contextTokens,
+        ...(ctx.contextWindowTokens ? { contextWindowTokens: ctx.contextWindowTokens } : {}),
+        // Cache hanya dilaporkan bila provider benar-benar mengirimnya; absen =
+        // UNKNOWN, bukan 0 yang menyiratkan "tidak ada cache".
+        ...(ue.cacheReadTokens ? { cacheReadTokens: ue.cacheReadTokens } : {}),
+        ...(ue.cacheWriteTokens ? { cacheWriteTokens: ue.cacheWriteTokens } : {}),
         eventCount: streamed,
+        // P12 S2.2 (F-DISCUSS-4) + P0.2: surface terstruktur WorkMode efektif di summary mesin
+        workMode: ctx.workMode,
         ...(submitted ? { submitted: submitted.result } : {}),
         ...(lastVerify
           ? {

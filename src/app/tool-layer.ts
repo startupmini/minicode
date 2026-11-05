@@ -2,40 +2,60 @@ import type { Tool } from "#minicore"
 import type { MinicodeConfig } from "../config.ts"
 import { configureServers as lspConfigure } from "../lsp/client.ts"
 import { connectAll as mcpConnectAll } from "../mcp/client.ts"
+import {
+  EXPLORE_TOOL_NAMES,
+  LOCAL_READONLY_TOOL_NAMES,
+  READONLY_TOOL_NAMES,
+} from "../policy/tool-contract.ts"
 import { isMcpToolName } from "../presentation/label.ts"
 import type { CanonicalScope } from "../session/verification.ts"
 import { createBashJobTools } from "../tools/bash.ts"
 import { withEvidence } from "../tools/evidence.ts"
 import { allTools, withMcpTools } from "../tools/index.ts"
-import { EXPLORE_TOOL_NAMES } from "../tools/task.ts"
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 export type ToolScope = "full" | "explore"
 
 const PLAN_EXTRA = new Set(["todo_write", "delegate_task", "submit_result"])
+const LOCAL_READONLY_SET: ReadonlySet<string> = new Set(LOCAL_READONLY_TOOL_NAMES)
 
-// WorkMode ceiling (P12 S2.2) — lapisan intent di ATAS permission mode.
-// Invariant INV-WM1: WorkMode TIDAK PERNAH memperluas akses; ia hanya
-// mempersempit. Karena itu filter di bawah digabung sebagai IRISAN dengan
-// filter permission mode: nama tool harus lolos KEDUANYA. Kombinasi
-// workMode=PLAN × permissionMode=readonly → irisan tetap explore (tidak
-// memperluas visibilitas readonly), sesuai matriks REV-2 sel PLAN×readonly.
-//
-// Murni + diekspor untuk test (pola repo: pure/diekspor-untuk-test). Tes MCP
-// visibility memanggilnya dengan tool bertitik tanpa men-spawn server MCP.
-export function workModeVisible(name: string, workMode: "DISCUSS" | "PLAN" | "EXECUTE"): boolean {
-  if (workMode === "DISCUSS") return EXPLORE_TOOL_NAMES.includes(name)
-  if (workMode === "PLAN") return EXPLORE_TOOL_NAMES.includes(name) || PLAN_EXTRA.has(name)
-  // EXECUTE = tanpa ceiling tambahan (perilaku lama).
+// WorkMode ceiling (P12 S2.2 + P0.2) — lapisan intent di ATAS permission mode.
+// Invariant INV-WM1 & #7: WorkMode TIDAK PERNAH memperluas akses; `visible`
+// diselaraskan penuh dengan `callable` di handler:
+// - DISCUSS: tepat 16 tool PURE_READ lokal (`LOCAL_READONLY_TOOL_NAMES`);
+//   `web_fetch` & `web_search` ditolak dan disembunyikan.
+// - PLAN: 18 `READONLY_TOOL_NAMES` (16 lokal + 2 network read ber-approval) +
+//   `PLAN_EXTRA` (kecuali bila `permissionMode` adalah `readonly`/`allowlist`
+//   yang ceiling-nya `readonly`).
+// - EXECUTE: tanpa ceiling WorkMode tambahan; mengikuti `permissionMode`.
+export function workModeVisible(
+  name: string,
+  workMode: "DISCUSS" | "PLAN" | "EXECUTE",
+  permissionMode?: string,
+): boolean {
+  if (isMcpToolName(name)) {
+    return workMode === "EXECUTE" && permissionMode !== "readonly" && permissionMode !== "plan"
+  }
+  if (workMode === "DISCUSS") return LOCAL_READONLY_SET.has(name)
+  if (workMode === "PLAN") {
+    if (permissionMode === "readonly" || permissionMode === "allowlist") {
+      return READONLY_TOOL_NAMES.has(name)
+    }
+    return READONLY_TOOL_NAMES.has(name) || PLAN_EXTRA.has(name)
+  }
+  // EXECUTE = tanpa ceiling WorkMode tambahan; hormati filter PermissionMode.
+  if (permissionMode === "readonly") return READONLY_TOOL_NAMES.has(name)
+  if (permissionMode === "plan") return READONLY_TOOL_NAMES.has(name) || PLAN_EXTRA.has(name)
   return true
 }
 
 export function applyWorkModeFilter<T extends Tool>(
   tools: readonly T[],
   workMode: "DISCUSS" | "PLAN" | "EXECUTE",
+  permissionMode?: string,
 ): T[] {
-  return tools.filter((t) => workModeVisible(t.name, workMode))
+  return tools.filter((t) => workModeVisible(t.name, workMode, permissionMode))
 }
 
 export type ToolEvidenceMode = "events" | "canonical"
@@ -47,31 +67,22 @@ export async function setupToolLayer(
   verification?: CanonicalScope,
   jobOwnerSid?: string,
   workMode: "DISCUSS" | "PLAN" | "EXECUTE" = "EXECUTE",
+  cwd?: string,
 ): Promise<{
   sessionTools: Tool[]
   evidenceMode: ToolEvidenceMode
   /** P12 S2.2 Slice 5 - set WorkMode runtime (visibilitas tool). */
   setWorkMode?: (m: "DISCUSS" | "PLAN" | "EXECUTE") => void
+  /** P0.2 - set PermissionMode runtime agar visibilitas tetap sinkron saat /mode atau Shift+Tab. */
+  setPermissionMode?: (pm: string) => void
 }> {
   let sessionTools: Tool[] = allTools
-  // Harness-P2: scope explore = subset read-only (sama seperti sub-agen).
-  // MCP runtime ikut terpotong (nama bertitik tak ada di daftar) — least privilege.
+  // Harness-P2: scope explore = subset read-only sub-agen (tetap 12 EXPLORE_TOOL_NAMES).
   if (scope === "explore")
     sessionTools = allTools.filter((t) => EXPLORE_TOOL_NAMES.includes(t.name))
-  // Paket perbaikan (1): plan/readonly sembunyikan tool tulis dari daftar agar
-  // model tak buang langkah mencoba yang pasti ditolak. Daftar fixed per sesi
-  // (ikuti docs/HARNESS.md batasan sadar).
-  if (permissionMode === "readonly") {
-    sessionTools = sessionTools.filter((t) => EXPLORE_TOOL_NAMES.includes(t.name))
-  } else if (permissionMode === "plan") {
-    sessionTools = sessionTools.filter(
-      (t) => EXPLORE_TOOL_NAMES.includes(t.name) || PLAN_EXTRA.has(t.name),
-    )
-  }
   // F-03 (P5 §C2): background bash job diikat ke sid kanonik sesi ini.
-  // Rebind instance SEBELUM withEvidence agar pembungkus evidence membungkus
-  // instance yang sudah terikat sid (bukan sebaliknya). Hanya jika nama ada di
-  // daftar — filter explore/plan di atas tetap berlaku (least privilege).
+  // Rebind dilakukan pada kandidat penuh sebelum filter mode supaya transisi
+  // runtime DISCUSS/PLAN/readonly → EXECUTE tetap mendapat bash terikat sid.
   if (jobOwnerSid) {
     const owned = createBashJobTools(jobOwnerSid)
     const rebind = new Map<string, Tool>([
@@ -82,10 +93,10 @@ export async function setupToolLayer(
     sessionTools = sessionTools.map((t) => rebind.get(t.name) ?? t)
   }
   try {
-    if (cfg.mcpServers?.length) {
-      const mcpTools = await mcpConnectAll(cfg.mcpServers)
+    if (cfg.mcpServers?.length && scope !== "explore") {
+      // P2.3: bawa cwd agar pin skema tersimpan per-workspace.
+      const mcpTools = await mcpConnectAll(cfg.mcpServers, cwd)
       if (mcpTools.length) {
-        // Plan/readonly: filter MCP juga, bukan balik ke allTools (bug lama).
         sessionTools = withMcpTools(sessionTools, mcpTools)
       }
     }
@@ -95,9 +106,6 @@ export async function setupToolLayer(
   try {
     if (cfg.lspServers?.length) lspConfigure(cfg.lspServers)
   } catch (e) {
-    // Label "[lsp]" — BUKAN "[mcp]": mengarang label yang salah membuat
-    // operator mengira MCP yang rusak, padahal yang gagal adalah registrasi
-    // server LSP.
     process.stderr.write(`[lsp] init failed: ${errMsg(e)}\n`)
   }
   if (verification) {
@@ -105,40 +113,38 @@ export async function setupToolLayer(
     // registry invocation. Special paths keep their explicit instrumentation.
     sessionTools = sessionTools.map((tool) => withEvidence(tool, verification))
   }
-  // P12 S2.2 Slice 5 - visibilitas tool runtime.
-  //
-  // Kenapa mutasi IN-PLACE: kernel menyimpan registry dari array yang sama
-  // (`createToolRegistry(config.tools)` menyimpan referensi; `list()` mengembalikannya
-  // apa adanya) dan `loop.ts` memetakan `registry.list()` per request. Jadi
-  // mengganti isi array yang dipegang kernel mengubah daftar tool yang dilihat
-  // model pada turn BERIKUTNYA tanpa perlu ganti handler/session.
-  //
-  // Batas jujur: `registry.get(name)` tetap memakai map yang dibuat saat
-  // konstruksi, jadi tool yang disembunyikan masih bisa dipanggil model bila
-  // ia menebak namanya. Yang MENOLAK tetap permission ceiling handler
-  // (WorkMode non-EXECUTE) - visibilitas hanya lapisan UX/least-privilege,
-  // bukan gerbang keamanan.
-  const preWorkMode = sessionTools
-  const mcpBlockedByPermission = permissionMode === "plan" || permissionMode === "readonly"
-  const computeVisible = (wm: "DISCUSS" | "PLAN" | "EXECUTE"): Tool[] => {
-    let list = preWorkMode
-    // Tool MCP runtime ber-nama bertitik ditolak pada plan/readonly (kontrak
-    // lama) dan pada WorkMode non-EXECUTE (ceiling tak memuat tool MCP).
-    if (mcpBlockedByPermission || wm !== "EXECUTE") {
-      list = list.filter((t) => !isMcpToolName(t.name) || EXPLORE_TOOL_NAMES.includes(t.name))
+  // P12 S2.2 + P0.2 - visibilitas tool runtime (sinkron terhadap WorkMode DAN
+  // PermissionMode). `parallelExecutor` meresolusi `registry.get(name)` dari
+  // `list()` yang sama sehingga `callable === visible` di kedua arah transisi.
+  const candidates = sessionTools
+  let currentWm: "DISCUSS" | "PLAN" | "EXECUTE" = workMode
+  let currentPm: string | undefined = permissionMode
+  const computeVisible = (wm: "DISCUSS" | "PLAN" | "EXECUTE", pm?: string): Tool[] => {
+    if (scope === "explore") {
+      // Scope explore sudah dibatasi ke EXPLORE_TOOL_NAMES; tetap terapkan irisan WorkMode.
+      return applyWorkModeFilter(candidates, wm, pm)
     }
-    return applyWorkModeFilter(list, wm)
+    return applyWorkModeFilter(candidates, wm, pm)
   }
   // Array LIVE: identitas objek ini yang dipegang kernel.
-  const visible: Tool[] = computeVisible(workMode)
-  const setWorkMode = (wm: "DISCUSS" | "PLAN" | "EXECUTE"): void => {
-    const next = computeVisible(wm)
+  const visible: Tool[] = computeVisible(currentWm, currentPm)
+  const syncVisible = (): void => {
+    const next = computeVisible(currentWm, currentPm)
     visible.length = 0
     visible.push(...next)
+  }
+  const setWorkMode = (wm: "DISCUSS" | "PLAN" | "EXECUTE"): void => {
+    currentWm = wm
+    syncVisible()
+  }
+  const setPermissionMode = (pm: string): void => {
+    currentPm = pm
+    syncVisible()
   }
   return {
     sessionTools: visible,
     evidenceMode: verification ? "canonical" : "events",
     setWorkMode,
+    setPermissionMode,
   }
 }

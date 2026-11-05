@@ -24,24 +24,16 @@ import {
 } from "../src/presentation/projection.ts"
 import { redoLastCheckpoint, undoLastCheckpoint } from "../src/session/checkpoint.ts"
 import { renderSkill } from "../src/skills/loader.ts"
-import {
-  getLastTurnTexts,
-  MAX_COPY_TURNS,
-  writeClipboardOsc52,
-} from "../src/ui/assistant/simple.ts"
+import { MAX_COPY_TURNS, writeClipboardOsc52 } from "../src/ui/assistant/simple.ts"
 import type { UiBus } from "../src/ui/contract.ts"
 import { t } from "../src/ui/i18n/locale.ts"
 import { loadHistory } from "../src/ui/input/input.ts"
-import {
-  clearCollapsedSections,
-  collapsedSectionsSnapshot,
-  sectionMinimized,
-  setSectionMinimized,
-} from "../src/ui/render/collapse.ts"
-import { setCompactMode } from "../src/ui/render/detail.ts"
 import { formatUsd } from "../src/ui/render/money.ts"
-import { setReasoningVisible } from "../src/ui/render/reasoning.ts"
 import { c } from "../src/ui/render/theme.ts"
+// [Area A · PROMPT 06] State UI milik SESI ini. TUI + printer linier sesi yang
+// sama berbagi state (satu instance), sesi lain di proses yang sama tak
+// tersentuh. Absen = instance default (fixture tes partial).
+import { defaultUiState, type UiSessionState } from "../src/ui/session-state.ts"
 import { TuiApp, type TuiHost } from "../src/ui/tui/app.ts"
 import { Transcript } from "../src/ui/tui/transcript.ts"
 import { parseWorkModeValue } from "./args.ts"
@@ -57,7 +49,14 @@ import type { CliSession } from "./setup.ts"
 
 const MODES = ["auto", "ask", "plan", "allowlist", "allow-all"] as const
 // /expand [id]: tanpa arg = semua entry store; dengan id = satu tool.
-const DRIVER_COMMANDS = ["/compact", "/thinking", "/expand [id]", "/minimize"]
+const DRIVER_COMMANDS = [
+  "/compact",
+  "/thinking",
+  "/expand [id]",
+  "/minimize",
+  "/mode",
+  "/work-mode",
+]
 
 function fmtCtx(n: number): string | undefined {
   if (!Number.isFinite(n) || n <= 0) return undefined
@@ -65,6 +64,32 @@ function fmtCtx(n: number): string | undefined {
   if (n < 10000) return `${(n / 1000).toFixed(1)}k`
   if (n < 1000000) return `${Math.round(n / 1000)}k`
   return `${(n / 1000000).toFixed(1)}m`
+}
+
+/**
+ * F-CTX-1: metrik usage footer (biaya + window %) dari angka NYATA, tanpa
+ * perkiraan. Kosong = tak ada data relevan (belum belanja / flag window tak
+ * disetel) — footer tak pernah menampilkan persentase/biaya palsu.
+ */
+function fmtUsageMetrics(ctx: CliSession): string | undefined {
+  const cost: number | undefined = ctx.usage.getSession().cost
+  const windowTokens: number | undefined = ctx.contextWindowTokens
+  // P1.4: persentase footer = OCCUPANCY konteks saat ini, bukan total token
+  // yang sudah dibelanjakan sepanjang sesi. Memakai spend membuat footer
+  // mentok 100% setelah beberapa step meski konteks masih jauh di bawah window.
+  const used: number = ctx.session.contextTokens
+  const parts: string[] = []
+  if (cost !== undefined && Number.isFinite(cost) && cost > 0) parts.push(formatUsd(cost))
+  if (
+    windowTokens !== undefined &&
+    Number.isFinite(windowTokens) &&
+    windowTokens > 0 &&
+    Number.isFinite(used)
+  ) {
+    const pct = Math.min(100, Math.round((used / windowTokens) * 100))
+    parts.push(`${pct}%`)
+  }
+  return parts.length ? parts.join(" ") : undefined
 }
 
 /**
@@ -123,14 +148,17 @@ export async function runTui(ctx: CliSession): Promise<void> {
     schedulerObservability,
   } = ctx
   const { session } = ctx
+  // [Area A · PROMPT 06] State UI sesi. `runTui` juga dijalankan fixture tes
+  // dengan CliSession parsial — absen berarti pakai instance default.
+  const ui: UiSessionState = ctx.uiState ?? defaultUiState
   const getPresentationSnapshot = () =>
     typeof ctx.getPresentationSnapshot === "function"
       ? ctx.getPresentationSnapshot()
       : { activities: [], turns: [] }
 
   let mode: string = permissions?.getMode() ?? permissionMode ?? "auto"
-  if (process.env.MINICODE_COMPACT === undefined) setCompactMode(true)
-  if (process.env.MINICODE_MINIMIZE_TOOL === undefined) setSectionMinimized("tool", true)
+  if (process.env.MINICODE_COMPACT === undefined) ui.setCompactMode(true)
+  if (process.env.MINICODE_MINIMIZE_TOOL === undefined) ui.setSectionMinimized("tool", true)
   let warned80 = false
   let abort: AbortController | null = null
 
@@ -146,6 +174,8 @@ export async function runTui(ctx: CliSession): Promise<void> {
   const transcript = new Transcript(session.events as unknown as UiBus, {
     getSnapshot: getPresentationSnapshot,
     onPresentationEvent: ctx.onPresentationEvent,
+    // [Area A · PROMPT 06] State sesi yang sama dengan printer linier.
+    uiState: ui,
     policy: {
       describeActivity,
       matchTurn: matchTurnBySummary,
@@ -184,6 +214,13 @@ export async function runTui(ctx: CliSession): Promise<void> {
     usage,
     skills: allLoadedSkills,
     toolsCount: sessionTools.length,
+    // P1.2: dua dimensi selalu terbaca live di /status — bukan snapshot boot.
+    get workMode() {
+      return workModeControl?.getWorkMode() ?? "EXECUTE"
+    },
+    get permissionMode() {
+      return permissions?.getMode() ?? mode
+    },
     providerHint: cfg.providers[0]?.providerHint,
     setModelOverride: (m) => persistModelChoice(m, modelRef),
     // Spawn anak stdio-inherit (/sessions <id>): keluar alt-screen + cooked
@@ -343,8 +380,12 @@ export async function runTui(ctx: CliSession): Promise<void> {
   function helpConcise(): void {
     // Diturunkan dari registry (BUILTIN + driver) — perintah baru tak bisa
     // hilang dari /help diam-diam (satu sumber, bukan daftar hardcode).
+    // Set menjaga urutan deklarasi sekaligus mencegah duplikasi saat perintah
+    // driver terdaftar di completion (DRIVER_COMMANDS) dan help (DRIVER_HELP_COMMANDS).
     const builtin = BUILTIN_COMMANDS.map((b) => `/${b.name}`).join(" ")
-    const driver = [...DRIVER_COMMANDS, ...DRIVER_HELP_COMMANDS.map((b) => `/${b.name}`)].join(" ")
+    const driver = [
+      ...new Set([...DRIVER_COMMANDS, ...DRIVER_HELP_COMMANDS.map((b) => `/${b.name}`)]),
+    ].join(" ")
     transcript.pushInfo([
       t("help.cHead"),
       `  ${builtin}`,
@@ -362,7 +403,10 @@ export async function runTui(ctx: CliSession): Promise<void> {
   }
 
   async function copyLastTurn(count: number): Promise<void> {
-    const turns = getLastTurnTexts(count)
+    // [Area A · PROMPT 06] Buffer /copy milik SESI ini (bukan singleton modul)
+    // — sesi lain di proses yang sama tak ikut tercampur.
+    const turns = ui
+      .getLastTurnTexts(count)
       .map((turn) => turn.trim())
       .filter(Boolean)
     const txt = turns.join("\n\n").trim()
@@ -462,20 +506,20 @@ export async function runTui(ctx: CliSession): Promise<void> {
     }
     if (name === "compact") {
       const next = args === "" ? undefined : args === "on" || args === "1"
-      const compact = setCompactMode(next)
+      const compact = ui.setCompactMode(next)
       transcript.pushInfo([c.muted(t("tui.toolCall", { v: compact ? "compact" : "expanded" }))])
       return
     }
     if (name === "thinking") {
       const next = args === "" ? undefined : args === "on" || args === "1"
-      const vis = setReasoningVisible(next)
+      const vis = ui.setReasoningVisible(next)
       transcript.pushInfo([c.muted(t("tui.thinkingSet", { v: vis ? "expanded" : "minimized" }))])
       return
     }
     if (name === "expand") {
       const sections = args ? ctx.expandContent(args) : ctx.expandAllContent()
-      const views = args ? [] : collapsedSectionsSnapshot()
-      if (!args) clearCollapsedSections()
+      const views = args ? [] : ui.collapsedSectionsSnapshot()
+      if (!args) ui.clearCollapsedSections()
       if (!sections.length && !views.length) {
         transcript.pushInfo([c.muted(t("tui.expandEmpty"))])
         return
@@ -501,15 +545,15 @@ export async function runTui(ctx: CliSession): Promise<void> {
     if (name === "minimize") {
       const arg = args.trim().toLowerCase()
       let next: boolean | undefined
-      if (arg === "") next = !(sectionMinimized("tool") && sectionMinimized("answer"))
+      if (arg === "") next = !(ui.sectionMinimized("tool") && ui.sectionMinimized("answer"))
       else if (arg === "on" || arg === "1") next = true
       else if (arg === "off" || arg === "0") next = false
       else {
         transcript.pushInfo([c.muted(t("tui.minUse"))])
         return
       }
-      setSectionMinimized("tool", next)
-      setSectionMinimized("answer", next)
+      ui.setSectionMinimized("tool", next)
+      ui.setSectionMinimized("answer", next)
       transcript.pushInfo([c.muted(t(next ? "tui.sectionsMin" : "tui.sectionsExp"))])
       return
     }
@@ -592,6 +636,7 @@ export async function runTui(ctx: CliSession): Promise<void> {
           model: modelRef.current ?? cfg.providers[0]?.models[0] ?? t("tui.noModel"),
           cwd: cwd ?? process.cwd(),
           context: fmtCtx(session.contextTokens),
+          metrics: fmtUsageMetrics(ctx),
         },
         busy: abort != null,
       }
@@ -615,11 +660,11 @@ export async function runTui(ctx: CliSession): Promise<void> {
       cycleMode(dir)
     },
     toggleCompact: () => {
-      const compact = setCompactMode()
+      const compact = ui.setCompactMode()
       transcript.pushInfo([c.muted(t("tui.toolCall", { v: compact ? "compact" : "expanded" }))])
     },
     toggleReasoning: () => {
-      const vis = setReasoningVisible()
+      const vis = ui.setReasoningVisible()
       transcript.pushInfo([c.muted(t("tui.thinkingSet", { v: vis ? "expanded" : "minimized" }))])
     },
   }

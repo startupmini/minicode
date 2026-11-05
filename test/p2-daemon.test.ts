@@ -423,6 +423,31 @@ describe("langganan & antrean terbatas", () => {
   test("kunci langganan tak bisa disusupi lewat penggabungan identitas", () => {
     expect(SubscriptionRegistry.key("a b", "c")).not.toBe(SubscriptionRegistry.key("a", "b c"))
   })
+
+  test("F-DAEMON-1: fase per-langganan replay -> live idempoten", () => {
+    const reg = new SubscriptionRegistry()
+    // Ada replay (fromSeq <= head): fase awal replay.
+    const replaying = reg.attach(
+      { consumerId: "c", sid: "s", from: 0, head: 10, fromSeq: 0 },
+      () => -1,
+    )
+    expect(replaying.sub.phase).toBe("replay")
+    replaying.sub.markLive()
+    expect(replaying.sub.phase).toBe("live")
+    // Idempoten: memanggil dua kali tetap live.
+    replaying.sub.markLive()
+    expect(replaying.sub.phase).toBe("live")
+
+    // Tanpa replay (tail, fromSeq = head+1): langsung live sejak awal.
+    const tail = reg.attach(
+      { consumerId: "c2", sid: "s2", from: "tail", head: 5, fromSeq: 0 },
+      () => -1,
+    )
+    expect(tail.sub.phase).toBe("live")
+
+    // Fase per-langganan, bukan global: dua langganan fase berbeda tak saling menimpa.
+    expect(replaying.sub.phase).toBe("live")
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -928,6 +953,41 @@ describe("host daemon end-to-end", () => {
     }
     const snap = seen.find((m) => m.t === "snapshot")
     if (snap?.t === "snapshot") expect(snap.snapshot.provenance).toBe("REPLAY")
+    client.close()
+  })
+
+  test("F-DAEMON-1: tail_marker membawa badge transisi fase live", async () => {
+    await appendPresentationEvents("s1", dir, [toolStarted(1)])
+    await appendPresentationEvents("s1", dir, [toolCompleted(2)])
+    await startHost()
+
+    const ep = readEndpoint(dir)!
+    const cap = issueCapabilityFromEndpoint(ep, { scopes: ["subscribe"], who: "tester" })
+    const client = await DaemonClient.connect({
+      target: { host: ep.host, port: ep.port },
+      capability: cap,
+      consumer: "tester",
+    })
+    const seen: ServerMessage[] = []
+    client.on((e) => {
+      if (e.kind === "message") seen.push(e.msg)
+    })
+    client.subscribe("s1", 0)
+    await Bun.sleep(200)
+
+    const marker = seen.find((m) => m.t === "tail_marker")
+    expect(marker).toBeDefined()
+    if (marker?.t === "tail_marker") {
+      // Badge eksplisit: transisi REPLAY→LIVE dinyatakan di titik penanda.
+      expect(marker.phase).toBe("live")
+      expect(marker.atSeq).toBe(2)
+    }
+    // Event sebelum penanda: semua REPLAY (badge hanya melabeli fase akhir LIVE).
+    const evs = seen.filter((m) => m.t === "event")
+    expect(evs.length).toBe(2)
+    for (const e of evs) {
+      if (e.t === "event") expect(e.provenance).toBe("REPLAY")
+    }
     client.close()
   })
 

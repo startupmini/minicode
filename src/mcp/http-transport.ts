@@ -35,6 +35,8 @@ export interface McpTransportLike {
   ): Promise<unknown>
   notify(method: string, params?: Record<string, unknown>): void
   close(): Promise<void>
+  /** P2.3: liveness untuk reconnect policy. */
+  readonly isClosed: boolean
 }
 
 export interface HttpTransportOptions {
@@ -55,6 +57,11 @@ export class McpHttpTransport implements McpTransportLike {
   private seq = 0
   private sessionId: string | null = null
   private closed = false
+
+  /** P2.3: liveness untuk reconnect policy. */
+  get isClosed(): boolean {
+    return this.closed
+  }
   /**
    * Set bila host TERBUKTI privat (audit F7): egress fire-and-forget
    * (notify/close) mengikuti keputusan ini supaya tak ada jalur yang

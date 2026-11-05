@@ -6,7 +6,7 @@ import type { ToolCall, ToolResult } from "#minicore/core/types.ts"
 import { LIMITS } from "../constants.ts"
 // [Fase 2 / TOOL-01] Klasifikasi konkurensi diturunkan dari SATU registry
 // kontrak tool — dulu dua Set manual di file ini yang bisa menyimpang.
-import { EXCLUSIVE_TOOLS, WRITE_TOOLS } from "./tool-contract.ts"
+import { contractForTool, EXCLUSIVE_TOOLS, WRITE_TOOLS } from "./tool-contract.ts"
 
 function isWrite(call: ToolCall): boolean {
   return WRITE_TOOLS.has(call.name) || EXCLUSIVE_TOOLS.has(call.name)
@@ -87,9 +87,46 @@ export function parallelExecutor(
 
   async function runBatch(
     calls: readonly ToolCall[],
-    deps: ExecutorDeps,
+    rawDeps: ExecutorDeps,
   ): Promise<readonly ToolResult[]> {
     if (calls.length === 0) return []
+    // P0.2 (G1 / Invariant #7): `createToolRegistry` vendor membekukan Map pada
+    // saat sesi dibuat sementara `list()` membaca array `visible` yang dimutasi
+    // in-place oleh `setWorkMode` / `setPermissionMode`. Resolusi live dari
+    // `list()` memastikan `callable === visible` di kedua arah transisi
+    // (DISCUSS→EXECUTE membuka tool tulis; EXECUTE→DISCUSS menutupnya).
+    const liveRegistry =
+      typeof rawDeps.registry.list === "function"
+        ? {
+            list: () => rawDeps.registry.list(),
+            get: (name: string) => rawDeps.registry.list().find((t) => t.name === name),
+          }
+        : rawDeps.registry
+    const getLiveWorkMode = (rawDeps.permissions as { __getWorkMode?: () => string } | undefined)
+      ?.__getWorkMode
+    const baseDeps: ExecutorDeps = { ...rawDeps, registry: liveRegistry }
+    // P0.2 (G-MEM-TRACK / Invariant #2 & #3): saat WorkMode DISCUSS atau PLAN,
+    // `read_memory` menerima `permissionMode: "readonly"` per-sesi agar tidak
+    // menaikkan `access_count` di SQLite walau PermissionMode dasar `auto`.
+    const depsFor = (call: ToolCall): ExecutorDeps => {
+      if (call.name === "read_memory") {
+        if (typeof getLiveWorkMode === "function") {
+          const wm = getLiveWorkMode.call(rawDeps.permissions)
+          if (wm === "DISCUSS" || wm === "PLAN") {
+            return { ...baseDeps, permissionMode: "readonly" }
+          }
+        }
+        const listed = typeof rawDeps.registry.list === "function" ? rawDeps.registry.list() : []
+        if (
+          listed.length > 0 &&
+          listed.every((t) => contractForTool(t.name)?.sideEffectTier === "PURE_READ")
+        ) {
+          return { ...baseDeps, permissionMode: "readonly" }
+        }
+      }
+      return baseDeps
+    }
+    const deps = baseDeps
     const results: (ToolResult | undefined)[] = new Array(calls.length)
 
     // write+baca campur → sekuensial urut input: read setelah write pada file
@@ -100,7 +137,8 @@ export function parallelExecutor(
     if (anyWrite && anyRead) {
       for (let i = 0; i < calls.length; i++) {
         if (deps.signal.aborted) throw abortError(deps.signal)
-        results[i] = await runCall(calls[i]!, deps)
+        const c = calls[i]!
+        results[i] = await runCall(c, depsFor(c))
       }
       return results as ToolResult[]
     }
@@ -129,7 +167,8 @@ export function parallelExecutor(
           (async () => {
             for (let i = 0; i < calls.length; i++) {
               if (signal.aborted) throw abortError(signal)
-              results[i] = await runCall(calls[i]!, deps)
+              const c = calls[i]!
+              results[i] = await runCall(c, depsFor(c))
             }
           })(),
           aborted,
@@ -225,7 +264,7 @@ export function parallelExecutor(
                 throw e
               }
             }
-            const res = await runCall(call, deps)
+            const res = await runCall(call, depsFor(call))
             results[idx] = res
           } finally {
             if (held) {

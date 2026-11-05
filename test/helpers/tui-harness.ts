@@ -146,6 +146,18 @@ export interface FakeTty {
   restore(): void
 }
 
+// [Area A · PROMPT 06] Nilai ASLI `isTTY`, diambil SEKALI saat modul ini
+// dimuat (sebelum test mana pun menyentuh stdout).
+//
+// Kenapa bukan "nilai saat install": `installFakeTty` sering dipanggil dua kali
+// tanpa restore di antaranya (mis. test parity yang menjalankan dua policy
+// berurutan). Kalau restore memakai nilai yang ditangkap saat install, nilai
+// itu sudah PALSU (ditinggalkan fake pertama) → `isTTY = true` bocor ke berkas
+// test berikutnya → renderer ikut menambah SGR → test yang mengharapkan teks
+// polos gagal. Restore ke nilai pristine menutup kebocoran lintas-instance ini.
+const PRISTINE_STDOUT_IS_TTY = process.stdout.isTTY
+const PRISTINE_STDERR_IS_TTY = process.stderr.isTTY
+
 export function installFakeTty(opts: FakeTtyOptions = {}): FakeTty {
   let columns = opts.columns ?? 100
   let rows = opts.rows ?? 30
@@ -178,8 +190,6 @@ export function installFakeTty(opts: FakeTtyOptions = {}): FakeTty {
   const origError = console.error
   const origColumns = process.stdout.columns
   const origRows = process.stdout.rows
-  const origStdoutIsTty = process.stdout.isTTY
-  const origStderrIsTty = process.stderr.isTTY
   const origColorterm = process.env.COLORTERM
   const origNoColor = process.env.NO_COLOR
   const origTerm = process.env.TERM
@@ -441,11 +451,11 @@ export function installFakeTty(opts: FakeTtyOptions = {}): FakeTty {
       })
       Object.defineProperty(process.stdout, "rows", { value: origRows, configurable: true })
       Object.defineProperty(process.stdout, "isTTY", {
-        value: origStdoutIsTty,
+        value: PRISTINE_STDOUT_IS_TTY,
         configurable: true,
       })
       Object.defineProperty(process.stderr, "isTTY", {
-        value: origStderrIsTty,
+        value: PRISTINE_STDERR_IS_TTY,
         configurable: true,
       })
       if (origColorterm == null) delete process.env.COLORTERM

@@ -7,6 +7,7 @@ import { parseCompactKeepTurns } from "../src/policy/compaction.ts"
 import { createRateLimiter } from "../src/policy/ratelimit.ts"
 import { resolveSandbox, sandboxRefusalReason } from "../src/policy/sandbox-policy.ts"
 import { budgetStatus } from "../src/policy/usage.ts"
+import { VerifyWorkModeConflictError } from "../src/policy/work-mode.ts"
 import { resolveRuntimeMode } from "../src/runtime/production-execution.ts"
 import { AdoptionRefusedError, parseAdoptTaskArg } from "../src/session/cross-session-adoption.ts"
 import { mintSessionId } from "../src/session/identity.ts"
@@ -17,11 +18,12 @@ import { findSkill, renderSkill } from "../src/skills/loader.ts"
 import { GATE_ENABLED, resolveSchedulerGate } from "../src/task/production-scheduler.ts"
 import { writeTrace } from "../src/telemetry/trace.ts"
 import { setSubAgentSessionFactory } from "../src/tools/task.ts"
-import { formatError, takePendingError } from "../src/ui/assistant/simple.ts"
+import { formatError } from "../src/ui/assistant/simple.ts"
 import { formatUsd } from "../src/ui/render/money.ts"
 import { c, glyphs } from "../src/ui/render/theme.ts"
 import {
   allowLocalConfig,
+  flagsAfterPromptBoundary,
   hasFlag,
   promptFromArgs,
   getArg as rawGetArg,
@@ -90,7 +92,7 @@ Options:
                       admitted through the runtime (kernel + durable journal); a rejected
                       admission runs nothing. Unknown value = off.
 
-TUI: /help /provider /model /sync /status /sessions /init /exit /mode /undo /redo /clear /copy /history /compact /thinking /minimize
+TUI: /help /provider /model /sync /status /sessions /init /exit /mode /work-mode /undo /redo /clear /copy /history /compact /thinking /minimize
 Keys: Enter submit · Tab/Shift+Tab mode · Up/Down history · Mouse wheel/PgUp/PgDn scroll (Shift = half page)
       Home/End jump to transcript top/tail · Ctrl+R search · Esc abort turn (twice = quit) · Ctrl+D exit
 Subcommand flags (config/mcp/sessions/skills/exec/...): see 'minicode <cmd> --help'.
@@ -288,6 +290,10 @@ const allowLocal = allowLocalConfig(args)
 // disamakan dengan WorkMode PLAN — keduanya lapisan terpisah.
 const workModeResolved = resolveWorkModeFlag(getArg)
 const workMode = workModeResolved.workMode
+// P12 S2.2 (D-2) — Sinyal WorkMode eksplisit (flag/env) ikut diteruskan supaya
+// jalur resume bisa memberi tahu transparan bahwa WorkMode TIDAK dipersist dan
+// default EXECUTE saat tak diberi ulang.
+const workModeExplicit = workModeResolved.explicit
 if (workModeResolved.warning) process.stderr.write(`[warn] ${workModeResolved.warning}\n`)
 // [PHASE 6U] Autonomous Scheduler opt-in. DEFAULT OFF.
 //
@@ -426,6 +432,16 @@ if (ratelimitRaw) {
 }
 
 const prompt = promptFromArgs(args) || (await readPrompt())
+// [Live Hardening 0.13.x §8.3] Flag dikenal yang muncul SETELAH prompt boundary
+// menjadi teks prompt (pertahanan anti-injeksi), bukan flag terparse — operator
+// yang salah letak flag diam-diam tidak mendapat perilaku yang diminta (stage5:
+// --resume dibuang). Peringatan actionable, hanya bila nyata ada flag tersisip.
+const ignoredFlags = flagsAfterPromptBoundary(args)
+if (ignoredFlags.length > 0) {
+  process.stderr.write(
+    `[warn] ignored flag(s) after the prompt: ${ignoredFlags.join(", ")} — put flags before the prompt (e.g. minicode ${ignoredFlags.join(" ")} "your prompt")\n`,
+  )
+}
 const enterRepl = interactive || (!prompt && process.stdin.isTTY)
 // REPL interaktif: cek update FRESH tiap dibuka → install + restart bila ada
 // versi baru (tak pernah kembali bila restart). Tampilkan spinner 1.8 dtk
@@ -517,6 +533,8 @@ try {
     toolScope,
     // P12 S2.2 — WorkMode efektif (sudah di-resolve, default EXECUTE).
     workMode,
+    // P12 S2.2 (D-2) — transparansi resume: tahu apakah WorkMode diberi eksplisit.
+    workModeExplicit,
     maxSteps,
     contextWindowTokens,
     ...(keepRecentTurns !== undefined ? { keepRecentTurns } : {}),
@@ -538,9 +556,9 @@ try {
   // DIGABUNG ke cabang NoProvider di atas (satu writer untuk kelas
   // "setup menolak, bukan gagal"): menambah penulis kedua hanya untuk satu
   // format pesan menaikkan inventaris writer tanpa menambah informasi.
-  if (e instanceof AdoptionRefusedError) {
+  if (e instanceof AdoptionRefusedError || e instanceof VerifyWorkModeConflictError) {
     console.error(e.message)
-    process.exit(1)
+    process.exit(e instanceof VerifyWorkModeConflictError ? 2 : 1)
   }
   throw e
 } finally {
@@ -553,6 +571,13 @@ if (enterRepl) {
   const { runTui } = await import("./tui.ts")
   await runTui(ctx)
 } else {
+  // P12 S2.2 (F-DISCUSS-4) + P0.2: one-shot linear memakai `ctx.workMode`
+  // efektif (termasuk hasil pulihan `--resume`).
+  if (ctx.workMode !== "EXECUTE") {
+    process.stderr.write(
+      `[work-mode] ${ctx.workMode}${ctx.workMode === "PLAN" ? " (read-only planning)" : " (read-only)"}\n`,
+    )
+  }
   const {
     session,
     usage,
@@ -632,7 +657,7 @@ if (enterRepl) {
   } catch (e) {
     // Error provider biasanya sudah dirender ramah oleh event handler
     // (takePendingError) — cetak sekali saja, jangan dua blok ✗.
-    const shown = takePendingError()
+    const shown = ctx.uiState.takePendingError()
     process.stderr.write(`\n${c.red(glyphs.cross)} ${shown ?? formatError(e)}\n`)
     // Audit #04 P1: sama seperti REPL — turn gagal setelah delegasi
     // committed = efek anak tetap ada. One-shot tak punya retry loop, tapi

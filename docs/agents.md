@@ -12,9 +12,9 @@ Approval: `delegate_task` di-gate — TTY meminta persetujuan sekali per delegas
 | Mode anak | Kemampuan |
 |---|---|
 | `explore` | Subset read-only (12 tool) — cari/pahami kode, kembalikan temuan |
-| `plan` | Read-only + `todo_read` (baca rencana parent), tetap tanpa mutasi dan tanpa `todo_write` |
+| `plan` | Selalu tanpa `todo_write`/mutasi memory/commit/nesting. **Jika parent ber-WorkMode/PM ketat** (`PLAN`/`DISCUSS`/`readonly`/`plan`/`ask`): subset read-only 12 tool, sama seperti `explore`. **Jika parent `EXECUTE`×auto/allow-all**: tool dasar parent (read + file-write + `bash`/`code_run`), minus MCP runtime, `git_commit`, memory-tulis, todo-tulis, dan job background |
 
-Restriksi anak (selalu, tanpa kecuali): **tanpa** MCP, `git_commit`, memory-tulis, todo-tulis, job background, nesting (anak tidak bisa mendelegasi lagi). Plan-parent dipaksa explore saat mendelegasi.
+Restriksi anak yang **selalu** berlaku: anak **tidak** bisa bersarang (`delegate_task` dibuang), tidak bisa `git_commit`, tidak menulis memory/todo, tidak memakai `bash_output`/`bash_kill` (job milik parent). Tool MCP runtime (`server.tool`) hanya muncul pada anak `plan` di bawah parent `EXECUTE`; pada `explore` maupun parent non-`EXECUTE`, daftar anak dibatasi ke `EXPLORE_TOOL_NAMES`. Plan-parent dipaksa explore saat mendelegasi.
 
 ## Kenapa dibatasi
 

@@ -468,6 +468,8 @@ export function createUsageCollector(
         cacheReadTokens?: number
         cacheWriteTokens?: number
         cacheIncluded?: boolean
+        /** P1.4: model yang menghasilkan segmen ini (mis. compaction). */
+        model?: string
       }
       const input =
         Number.isFinite(d.inputTokens) && (d.inputTokens ?? 0) >= 0 ? (d.inputTokens ?? 0) : 0
@@ -505,7 +507,7 @@ export function createUsageCollector(
         requestBoundary += 1
       }
       lastRequestTotal = reportedTotal
-      const segModel = effectiveModel ?? model
+      const segModel = d.model ?? effectiveModel ?? model
       const segCost = segModel
         ? costFor(segModel, input, output, cRead, cWrite, segCacheIncluded)
         : undefined

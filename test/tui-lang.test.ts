@@ -78,76 +78,110 @@ function fakeSession(): FakeSession {
 }
 
 describe("/lang end-to-end", () => {
+  async function closeTuiIfRunning(
+    activeTty: ReturnType<typeof installFakeTty> | null,
+    runP: Promise<void> | null,
+  ): Promise<void> {
+    if (!activeTty || !runP) return
+    try {
+      // Kosongkan baris input (\x15 = Ctrl+U) lalu keluar bersih agar listener
+      // sinyal/stdin TuiApp selalu dilepas walau expect gagal duluan.
+      await activeTty.send("\x15/exit")
+      await activeTty.send(KEY.enter)
+      await runP
+    } catch {}
+  }
+
   test("/lang id ganti locale sesi + simpan permanen", async () => {
     tty = installFakeTty({ columns: 80, rows: 24 })
-    const runP = runTui(fakeSession())
-    await tty.ready()
-    await tty.waitForOutput((o) => o.includes("00.00.00"))
-    expect(currentLocale()).toBe("en")
-    await tty.send("/lang id")
-    await tty.send(KEY.enter)
-    await tty.waitForOutput((o) => o.includes("lang: id"))
-    expect(currentLocale()).toBe("id")
-    expect(await loadLang()).toBe("id")
-    await tty.send("/exit")
-    await tty.send(KEY.enter)
-    await runP
+    let runP: Promise<void> | null = runTui(fakeSession())
+    try {
+      await tty.ready()
+      await tty.waitForOutput((o) => o.includes("00.00.00"))
+      expect(currentLocale()).toBe("en")
+      await tty.send("/lang id")
+      await tty.send(KEY.enter)
+      await tty.waitForOutput((o) => o.includes("lang: id"))
+      expect(currentLocale()).toBe("id")
+      expect(await loadLang()).toBe("id")
+      await tty.send("/exit")
+      await tty.send(KEY.enter)
+      await runP
+      runP = null
+    } finally {
+      await closeTuiIfRunning(tty, runP)
+    }
   })
   test("/lang tanpa argumen tampilkan aktif; argumen asing ditolak", async () => {
     tty = installFakeTty({ columns: 80, rows: 24 })
-    const runP = runTui(fakeSession())
-    await tty.ready()
-    await tty.waitForOutput((o) => o.includes("00.00.00"))
-    await tty.send("/lang")
-    await tty.send(KEY.enter)
-    await tty.waitForOutput((o) => o.includes("lang: en"))
-    await tty.send("/lang xx")
-    await tty.send(KEY.enter)
-    await tty.waitForOutput((o) => o.includes("unknown lang"))
-    expect(currentLocale()).toBe("en")
-    expect(await loadLang()).toBeUndefined()
-    await tty.send("/exit")
-    await tty.send(KEY.enter)
-    await runP
+    let runP: Promise<void> | null = runTui(fakeSession())
+    try {
+      await tty.ready()
+      await tty.waitForOutput((o) => o.includes("00.00.00"))
+      await tty.send("/lang")
+      await tty.send(KEY.enter)
+      await tty.waitForOutput((o) => o.includes("lang: en"))
+      await tty.send("/lang xx")
+      await tty.send(KEY.enter)
+      await tty.waitForOutput((o) => o.includes("unknown lang"))
+      expect(currentLocale()).toBe("en")
+      expect(await loadLang()).toBeUndefined()
+      await tty.send("/exit")
+      await tty.send(KEY.enter)
+      await runP
+      runP = null
+    } finally {
+      await closeTuiIfRunning(tty, runP)
+    }
   })
   test("/copy 2 menyalin dua turn terakhir", async () => {
     const s = fakeSession()
     const detach = attachSimpleLogger(s.bus as never, { quiet: true })
     tty = installFakeTty({ columns: 80, rows: 24 })
-    const runP = runTui(s)
-    await tty.ready()
-    await tty.waitForOutput((o) => o.includes("00.00.00"))
-    s.bus.emit("turn:started", { turn: 1 })
-    s.bus.emit("provider:text", { text: "jawaban satu\n" })
-    s.bus.emit("turn:completed", {})
-    s.bus.emit("turn:started", { turn: 2 })
-    s.bus.emit("provider:text", { text: "jawaban dua\n" })
-    s.bus.emit("turn:completed", {})
-    await tty.send("/copy 2")
-    await tty.send(KEY.enter)
-    await tty.waitForOutput((o) => o.includes("copied 2 turns"))
-    expect(tty.all()).toContain("\x1b]52;c;")
-    await tty.send("/exit")
-    await tty.send(KEY.enter)
-    await runP
-    detach()
+    let runP: Promise<void> | null = runTui(s)
+    try {
+      await tty.ready()
+      await tty.waitForOutput((o) => o.includes("00.00.00"))
+      s.bus.emit("turn:started", { turn: 1 })
+      s.bus.emit("provider:text", { text: "jawaban satu\n" })
+      s.bus.emit("turn:completed", {})
+      s.bus.emit("turn:started", { turn: 2 })
+      s.bus.emit("provider:text", { text: "jawaban dua\n" })
+      s.bus.emit("turn:completed", {})
+      await tty.send("/copy 2")
+      await tty.send(KEY.enter)
+      await tty.waitForOutput((o) => o.includes("copied 2 turns"))
+      expect(tty.all()).toContain("\x1b]52;c;")
+      await tty.send("/exit")
+      await tty.send(KEY.enter)
+      await runP
+      runP = null
+    } finally {
+      await closeTuiIfRunning(tty, runP)
+      detach()
+    }
   })
 
   test("/help ringkas memuat semua perintah terdaftar (satu sumber)", async () => {
     const { BUILTIN_COMMANDS } = await import("../cli/commands.ts")
     tty = installFakeTty({ columns: 80, rows: 24 })
-    const runP = runTui(fakeSession())
-    await tty.ready()
-    await tty.waitForOutput((o) => o.includes("00.00.00"))
-    await tty.send("/help")
-    await tty.send(KEY.enter)
-    const out = await tty.waitForOutput((o) => o.includes("Commands:"))
-    for (const b of BUILTIN_COMMANDS) expect(out, b.name).toContain(`/${b.name}`)
-    for (const n of ["/mode", "/lang", "/compact", "/expand", "/minimize"])
-      expect(out, n).toContain(n)
-    await tty.send("/exit")
-    await tty.send(KEY.enter)
-    await runP
+    let runP: Promise<void> | null = runTui(fakeSession())
+    try {
+      await tty.ready()
+      await tty.waitForOutput((o) => o.includes("00.00.00"))
+      await tty.send("/help")
+      await tty.send(KEY.enter)
+      const out = await tty.waitForOutput((o) => o.includes("Commands:"))
+      for (const b of BUILTIN_COMMANDS) expect(out, b.name).toContain(`/${b.name}`)
+      for (const n of ["/mode", "/lang", "/compact", "/expand", "/minimize"])
+        expect(out, n).toContain(n)
+      await tty.send("/exit")
+      await tty.send(KEY.enter)
+      await runP
+      runP = null
+    } finally {
+      await closeTuiIfRunning(tty, runP)
+    }
   })
 })
 

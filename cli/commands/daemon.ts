@@ -18,12 +18,14 @@ import { createStoreFeed } from "../../src/daemon/feed.ts"
 import type { DaemonHost } from "../../src/daemon/host.ts"
 import { DAEMON_SCOPES, type DaemonScope } from "../../src/daemon/protocol.ts"
 import { sanitizeLabel } from "../../src/daemon/sanitize.ts"
+import { VerifyWorkModeConflictError, type WorkMode } from "../../src/policy/work-mode.ts"
 import { DURABILITY } from "../../src/presentation/events.ts"
 import {
   type RuntimeProductionMode,
   resolveRuntimeMode,
 } from "../../src/runtime/production-execution.ts"
-import { flagNameOf, valueFlags } from "../args.ts"
+import { listSessionRuns } from "../../src/session/persistence.ts"
+import { flagNameOf, resolveWorkModeFlag, valueFlags } from "../args.ts"
 import type { CliSession, CliSessionOptions } from "../setup.ts"
 
 export async function handleDaemon(
@@ -88,7 +90,7 @@ export async function handleDaemon(
 
 const DAEMON_HELP = `minicode daemon <mulai|status|stop|issue|sessions|help>
 
-  start   [--port N] [--cwd D] [--prompt P] [--session S] [--runtime <mode>] [--json]
+  start   [--port N] [--cwd D] [--prompt P] [--session S] [--runtime <mode>] [--work-mode <mode>] [--json]
           Jalankan host daemon (blocking). Tanpa --prompt hanya melayani
           konsumen; dengan --prompt sesi di-host di dalam proses daemon.
           --runtime constructed|owned menyalakan runtime ter-supervisi pada
@@ -198,6 +200,12 @@ export async function startDaemonHostedRuntime(opts: {
    * append sesungguhnya).
    */
   readonly presentationAppend?: CliSessionOptions["presentationAppend"]
+  /**
+   * P2.3: jalankan `--prompt` yang di-host. Default false agar tes komposisi
+   * yang tidak ingin turn tetap deterministik; `startDaemon` (produksi)
+   * menyalakannya.
+   */
+  readonly autoRunPrompt?: boolean
 }): Promise<DaemonHostedRuntime> {
   const { sub, getArg, cwd } = opts
   const portRaw = getArg("--port")
@@ -212,6 +220,9 @@ export async function startDaemonHostedRuntime(opts: {
   // [P13.3 Stage C] Scheduler mengikuti mode runtime, bukan flag terpisah:
   // daemon `owned` memang ingin kerja durable berlanjut; mode lain tetap inert.
   const schedulerEnabled = schedulerEnabledForDaemon(runtimeMode)
+  // P0.2 (Q5): parity WorkMode di daemon (`--work-mode` > `MINICODE_WORK_MODE`
+  // > default EXECUTE; invalid = EXECUTE + warning di startDaemon).
+  const workModeResolved = resolveWorkModeFlag(getArg)
 
   const { DaemonHost } = await import("../../src/daemon/host.ts")
   const feeds = new Map<string, SessionFeed>()
@@ -227,13 +238,41 @@ export async function startDaemonHostedRuntime(opts: {
   // lifecycle sesi selesai — termasuk pembersihan anak proses yang disupervisi.
   let sessionRef: CliSession | null = null
   let sessionClosed = false
+  // P2.3: satu controller untuk run yang sedang berjalan. Interrupt/cancel
+  // meng-abort run ini (bukan hanya mengembalikan status palsu).
+  let activeRunCtl: AbortController | null = null
   const closeHostedSession = async (): Promise<void> => {
     if (sessionClosed) return
     sessionClosed = true
+    try {
+      activeRunCtl?.abort(new Error("daemon shutdown"))
+    } catch {}
+    activeRunCtl = null
     const s = sessionRef
     sessionRef = null
     if (!s) return
     await s.close()
+  }
+
+  // P2.3: abort run yang benar-benar berjalan. runId dari state kanonik; call
+  // dengan runId lain ditolak agar sinyal tidak salah arah ke sesi/run lain.
+  const abortHostedRun = (
+    sid: string,
+    runId: string | null,
+    reason: string,
+  ): { ok: true } | { ok: false; code: "RUN_TERMINAL" | "SESSION_MISMATCH"; message: string } => {
+    const s = sessionRef
+    if (!s || s.sessionId !== sid)
+      return { ok: false, code: "SESSION_MISMATCH", message: "sesi bukan milik daemon ini" }
+    const state = s.runState()
+    if (!state.runId || state.status !== "RUNNING")
+      return { ok: false, code: "RUN_TERMINAL", message: "tidak ada run aktif untuk dihentikan" }
+    if (runId !== null && runId !== state.runId)
+      return { ok: false, code: "RUN_TERMINAL", message: `run ${runId} bukan run aktif` }
+    if (!activeRunCtl || activeRunCtl.signal.aborted)
+      return { ok: false, code: "RUN_TERMINAL", message: "run tidak dapat diinterupsi" }
+    activeRunCtl.abort(new Error(reason))
+    return { ok: true }
   }
 
   // Aksi kontrol dibangun dari state yang benar-benar diketahui proses ini.
@@ -242,18 +281,8 @@ export async function startDaemonHostedRuntime(opts: {
   const actions: ControlActions = {
     listSessions: () => [...hosted.values()],
     sessionStatus: (sid) => hosted.get(sid) ?? null,
-    interrupt: (sid) => {
-      void sid
-      return { ok: false, code: "RUN_TERMINAL", message: "tidak ada jalur interupsi pada sesi ini" }
-    },
-    cancel: (sid) => {
-      void sid
-      return {
-        ok: false,
-        code: "RUN_TERMINAL",
-        message: "tidak ada jalur pembatalan pada sesi ini",
-      }
-    },
+    interrupt: (sid, runId) => abortHostedRun(sid, runId, "interrupted by daemon operator"),
+    cancel: (sid, runId) => abortHostedRun(sid, runId, "cancelled by daemon operator"),
     shutdown: (reason) => {
       const h = hostRef
       if (!h) return
@@ -306,7 +335,9 @@ export async function startDaemonHostedRuntime(opts: {
         }),
         plan: false,
         allowlist: false,
-        verify: false,
+        verify: sub.includes("--verify"),
+        workMode: workModeResolved.workMode,
+        workModeExplicit: workModeResolved.explicit,
         // [P13.2] Mode runtime yang sama dengan CLI → komposisi yang di-host
         // punya jalur ownership proses + status kanonik yang sama.
         runtimeMode,
@@ -355,13 +386,62 @@ export async function startDaemonHostedRuntime(opts: {
       sid: session.sessionId,
       hosted: true,
       writerEpoch: session.writerEpoch,
-      runId: null,
-      runStatus: null,
+      // P2.3: status dibaca LIVE dari run kanonik sesi, bukan snapshot null.
+      get runId() {
+        return session.runState().runId
+      },
+      get runStatus() {
+        return session.runState().status
+      },
       presentationHead: durable.head(),
+      get workMode() {
+        return session.workMode
+      },
+      // P2.3: recovery run terakhir yang durable — setelah restart run mati
+      // tampil INTERRUPTED + recovery UNKNOWN, tidak pernah disamarkan LIVE.
+      get recoveryStatus() {
+        try {
+          const runs = listSessionRuns(session.sessionId, cwd)
+          const last = runs[runs.length - 1]
+          return last?.recovery_status ?? null
+        } catch {
+          return null
+        }
+      },
     })
+
+    if (opts.autoRunPrompt === true && prompt !== undefined && prompt.trim().length > 0) {
+      const ctl = new AbortController()
+      activeRunCtl = ctl
+      void session
+        .runPromptWithVerify(prompt, ctl.signal)
+        .catch((e) => {
+          if (!ctl.signal.aborted) {
+            process.stderr.write(`[daemon] hosted run failed: ${(e as Error).message}\n`)
+          }
+        })
+        .finally(() => {
+          if (activeRunCtl === ctl) activeRunCtl = null
+        })
+    }
+  } else if (sub.includes("--verify") && workModeResolved.workMode !== "EXECUTE") {
+    // P0.2 (Q4): fail-closed sekalipun daemon start dipanggil dengan --verify
+    // tanpa --prompt pada mode non-EXECUTE.
+    try {
+      await host.shutdown("verify-work-mode-conflict")
+    } catch {
+      /* abaikan error shutdown */
+    }
+    throw new VerifyWorkModeConflictError(workModeResolved.workMode)
   }
 
-  return { host, session: ctx, closeHostedSession }
+  return {
+    host,
+    session: ctx,
+    closeHostedSession,
+    workMode: ctx?.workMode ?? workModeResolved.workMode,
+    ...(workModeResolved.warning ? { workModeWarning: workModeResolved.warning } : {}),
+  }
 }
 
 /**
@@ -377,6 +457,10 @@ export interface DaemonHostedRuntime {
   readonly session: CliSession | null
   /** Tutup sesi yang di-host (idempoten). Dipakai daemon saat shutdown. */
   readonly closeHostedSession: () => Promise<void>
+  /** P0.2 (Q5): WorkMode efektif daemon / sesi yang di-host. */
+  readonly workMode: WorkMode
+  /** P0.2 (Q5): Peringatan bila nilai `--work-mode` / env tidak valid. */
+  readonly workModeWarning?: string
 }
 
 async function startDaemon(
@@ -385,7 +469,16 @@ async function startDaemon(
   cwd: string | undefined,
   json: boolean,
 ): Promise<void> {
-  const { host, session } = await startDaemonHostedRuntime({ sub, getArg, cwd })
+  let started: DaemonHostedRuntime
+  try {
+    started = await startDaemonHostedRuntime({ sub, getArg, cwd, autoRunPrompt: true })
+  } catch (e) {
+    if (e instanceof VerifyWorkModeConflictError) {
+      fail(json ? { ok: false, code: "USER_ERROR", reason: e.message } : null, e.message, 2)
+    }
+    throw e
+  }
+  const { host, session, workMode, workModeWarning } = started
 
   const lines = [
     `daemon: listening on ${host.port} (incarnation ${host.incarnation})`,
@@ -398,6 +491,8 @@ async function startDaemon(
     incarnation: host.incarnation,
     endpoint: host.endpointPath,
     hostedSessions: session ? [session.sessionId] : [],
+    workMode,
+    ...(workModeWarning ? { warning: workModeWarning } : {}),
   }
   emit(lines, json ? JSON.stringify(payload) : null)
 

@@ -1,12 +1,20 @@
 import type { Tool } from "#minicore"
-import { appendMemory, deleteMemoryLines, readMemoryFile } from "../memory/files.ts"
+import {
+  appendMemory,
+  deleteMemoryEntry,
+  deleteMemoryLines,
+  readMemoryFile,
+} from "../memory/files.ts"
 import {
   addMemory,
+  checkMemorySupersessionTarget,
   deleteMemoryByQuery,
   invokeMemoryWriteFaultForTest,
+  memoryEntryText,
   recordCandidateLesson,
   searchHybrid,
 } from "../memory/vector.ts"
+import { subAgentWorkMode } from "./task.ts"
 
 export const readMemoryTool: Tool = {
   name: "read_memory",
@@ -27,14 +35,16 @@ export const readMemoryTool: Tool = {
     // Mode readonly/plan: retrieval tidak boleh menulis access_count/WAL —
     // permissionMode diteruskan kernel per turn (lihat task.ts).
     const pm = (ctx as unknown as { permissionMode?: string }).permissionMode
-    const trackAccess = pm !== "readonly" && pm !== "plan"
+    // P0.2 (G-MEM-TRACK): selain PermissionMode readonly/plan, WorkMode DISCUSS
+    // dan PLAN juga wajib tanpa mutasi access_count/WAL di SQLite.
+    const trackAccess = pm !== "readonly" && pm !== "plan" && subAgentWorkMode() === "EXECUTE"
     if (!query || !(query as string).trim()) {
       const txt = await readMemoryFile(cwd)
       return txt || "(no MEMORY.md)"
     }
     const q = query as string
     // hybrid search — use cwd + try embedding via env (consistent with cli RAG)
-    let hits: { text: string; score: number; createdAt: number }[] = []
+    let hits: { text: string; score: number; createdAt: number; id?: string }[] = []
     try {
       const baseUrl = process.env.AGENT_BASE_URL ?? "https://api.openai.com/v1"
       const apiKey =
@@ -78,7 +88,10 @@ export const readMemoryTool: Tool = {
             const meta = h.provenance
               ? `[session:${h.provenance.sessionId || "?"}] [turn:${h.provenance.turnId || "?"}] `
               : ""
-            return `- ${h.text.slice(0, 300)}${h.text.length > 300 ? "…" : ""} (${h.score.toFixed(2)}, ${fmtDate(h.createdAt)}) ${meta}`
+            // [Live Hardening §7.5] ekspos id row agar write_memory.supersedes_id
+            // bisa menyasar id nyata (sebelumnya tak diekspos → model memakai teks).
+            const idTag = h.id ? ` [id:${h.id}] ` : ""
+            return `- ${h.text.slice(0, 300)}${h.text.length > 300 ? "…" : ""} (${h.score.toFixed(2)}, ${fmtDate(h.createdAt)}) ${meta}${idTag}`
           },
         )
         .join("\n")}\n`
@@ -170,11 +183,25 @@ export const writeMemoryTool: Tool = {
       })
       return `candidate lesson recorded (provisional) id=${id}: ${t.slice(0, 100)}`
     }
-    const path = await appendMemory(t, cwd)
-    // [Fase 9 / 9.2] Fault-injection boundary: file (MEMORY.md) sudah ketulis,
-    // vector.db belum. Injector yang melempar di stage ini menyimulasikan crash
-    // persis di titik ini → menghasilkan entri file-only (split-brain arah 1).
-    invokeMemoryWriteFaultForTest("after_file_before_vector")
+    // [Live Hardening §7.5] Validasi supersedes_id SEBELUM file/vector tersentuh.
+    // Id yang tak ada → error actionable, bukan tombstone no-op yang menyisakan
+    // row lama hidup. Kegagalan di sini tak menulis apa pun (tanpa split-brain).
+    if (typeof supersedes_id === "string" && supersedes_id) {
+      // P1.3: validasi target AKTIF (bukan sekadar "ada"). Target yang sudah
+      // superseded/stale harus ditolak SEBELUM file disentuh; kalau tidak,
+      // MEMORY.md berubah sementara store menolak → split-brain.
+      const target = await checkMemorySupersessionTarget(supersedes_id, cwd)
+      if (!target.ok) {
+        const msg =
+          target.code === "NOT_FOUND"
+            ? `supersedes_id not found: "${supersedes_id}". Use read_memory to get a real [id:...] from a previous result, or omit supersedes_id to store this as a new fact.`
+            : `supersedes_id rejected (${target.code}): ${target.reason}. Re-read memory and supersede the current live entry instead.`
+        throw new Error(msg)
+      }
+    }
+    // [Area E / D2] Tag provenance DIHITUNG SEBELUM appendMemory — versi lama
+    // menulisnya hanya ke hasil tool, sehingga baris di MEMORY.md tak punya
+    // bukti provenance (tag yang dibangun di bawah terbuang percuma).
     const cat = (category as string) ?? "fact"
     const tagArr = Array.isArray(tags) ? (tags as string[]) : undefined
     // [Fase 12 / LF-4] id memori lama yang digantikan (supersession) dari argumen tool.
@@ -186,6 +213,12 @@ export const writeMemoryTool: Tool = {
     if (turnId) memTags.push(`turn:${turnId}`)
     if (sourceKind) memTags.push(`source:${sourceKind}`)
     if (sourceRef) memTags.push(`ref:${sourceRef}`)
+
+    const path = await appendMemory(t, cwd, memTags)
+    // [Fase 9 / 9.2] Fault-injection boundary: file (MEMORY.md) sudah ketulis,
+    // vector.db belum. Injector yang melempar di stage ini menyimulasikan crash
+    // persis di titik ini → menghasilkan entri file-only (split-brain arah 1).
+    invokeMemoryWriteFaultForTest("after_file_before_vector")
 
     const baseUrl = process.env.AGENT_BASE_URL ?? "https://api.openai.com/v1"
     const apiKey =
@@ -222,13 +255,40 @@ export const writeMemoryTool: Tool = {
           sourceRef,
           supersedesId,
         })
+        added = true
       } catch (e2) {
         process.stderr.write(
           `[warn] memory keyword-only fallback failed: ${(e2 as Error).message}\n`,
         )
       }
     }
-    return `saved to ${path}: ${t.slice(0, 100)}${memTags.length ? ` [tags: ${JSON.stringify(memTags)}]` : ""}`
+    // [Area E / D6] Fakta lama yang digantikan harus hilang dari MEMORY.md —
+    // jalur retrieval file membaca berkas mentah, jadi menambah fakta baru
+    // saja membuat fakta lama tetap "benar". Hanya dilakukan bila store vektor
+    // benar-benar menerapkan supersession (added=true); bila tidak, baris lama
+    // tetap valid dan tidak boleh dihapus.
+    if (added && supersedesId) {
+      try {
+        const oldText = await memoryEntryText(supersedesId, cwd)
+        if (oldText) await deleteMemoryEntry(oldText, cwd)
+      } catch {}
+    }
+    // P1.3: bila store menolak (mis. race: target baru saja superseded), tarik
+    // kembali baris file yang sudah ditulis agar tidak ada fakta "file-only"
+    // yang tetap terbaca sementara relasi supersession gagal.
+    if (!added && supersedesId) {
+      try {
+        await deleteMemoryEntry(t, cwd)
+      } catch {}
+    }
+    // [Area E / D1] Jangan klaim sukses penuh bila indeks vektor gagal total:
+    // fakta memang tersimpan di berkas, tetapi pencarian hybrid tak akan
+    // menemukannya sampai reconcile. Pesan ini membuat degradasi TERLIHAT
+    // (bukan hanya warning stderr yang tak dibaca model).
+    const vectorNote = added
+      ? ""
+      : " (vector index unavailable — saved to file only; run `minicode memory reconcile` to index)"
+    return `saved to ${path}: ${t.slice(0, 100)}${memTags.length ? ` [tags: ${JSON.stringify(memTags)}]` : ""}${vectorNote}`
   },
 }
 

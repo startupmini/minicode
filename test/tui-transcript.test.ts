@@ -237,3 +237,90 @@ describe("Transcript", () => {
     }
   })
 })
+
+describe("P1 operator diagnostics in TUI", () => {
+  test("verification.observed dirender (tidak lagi ditelan guard tool.*)", () => {
+    const { t, emit } = setupPresentation({
+      activities: [activity({ toolCallId: "call-v", name: "edit", target: "a.ts" })],
+      turns: [],
+    })
+    emit("verification.observed", {
+      seq: 2,
+      turnId: 1,
+      toolCallId: "call-v",
+      verification: {
+        invocationId: "inv-1",
+        verdict: "present",
+        method: "journal",
+        observedAt: 1,
+      },
+    })
+    expect(t.view(80, 3, 0).join("\n")).toContain("verified")
+  })
+
+  test("consequence.decided menampilkan verdict + next action", () => {
+    const { t, emit } = setupPresentation({ activities: [], turns: [] })
+    emit("consequence.decided", {
+      seq: 3,
+      turnId: 1,
+      verdict: "BLOCKED",
+      failureClass: "EVALUATOR_TAMPER_ATTEMPT",
+      nextAction: "STOP_AND_REPORT",
+      message: "verifier script modified",
+    })
+    const out = t.view(100, 4, 0).join("\n")
+    expect(out).toContain("consequence")
+    expect(out).toContain("BLOCKED")
+    expect(out).toContain("STOP_AND_REPORT")
+  })
+
+  test("context.window memakai occupancy/capacity, bukan session spend", () => {
+    const { t, emit } = setupPresentation({ activities: [], turns: [] })
+    emit("context.window", {
+      seq: 4,
+      turnId: 1,
+      usedTokens: 1200,
+      windowTokens: 4000,
+      percent: 30,
+    })
+    const out = t.view(100, 3, 0).join("\n")
+    expect(out).toContain("context window")
+    expect(out).toContain("1,200/4,000")
+    expect(out).toContain("30%")
+  })
+
+  test("task COMPLETED tanpa verification tampil unverified (bukan PASS)", () => {
+    const { t, emit } = setupPresentation({ activities: [], turns: [] })
+    emit("task.status", {
+      seq: 6,
+      turnId: 1,
+      taskId: "t1",
+      taskStatus: "COMPLETED",
+      taskVerification: { verdict: "unverified", checkedAt: "" },
+    })
+    expect(t.view(100, 3, 0).join("\n")).toContain("[unverified]")
+  })
+
+  test("tool.denied menampilkan denyReason", () => {
+    const { t, emit } = setupPresentation({
+      activities: [
+        activity({
+          toolCallId: "call-d",
+          name: "write_file",
+          target: "a.ts",
+          status: "denied",
+          denyReason: "read-only mode",
+        }),
+      ],
+      turns: [],
+    })
+    emit("tool.denied", {
+      seq: 5,
+      turnId: 1,
+      toolCallId: "call-d",
+      status: "denied",
+      reason: "read-only mode",
+    })
+    expect(t.view(100, 3, 0).join("\n")).toContain("read-only mode")
+  })
+})

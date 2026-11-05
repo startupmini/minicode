@@ -35,6 +35,7 @@ import { createCliSession } from "../setup.ts"
 //   <- {"type":"turn.started|completed|failed|cancelled",...} ...
 //   <- {"type":"file.changed|test.completed|diagnostic.raised|checkpoint.created",...} ...
 //   <- {"type":"plan.updated|finding.detected|result.produced|context.compacted",...} ...
+//   <- {"type":"task.status","taskId":"t1","status":"COMPLETED","parentId":"t0",...} ...
 //   <- {"id":2,"result":{"ok":true,"tokens":123,"steps":4,"turns":1,"text":"..."}}
 //   -> {"id":3,"method":"cancel"}  (menggugurkan run yang berjalan)
 //   -> {"id":4,"method":"shutdown"} (keluar 0 setelah run selesai/dibatalkan)
@@ -119,9 +120,13 @@ export function parseRunParams(
   const mode =
     p.mode === undefined || p.mode === "auto" ? "auto" : p.mode === "plan" ? "plan" : null
   if (mode === null) return { ok: false, error: 'params.mode must be "auto" or "plan"' }
-  // P12 S2.2 — WorkMode default EXECUTE; nilai invalid → error (bukan diam
-  // melebar). Case-insensitive agar konsisten dengan flag CLI.
-  const wmRaw = p.workMode === undefined ? "EXECUTE" : String(p.workMode).toUpperCase()
+  // P12 S2.2 + P0.2 (Q5) — WorkMode: params.workMode eksplisit mengalahkan env
+  // MINICODE_WORK_MODE; keduanya absen → EXECUTE. Nilai params.workMode yang
+  // invalid ditolak fail-closed (bukan diam melebar).
+  const envWmRaw = (process.env.MINICODE_WORK_MODE ?? "").trim().toUpperCase()
+  const envWorkMode =
+    envWmRaw === "DISCUSS" || envWmRaw === "PLAN" || envWmRaw === "EXECUTE" ? envWmRaw : "EXECUTE"
+  const wmRaw = p.workMode === undefined ? envWorkMode : String(p.workMode).toUpperCase()
   const workMode =
     wmRaw === "DISCUSS"
       ? "DISCUSS"
@@ -257,6 +262,15 @@ function projectAcpLifecycle(
         : {}),
       ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
       ...(event.provenance ? { provenance: event.provenance } : {}),
+    }
+  if (event.type === "task.status")
+    return {
+      ...base,
+      ...(event.taskId ? { taskId: event.taskId } : {}),
+      ...(event.taskStatus ? { status: event.taskStatus } : {}),
+      ...(event.parentId ? { parentId: event.parentId } : {}),
+      ...(event.dependsOn?.length ? { dependsOn: event.dependsOn } : {}),
+      ...(event.revision !== undefined ? { revision: event.revision } : {}),
     }
   if (event.type === "diagnostic.raised")
     return {
@@ -457,6 +471,7 @@ export async function runAcpSession(
             ok: true,
             sessionId: ctx.sessionId,
             model: ctx.modelRef.current,
+            workMode: (ctx as { workMode?: string }).workMode ?? rp.workMode ?? "EXECUTE",
             tokens: ue.totalTokens,
             inputTokens: ue.inputTokens,
             outputTokens: ue.outputTokens,

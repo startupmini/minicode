@@ -257,22 +257,47 @@ test("delegate_task meneruskan abort ke child dan pool pulih", async () => {
   if (!savedKey && !savedAgent) process.env.OPENAI_API_KEY = "sk-test-hermetic"
   try {
     let childAborted = false
+    // [PROMPT 06 · Area F] Abort ditembak SETELAH anak benar-benar mulai,
+    // bukan setelah 100 ms buta. Urutan nyata: persistEffectIntent (SQLite,
+    // bisa >100 ms saat suite penuh/ber-instrumentasi) → pool.run → factory →
+    // run anak. Kalau parent abort sebelum `pool.run`, jalur yang diuji bukan
+    // "abort diteruskan ke child" melainkan "delegasi ditolak sebelum mulai"
+    // (execute melempar reason) — test jadi merah flaky, bukan regresi produk.
+    let markStarted: () => void = () => {}
+    const childStarted = new Promise<void>((r) => {
+      markStarted = r
+    })
     setSubAgentSessionFactory(async () => ({
       events: { on: () => () => {} },
       run: async (_p: string, opts: { signal: AbortSignal }) => {
-        await new Promise<void>((_, rej) =>
-          opts.signal.addEventListener("abort", () => {
+        markStarted()
+        await new Promise<void>((_, rej) => {
+          // Signal yang sudah abort tetap harus menolak (fail-closed), bukan
+          // menggantung menunggu event yang tak akan datang lagi.
+          if (opts.signal.aborted) {
             childAborted = true
             rej(opts.signal.reason instanceof Error ? opts.signal.reason : new Error("aborted"))
-          }),
-        )
+            return
+          }
+          opts.signal.addEventListener(
+            "abort",
+            () => {
+              childAborted = true
+              rej(opts.signal.reason instanceof Error ? opts.signal.reason : new Error("aborted"))
+            },
+            { once: true },
+          )
+        })
         return { finalText: "tak tercapai", usage: { steps: 0 } }
       },
     }))
     const c = new AbortController()
     const ctx = { signal: c.signal, emit: () => {}, cwd: tmpdir() } as never
     const p = delegateTaskTool.execute({ prompt: "x" }, ctx) as Promise<string>
-    setTimeout(() => c.abort(new Error("batal-induk")), 100)
+    // Batas atas: kalau anak tak pernah mulai (pool bocor), abort tetap
+    // ditembak agar test gagal dengan diagnosa, bukan menggantung 30 dtk.
+    await Promise.race([childStarted, new Promise<void>((r) => setTimeout(r, 5000))])
+    c.abort(new Error("batal-induk"))
     const out = await p
     // Dibatalkan = error, BUKAN success; child menerima abort yang sama.
     expect(out).toMatch(/sub-agent .* error.*batal-induk/)

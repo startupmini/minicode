@@ -7,6 +7,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { attachSimpleLogger } from "../src/ui/assistant/simple.ts"
 import { attachTurnStatus, type TurnStatusHandle } from "../src/ui/assistant/turn-status.ts"
+import { setSectionMinimized } from "../src/ui/render/collapse.ts"
 import { setCompactMode } from "../src/ui/render/detail.ts"
 import { setReasoningVisible } from "../src/ui/render/reasoning.ts"
 import { stripAnsi } from "../src/ui/render/theme.ts"
@@ -24,10 +25,10 @@ afterEach(() => {
   status = null
   setCompactMode(false)
   setReasoningVisible(false)
-  // Section collapse dibaca per-event dari env — bocor antar test dalam
-  // file yang sama akan mengubah cabang › vs + secara diam-diam.
-  delete process.env.MINICODE_MINIMIZE_TOOL
-  delete process.env.MINICODE_MINIMIZE_ANSWER
+  // Section collapse kini module-local (F-ENV-1) — reset lewat setter agar
+  // tidak bocor antar test (cabang › vs + berubah secara diam-diam).
+  setSectionMinimized("tool", false)
+  setSectionMinimized("answer", false)
   tty?.restore()
   tty = undefined
 })
@@ -168,7 +169,7 @@ describe("terminal contract: tidak ada tulis setelah detach/endTurn", () => {
     const { getLastTurnText } = await import("../src/ui/assistant/simple.ts")
     const { collapsedSectionsSnapshot } = await import("../src/ui/render/collapse.ts")
     setCompactMode(true)
-    process.env.MINICODE_MINIMIZE_TOOL = "1"
+    setSectionMinimized("tool", true)
     tty = installFakeTty({ columns: 80, rows: 24 })
     const bus = createFakeBus()
     const detach = attachSimpleLogger(bus as never, { quiet: true })

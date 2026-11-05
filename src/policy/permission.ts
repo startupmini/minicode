@@ -1,9 +1,20 @@
 import { resolve } from "node:path"
 import { cwd } from "node:process"
 import type { PermissionHandler, ToolCall } from "#minicore"
-import type { ApprovalEventHook, ApprovalHookEvent } from "../presentation/events.ts"
+import type {
+  ApprovalEventHook,
+  ApprovalHookEvent,
+  SideEffectTierDisplay,
+} from "../presentation/events.ts"
 import { isMcpToolName } from "../presentation/label.ts"
 import { loadAllowlist, matchAllowlist, saveAllowlist } from "./allowlist.ts"
+// [Area B · PROMPT 06] Binding persetujuan ↔ operasi yang dieksekusi.
+import {
+  type ApprovalBinding,
+  type ApprovalBindingStore,
+  captureApprovalBinding,
+  verifyApprovalBinding,
+} from "./approval-binding.ts"
 import { inspectBashCommand } from "./bash-guard.ts"
 import {
   isCwdOutsideRoot,
@@ -14,6 +25,9 @@ import {
   isSensitive,
   isTrashRestore,
 } from "./jail.ts"
+import { scrubSecrets } from "./scrub.ts"
+// [Fase 2 / TOOL-01] Diimpor dari registry kontrak tool (satu sumber).
+import { contractForTool, GATED_TOOLS, READONLY_TOOL_NAMES } from "./tool-contract.ts"
 
 export type PermissionMode = "auto" | "readonly" | "plan" | "allow-all" | "ask" | "allowlist"
 
@@ -28,28 +42,33 @@ export type PermissionAsk = (call: {
   args?: unknown
   /** [Fase 2 / LOOP-INV-08] Identitas pemanggilan untuk pengikatan approval. */
   id?: string
+  /** F-APPROVAL-1: tier risiko efek samping (dari kontrak tool). */
+  riskTier?: SideEffectTierDisplay
+  /** F-APPROVAL-1: pratinjau diff ringkas (sudah di-scrub secret). */
+  diffPreview?: string
+  /** P1.2: `always` tersedia hanya bila args dapat dipersist (≤ 2 KB JSON). */
+  canAlways?: boolean
 }) => Promise<"allow" | "deny" | "always">
 
-const READONLY_TOOLS = new Set([
-  "read_file",
-  "glob",
-  "grep",
-  "git_status",
-  "git_diff",
-  "git_log",
-  "web_fetch",
-  "web_search",
-  "read_memory",
-  "todo_read",
-  "mcp_list",
-  "lsp_diagnostics",
-  "lsp_definition",
-  "lsp_references",
-  "lsp_hover",
-  "lsp_symbols",
-  "lsp_workspace_symbols",
-  "read_image",
-])
+/** Batas args yang boleh dipersist sebagai grant `always` (fail-closed). */
+const MAX_ALWAYS_ARGS_JSON = 2000
+
+/** P1.2: satu sumber kebenaran untuk ketersediaan opsi `always`. */
+export function canPersistAlways(args: unknown): boolean {
+  try {
+    return JSON.stringify(args).length <= MAX_ALWAYS_ARGS_JSON
+  } catch {
+    return false
+  }
+}
+
+// [Fase 2 / TOOL-01] Satu sumber kebenaran: `READONLY_TOOLS` kini diturunkan
+// dari registry kontrak tool (`allowedInReadonly`) — bukan lagi daftar manual
+// yang bisa menyimpang dari `tool-contract.ts`. Menambah/mengganti tool read
+// berarti mengubah `allowedInReadonly` di registry; tidak ada daftar kedua
+// untuk lupa. Membership (termasuk in/out `web_fetch`/`web_search`) dipegang
+// test no-drift di p15-phase2-contracts-approval-recovery.test.ts.
+const READONLY_TOOLS: ReadonlySet<string> = READONLY_TOOL_NAMES
 // Tool yang menulis state internal minicode (bukan file workspace) — aman
 // di semua mode kecuali readonly/plan. `bash_kill` menghentikan proses yang
 // dimulai agent sendiri, jadi tidak menambah permukaan serangan.
@@ -84,8 +103,6 @@ const NO_PROMPT_TOOLS = new Set(["todo_write", "submit_result", "bash_output", "
 // `ask_user` di-gate: model yang bisa bertanya tanpa batas bisa membanjiri
 // user (atau memancing jawaban kredensial) — persetujuan sekali per sesi
 // via `[a] Always` tetap tersedia.
-// [Fase 2 / TOOL-01] Diimpor dari registry kontrak tool (satu sumber).
-import { GATED_TOOLS } from "./tool-contract.ts"
 
 // Denylist bash kini di src/policy/bash-guard.ts — pemeriksaan dilakukan pada
 // bentuk TERNORMALISASI (quote dibuang, variabel sederhana disubstitusi), bukan
@@ -157,6 +174,112 @@ function matchBashAllowlist(cmd: string, pattern: string): boolean {
   return re.test(trimmed)
 }
 
+// F-APPROVAL-1: pratinjau diff ringkas + representatif (satu baris) untuk kartu
+// approval. Dikomputasi di policy — satu-satunya lapisan yang BOLEH memakai
+// scrubSecrets (view tidak boleh impor src/policy). Bentuknya dipilih per-tool
+// agar menggambarkan operasi NYATA (bash → perintah, tulis/edit → path + isi
+// baru, hapus/pindah → tujuan, commit → pesan), bukan "ringkasan pendek" fiktif.
+// Semua teks dibasuh secret; kegagalan apa pun = undefined (preview hanyalah
+// informasi tambahan, bukan jalur keputusan gate).
+function buildDiffPreview(name: string, args: unknown): string | undefined {
+  if (args === undefined || args === null) return undefined
+  const a = typeof args === "object" ? (args as Record<string, unknown>) : {}
+  const str = (v: unknown): string => (typeof v === "string" ? v : "")
+  const line = (v: unknown, max = 120): string => {
+    const s = typeof v === "string" ? v : String(v ?? "")
+    const first = s.split(/\r?\n/)[0] ?? ""
+    return first.length > max ? `${first.slice(0, max)}…` : first
+  }
+  const text = (content: unknown): string => {
+    if (typeof content === "string") return content
+    if (Array.isArray(content))
+      return content
+        .map((c) =>
+          typeof c === "string"
+            ? c
+            : c && typeof c === "object" && "text" in c
+              ? String((c as { text?: unknown }).text ?? "")
+              : "",
+        )
+        .filter(Boolean)
+        .join("\n")
+    if (content && typeof content === "object" && "text" in content)
+      return String((content as { text?: unknown }).text ?? "")
+    return ""
+  }
+  // Basuh secret SEKALI di jalur keluar — path pun bisa memuat token; preview
+  // tak pernah boleh membocorkannya ke kartu UI.
+  const out = (raw: string): string | undefined => {
+    const s = scrubSecrets(raw.trim()).trim()
+    return s ? s.slice(0, 300) : undefined
+  }
+  try {
+    switch (name) {
+      case "bash": {
+        const cmd = (str(a.cmd) || str(a.command)).trim()
+        return cmd ? out(`$ ${cmd}`) : undefined
+      }
+      case "write_file": {
+        const p = str(a.path)
+        const head = line(text(a.content))
+        return p ? out(`→ ${p}${head ? ` · ${head}` : ""}`) : undefined
+      }
+      case "edit": {
+        const p = str(a.path)
+        // Skema NYATA tool `edit` = `oldString`/`newString` (src/tools/edit.ts:133-142).
+        // `old_string`/`new_string` dipakai sebagai fallback legacy — bukan
+        // sebagai nama utama: memakai yang salah membuat preview kosong
+        // (menampilkan "hanya path") untuk operasi yang sebenarnya mengganti
+        // blok kode tertentu.
+        const oldv = line(str(a.oldString ?? a.old_string), 80)
+        const newv = line(str(a.newString ?? a.new_string), 80)
+        const delta = `${oldv ? ` -${oldv}` : ""}${newv ? ` +${newv}` : ""}`
+        return p ? out(`→ ${p}${delta}`) : undefined
+      }
+      case "apply_patch": {
+        const p = str(a.path)
+        // Skema NYATA tool `apply_patch` = `patches: [{search, replace}]`
+        // (src/tools/patch.ts:18-35) — BUKAN `patch`/`diff`.
+        const patches = Array.isArray(a.patches)
+          ? (a.patches as { search?: unknown; replace?: unknown }[])
+          : []
+        if (patches.length > 0) {
+          const first = patches[0] ?? {}
+          const oldv = line(str(first.search), 80)
+          const newv = line(str(first.replace), 80)
+          const more = patches.length > 1 ? ` (+${patches.length - 1} blok)` : ""
+          const delta = `${oldv ? ` -${oldv}` : ""}${newv ? ` +${newv}` : ""}`
+          return p ? out(`→ ${p}${delta}${more}`) : undefined
+        }
+        const head = line(text(a.patch ?? a.diff))
+        return p ? out(`→ ${p}${head ? ` · ${head}` : ""}`) : undefined
+      }
+      case "delete_file":
+        return str(a.path) ? out(`- ${str(a.path)}`) : undefined
+      case "move_file":
+        return str(a.from) || str(a.to) ? out(`${str(a.from)} → ${str(a.to)}`) : undefined
+      case "git_commit": {
+        const m = line(str(a.message), 160)
+        return m ? out(`commit ${m}`) : undefined
+      }
+      default: {
+        // Generic: name + ringkasan key=value yang dibasuh — jangan JSON mentah
+        // (struktur/token yang tak dikenal scrub bisa bocor).
+        const keys = ["path", "file", "query", "pattern", "prompt", "url", "dir", "id", "name"]
+        const parts: string[] = []
+        for (const k of keys) {
+          const v = a[k]
+          if (typeof v === "string" && v) parts.push(`${k}=${line(v, 80)}`)
+          else if (typeof v === "number" || typeof v === "boolean") parts.push(`${k}=${v}`)
+        }
+        return parts.length ? out(`${name} ${parts.join(" ")}`) : undefined
+      }
+    }
+  } catch {
+    return undefined
+  }
+}
+
 export function createPermissionHandler(
   opts: {
     mode?: PermissionMode
@@ -169,10 +292,22 @@ export function createPermissionHandler(
      * samping callback keputusan, bukan sebagai pengganti. Tanpa hook =
      * perilaku gate identik seperti dulu. Hook tak boleh melempar ke gate. */
     onApprovalEvent?: ApprovalEventHook
+    /**
+     * [Area B · PROMPT 06] Penyimpanan binding persetujuan milik SESI.
+     *
+     * Dipakai untuk dua hal: (1) menyimpan sidik jari args + file target
+     * SAAT preview dibuat (sebelum prompt), lalu (2) mengikatkannya ke
+     * keputusan "allow". Batas eksekusi (tool wrapper) memverifikasi ulang
+     * sidik jari file target dan menolak operasi yang basi.
+     *
+     * Tanpa store = perilaku lama persis (tanpa verifikasi tambahan).
+     */
+    approvalBindings?: ApprovalBindingStore
   } = {},
 ): PermissionHandler {
   const state = { mode: (opts.mode ?? "auto") as PermissionMode }
   const root = resolve(opts.root ?? cwd())
+  const approvalBindings = opts.approvalBindings
   const askUser = opts.ask
   const allowLocal = opts.allowLocalConfig === true
   let allowlistCache: string[] | null = null
@@ -249,7 +384,8 @@ export function createPermissionHandler(
   // Jawaban prompt yang dilaporkan ke observability. "headless" = jalur
   // tanpa prompt (mantan early-return noTty): pemanggil memetakan ke
   // keputusan deny-nya sendiri agar alasan deny tak berubah.
-  type GatedAnswer = "allow" | "deny" | "always" | "aborted" | "headless"
+  // "stale" = user menyetujui, tapi target berubah selama prompt → fail-closed.
+  type GatedAnswer = "allow" | "deny" | "always" | "aborted" | "headless" | "stale"
 
   // Counter id persetujuan per handler (= per sesi): deterministik dan
   // test-friendly (tak perlu randomUUID untuk observability).
@@ -260,8 +396,8 @@ export function createPermissionHandler(
     // Arg raksasa (>2KB JSON, mis. write_file 1MB) tidak disimpan sama sekali
     // (fail-closed, minta persetujuan tiap kali) — kalau tidak allowlist.json
     // membengkak dan "always" menjadi blanket-allow untuk konten apa pun.
+    if (!canPersistAlways(call.args)) return Promise.resolve()
     const argsJson = JSON.stringify(call.args)
-    if (argsJson.length > 2000) return Promise.resolve()
     const key = `${call.name}:${argsJson}`
     if (!sessionGrants.includes(key)) sessionGrants.push(key)
     allowlistCache = null
@@ -335,6 +471,9 @@ export function createPermissionHandler(
       }
       const ans = await gatedPrompt(call, signal, askUser, false)
       if (ans === "headless") return "deny"
+      // [Area B] "stale" = target berubah saat prompt → deny; alasan sudah
+      // dicatat di `deny()` (jangan timpa dengan "declined by user").
+      if (ans === "stale") return "deny"
       if (ans === "always") {
         await saveAlways(call)
         return "allow"
@@ -509,11 +648,21 @@ export function createPermissionHandler(
     describeDenial(call: ToolCall): string | undefined {
       return takeDenyReason(call)
     },
+    // Seam P0.2 (Q2): gerbang approval paksaan untuk network read (`web_fetch`,
+    // `web_search`) saat WorkMode PLAN aktif. Memakai jalur gated yang SAMA
+    // (`promptAskOr`: TTY + ask wajib, allowlist grant berlaku, headless = deny)
+    // sehingga observability persetujuan & alasan deny tetap kanonik.
+    async __promptGated(call: ToolCall, _deps?: unknown): Promise<"allow" | "deny"> {
+      const signal = (_deps as { signal?: AbortSignal } | null | undefined)?.signal
+      if (signal?.aborted) return "deny"
+      return promptAskOr(call, () => deny(call, "gated approval unavailable"), signal)
+    },
   }
   return returned as unknown as PermissionHandler & {
     __setMode(m: PermissionMode): void
     __getMode(): PermissionMode
     describeDenial(call: ToolCall): string | undefined
+    __promptGated(call: ToolCall, deps?: unknown): Promise<"allow" | "deny">
   }
 
   // Balapan prompt melawan abort: jawaban yang tiba SETELAH sesi dibatalkan
@@ -555,18 +704,53 @@ export function createPermissionHandler(
     const headless = signal?.aborted === true || !ask || (requireTTY && !process.stdin.isTTY)
     const approvalId = `ap_${++approvalCounter}`
     const callInfo = { id: call.id, name: call.name, args: call.args }
+    // F-APPROVAL-1: tier risiko efek samping dari kontrak tool — absen/kontrak
+    // tak dikenal = UNKNOWN (jelas, bukan tebakan). Tidak mengubah keputusan gate.
+    const riskTier = contractForTool(call.name)?.sideEffectTier ?? "UNKNOWN"
+    // F-APPROVAL-1: pratinjau diff yang REPRESENTATIF (per-tool) + sudah
+    // di-scrub secret — dihitung di policy karena hanya policy yang boleh
+    // memanggil scrubSecrets. Absen = tidak ada preview yang layak, kartu UI
+    // tetap menampilkan ringkasan args yang ada (fallback tak berubah).
+    const diffPreview = buildDiffPreview(call.name, call.args)
+    // [Area B · PROMPT 06] TANGKAP sidik jari operasi SEBELUM prompt. Ini
+    // "apa yang dilihat user": argumen + isi file target pada saat preview
+    // dibuat. Diambil sebelum `ask` karena `ask` bisa mengubah dunia (user
+    // sendiri atau proses lain bisa menulis file sementara prompt terbuka) —
+    // kalau sidik jari diambil SETELAH prompt, kita memverifikasi state yang
+    // tidak pernah dilihat user.
+    const capturedBinding: ApprovalBinding | null = approvalBindings
+      ? captureApprovalBinding(call.name, call.args, root)
+      : null
     emitApprovalSafe({
       kind: "requested",
       approvalId,
       call: callInfo,
       via: headless ? "system" : "prompt",
+      riskTier,
+      ...(diffPreview ? { diffPreview } : {}),
     })
     let ans: "allow" | "deny" | "always" | "aborted"
     try {
       // Headless = tanpa prompt (ask tak tersedia / [gated: bukan TTY] / sudah
       // abort): jawaban "deny" tanpa memanggil view — pemanggil memetakan ke
       // keputusan deny-nya sendiri agar alasan deny tak berubah.
-      ans = headless || !ask ? "deny" : await raceAbort(ask(call), signal)
+      // F-APPROVAL-1: tier + diff diteruskan ke view agar kartu approval
+      // menunjukkan bukti yang SAMA dengan yang user setujui (bukan ringkasan
+      // terpisah yang bisa menyimpang dari operasi yang benar dieksekusi).
+      ans =
+        headless || !ask
+          ? "deny"
+          : await raceAbort(
+              ask({
+                id: call.id,
+                name: call.name,
+                args: call.args,
+                riskTier,
+                diffPreview,
+                canAlways: canPersistAlways(call.args),
+              }),
+              signal,
+            )
     } catch (e) {
       emitApprovalSafe({
         kind: "settled",
@@ -604,6 +788,29 @@ export function createPermissionHandler(
       })
       return "headless"
     }
+    if (ans === "always" || ans === "allow") {
+      // [Area B · PROMPT 06] Verifikasi lapis-1: persetujuan diberikan user
+      // untuk state file TERTENTU. Bila target berubah selama prompt
+      // terbuka, operasi yang disetujui ≠ operasi yang akan dieksekusi →
+      // FAIL-CLOSED: tolak, jangan jalankan.
+      //
+      // Verifikasi ini terjadi SEBELUM intent jurnal ditulis (barrier efek
+      // ada di lapisan app), jadi jurnal tak pernah memuat intent untuk
+      // operasi yang memang ditolak.
+      if (capturedBinding) {
+        const verdict = verifyApprovalBinding(capturedBinding)
+        if (verdict.kind === "stale") {
+          emitApprovalSafe({
+            kind: "settled",
+            approvalId,
+            call: callInfo,
+            outcome: { decision: "deny", by: "system", reason: "approval-stale" },
+          })
+          deny(call, `approval stale: ${verdict.reason}`)
+          return "stale"
+        }
+      }
+    }
     if (ans === "always") {
       emitApprovalSafe({
         kind: "settled",
@@ -611,6 +818,11 @@ export function createPermissionHandler(
         call: callInfo,
         outcome: { decision: "allow-always", by: "user" },
       })
+      // [Area B] Grant dibuat untuk call yang SEDANG berjalan: allowlist
+      // membuat call berikutnya lolos tanpa prompt, jadi tak ada bukti baru
+      // yang bisa diverifikasi — call ini masih terikat ke bukti yang user
+      // benar-benar setujui.
+      if (capturedBinding) approvalBindings?.grant(capturedBinding)
       return ans
     }
     emitApprovalSafe({
@@ -622,6 +834,8 @@ export function createPermissionHandler(
           ? { decision: "allow", by: "user" }
           : { decision: "deny", by: "user", reason: "declined" },
     })
+    // [Area B] Izin berlaku untuk operasi yang disetujui saja.
+    if (ans === "allow" && capturedBinding) approvalBindings?.grant(capturedBinding)
     return ans
   }
 
@@ -644,6 +858,9 @@ export function createPermissionHandler(
     const ans = await gatedPrompt(call, signal, askUser, true)
     if (ans === "headless") return noTty()
     if (ans === "aborted") return "deny"
+    // [Area B] "stale" = target berubah saat prompt → deny; alasan sudah
+    // dicatat di `deny()` (jangan timpa dengan "declined by user").
+    if (ans === "stale") return "deny"
     if (ans === "always") {
       await saveAlways(call)
       return "allow"

@@ -34,8 +34,20 @@ const skipReason = pty.reason
 // TANPA kode (`exitCode: undefined`) - itu "tidak dapat diverifikasi", bukan
 // "berhasil". Self-check memakai jalur NYATA (CLI TUI + Ctrl+D), bukan probe
 // generik, karena yang diperiksa justru perilaku jalur interaktif itu.
-const exitCode = await ptyExitCodeVerifiable()
-const exitVerifiable = exitCode.ok
+//
+// [PROMPT 06 · Area F] Windows ConPTY di sini TIDAK dianggap verifiable sama
+// sekali, walau probe sekali-jalan sempat melaporkan kode. Bukti: pada satu
+// run suite penuh probe melaporkan `ok`, lalu test sesungguhnya menerima
+// `exitCode: undefined` → merah flaky yang tidak mencerminkan regresi produk.
+// Pelajaran: satu sampel probe tidak membuktikan API platform deterministik.
+// Jadi gate exit-code = POSIX saja (Linux/macOS/CI ubuntu: assertion penuh).
+// Di Windows, test DI-SKIP dengan alasan eksplisit pada nama test — bukan
+// diluluskan diam-diam, dan bukan dianggap "berhasil".
+const EXIT_CODE_PLATFORM_VERIFIABLE = process.platform !== "win32"
+const exitCode = EXIT_CODE_PLATFORM_VERIFIABLE
+  ? await ptyExitCodeVerifiable()
+  : { ok: false, reason: "Windows ConPTY tak menjamin exitCode anak (terbukti `undefined`)" }
+const exitVerifiable = EXIT_CODE_PLATFORM_VERIFIABLE && exitCode.ok
 const exitSkipReason = exitCode.reason
 
 // [P12 S2.2 Stage 4B] Apakah transport PTY yang tersedia MENGANTARKAN byte

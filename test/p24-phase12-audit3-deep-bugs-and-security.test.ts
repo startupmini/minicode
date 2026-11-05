@@ -80,7 +80,7 @@ describe("p24: Audit #3 deep bugs & security", () => {
     writeFileSync(join(cwd, ".minicode", "MEMORY.md"), `- 2026-01-01 ${text}\n`, "utf8")
     const res = await reconcileMemoryStores(cwd)
     // Multi-kata yang sah TIDAK terhapus.
-    expect(res.vectorOnlyRemoved).toBe(0)
+    expect(res.vectorOnlyAdopted).toBe(0)
   })
 
   test("LF-2: NoProgressDetector tak terspoof substring [LOOP_GUARD", () => {

@@ -22,8 +22,8 @@ let tty: FakeTty | undefined
 beforeEach(() => {
   tty = installFakeTty({ columns: 80, rows: 24 })
   setReasoningVisible(false)
-  delete process.env.MINICODE_MINIMIZE_TOOL
-  delete process.env.MINICODE_MINIMIZE_ANSWER
+  setSectionMinimized("tool", false)
+  setSectionMinimized("answer", false)
   clearCollapsedSections()
 })
 
@@ -31,8 +31,8 @@ afterEach(() => {
   tty?.restore()
   tty = undefined
   setReasoningVisible(false)
-  delete process.env.MINICODE_MINIMIZE_TOOL
-  delete process.env.MINICODE_MINIMIZE_ANSWER
+  setSectionMinimized("tool", false)
+  setSectionMinimized("answer", false)
   clearCollapsedSections()
 })
 
@@ -173,7 +173,7 @@ describe("collapse: tool section", () => {
 
 describe("collapse: answer section", () => {
   const minimizeAnswer = () => {
-    process.env.MINICODE_MINIMIZE_ANSWER = "1"
+    setSectionMinimized("answer", true)
   }
 
   test("minimized: jawaban di-buffer, satu baris + answer (N chars) di akhir", () => {
@@ -213,7 +213,7 @@ describe("collapse: answer section", () => {
     bus.emit("provider:text", { text: "bagian satu\n" })
     expect(all()).not.toContain("bagian satu")
     // Tombol + : minimize mati → header + flush + stream.
-    delete process.env.MINICODE_MINIMIZE_ANSWER
+    setSectionMinimized("answer", false)
     bus.emit("provider:text", { text: "bagian dua\n" })
     expect(all()).toContain("bagian satu")
     expect(all()).toContain("bagian dua")

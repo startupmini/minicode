@@ -12,12 +12,14 @@
 //   8.4  `fenceUntrustedToolOutput` meng-escape injection
 //        `[END_UNTRUSTED_TOOL_OUTPUT]` → `_ESCAPED`.
 
+import { Database } from "bun:sqlite"
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createEventBus, createToolRegistry } from "#minicore"
 import { allowAll } from "#minicore/test/fakes.ts"
+import { resolveDbPath } from "../src/lib/db-path.ts"
 import {
   computeMcpToolSchemaHash,
   McpSchemaPinRegistry,
@@ -26,6 +28,7 @@ import {
 import {
   addMemory,
   clearAllMemory,
+  memoryRowExists,
   resetEmbeddingCircuitBreaker,
   searchHybrid,
   supersedeMemory,
@@ -122,6 +125,111 @@ describe("8.1 Memory Supersession — supersedes / superseded_by & recall filter
   test("topicKey produces key:<name> with colon", () => {
     expect(topicKey("preferences")).toBe("key:preferences")
     expect(topicKey("")).toBe("key:")
+  })
+
+  test("searchHybrid exposes row id so supersedes_id can target a real id (§7.5)", async () => {
+    const dir = tmpRoot()
+    mkdirSync(join(dir, ".minicode"), { recursive: true })
+    const id = await addMemory("cache ttl is 300s", { cwd: dir })
+    const res = await searchHybrid("cache ttl", { cwd: dir })
+    expect(res.length).toBeGreaterThan(0)
+    expect(res[0]!.id).toBe(id)
+  })
+
+  test("memoryRowExists distinguishes existing vs missing local rows", async () => {
+    const dir = tmpRoot()
+    mkdirSync(join(dir, ".minicode"), { recursive: true })
+    const id = await addMemory("deploy region is us-east", { cwd: dir })
+    expect(await memoryRowExists(id, dir)).toBe(true)
+    expect(await memoryRowExists("no-such-id", dir)).toBe(false)
+  })
+
+  test("addMemory with a nonexistent supersedesId throws and inserts nothing (§7.5)", async () => {
+    const dir = tmpRoot()
+    mkdirSync(join(dir, ".minicode"), { recursive: true })
+    await addMemory("port is 8080", { cwd: dir })
+    await expect(
+      addMemory("port is 9090", { cwd: dir, supersedesId: "missing-id" }),
+    ).rejects.toThrow(/supersedesId not found/)
+    // Baris baru TIDAK ter-insert, baris lama TIDAK tertombstone (rollback utuh).
+    const res = await searchHybrid("port is", { cwd: dir, includeSuperseded: true })
+    const texts = res.map((h) => h.text)
+    expect(texts).toContain("port is 8080")
+    expect(texts).not.toContain("port is 9090")
+  })
+
+  // F-MEM-1 (Risk A): supersession atas entri BER-chunk tadinya hanya
+  // menombstone chunk 0 (`superseded_by = newId WHERE id = oldId`), sehingga
+  // sibling chunk 1..N yang berbagi `parent = oldId` tetap hidup dan bocor
+  // sebagai memori stale. Dua jalur tombstone kini menutup `parent = oldId`.
+  test("addMemory supersedesId tombstones ALL chunks of a chunked entry (F-MEM-1 Risk A)", async () => {
+    const dir = tmpRoot()
+    mkdirSync(join(dir, ".minicode"), { recursive: true })
+    // Entri panjang (> chunk chars) → ≥2 chunk, marker unik di kepala & ekor.
+    const head = `head-${Math.random().toString(36).slice(2, 8)}`
+    const tail = `tail-${Math.random().toString(36).slice(2, 8)}`
+    const oldId = await addMemory(`${head} ${"x".repeat(4200)} ${tail}`, { cwd: dir })
+    // Buktikan ini benar-benar ter-chunk (parent = oldId, >1 baris).
+    let chunkCount = 0
+    const db = new Database(resolveDbPath("vector.db", dir))
+    try {
+      const cnt = db.prepare(`SELECT count(*) as c FROM memory WHERE parent = ?`).get(oldId) as {
+        c: number
+      } | null
+      chunkCount = cnt?.c ?? 0
+      expect(chunkCount > 1).toBe(true)
+    } finally {
+      db.close()
+    }
+    const newId = await addMemory("deploy region is v2", { cwd: dir, supersedesId: oldId })
+    // SEMUA chunk lama (bukan hanya chunk 0) kini superseded_by = newId.
+    const db2 = new Database(resolveDbPath("vector.db", dir))
+    try {
+      const live = db2
+        .prepare(
+          `SELECT count(*) as c FROM memory WHERE parent = ? AND (superseded_by IS NULL OR superseded_by = '')`,
+        )
+        .get(oldId) as { c: number } | null
+      expect(live?.c ?? -1).toBe(0)
+      const tombstoned = db2
+        .prepare(`SELECT count(*) as c FROM memory WHERE parent = ? AND superseded_by = ?`)
+        .get(oldId, newId) as { c: number } | null
+      // Jumlah chunk yang tertombstone = seluruh baris entri lama (>1).
+      expect(tombstoned?.c ?? 0).toBe(chunkCount)
+      expect((tombstoned?.c ?? 0) > 1).toBe(true)
+    } finally {
+      db2.close()
+    }
+    // Recall default tidak menyajikan chunk ekor yang stale (sebelum perbaikan:
+    // chunk ekor masih hidup → bocor). includeSuperseded tetap menampilkan bukti.
+    const stale = await searchHybrid(tail, { cwd: dir })
+    expect(stale.some((h) => h.text.includes(tail))).toBe(false)
+    const forensic = await searchHybrid(tail, { cwd: dir, includeSuperseded: true })
+    expect(forensic.some((h) => h.text.includes(tail))).toBe(true)
+    const fresh = await searchHybrid("deploy region", { cwd: dir })
+    expect(fresh.some((h) => h.text.includes("deploy region is v2"))).toBe(true)
+  })
+
+  test("supersedeMemory tombstones ALL chunks of a chunked entry (F-MEM-1 Risk A)", async () => {
+    const dir = tmpRoot()
+    mkdirSync(join(dir, ".minicode"), { recursive: true })
+    const tail = `tail-${Math.random().toString(36).slice(2, 8)}`
+    const oldId = await addMemory(`port matrix ${"y".repeat(4200)} ${tail}`, { cwd: dir })
+    const newId = await addMemory("port matrix is final", { cwd: dir })
+    await supersedeMemory(oldId, newId, dir)
+    const db = new Database(resolveDbPath("vector.db", dir))
+    try {
+      const live = db
+        .prepare(
+          `SELECT count(*) as c FROM memory WHERE parent = ? AND (superseded_by IS NULL OR superseded_by = '')`,
+        )
+        .get(oldId) as { c: number } | null
+      expect(live?.c ?? -1).toBe(0)
+    } finally {
+      db.close()
+    }
+    const res = await searchHybrid(tail, { cwd: dir })
+    expect(res.some((h) => h.text.includes(tail))).toBe(false)
   })
 })
 

@@ -39,7 +39,20 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // target id conflict, unresolved relation). Both are "setup refused", not
   // crashes, so they print one line instead of a stack trace. Declared,
   // not absorbed, per the rule above.
-  "cli/index.ts": { max: 29, owner: "human-cmd" },
+  // [Live Hardening 0.13.x §8.3] 29 -> 30 for exactly ONE writer: the warning
+  // when known flags appear AFTER the prompt boundary and are therefore
+  // swallowed as prompt text (anti-injection stop-at-prompt). Silently dropping
+  // `--resume`/`--cwd`/`--allow-all`/`--timeout`/`--model` would let the
+  // operator believe the flags took effect while they became prompt text (the
+  // stage5 failure mode) — the operator must see the misplaced flags. Declared,
+  // not absorbed, per the rule above.
+  // [P1 / F-DISCUSS-4] 30 -> 31 for exactly ONE writer: the one-shot linear
+  // `[work-mode] <MODE>` stderr line surfaced when a non-EXECUTE WorkMode is
+  // active (one-shot has no TUI footer). A silently enforced read-only/plan
+  // ceiling would read as "permission denied" with no indication the mode is
+  // active. EXECUTE (default) emits nothing, so there is no flood. Declared,
+  // not absorbed, per the rule above.
+  "cli/index.ts": { max: 31, owner: "human-cmd" },
   "cli/model-manager.ts": { max: 2, owner: "human-cmd" },
   "cli/provider-manager.ts": { max: 3, owner: "human-cmd" },
   // [P2.1] 26 -> 27 for exactly ONE writer: the canonical identity line
@@ -88,7 +101,11 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // truncated: context-window limit reached`). Both abort a turn the operator
   // asked to bound; a silent abort would read as a hang/hidden cut instead of an
   // enforced deadline/window. Declared, not absorbed, per the rule above.
-  "cli/setup.ts": { max: 41, owner: "diagnostic" },
+  // [P1 / D-2 → P0.2 Q5] 41 -> 42 for exactly ONE writer: the resume WorkMode
+  // transparency notice (`[resume] WorkMode <MODE> restored from session...` or
+  // legacy fallback/explicit override). Any WorkMode state on resume is surfaced
+  // on one visible stderr line, never silently altered. Declared, not absorbed.
+  "cli/setup.ts": { max: 42, owner: "diagnostic" },
   "cli/tui.ts": { max: 9, owner: "screen" },
   // [P2.2] 3 -> 4 for exactly ONE writer: the stale-writer durability
   // diagnostic after a headless run persisted. The ACP success envelope is
@@ -103,7 +120,7 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // (kumpulkan ke array, flush di akhir) — pola yang sama dengan yang dipakai
   // /scheduler, supaya satu baris perintah tidak jadi enam panggilan tulis.
   // Declared, not absorbed, per the rule above.
-  "cli/commands/daemon.ts": { max: 6, owner: "human-cmd" },
+  "cli/commands/daemon.ts": { max: 7, owner: "human-cmd" }, // +1 P2.3: hosted-run failure diagnostic
   "cli/commands/doctor.ts": { max: 4, owner: "human-cmd" },
   // [P2.2] 7 -> 8 for exactly ONE writer: the stale-writer message on the
   // non-JSON path when history could not be made durable (mirrors the JSON
@@ -122,7 +139,18 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // with cli/index.ts parsing. Fix live UAT: exec sebelumnya menyaring nilai
   // flag ini dari prompt tetapi tidak pernah menerapkannya — tanpa warning,
   // batas yang diminta operator diam-diam diabaikan. Declared, not absorbed.
-  "cli/commands/exec.ts": { max: 15, owner: "machine" },
+  // [P1 / F-DISCUSS-4] 15 -> 16 for exactly ONE writer: the non-JSON exec
+  // `[work-mode] <MODE>` stderr line surfaced when a non-EXECUTE WorkMode is
+  // active (exec non-JSON = linear manusia tanpa footer TUI; JSON memakai
+  // summary.workMode terstruktur, bukan teks dekoratif). Silent read-only/plan
+  // enforcement would misread as ordinary denial. EXECUTE emits nothing.
+  // Declared, not absorbed, per the rule above.
+  // [P0.2 Q5 / Invariant #6] 16 -> 17 for exactly ONE writer: the
+  // `flagsAfterPromptBoundary` stderr warning on `exec` (parity with
+  // cli/index.ts §8.3), preventing `minicode exec "task" --work-mode DISCUSS`
+  // from silently swallowing `--work-mode` into prompt text and running EXECUTE
+  // without warning. Declared, not absorbed, per the rule above.
+  "cli/commands/exec.ts": { max: 17, owner: "machine" },
   "cli/commands/mcp.ts": { max: 2, owner: "human-cmd" },
   "cli/commands/memory.ts": { max: 11, owner: "human-cmd" },
   // [P14.4] 0 -> 8 for the openwork command's writers, per the terminal

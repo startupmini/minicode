@@ -104,6 +104,25 @@ export type ServerMessage =
        * yang tak pernah bisa ia deteksi sendiri.
        */
       snapshotRejected: number
+      /**
+       * [Area C · PROMPT 06] Fase stream SAAT INI di langganan ini.
+       *
+       * "replay" = server masih akan mengirim event durable lama (event
+       * setelah pesan ini masih bisa Ber-provenance "REPLAY"); "live" = tak
+       * ada replay yang menunggu, stream ini live sejak awal.
+       *
+       * Kenapa Wajib di sini: tanpa field ini konsumen harus MENEBAK apakah
+       * replay akan datang (dari `fromSeq` vs head yang tak dikirim), dan
+       * tebakan yang salah membuat UI menampilkan "live" untuk data yang
+       * sebenarnya basi — atau sebaliknya, menampilkan "replay" untuk stream
+       * yang sudah live. `tail_marker` tetap menjadi penanda TRANSISI
+       * (phase "live"), jadi kedua titik itu konsisten.
+       *
+       * Field TAMBAHAN (additive): konsumen lama yang mengabaikan field
+       * tak dikenal tetap bekerja; ia hanya tak bisa menampilkan badge fase
+       * awal sampai `tail_marker` tiba.
+       */
+      phase: DaemonStreamPhase
     }
   | { t: "frontiers"; sid: string; frontiers: SessionFrontiers }
   | { t: "snapshot"; sid: string; consumer: string; snapshot: SessionSnapshot }
@@ -116,7 +135,19 @@ export type ServerMessage =
       event: unknown
     }
   | { t: "replay_done"; sid: string; consumer: string; upToSeq: number }
-  | { t: "tail_marker"; sid: string; consumer: string; atSeq: number }
+  | {
+      t: "tail_marker"
+      sid: string
+      consumer: string
+      atSeq: number
+      /**
+       * F-DAEMON-1: fase stream pada titik ini — selalu "live" (tail_marker
+       * ADALAH transisi REPLAY→LIVE). Bila tidak ada replay (subscribe "tail"
+       * dari head), fase tetap "live" dan event yang ditandai LIVE sudah tiba
+       * sejak awal; konsumen tak perlu menebak dari urutan pesan.
+       */
+      phase: DaemonStreamPhase
+    }
   | { t: "ack_ok"; sid: string; consumer: string; seq: number }
   | { t: "approval"; consumer: string; approval: ApprovalView }
   | { t: "control_result"; idem: string; ok: boolean; result?: unknown; refusal?: RefusalBody }
@@ -135,8 +166,23 @@ export interface RefusalBody {
  * Provenance sebuah event di mata konsumen. LIVE = dari penulis sesi sekarang;
  * REPLAY = dibaca dari durable store; RECONSTRUCTED = hasil rebuild presentasi;
  * UNKNOWN = tak dapat dipastikan. Tak boleh pernah diratakan ke satu nilai.
+ *
+ * INI KOSAKATA WIRE (UPPERCASE). Beda dari kosakata provenance TAMPILAN
+ * (lowercase `live|replay|reconstructed|unknown` di `src/presentation/projection.ts`
+ * / `src/ui/contract.ts:UiProvenance`). Dua kosakata itu disengaja terpisah:
+ * yang satu menjelaskan (di mata konsumen daemon) DARI MANA sebuah event dibaca
+ * dari toko; yang lain menjelaskan (di mata renderer) status rebuild/`incomplete`
+ * baris transcript terhadap watershed rebuild. Jangan pernah membandingkan
+ * keduanya secara langsung tanpa mapping eksplisit.
  */
 export type Provenance = "LIVE" | "REPLAY" | "RECONSTRUCTED" | "UNKNOWN"
+
+/**
+ * F-DAEMON-1: fase stream per-konsumen. `replay` = masih melayani event durable
+ * yang sudah ada (SEBELUM `tail_marker`); `live` = sudah melewati `tail_marker`,
+ * setiap event berikutnya adalah LIVE (mungkin belum durable).
+ */
+export type DaemonStreamPhase = "replay" | "live"
 
 /** Frontier = batas pengetahuan terakhir per toko (bukan kepemilikan). */
 export interface SessionFrontiers {

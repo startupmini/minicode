@@ -124,14 +124,20 @@ export function parseWorkModeValue(raw: string): CliWorkMode | undefined {
  */
 export function resolveWorkModeFlag(getArg: (n: string) => string | undefined): {
   workMode: CliWorkMode
+  /** Benar bila operator memberi sinyal WorkMode eksplisit (flag ATAU env),
+   *  terlepas nilainya sah/tidak. Dipakai composition root untuk transparansi
+   *  resume (D-2): WorkMode TIDAK dipersist, jadi resume tanpa sinyal eksplisit
+   *  kembali ke EXECUTE dan diberi tahu satu baris. */
+  explicit: boolean
   warning?: string
 } {
   const raw = getArg("--work-mode") ?? process.env.MINICODE_WORK_MODE
-  if (raw === undefined) return { workMode: "EXECUTE" }
+  if (raw === undefined) return { workMode: "EXECUTE", explicit: false }
   const parsed = parseWorkModeValue(raw)
-  if (parsed) return { workMode: parsed }
+  if (parsed) return { workMode: parsed, explicit: true }
   return {
     workMode: "EXECUTE",
+    explicit: true,
     warning: `--work-mode requires DISCUSS|PLAN|EXECUTE, ignoring "${raw}" (using EXECUTE)`,
   }
 }
@@ -211,6 +217,48 @@ export function promptFromArgs(argv: string[]): string {
     if (!a.includes("=")) i++
   }
   return out.join(" ")
+}
+
+/**
+ * [Live Hardening 0.13.x §8.3/§7.1] Daftar flag YANG DIKENAL yang muncul SETELAH
+ * prompt boundary (kata prompt pertama, atau separator `--`). `promptFromArgs`
+ * sengaja menghentikan pemindaian flag pada boundary itu (pertahanan anti-injeksi),
+ * sehingga flag semacam itu menjadi bagian teks prompt — bukan flag yang diparse.
+ *
+ * Tanpa peringatan, operator yang mengetik `minicode "refactor" --work-mode PLAN`
+ * diam-diam menjalankan satu run tanpa work-mode yang diminta (kasus stage5: resume
+ * dibuang). Helper ini memurnikan deteksi agar CLI dapat memberi `[warn]` yang
+ * actionable. Nama flag di-dedupe menjaga urutan kemunculan; hanya flag dikenal
+ * yang dilaporkan (flag tak dikenal memang tak akan pernah dijalankan sebagai flag).
+ */
+export function flagsAfterPromptBoundary(argv: string[]): string[] {
+  const found: string[] = []
+  let afterBoundary = false
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]
+    if (a === undefined) break
+    if (a === "--") {
+      // Separator eksplisit: semua token setelahnya adalah prompt (flag pun).
+      afterBoundary = true
+      continue
+    }
+    if (afterBoundary) {
+      const f = flagNameOf(a)
+      if (f && !found.includes(f)) found.push(f)
+      continue
+    }
+    const fname = flagNameOf(a)
+    if (fname === null) {
+      // Token prompt pertama (bukan flag dikenal) → boundary di titik ini;
+      // token ini sendiri adalah prompt, bukan flag.
+      afterBoundary = true
+      continue
+    }
+    // Flag dikenal SEBELUM boundary: lewati flag + nilainya (bila value flag
+    // bentuk terpisah) persis seperti promptFromArgs.
+    if (valueFlags.has(fname) && !a.includes("=")) i++
+  }
+  return found
 }
 
 export function readPrompt(): Promise<string> {

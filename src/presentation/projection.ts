@@ -368,7 +368,15 @@ export function selectNodes(state: PresentationState, mode: ProjectionMode): Pro
     if (ref.kind === "system") {
       const entry = state.system.find((s) => s.id === ref.id)
       if (!entry) continue
-      if (mode === "normal" && entry.systemKind !== "checkpoint" && entry.systemKind !== "recovery")
+      // F-TASK-1: notice status task tetap terlihat di proyeksi `normal` —
+      // event ini adalah observabilitas kanonik (bukan notice internal biasa)
+      // dan justru hilang bila disaring bersama notice lain.
+      if (
+        mode === "normal" &&
+        entry.systemKind !== "checkpoint" &&
+        entry.systemKind !== "recovery" &&
+        entry.taskId === undefined
+      )
         continue
       out.push({ kind: "system", id: ref.id, seq: ref.seq, data: entry })
       continue
@@ -562,6 +570,24 @@ export interface MachineEventInput {
   provenance?: unknown
   /** Observasi verifikasi (tanpa evidenceReference — tetap di jurnal). */
   verification?: unknown
+  // ── P1 Observability & Interaction (aditif) ──
+  verdict?: unknown
+  failureClass?: unknown
+  nextAction?: unknown
+  newEvidenceSinceLastAttempt?: unknown
+  riskTier?: unknown
+  diffPreview?: unknown
+  schemaDrift?: unknown
+  taskId?: unknown
+  taskStatus?: unknown
+  parentId?: unknown
+  dependsOn?: unknown
+  revision?: unknown
+  usedTokens?: unknown
+  windowTokens?: unknown
+  percent?: unknown
+  costUsd?: unknown
+  providerModel?: unknown
 }
 
 const VALID_PROVENANCE: readonly string[] = ["live", "replay", "reconstructed", "unknown"]
@@ -586,21 +612,6 @@ export interface MachineEnvelope {
   visibility: ["machine"]
   /** Provenans tampilan; absen = live-atau-tak-ditentukan. */
   provenance?: Provenance
-  payload: Record<string, unknown>
-}
-
-export interface MachineEnvelope {
-  schema: typeof MACHINE_SCHEMA
-  eventId: string
-  type: string
-  timestamp: string
-  sessionId: string
-  turnId?: number
-  correlationId?: string
-  source: "derived"
-  severity: MachineSeverity
-  status: MachineStatus
-  visibility: ["machine"]
   payload: Record<string, unknown>
 }
 
@@ -653,6 +664,20 @@ export function machineSeverity(event: MachineEventInput): MachineSeverity {
   const explicit = asString(event.severity)
   if (explicit && (VALID_SEVERITIES as readonly string[]).includes(explicit))
     return explicit as MachineSeverity
+  // ── P1 Observability (aditif) ──
+  if (event.type === "consequence.decided") {
+    const verdict = asString(event.verdict)
+    // P1.5: PASS = "info" (sebelumnya "warning" — salah karena bukan masalah),
+    // INCONCLUSIVE = "warning" (memerlukan perhatian tapi bukan error).
+    if (verdict === "FAIL" || verdict === "BLOCKED") return "error"
+    if (verdict === "INCONCLUSIVE") return "warning"
+    return "info"
+  }
+  if (event.type === "context.cutoff") return "warning"
+  if (event.type === "task.status") {
+    const status = asString(event.taskStatus)
+    return status === "FAILED" ? "error" : status === "BLOCKED" ? "warning" : "info"
+  }
   const suffix = eventSuffix(event.type)
   if (suffix === "failed" || suffix === "interrupted" || event.error !== undefined) return "error"
   if (suffix === "denied" || suffix === "cancelled") return "warning"
@@ -677,6 +702,26 @@ export function machineStatus(event: MachineEventInput): MachineStatus {
   }
   if (event.type === "finding.detected") return "completed"
   if (event.type === "diagnostic.raised") return "active"
+  // ── P1 Observability (aditif) ──
+  // P1.5: consequence.decided status mencerminkan verdict — sebelumnya
+  // selalu "completed" meskipun FAIL/BLOCKED.
+  if (event.type === "consequence.decided") {
+    const verdict = asString(event.verdict)
+    if (verdict === "FAIL") return "failed"
+    if (verdict === "BLOCKED") return "interrupted"
+    if (verdict === "INCONCLUSIVE") return "active"
+    return "completed"
+  }
+  if (event.type === "context.cutoff") return "interrupted"
+  if (event.type === "context.window") return "active"
+  if (event.type === "task.status") {
+    const status = asString(event.taskStatus)
+    if (status === "COMPLETED") return "completed"
+    if (status === "FAILED") return "failed"
+    if (status === "CANCELLED") return "cancelled"
+    if (status === "BLOCKED") return "interrupted"
+    return "active"
+  }
   const suffix = eventSuffix(event.type)
   if (
     suffix === "started" ||
@@ -751,6 +796,36 @@ export function machinePayload(event: MachineEventInput): Record<string, unknown
   put("severity", asString(event.severity))
   put("action", asString(event.action))
   put("compactionReason", asString(event.compactionReason))
+  // ── P1 Observability & Interaction (aditif) ──
+  put("verdict", asString(event.verdict))
+  put("failureClass", asString(event.failureClass))
+  put("nextAction", asString(event.nextAction))
+  put(
+    "newEvidenceSinceLastAttempt",
+    typeof event.newEvidenceSinceLastAttempt === "boolean"
+      ? event.newEvidenceSinceLastAttempt
+      : undefined,
+  )
+  put("riskTier", asString(event.riskTier))
+  put("diffPreview", asString(event.diffPreview))
+  if (event.schemaDrift !== undefined && event.schemaDrift !== null)
+    payload.schemaDrift = event.schemaDrift
+  put("taskId", asString(event.taskId))
+  put("taskStatus", asString(event.taskStatus))
+  put("parentId", asString(event.parentId))
+  if (Array.isArray(event.dependsOn)) payload.dependsOn = event.dependsOn.slice(0, 100)
+  put("revision", asNumber(event.revision))
+  const taskVerification = asRecord((event as { taskVerification?: unknown }).taskVerification)
+  if (taskVerification) payload.taskVerification = taskVerification
+  put("usedTokens", asNumber(event.usedTokens))
+  put("windowTokens", asNumber(event.windowTokens))
+  put("percent", asNumber(event.percent))
+  put("costUsd", asNumber(event.costUsd))
+  put("providerModel", asString(event.providerModel))
+  // P1.6: identitas anak tidak boleh hilang di machine envelope. `childSessionId`
+  // = session anak, `runId` = run kanonik anak, `parentToolCallId` = taut pemanggil.
+  put("childSessionId", asString((event as { childSessionId?: unknown }).childSessionId))
+  put("runId", asString((event as { runId?: unknown }).runId))
   const outcome = asRecord(event.outcome)
   if (outcome) payload.outcome = outcome
   const summary = asRecord(event.summary)
@@ -789,12 +864,16 @@ export function toMachineEnvelope(
   const turnId = asNumber(event.turnId)
   const seq = asNumber(event.seq)
   const provenance = asProvenance(event.provenance)
+  // Identitas event mengikuti session pemilik event (anak untuk forward), bukan
+  // selalu session induk. Adapter anak punya `seq`/`turnId` sendiri; memakai
+  // induk akan menghasilkan eventId yang sama untuk dua event berbeda.
+  const eventSessionId = asString((event as { sessionId?: unknown }).sessionId) ?? ctx.sessionId
   const envelope: MachineEnvelope = {
     schema: MACHINE_SCHEMA,
-    eventId: machineEventId(ctx.sessionId, turnId, seq),
+    eventId: machineEventId(eventSessionId, turnId, seq),
     type: event.type,
     timestamp: machineTimestamp(ctx.timestamp),
-    sessionId: ctx.sessionId,
+    sessionId: eventSessionId,
     ...(turnId !== undefined ? { turnId } : {}),
     source: "derived",
     severity: machineSeverity(event),
@@ -843,6 +922,16 @@ export function machineError(e: unknown): MachineError {
   )
   if (name === "NoProviderError" || /no provider configured/i.test(message))
     return { category: "CONFIGURATION_ERROR", message, action: "configure a provider" }
+  // [Live Hardening 0.13.x §8.1] kind budget_exceeded yang sebenarnya kehabisan
+  // jendela konteks ("context window exceeded after compaction", vendor loop)
+  // HARUS disarankan start-sesi-baru/model-jendela-besar, bukan --budget. Branch
+  // ini diselaraskan dengan Fix 4 di src/ui/render/errors.ts (err.context).
+  if (kind === "budget_exceeded" && /context window/i.test(message))
+    return {
+      category: "USER_ERROR",
+      message,
+      action: "start a new session or use a model with a larger context window",
+    }
   if (kind === "budget_exceeded" || /over budget|unknown cost/i.test(message))
     return { category: "USER_ERROR", message, action: "raise --budget or reduce usage" }
   if (kind === "timeout" || (/timeout|timed out/i.test(message) && kind !== "aborted"))

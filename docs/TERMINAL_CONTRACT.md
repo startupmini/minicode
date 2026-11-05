@@ -227,6 +227,15 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      tetap pada ledger tool, status tool final memakai glyph + kata
      (`completed`/`failed`/`denied`/`cancelled`/`interrupted`), retry dan grup
      anak mengikuti model, serta ringkasan turn masuk sebagai system entry.
+     **Grup anak (F-AGENT-1):** tool anak yang punya identitas run
+     (`childSessionId`/`runId` — dari `ChildSessionLink`) tampil sebagai baris
+     run sendiri, diindented `↳ <marker> <tool> <target> <status>` dengan
+     marker `run_<8>`/`sub_<8>`; anak paralel tak lagi(dir) satukan jadi satu
+     hitungan. Tool anak yang HANYA punya `parentToolCallId` (grouping legacy,
+     tanpa identitas run) tetap ditelan sebagai hitungan induk `n child tools`
+     — `parentToolCallId` = taut ke pemanggil, bukan identitas run, jadi dua
+     makna itu tak boleh disamakan. Baris running anak memakai aturan yang
+     sama (marker per run).
 
 18. Prompt multiline (Ctrl+J newline), histori memori-sesi (tak persist ke
     berkas histori lama). `/copy [n]` menyalin 1–10 turn terakhir (default 1,
@@ -319,24 +328,48 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      — subcommand lain menerima args mentah. Invarian ini tidak mengubah
      semantik, aksi, atau exit code masing-masing aksi; yang berubah hanya
      invokasi flag-mendahului yang dulu salah rute menjadi rute benar.
-35. **WorkMode = lapis intent di ATAS permission mode (P12 S2.2)** — dua
+35. **WorkMode = lapis intent di ATAS permission mode (P12 S2.2 + P0.2)** — dua
     dimensi yang BERJALAN BERSAMA, bukan pengganti:
-    **Nilai:** `DISCUSS` (read-only penuh) · `PLAN` (ceiling rencana) ·
-    `EXECUTE` (tanpa ceiling tambahan). Default `EXECUTE` = perilaku lama
-    (kompatibel: sesi tanpa WorkMode yang eksplisit tetap EXECUTE).
-    **Gerbang penolakan:** permission handler tetap satu-satunya yang menentukan
-    keamanan eksekusi. WorkMode hanya MEMASANG CEILING di atasnya; ia tidak
-    pernah memperluas kewenangan permission mode dasar (INV-WM1).
+    **Nilai:** `DISCUSS` (investigasi baca-saja lokal: tepat 16 tool `PURE_READ`
+    lokal, network read `web_fetch`/`web_search` ditolak penuh) · `PLAN`
+    (ceiling rencana: 16 tool baca lokal + `web_fetch`/`web_search` wajib lewat
+    approval prompt + ekstra rencana bila diizinkan PM) · `EXECUTE` (tanpa
+    ceiling tambahan). Default `EXECUTE` = perilaku lama (kompatibel: sesi baru
+    tanpa WorkMode eksplisit tetap EXECUTE).
+    **Gerbang penolakan & side-effect ceiling:** permission handler tetap
+    satu-satunya yang menentukan keamanan eksekusi. WorkMode hanya MEMASANG
+    CEILING di atasnya; ia tidak pernah memperluas kewenangan permission mode
+    dasar (INV-WM1), `visible === callable` terjaga lintas transisi runtime,
+    hooks diblokir pada `DISCUSS` maupun `PLAN` untuk semua PM, dan `--verify`
+    ditolak fail-closed saat startup bila digabung `DISCUSS`/`PLAN` (exit 2)
+    serta dilewati otomatis saat mode turun ke `DISCUSS`/`PLAN` di TUI.
     **Command `/work-mode <DISCUSS|PLAN|EXECUTE>`:** aksi operator EKSPLISIT.
     Tanpa argumen → tampilkan mode aktif + usage; nilai invalid → pesan
     kesalahan dan mode AKTIF TIDAK berubah; sesi tanpa kontrol WorkMode
     (handler izin terinjeksi = policy, bukan mode) → ditolak, bukan
     diam-diam tampak berubah. Transisi berlaku pada SESI YANG SEDANG
     BERJALAN: ceiling permission dievaluasi per pemanggilan tool, daftar tool
-    yang dilihat model ikut turun/naik, hooks dievaluasi terhadap WorkMode
-    aktif, dan delegasi berikutnya mewarisi WorkMode parent yang aktif.
-    WorkMode TIDAK bisa dinaikkan otomatis oleh model, anak, atau argumen
-    delegasi.
+    dan instruksi system prompt yang dilihat model ikut turun/naik, hooks/verify
+    dievaluasi terhadap WorkMode aktif, dan delegasi berikutnya mewarisi
+    WorkMode parent yang aktif. WorkMode TIDAK bisa dinaikkan otomatis oleh
+    model, anak, atau argumen delegasi.
+    **Resume (P0.2 Q5 — menggantikan D-2):** WorkMode DIPERSIST di metadata sesi
+    (`sessions.work_mode`) lintas `--resume`. Saat resume tanpa sinyal eksplisit
+    (`--work-mode` / `MINICODE_WORK_MODE`), WorkMode dipulihkan dari metadata
+    sesi (baris legacy tanpa `work_mode` kembali ke default `EXECUTE`) dan
+    composition root menulis SATU baris stderr human-facing
+    (`[resume] WorkMode <MODE> restored from session...` atau notice override/
+    legacy) agar otoritas sesi hasil resume selalu terlihat eksplisit. Baris itu
+    keluar lewat stderr, BUKAN proyeksi mesin/JSON/ACP — kanal machine tetap
+    terstruktur (`summary.workMode` / `result.workMode`), tanpa teks dekoratif.
+    **Surfacing lintas-surface (F-DISCUSS-4):** WorkMode terlihat di TUI lewat
+    footer (`<WorkMode>·<permission mode>`), di one-shot/exec linear lewat SATU
+    baris stderr human-facing `[work-mode] <MODE> …` hanya saat WorkMode ≠
+    EXECUTE (EXECUTE = default, tanpa baris), dan di `exec --json` lewat field
+    terstruktur `summary.workMode` (selalu hadir, termasuk EXECUTE) — bukan teks
+    dekoratif. ACP memakai `params.workMode` (terstruktur) dan tak menambah baris
+    dekoratif. WorkMode selalu dibedakan tegas dari PermissionMode (`[work-mode]`
+    vs `/mode`/`--plan`) dan dari status sesi.
     **Pemisahan dari permission mode:** Tab/Shift+Tab dan `/mode` TETAP
     khusus permission mode — WorkMode tak masuk siklus Tab. Permission mode
     yang memutuskan allow/deny per tool; WorkMode memilih postur
@@ -369,7 +402,9 @@ belakang + kotak terpusat (form di dalam) + Esc tutup · approval tercatat ·
 `/status`, `/history`, `/help` ringkas & `/expand` mengalir ke transkrip ·
 `/mode` = permission mode · `/work-mode` = WorkMode (intent layer) ·
 Projection V2: `› name target … running`, ledger status ber-glyph/kata,
-retry/grup anak, ringkasan turn, dan marker evict sesuai flag ·
+retry/grup anak (anak ber-identitas run = baris `↳ run_<8>` sendiri; tanpa
+identitas run = hitungan `n child tools`), ringkasan turn, dan marker evict
+sesuai flag ·
 
 `Esc` saat turn = abort (+ hint sekali); busy = input beku total ·
 Mouse wheel = scroll transkrip, PgUp/PgDn = scroll, Shift+PgUp/PgDn = setengah
@@ -430,17 +465,40 @@ panjang).
 - `test/tui-transcript.test.ts` — I7/I12/I17/I22 (ledger satu baris per tool, cap 5000 + marker evict, `total()` monotonik kebal evict, viewport, thinking minimized/expanded).
 - `test/presentation-projections.test.ts` — I12/I17/I32 (projection
   snapshot, running/elapsed, status terminal, retry/child grouping, summary,
-  marker evict + `total()` monotonik, dan parity flag OFF).
+  marker evict + `total()` monotonik, dan parity flag OFF) + F-AGENT-1
+  (baris per-run `↳ run_<8>`/`sub_<8>` untuk anak ber-identitas run; tiga anak
+  paralel = tiga baris; anak tanpa identitas run tetap satu baris ledger induk
+  `n child tools`) + F-TASK-1 (baris ledger `t<n> <status> parent=… dependsOn=[…]
+  r<rev>`; jalur **linear** merender baris sama + proyeksi `normal`
+  mempertahankan notice task — PROMPT 06 Area D).
 - `test/presentation-linear-acp.test.ts` — I33 (linear projection
-  status/duration/receipt dan lifecycle ACP terstruktur; parity policy-vs-legacy).
+  status/duration/receipt dan lifecycle ACP terstruktur; parity policy-vs-legacy)
+  + PROMPT 06 Area D (`task.status` → baris ledger linear **dan** envelope ACP
+  berfield `taskId`/`status`/`parentId`/`dependsOn`/`revision`).
 - `test/presentation-policy.test.ts` — I32/I33 (seleksi node per mode, envelope
-  machine, digest divergensi; purity tanpa clock/IO).
+  machine, digest divergensi; purity tanpa clock/IO) + PROMPT 06 Area D
+  (notice `task.status` **ikut mode `normal`** dengan field terstruktur utuh).
 - `test/writer-inventory.test.ts` — OAP-008 (setiap writer langsung terdaftar
   dengan owner; jumlah tak boleh naik diam-diam).
 - `test/exec-json-envelope.test.ts` + `test/cli-session.test.ts` (envelope
   machine) — I28/I33/I34 (summary berversi, tanpa ANSI/secret, tanpa raw
   kernel; P11.2 scoping prompt: flag-mendahului vs `exec`-dahulu identik,
   kata `exec` milik user tetap utuh).
+- PROMPT 06 Area A — `test/ui-instance-isolation.test.ts`: state renderer
+  per-instans (dua sesi nyata; env = bootstrap saja).
+- PROMPT 06 Area B — `test/approval-integrity.test.ts`: binding args-hash +
+  fingerprint target difoto sebelum prompt dan diverifikasi di barrier efek
+  (deny `"stale"` bila berubah), termasuk jalur kernel nyata.
+- PROMPT 06 Area C — `test/daemon-stream-phase.test.ts`: `subscribed.phase` +
+  `tail_marker.phase` dari latch per-langganan; badge `" [replay]"`.
+- PROMPT 06 Area E — `test/memory-consistency.test.ts`: degradasi vector
+  terlihat di hasil tool, revoke provenance AND (fail-closed), reconcile
+  mengadopsi (bukan menghapus) vector-only, fakta panjang utuh, supersession
+  menarik baris lama, lupa menghapus entri multi-chunk utuh, cap per-entri,
+  validasi respons embedding.
+- PROMPT 06 Area F — `test/ci-glob-expansion.test.ts`: `ci-windows` memakai
+  `shell: bash` (pwsh tak mengekspansi glob → suite p15..p24 lolos diam-diam),
+  pola mati dihapus, subset p15..p24 hadir di kedua job.
 
 - `test/tui-popup.test.ts` — I16 (komposit di atas transkrip, anti-bocor,
   anti-hantu).
@@ -457,19 +515,22 @@ panjang).
   termasuk nilai invalid; `/mode` + Shift+Tab tak menyentuh WorkMode; label
   footer `PLAN·auto`/`DISCUSS·auto`).
 - `test/work-mode-contract.test.ts` — I35 (ceiling handler WorkMode di atas
-  handler PM: 18 sel matriks, gerbang approval `PLAN × auto/ask`, `describeDenial`
-  per pemilik keputusan, `always`/K-1 tetap utuh, `__setMode` tak mencabut
-  ceiling).
+  handler PM: 18 sel matriks, gerbang approval `PLAN × PM` termasuk `web_fetch`/
+  `web_search`, `DISCUSS` memblokir network read, `describeDenial` per pemilik
+  keputusan, `always`/K-1 tetap utuh, `__setMode` tak mencabut ceiling).
 - `test/work-mode-tool-visibility.test.ts` — I35 (visibilitas tool = irisan
-  permission mode ∧ WorkMode; `PLAN × readonly` tak memperluas readonly;
+  permission mode ∧ WorkMode; `DISCUSS` tepat 16 tool baca lokal tanpa network
+  read; `PLAN × readonly/allowlist` tak memperluas di luar 18 `READONLY_TOOL_NAMES`;
   tool MCP ikut dibatasi).
-- `test/work-mode-hooks.test.ts` — I35 (hooks: `DISCUSS` menahan, `PLAN`/
-  `EXECUTE` mengikuti permission mode; pemanggil lama tanpa WorkMode kompatibel).
+- `test/work-mode-hooks.test.ts` — I35 (hooks: `DISCUSS` dan `PLAN` menahan
+  semua `.minicode/hooks/*` di seluruh `PermissionMode`; hanya `EXECUTE` yang
+  mengikuti permission mode; pemanggil lama tanpa WorkMode kompatibel).
 - `test/work-mode-subagent.test.ts` — I35 (child mewarisi WorkMode parent;
   tak ada eskalasi lewat mode child; default tanpa WorkMode = perilaku lama).
-- `test/work-mode-cli.test.ts` — I35 (`--work-mode`/env: flag > env > default
-  EXECUTE; nilai invalid → EXECUTE + peringatan; ACP `workMode` terpisah dari
-  `mode`).
+- `test/work-mode-cli.test.ts` — I35 (`--work-mode`/env: flag > env > persisted
+  resume > default EXECUTE; nilai invalid → EXECUTE + peringatan; `--verify`
+  ditolak fail-closed pada DISCUSS/PLAN; ACP `workMode` + fallback env; daemon
+  `workMode` parity).
 - `test/tui-app.test.ts`, `test/tui-popup.test.ts` — I13/I17 (composer
   editing/busy, dots clock, timer, cursor, resize, popup). *Klausul "satu baris
   kosong memisahkan composer dari footer" TIDAK punya assertion — lihat
@@ -556,6 +617,11 @@ panjang).
   sebagai proses biasa tanpa PTY (lihat komentar di berkasnya) — jadi ia
   bukan bukti byte stream; bukti envelope ada di `test/exec-json-envelope.test.ts`.*
   Platform tak mampu (ConPTY rusak) = SKIP beralasan, bukan hijau palsu.
+  Verifikasi **exit code** (I28) hanya dijalankan di POSIX: Windows ConPTY
+  terbukti kadang melaporkan `exitCode: undefined` untuk anak yang keluar via
+  PTY interaktif (satu probe sukses TIDAK menjamin run berikutnya), sehingga
+  test di-SKIP beralasan di Windows — bukan diluluskan dan bukan dianggap
+  "berhasil".
   Jalur mouse SGR punya capability gate (`ptySgrMouseDelivered()`): transport
   yang TAK mengantarkan byte SGR → SKIP beralasan; probe tak konklusif → SKIP
   dengan alasan "tak konklusif" (BUKAN bukti SGR tak didukung); di CI Linux
@@ -577,3 +643,4 @@ kata-kata di sini TIDAK menutup gap.
 | I5 — tak ada popup yatim / input bocor setelah success/failure/cancel/SIGINT/session end | Tak terverifikasi | `test/turn-status.test.ts` dan `test/statusline-bun-guard.test.ts` tidak meng-assert apa pun soal popup yatim atau kebocoran input. |
 | I26 pada jalur presentasi | i18n ada dan dijaga terpisah | `test/presentation-projections.test.ts` mengunci locale `en` di setiap test dan tak pernah menguji locale `id`; klaim i18n dijaga `test/i18n.test.ts` + `test/i18n-hardcode.test.ts`. |
 | I2/I6/I28 pada proyeksi linear/ACP | Alur linear/ACP ada | `test/presentation-linear-acp.test.ts` tak meng-assert split stdout/stderr, absence cursor-control, maupun exit code secara langsung. |
+| I3 — tak ada byte stdout bocor selama alternate-screen | Terimplementasi (TUI menulis UI ke stderr; stdout khusus pipe/envelope) | Belum ada test PTY yang meng-assert "stream stdout kosong selama alt-screen aktif" (hanya fake-TTY). Juga: job `ci-windows` TIDAK pernah menjalankan `pty*.test.ts` — suite PTY hanya tercapai lewat glob `test/p*.test.ts` di job ubuntu. |

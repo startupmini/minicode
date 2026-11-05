@@ -21,6 +21,14 @@ export interface HostedSessionInfo {
   runId: string | null
   runStatus: string | null
   presentationHead: number
+  /** P0.2 (Q5): WorkMode efektif sesi yang di-host (bila diketahui host). */
+  workMode?: "DISCUSS" | "PLAN" | "EXECUTE"
+  /**
+   * P2.3: hasil recovery run terakhir yang durable (mis. UNKNOWN setelah
+   * restart). Operator dapat membedakan LIVE vs reconstructed/interrupted
+   * tanpa membaca log. Absen = belum ada run.
+   */
+  recoveryStatus?: string | null
 }
 
 /**

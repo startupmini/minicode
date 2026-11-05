@@ -12,19 +12,11 @@ import type {
   UiStep,
 } from "../contract.ts"
 import { t } from "../i18n/locale.ts"
-import {
-  clearCollapsedSections,
-  collapse,
-  rememberCollapsedSection,
-  sectionMinimized,
-} from "../render/collapse.ts"
-import { detail } from "../render/detail.ts"
 import { renderDiffCard } from "../render/diff.ts"
 import { formatArgsPreview, formatProviderError, formatUsage } from "../render/format.ts"
 import { highlightCode } from "../render/highlight.ts"
 import { decorateMarkdown, type FenceMatch, parseFence, renderInline } from "../render/markdown.ts"
 import { MarkdownTableStream } from "../render/markdown-table.ts"
-import { reasoning } from "../render/reasoning.ts"
 import {
   cleanUntrusted,
   createStreamSanitizer,
@@ -37,6 +29,15 @@ import { c, glyphs, stripAnsi } from "../render/theme.ts"
 import { displayWidth, truncateToWidth } from "../render/width.ts"
 import { formatWrapped } from "../render/wrap.ts"
 import { runWithoutStatus } from "../runtime/statusline.ts"
+// [Area A · PROMPT 06] State UI per-sesi. Printer linier memakai state SESI
+// miliknya (diteruskan composition root), bukan singleton modul — dua sesi di
+// satu proses tak lagi saling menimpa minimize/compact/reasoning.
+import {
+  defaultUiState,
+  LAST_TURN_MAX_CHARS,
+  MAX_COPY_TURNS,
+  type UiSessionState,
+} from "../session-state.ts"
 
 export interface SimpleOptions {
   verbose?: boolean
@@ -51,41 +52,50 @@ export interface SimpleOptions {
   onPresentationEvent?: (handler: (event: UiPresentationEvent) => void) => () => void
   /** Kebijakan kanonik dari composition root; absen = logika inline legacy. */
   policy?: PresentationPolicy
+  /**
+   * [Area A · PROMPT 06] State UI milik SESI ini. Absen = instance default
+   * modul (dipakai one-shot/test) — jalur produksi WAJIB mengoper instance
+   * sesinya supaya dua sesi dalam satu proses tak saling menimpa.
+   */
+  uiState?: UiSessionState
 }
 
 // Buffer output turn terakhir untuk /copy: teks model (sudah sanitize, sama
 // seperti yang terlihat) + isi hasil tool string. BUKAN transcript penuh —
 // scrollback milik terminal; ini konten yang berguna ditempel ulang. Cap agar
 // sesi panjang tak membengkakkan memori.
-const LAST_TURN_MAX_CHARS = 200_000
-export const MAX_COPY_TURNS = 10
-let lastTurnText = ""
-let previousTurnTexts: string[] = []
+//
+// [Area A · PROMPT 06] Buffer ini kini milik `UiSessionState` (per sesi),
+// bukan variabel modul. Fungsi modul di bawah tetap eksport demi kompatibilitas
+// dan mendelegasikan ke instance default.
+export { MAX_COPY_TURNS }
 
 /** Isi output turn terakhir (teks model + hasil tool). */
 export function getLastTurnText(): string {
-  return lastTurnText
+  return defaultUiState.getLastTurnText()
 }
 
 export function getLastTurnTexts(count = 1): string[] {
-  const all = lastTurnText ? [...previousTurnTexts, lastTurnText] : [...previousTurnTexts]
-  const n = Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1
-  return all.slice(-n)
+  return defaultUiState.getLastTurnTexts(count)
 }
 
-const archiveTurn = (): void => {
-  if (!lastTurnText) return
-  previousTurnTexts.push(lastTurnText)
-  if (previousTurnTexts.length > MAX_COPY_TURNS) previousTurnTexts.shift()
-  lastTurnText = ""
+/**
+ * [Area A] Reset eksplisit buffer /copy + error tertunda milik instance
+ * default modul. Dipakai oleh sesi/uji yang butuh kekaburan; attach logger
+ * TIDAK lagi wipe buffer (itu yang merusak `/copy [n]` untuk n>1).
+ */
+export function resetCopyBuffer(): void {
+  defaultUiState.resetCopyBuffer()
 }
 
-const rememberTurn = (s: string) => {
+const archiveTurn = (ui: UiSessionState): void => {
+  ui.archiveTurn()
+}
+
+const rememberTurn = (ui: UiSessionState, s: string) => {
   if (!s) return
   // Samakan dengan yang terlihat: kebijakan pipa (F2) berlaku juga untuk /copy.
-  lastTurnText += process.stdout.isTTY ? s : stripSgr(s)
-  if (lastTurnText.length > LAST_TURN_MAX_CHARS)
-    lastTurnText = lastTurnText.slice(-LAST_TURN_MAX_CHARS)
+  ui.appendTurnText(process.stdout.isTTY ? s : stripSgr(s))
 }
 
 /**
@@ -113,12 +123,14 @@ const wErrDirect = (s: string) =>
 // Alasan: error tengah-turn sering pulih via fallback router; mencetak tiap
 // event + sekali lagi di catch driver = dua blok ✗ untuk satu kegagalan.
 // Driver (index.ts/repl.ts) mencetak sekali via takePendingError().
-let pendingError: string | null = null
+//
+// [Area A · PROMPT 06] Error tertunda milik SESI (state per-sesi), bukan
+// variabel modul — dua sesi dalam satu proses tak lagi saling menimpa
+// pesan error. Fungsi modul delegate ke instance default.
+export { LAST_TURN_MAX_CHARS }
 /** Ambil + kosongkan error tertunda (consume-once per turn). */
 export function takePendingError(): string | null {
-  const e = pendingError
-  pendingError = null
-  return e
+  return defaultUiState.takePendingError()
 }
 
 // Batas tampilan expanded — ADAPTIF terhadap tinggi terminal, bukan konstanta
@@ -153,8 +165,9 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   // Shadowing disengaja agar ~20 call-site tak perlu diubah satu per satu.
   const wOut = opts.quiet ? (_: string) => {} : wOutDirect
   const wErr = opts.quiet ? (_: string) => {} : wErrDirect
-  previousTurnTexts = []
-  lastTurnText = ""
+  // [Area A · PROMPT 06] State UI milik instance ini. Composition root mengoper
+  // state SESI; tanpa itu (one-shot/test) jatuh ke instance default modul.
+  const ui: UiSessionState = opts.uiState ?? defaultUiState
   const tableStream = new MarkdownTableStream()
   let plainLineBuffer = ""
   // Sanitizer sadar-stream per aliran teks (temuan F1): ekor escape yang
@@ -197,7 +210,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   // Jawaban tak pernah disembunyikan di pipa/CI (output mesin harus utuh)
   // dan --verbose selalu menampilkan semua.
   const answerHidden = (): boolean =>
-    sectionMinimized("answer") && !!process.stdout.isTTY && !opts.verbose
+    ui.sectionMinimized("answer") && !!process.stdout.isTTY && !opts.verbose
   const emitAnswer = (s: string) => {
     if (!answerHidden()) {
       wOut(s)
@@ -278,7 +291,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     // Petunjuk /expand WAJIB di baris ini: tanpa itu jawaban yang dikecilkan
     // terlihat "bisu" (tak ada cara membuka yang bisa ditemukan user).
     wErr(c.info(t("one.answerMin", { n, cap })))
-    rememberCollapsedSection("answer", answerBuf, "stdout")
+    ui.rememberCollapsedSection("answer", answerBuf, "stdout")
     answerBuf = ""
     answerTruncated = false
   }
@@ -286,11 +299,11 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   const flushThinking = () => {
     flushReasoningTail()
     if (thinkState === "min" && thinkingBuf) {
-      rememberCollapsedSection("thinking", thinkingBuf)
+      ui.rememberCollapsedSection("thinking", thinkingBuf)
       thinkingBuf = ""
     }
     thinkState = "off"
-    collapse.setActiveSection(null)
+    ui.setActiveSection(null)
   }
 
   const flushLine = (line: string) => {
@@ -343,6 +356,9 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   const presentationEnabled = !!opts.getSnapshot
   const presentedTerminals = new Set<string>()
   const presentedVerifications = new Set<string>()
+  // F-TASK-1: dedup baris ledger status task (id+status+revisi) — event yang
+  // sama tak boleh muncul dua kali bila konsumen memutar ulang sebagian stream.
+  const presentedTaskStatuses = new Set<string>()
   const presentationSnapshot = (): UiPresentationSnapshot | null => {
     if (!presentationEnabled || !opts.getSnapshot) return null
     try {
@@ -400,9 +416,52 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     if (status === "completed") return c.success(line)
     return c.muted(line)
   }
+  // F-AGENT-1: label run pendek stabil (`run_<8>` | `sub_<8>`) — identitas anak,
+  // sama dengan TUI, supaya failure tool anak paralel tak saling tertukar.
+  const runMarker = (activity: UiPresentationActivity | undefined): string => {
+    const id = activity?.runId ?? activity?.childSessionId
+    if (!id) return ""
+    const prefix = id.startsWith("run_") ? "run_" : id.startsWith("sub_") ? "sub_" : ""
+    const bare = id.slice(prefix.length).replace(/-/g, "")
+    return prefix + bare.slice(0, 8)
+  }
   const writePresentationTerminal = (event: UiPresentationEvent): void => {
     if (!presentationEnabled) return
     flushTableStream()
+    // F-TASK-1: status task kanonik juga punya baris ledger di jalur linear
+    // (scrollback non-TTY). Sebelum ini event hanya hidup di TUI + machine
+    // envelope — pengguna `minicode exec`/pipe tak pernah melihatnya.
+    if (event.type === "task.status") {
+      const id = event.taskId
+      const raw = event.taskStatus
+      if (id === undefined || raw === undefined) return
+      const key = `${id}:${raw}:${event.revision ?? ""}`
+      if (presentedTaskStatuses.has(key)) return
+      presentedTaskStatuses.add(key)
+      const status = sanitizeAnsiLine(String(raw).toLowerCase())
+      const parent = event.parentId ? ` parent=${sanitizeAnsiLine(event.parentId)}` : ""
+      const deps = event.dependsOn?.length
+        ? ` dependsOn=[${event.dependsOn.map((d) => sanitizeAnsiLine(d)).join(",")}]`
+        : ""
+      const rev = event.revision !== undefined ? ` r${event.revision}` : ""
+      const verify =
+        raw === "COMPLETED"
+          ? event.taskVerification?.verdict === "passed"
+            ? " [verified]"
+            : ` [${event.taskVerification?.verdict ?? "unverified"}]`
+          : ""
+      const line = `  ${glyphs.bullet} ${sanitizeAnsiLine(id)} ${status}${parent}${deps}${rev}${verify}`
+      const paint =
+        raw === "FAILED"
+          ? c.error(line)
+          : raw === "BLOCKED"
+            ? c.warning(line)
+            : raw === "COMPLETED"
+              ? c.success(line)
+              : c.muted(line)
+      wErr(`${paint}\n`)
+      return
+    }
     // Observasi verifikasi punya baris sendiri (dedup per invocation):
     // terminal tool sudah tampil duluan dan baris linear append-only.
     // Baris ini tak pernah mengklaim status tool.
@@ -421,6 +480,42 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
           ? `  ${glyphs.arrow} ${name}${targetText} verified`
           : `  ? ${name}${targetText} unverified (${verification.verdict})`
       wErr(`${verification.verdict === "present" ? c.success(line) : c.muted(line)}\n`)
+      return
+    }
+    // P1.5: consequence/context diagnostics juga tampil di scrollback linear.
+    // Sebelumnya hanya TUI/machine yang melihatnya.
+    if (event.type === "consequence.decided") {
+      const verdict = String(event.verdict ?? "UNKNOWN")
+      const cls = event.failureClass ? ` class=${sanitizeAnsiLine(String(event.failureClass))}` : ""
+      const next = event.nextAction ? ` next=${sanitizeAnsiLine(String(event.nextAction))}` : ""
+      const why = event.message ?? event.reason
+      const detail = why
+        ? `: ${truncateToWidth(sanitizeAnsi(String(why)), 200, "…").split("\n")[0] ?? ""}`
+        : ""
+      const line = `  ${glyphs.bullet} consequence ${sanitizeAnsiLine(verdict)}${cls}${next}${detail}`
+      const paint =
+        verdict === "FAIL" || verdict === "BLOCKED"
+          ? c.error(line)
+          : verdict === "PASS"
+            ? c.success(line)
+            : c.warning(line)
+      wErr(`${paint}\n`)
+      return
+    }
+    if (event.type === "context.cutoff") {
+      const reason = event.reason ? `: ${sanitizeAnsiLine(String(event.reason))}` : ""
+      wErr(`${c.warning(`  ${glyphs.bullet} context cutoff${reason}`)}\n`)
+      return
+    }
+    if (event.type === "context.window") {
+      const used = event.usedTokens
+      const window = event.windowTokens
+      const pct = event.percent != null ? ` ${Math.round(event.percent)}%` : ""
+      const tokens =
+        used != null
+          ? ` ${used.toLocaleString()}${window ? `/${window.toLocaleString()}` : ""} tokens`
+          : ""
+      wErr(`${c.muted(`  ${glyphs.bullet} context window${tokens}${pct}`)}\n`)
       return
     }
     if (
@@ -443,7 +538,14 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     const detail = message
       ? `: ${truncateToWidth(sanitizeAnsi(String(message)), 200, "…").split("\n")[0] ?? ""}`
       : ""
-    const line = `  ${glyphs.arrow} ${name}${targetText}${linearSuffix(activity)}${detail}`
+    // F-AGENT-1: tool anak dirender sebagai baris run sendiri (`↳ <marker>`),
+    // bukan dicampur ke baris root — identitas childSessionId/runId tiap run.
+    // Child tanpa identitas run tetap tampil (kegagalan tak boleh hilang),
+    // hanya tanpa marker.
+    const isChild = activity?.parentToolCallId !== undefined
+    const marker = runMarker(activity)
+    const prefix = isChild ? `    ↳ ${marker ? `${marker} ` : ""}` : `  ${glyphs.arrow} `
+    const line = `${prefix}${name}${targetText}${linearSuffix(activity)}${detail}`
     wErr(paintTerminal(status, `${line}\n`))
   }
 
@@ -463,12 +565,13 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       reasoningLine = ""
       answerBuf = ""
       answerTruncated = false
-      clearCollapsedSections()
-      collapse.setActiveSection(null)
-      archiveTurn()
-      pendingError = null
+      ui.clearCollapsedSections()
+      ui.setActiveSection(null)
+      archiveTurn(ui)
+      ui.setPendingError(null)
       presentedTerminals.clear()
       presentedVerifications.clear()
+      presentedTaskStatuses.clear()
 
       if (opts.verbose) wErr(c.muted(t("one.turnHead", { n: e.turn })))
     }),
@@ -494,7 +597,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       // Teks = jawaban; section-nya ikut collapse (minimize → buffer + expand
       // via + / /expand), kecuali pipa/CI/verbose yang selalu stream.
       flushThinking()
-      collapse.setActiveSection("answer")
+      ui.setActiveSection("answer")
       if (!answerHidden() && answerBuf.length > 0) {
         wErr(c.muted(t("one.answerOpen")))
         wOut(answerBuf)
@@ -502,7 +605,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         answerTruncated = false
       }
       const clean = cleanUntrusted(textSan.push(e.text), !!process.stdout.isTTY)
-      rememberTurn(clean)
+      rememberTurn(ui, clean)
       consumeTableEvents(tableStream.push(clean))
     }),
   )
@@ -512,12 +615,12 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         // Section thinking: reasoning.visible = expanded (stream), else
         // minimized (satu baris `  + thinking`, isi di-buffer untuk /expand).
         // Toggle runtime /thinking, Ctrl+T, atau tombol + / - saat busy.
-        collapse.setActiveSection("thinking")
+        ui.setActiveSection("thinking")
         const d = e.data as { text?: string }
         const text = d.text ?? ""
         // --verbose = semua terlihat (expanded). Kalau tidak, reasoning.visible
         // menentukan: true = stream live, false = `  + thinking` + buffer.
-        const expanded = opts.verbose || reasoning.visible
+        const expanded = opts.verbose || ui.reasoningVisible
         if (expanded) {
           if (thinkState !== "exp") {
             thinkState = "exp"
@@ -580,7 +683,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         }
       } else if (e.kind === "error") {
         const d = e.data as { message?: string; category?: string }
-        pendingError = formatProviderError(d)
+        ui.setPendingError(formatProviderError(d))
       } else if (e.kind === "content_filter") {
         wErr(c.warning(t("one.contentBlocked")))
       }
@@ -604,11 +707,11 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     bus.on("execution:started", (e) => {
       flushTableStream()
       // Section aktif = tool yang sedang jalan — target tombol + / - saat busy.
-      collapse.setActiveSection("tool")
+      ui.setActiveSection("tool")
       // Ganti fase: sisa baris thinking yang belum ber-newline dicetak dulu
       // agar tak menempel ke baris tool.
       flushReasoningTail()
-      if (detail.compact) {
+      if (ui.compact) {
         // Mode compact: TIDAK ada baris start. Aktivitas ditampilkan oleh
         // garis status "Thinking"/nama tool (TTY) atau diam (non-TTY) — baris
         // `running x... ` lama tanpa newline menempel ke baris ✓ berikutnya
@@ -644,11 +747,11 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       // Hasil string ikut ke buffer /copy (versi sanitize, cap per-add agar
       // satu read_file raksasa tak langsung memenuhi buffer sendirian).
       if (!isError && typeof r.content === "string")
-        rememberTurn(truncateToWidth(sanitizeAnsi(r.content), 20000, ""))
+        rememberTurn(ui, truncateToWidth(sanitizeAnsi(r.content), 20000, ""))
       if (isError) {
         // Error tool ditampilkan ringkas per baris (cap 200 kolom + marker) —
         // tanpa marker user tak bisa bedakan "pesan 200 kolom" vs "terpotong".
-        collapse.setActiveSection(null)
+        ui.setActiveSection(null)
         wErr(
           c.error(
             `  ${glyphs.arrow} ${sanitizeAnsiLine(name)}${suffix}: ${truncateToWidth(sanitizeAnsi(String(r.content)), 200, "…")}\n`,
@@ -660,13 +763,13 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       // Section tool dikecilkan: satu baris `  + label`, isi di-buffer untuk
       // /expand. Ledger lain (chevron) tetap satu baris — ini menggantikan
       // pencetakan isi (bash/edit/diff/content tool), bukan marker.
-      if (sectionMinimized("tool")) {
-        collapse.setActiveSection(null)
+      if (ui.sectionMinimized("tool")) {
+        ui.setActiveSection(null)
         const label = activity?.summary
           ? sanitizeAnsiLine(activity.summary)
           : fallbackToolLabel(name, args, target)
         wErr(c.info(`  + ${label}${suffix}\n`))
-        rememberCollapsedSection(label, sanitizeAnsi(String(r.content ?? "")).trim())
+        ui.rememberCollapsedSection(label, sanitizeAnsi(String(r.content ?? "")).trim())
         return
       }
       if (name === "write_file" && target) {
@@ -688,7 +791,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
             : patchBlocks(args.patches)
         // Expanded: diff adalah inti perubahan — tampilkan inline. Compact
         // jatuh ke baris ringkasan seperti sebelumnya.
-        if (!detail.compact && (oldT || newT)) {
+        if (!ui.compact && (oldT || newT)) {
           wOut(
             `${renderDiffCard(sanitizeAnsiLine(target), sanitizeAnsi(oldT), sanitizeAnsi(newT), {
               maxLines: DIFF_MAX_LINES,
@@ -721,7 +824,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         // di sini — cabang compact di bawah dan expanded map di-sanitize lagi
         // (idempoten) sehingga tak ada cabang yang mentah.
         const lines = sanitizeAnsi(String(r.content)).trim().split("\n").filter(Boolean)
-        if (detail.compact) {
+        if (ui.compact) {
           const preview =
             lines.length > 3
               ? lines.slice(0, 3).join("\n    ") + c.muted(t("one.more3", { n: lines.length - 3 }))
@@ -744,7 +847,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       // Tool penghasil KONTEN (isi berkas, hasil cari) di mode compact cukup
       // satu baris › + target — isinya milik model untuk dibaca, bukan untuk
       // membanjiri scrollback pengguna. Konten tetap bisa dilihat via expanded.
-      if (detail.compact && CONTENT_TOOLS.has(name)) {
+      if (ui.compact && CONTENT_TOOLS.has(name)) {
         const label = activity?.summary
           ? sanitizeAnsiLine(activity.summary)
           : truncateWords(sanitizeAnsiLine(target ?? formatArgsPreview(args)), 120)
@@ -756,7 +859,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         )
         return
       }
-      if (!detail.compact && CONTENT_TOOLS.has(name)) {
+      if (!ui.compact && CONTENT_TOOLS.has(name)) {
         // Expanded: hasil berupa KONTEN (isi berkas, hasil cari) ikut mengalir.
         const raw = sanitizeAnsi(String(r.content ?? "")).trim()
         const lines = raw ? raw.split("\n") : []
@@ -784,7 +887,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       const first = sanitizeAnsi(String(r.content)).trim().split("\n")[0] ?? ""
       const preview = truncateToWidth(first, 80, "")
       const cleanName = sanitizeAnsiLine(name)
-      if (!detail.compact && preview) {
+      if (!ui.compact && preview) {
         wErr(
           c.success(
             `  ${glyphs.arrow} ${cleanName}${label ? ` ${label}` : ""}${suffix} ${c.muted(preview)}\n`,

@@ -24,6 +24,7 @@ Semua cara menjalankan Minicode: interaktif, sekali jalan, pipe, dan otomasi CI 
 | `minicode skills list` | Daftar skill terpasang |
 | `minicode sessions list` | Riwayat sesi |
 | `minicode memory status [--json]` | Statistik vector RAG (rows, size, hit-rate) |
+| `minicode memory reconcile [--json] [--cwd PATH]` | Samakan `vector.db` ↔ `.minicode/MEMORY.md` (adopsi entri vector-only, tambah baris file-only; tidak menghapus) |
 | `minicode doctor [--json]` | Diagnosis lokal |
 | `minicode mcp serve` | Ekspos minicode sebagai MCP server |
 

@@ -35,6 +35,7 @@ import {
   EXCLUSIVE_TOOLS,
   EXPLORE_TOOL_NAMES,
   GATED_TOOLS,
+  READONLY_TOOL_NAMES,
   TOOL_CONTRACTS,
   WRITE_TOOLS,
 } from "../src/policy/tool-contract.ts"
@@ -144,6 +145,46 @@ describe("TOOL-01/LOOP-INV-04 — registry kontrak tool = sumber tunggal", () =>
     )
     // Re-export di task.ts TIDAK menyalin daftar (import langsung dari registry)
     expect(TASK_EXPLORE_REEXPORT).toBe(EXPLORE_TOOL_NAMES)
+  })
+
+  test("READONLY_TOOL_NAMES: no-drift terhadap daftar izin read-only permission", () => {
+    // Sumber tunggal untuk `READONLY_TOOLS` di permission.ts (sebelumnya daftar
+    // manual yang bisa menyimpang). Membership harus PERSIS sama dengan
+    // perilaku yang sudah teruji: setiap perubahan (tambah/hapus/geser)
+    // harus deliberate, bukan efek samping edit registry lain.
+    expect(setOf([...READONLY_TOOL_NAMES])).toEqual(
+      new Set([
+        "read_file",
+        "read_image",
+        "glob",
+        "grep",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "web_fetch",
+        "web_search",
+        "read_memory",
+        "todo_read",
+        "mcp_list",
+        "lsp_diagnostics",
+        "lsp_definition",
+        "lsp_references",
+        "lsp_hover",
+        "lsp_symbols",
+        "lsp_workspace_symbols",
+      ]),
+    )
+    // Tidak ada tool read permission yang menulis workspace / internal state:
+    // mustahil ada `append_patch`/`write_memory` lolos ke mode readonly via ban.
+    for (const name of READONLY_TOOL_NAMES) {
+      expect(name).not.toContain("write")
+      expect(name).not.toContain("submit")
+    }
+    // Konsistensi registry: field `allowedInReadonly` HARUS tercermin derivasi
+    // (kalau menyimpang, derivasi di tool-contract.ts berarti berbohong).
+    for (const c of TOOL_CONTRACTS) {
+      expect(READONLY_TOOL_NAMES.has(c.name)).toBe(c.allowedInReadonly)
+    }
   })
 
   test("cermin matriks kapabilitas otonom tetap sinkron dengan registry", () => {

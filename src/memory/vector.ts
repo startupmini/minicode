@@ -421,7 +421,22 @@ export async function embedTexts(
         budget,
         timeouts?.attemptMs,
       )
-      if (json?.data && Array.isArray(json.data)) return json.data.map((d) => d.embedding)
+      // [Area E / D12] Bentuk salah = fallback keyword (bukan vektor sampah).
+      // Provider/gateway bisa mengembalikan `{data: []}`/`embedding: null`;
+      // dulu itu lolos jadi baris `dim=0`/BLOB rusak yang ikut dibandingkan.
+      if (json?.data && Array.isArray(json.data) && json.data.length === texts.length) {
+        const vecs = json.data.map((d) => d?.embedding)
+        const valid =
+          vecs.length > 0 &&
+          vecs.every(
+            (v) =>
+              Array.isArray(v) &&
+              v.length > 0 &&
+              v.every((n) => typeof n === "number" && Number.isFinite(n)),
+          ) &&
+          vecs.every((v) => v.length === vecs[0]!.length)
+        if (valid) return vecs
+      }
     }
   }
   // Semua attempt gagal (timeout/404/405/501/koneksi ditolak) → tandai endpoint
@@ -473,19 +488,32 @@ export async function deleteMemoryByQuery(query: string, cwd?: string): Promise<
   for (const p of paths) {
     const db = openAt(p)
     try {
-      // Hitung dulu: sqlite3_changes() ikut menghitung tulis trigger FTS,
-      // jadi info.changes DELETE bukan jumlah baris memory yang terhapus.
+      // [Area E / D8] Hapus SELURUH entri (semua chunk berbagi `parent`), bukan
+      // hanya baris yang teksnya cocok. Menghapus chunk 0 saja meninggalkan
+      // chunk 1..N hidup dengan `parent` menggantung; menghapus chunk tengah
+      // meninggalkan fakta separuh. Query bisa mengenai chunk mana pun.
+      const matched = db
+        .prepare(
+          "SELECT DISTINCT COALESCE(parent, id) AS head FROM memory WHERE lower(text) LIKE '%' || ? || '%' ESCAPE '\\'",
+        )
+        .all(pattern) as { head: string }[]
+      if (matched.length === 0) continue
+      const placeholders = matched.map(() => "?").join(",")
+      const heads = matched.map((m) => m.head)
+      // Hitung dulu (trigger FTS ikut terhitung di changes DELETE).
       const before = db
         .prepare(
-          "SELECT count(*) as c FROM memory WHERE lower(text) LIKE '%' || ? || '%' ESCAPE '\\'",
+          `SELECT count(*) as c FROM memory WHERE id IN (${placeholders}) OR parent IN (${placeholders})`,
         )
-        .get(pattern) as { c: number } | null
+        .get(...heads, ...heads) as { c: number } | null
       const n = before?.c ?? 0
       if (n === 0) continue
       await withBusyRetry(() =>
         db
-          .prepare("DELETE FROM memory WHERE lower(text) LIKE '%' || ? || '%' ESCAPE '\\'")
-          .run(pattern),
+          .prepare(
+            `DELETE FROM memory WHERE id IN (${placeholders}) OR parent IN (${placeholders})`,
+          )
+          .run(...heads, ...heads),
       )
       total += n
     } finally {
@@ -580,48 +608,62 @@ export async function addMemory(
     }
   } catch {}
   try {
-    // F8.1: transaksi supersession — insert baris baru + tombstone baris lama
-    // (bila `supersedesId` diisi) atomik dalam satu transaksi.
-    for (let i = 0; i < chunks.length; i++) {
-      const v = vecs?.[i]
-      const embedding = v ? toBlob(v) : null
-      const id = i === 0 ? parentId : randomUUID()
-      const category = (opts.category as string) ?? "fact"
-      const tagsJson = opts.tags ? JSON.stringify(opts.tags) : null
-      // MEM-01: insert provenance columns (nullable; legacy DBs get NULL default)
-      const supersedes = i === 0 ? (opts.supersedesId ?? null) : null
-      await withBusyRetry(() =>
-        db
-          .prepare(
-            "INSERT INTO memory (id, text, embedding, created_at, model, dim, parent, category, tags, access_count, session_id, turn_id, source_kind, source_ref, validation_status, supersedes, superseded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, NULL)",
-          )
-          .run(
-            id,
-            chunks[i]!,
-            embedding,
-            now,
-            embedding ? embedModel : null,
-            v?.length ?? null,
-            parentId,
-            category,
-            tagsJson,
-            opts.sessionId ?? null,
-            opts.turnId ?? null,
-            opts.sourceKind ?? null,
-            opts.sourceRef ?? null,
-            opts.validationStatus ?? "validated",
-            supersedes,
-          ),
-      )
-      // Tombstone baris lama hanya pada chunk pertama (parent) — sinkronisasi
-      // tombstone untuk chunk berbagi parent dilakukan di supersedeMemory.
-      if (i === 0 && opts.supersedesId) {
-        const oldId = opts.supersedesId as string
-        await withBusyRetry(() =>
-          db.prepare(`UPDATE memory SET superseded_by = ? WHERE id = ?`).run(id, oldId),
-        )
-      }
-    }
+    // F8.1 + Live Hardening §7.5: validasi supersedesId + insert semua chunk +
+    // tombstone baris lama dalam SATU transaksi SQLite. Sebelumnya tiap INSERT dan
+    // tombstone berjalan sebagai statement terpisah lewat withBusyRetry, sehingga
+    // (a) crash di antaranya bisa menyisakan baris baru hidup tanpa baris lama
+    // tertombstone, dan (b) supersedesId tak dikenal hanya no-op diam-diam.
+    await withBusyRetry(() =>
+      db
+        .transaction(() => {
+          // §7.5 + P1.3: target harus ada, AKTIF, dan dinormalisasi ke kepala
+          // entri. Id chunk non-kepala dulu hanya menombstone chunk itu sendiri
+          // (kepala + sibling tetap hidup → split-brain dengan MEMORY.md), dan
+          // target yang sudah di-supersede dulu ditimpa diam-diam (dua penerus
+          // hidup). Keduanya kini throw → rollback penuh, nol tulisan parsial.
+          const oldHeadId = opts.supersedesId
+            ? requireActiveSupersessionTarget(db, opts.supersedesId as string).headId
+            : null
+          for (let i = 0; i < chunks.length; i++) {
+            const v = vecs?.[i]
+            const embedding = v ? toBlob(v) : null
+            const id = i === 0 ? parentId : randomUUID()
+            const category = (opts.category as string) ?? "fact"
+            const tagsJson = opts.tags ? JSON.stringify(opts.tags) : null
+            // MEM-01: insert provenance columns (nullable; legacy DBs get NULL default)
+            // P1.3: `supersedes` selalu id KEPALA kanonik, bukan id chunk mentah.
+            const supersedes = i === 0 ? oldHeadId : null
+            db.prepare(
+              "INSERT INTO memory (id, text, embedding, created_at, model, dim, parent, category, tags, access_count, session_id, turn_id, source_kind, source_ref, validation_status, supersedes, superseded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, NULL)",
+            ).run(
+              id,
+              chunks[i]!,
+              embedding,
+              now,
+              embedding ? embedModel : null,
+              v?.length ?? null,
+              parentId,
+              category,
+              tagsJson,
+              opts.sessionId ?? null,
+              opts.turnId ?? null,
+              opts.sourceKind ?? null,
+              opts.sourceRef ?? null,
+              opts.validationStatus ?? "validated",
+              supersedes,
+            )
+            // Tombstone SEMUA chunk entri lama, bukan hanya chunk 0. Entri lama yang
+            // di-chunk membagi `parent = oldId`; `supersedesId` menunjuk chunk 0-nya.
+            // `WHERE id = ? OR parent = ?` menutup sibling chunk 1..N yang sebelumnya
+            // bocor sebagai memori stale (Risk A). `id` di sini = id baru (parentId),
+            // sehingga chunk entri BARU tidak ikut tertombstone.
+            if (i === 0 && oldHeadId) {
+              tombstoneEntry(db, oldHeadId, id)
+            }
+          }
+        })
+        .immediate(),
+    )
     // [Fase 9 / 9.2] Fault-injection boundary ":after_vector_before_file":
     // vector.db sudah ter-commit (loop insert di atas selesai), but "file write"
     // (MEMORY.md) yang dalam model atomic two-store belum selesai. Injector yang
@@ -655,13 +697,7 @@ export async function addMemory(
       const cnt =
         (db.prepare("SELECT count(*) as c FROM memory").get() as { c: number } | null)?.c ?? 0
       if (cnt > LIMITS.MEMORY_MAX_ROWS) {
-        await withBusyRetry(() =>
-          db
-            .prepare(
-              `DELETE FROM memory WHERE id IN (SELECT id FROM memory ORDER BY created_at DESC LIMIT -1 OFFSET ${LIMITS.MEMORY_MAX_ROWS})`,
-            )
-            .run(),
-        )
+        await withBusyRetry(() => pruneMemoryCap(db))
       }
       if (cnt % 1000 === 0) {
         try {
@@ -694,32 +730,210 @@ export function topicKey(name: string): string {
   return `key:${name}`
 }
 
-export async function supersedeMemory(oldId: string, newId: string, cwd?: string): Promise<void> {
+/**
+ * [Area E / D8] Id chunk kepala untuk satu baris memori. Semua chunk satu
+ * entri berbagi `parent = <chunk-0 id>`; baris legacy/reconcile bisa `NULL`
+ * sehingga id-nya sendiri yang menjadi kepala. Supersession/delete per-entri
+ * WAJIB memakai kepala ini, bukan id chunk yang kebetulan disentuh query.
+ */
+function memoryEntryHeadId(
+  db: Database,
+  id: string,
+): { headId: string; headText: string | null } | null {
+  const row = db
+    .prepare(`SELECT COALESCE(parent, id) AS head FROM memory WHERE id = ?`)
+    .get(id) as {
+    head: string | null
+  } | null
+  if (!row?.head) return null
+  const head = db.prepare(`SELECT text FROM memory WHERE id = ?`).get(row.head) as {
+    text: string | null
+  } | null
+  if (head) return { headId: row.head, headText: head.text }
+  // Chunk kepala sudah hilang (delete lama yang menyisakan anak): ambil chunk
+  // tertua yang masih berbagi parent agar teks entry tidak hilang.
+  const sibling = db
+    .prepare(`SELECT text FROM memory WHERE parent = ? ORDER BY rowid ASC LIMIT 1`)
+    .get(row.head) as { text: string | null } | null
+  return { headId: row.head, headText: sibling?.text ?? null }
+}
+
+/**
+ * P1.3: kegagalan supersession yang SEMANTIK (target tak ada / sudah
+ * digantikan / diri sendiri / konflik konkuren) — dibedakan dari kegagalan
+ * infrastruktur (embedding/jaringan) supaya pemanggil (write_memory) tidak
+ * menelannya sebagai "vector index unavailable" lalu tetap menulis berkas.
+ */
+export class MemorySupersessionError extends Error {
+  constructor(
+    message: string,
+    readonly code: "NOT_FOUND" | "ALREADY_SUPERSEDED" | "SELF" | "CONFLICT",
+  ) {
+    super(message)
+    this.name = "MemorySupersessionError"
+  }
+}
+
+/**
+ * P1.3: hasil validasi target supersession — `headId` kanonik bila aktif,
+ * atau alasan penolakan yang bisa ditindaklanjuti. Murni baca (tanpa tulis).
+ */
+export type SupersessionTargetCheck =
+  | { ok: true; headId: string; headText: string | null }
+  | { ok: false; code: MemorySupersessionError["code"]; supersededBy?: string; reason: string }
+
+function checkSupersessionTarget(db: Database, id: string): SupersessionTargetCheck {
+  const head = memoryEntryHeadId(db, id)
+  if (!head) {
+    return { ok: false, code: "NOT_FOUND", reason: `memory id not found in this store: ${id}` }
+  }
+  // Seluruh baris entri (kepala + chunk) harus masih hidup. Satu chunk yang
+  // sudah bertombstone = entri sudah digantikan (atau korup sebagian) →
+  // fail-closed, jangan timpa `superseded_by` dan menciptakan dua penerus.
+  const dead = db
+    .prepare(
+      `SELECT superseded_by FROM memory WHERE (id = ? OR parent = ?) AND superseded_by IS NOT NULL AND superseded_by != '' LIMIT 1`,
+    )
+    .get(head.headId, head.headId) as { superseded_by: string } | null
+  if (dead) {
+    return {
+      ok: false,
+      code: "ALREADY_SUPERSEDED",
+      supersededBy: dead.superseded_by,
+      reason: `memory ${head.headId} is already superseded by ${dead.superseded_by}`,
+    }
+  }
+  return { ok: true, headId: head.headId, headText: head.headText }
+}
+
+function requireActiveSupersessionTarget(
+  db: Database,
+  id: string,
+): { headId: string; headText: string | null } {
+  const r = checkSupersessionTarget(db, id)
+  if (!r.ok) {
+    // Pesan NOT_FOUND mempertahankan awalan lama (`supersedesId not found`)
+    // yang dikunci test regresi §7.5.
+    const msg = r.code === "NOT_FOUND" ? `supersedesId not found in memory store: ${id}` : r.reason
+    throw new MemorySupersessionError(msg, r.code)
+  }
+  return r
+}
+
+/**
+ * P1.3: tombstone SELURUH entri lama secara kondisional. `WHERE superseded_by
+ * IS NULL` + cek `changes` menutup lost-update konkuren: penulis kedua yang
+ * lolos validasi sebelum penulis pertama commit tetap ditolak di sini.
+ */
+function tombstoneEntry(db: Database, oldHeadId: string, newHeadId: string): void {
+  if (oldHeadId === newHeadId) {
+    throw new MemorySupersessionError(`memory ${oldHeadId} cannot supersede itself`, "SELF")
+  }
+  const res = db
+    .prepare(
+      `UPDATE memory SET superseded_by = ? WHERE (id = ? OR parent = ?) AND (superseded_by IS NULL OR superseded_by = '')`,
+    )
+    .run(newHeadId, oldHeadId, oldHeadId)
+  if (Number(res.changes) === 0) {
+    throw new MemorySupersessionError(
+      `memory ${oldHeadId} was superseded concurrently; re-read memory and retry`,
+      "CONFLICT",
+    )
+  }
+}
+
+/** P1.3: validasi target supersession tanpa menulis (dipakai write_memory sebelum IO berkas). */
+export async function checkMemorySupersessionTarget(
+  id: string,
+  cwd?: string,
+): Promise<SupersessionTargetCheck> {
+  // Sama dengan memoryRowExists/addMemory: resolusi harus mendarat di DB lokal
+  // yang nanti benar-benar ditulis, bukan fallback global.
+  ensureLocalMemoryDir(cwd)
   const db = open(cwd)
   try {
+    return checkSupersessionTarget(db, id)
+  } finally {
+    db.close()
+  }
+}
+
+function ensureLocalMemoryDir(cwd?: string): void {
+  try {
+    const { mkdirSync } = require("node:fs") as typeof import("node:fs")
+    const { resolve: resolvePath, join: joinPath } =
+      require("node:path") as typeof import("node:path")
+    mkdirSync(joinPath(resolvePath(cwd ?? process.cwd()), ".minicode"), { recursive: true })
+  } catch {}
+}
+
+/**
+ * [Area E / D6] Teks entri kepala untuk id baris memori mana pun — dipakai
+ * `write_memory` agar baris lama di MEMORY.md ikut dihapus saat supersession.
+ * `null` = id tidak ada (fail-closed; pemanggil tak boleh menghapus apa pun).
+ */
+export async function memoryEntryText(id: string, cwd?: string): Promise<string | null> {
+  const db = open(cwd)
+  try {
+    return memoryEntryHeadId(db, id)?.headText ?? null
+  } finally {
+    db.close()
+  }
+}
+
+export async function supersedeMemory(oldId: string, newId: string, cwd?: string): Promise<void> {
+  const db = open(cwd)
+  let oldText: string | null = null
+  try {
     await withBusyRetry(() => {
-      // Baris lama tidak boleh dihapus — hanya ditandai superseded (tombstone).
-      const oldRow = db.prepare(`SELECT id FROM memory WHERE id = ?`).get(oldId) as {
-        id: string
-      } | null
-      if (!oldRow) {
-        throw new Error(`supersedeMemory: old memory id not found: ${oldId}`)
-      }
-      const newRow = db.prepare(`SELECT id FROM memory WHERE id = ?`).get(newId) as {
-        id: string
-      } | null
-      if (!newRow) {
-        throw new Error(`supersedeMemory: new memory id not found: ${newId}`)
-      }
-      // Tombstone baris lama → superseded_by = newId
-      db.prepare(`UPDATE memory SET superseded_by = ? WHERE id = ?`).run(newId, oldId)
-      // Tautkan baris baru → supersedes = oldId
-      db.prepare(`UPDATE memory SET supersedes = ? WHERE id = ?`).run(oldId, newId)
+      // P1.3: BEGIN IMMEDIATE mencegah race condition antara read dan write —
+      // tanpa ini dua supersession konkuren bisa lolos validasi bersamaan.
+      db.transaction(() => {
+        const oldRow = requireActiveSupersessionTarget(db, oldId)
+        oldText = oldRow.headText
+        const newRow = db.prepare(`SELECT id FROM memory WHERE id = ?`).get(newId) as {
+          id: string
+        } | null
+        if (!newRow) {
+          throw new Error(`supersedeMemory: new memory id not found: ${newId}`)
+        }
+        // Tombstone SELURUH entri lama (semua chunk berbagi kepala) —
+        // conditional update memastikan row belum di-supersede oleh proses lain.
+        tombstoneEntry(db, oldRow.headId, newId)
+        // Tautkan baris baru → supersedes = headId kanonik (bukan raw oldId
+        // yang bisa berupa chunk non-head).
+        db.prepare(`UPDATE memory SET supersedes = ? WHERE id = ?`).run(oldRow.headId, newId)
+      }).immediate()
     })
     // Perbarui MEMORY.md (best-effort — jangan gagalkan supersession)
     try {
-      await syncMemoryFileToSupersession(cwd, oldId, newId)
+      await syncMemoryFileToSupersession(cwd, oldId, newId, oldText)
     } catch {}
+  } finally {
+    db.close()
+  }
+}
+
+/**
+ * [Live Hardening 0.13.x §7.5] Cek apakah id row memory ada di store TULIS lokal
+ * (target yang sama dengan `addMemory`). Dipakai `write_memory` untuk memvalidasi
+ * `supersedes_id` SEBELUM file/vendor tersentuh, sehingga id tak dikenal memberi
+ * error actionable (bukan tombstone no-op diam-diam).
+ *
+ * Punya efek meratakan `.minicode` lokal (sama seperti `addMemory`) agar resolusi
+ * `open(cwd)` mendarat di DB lokal yang sama yang akan di-tombstone.
+ */
+export async function memoryRowExists(id: string, cwd?: string): Promise<boolean> {
+  // Mirror addMemory: pastikan .minicode ada agar open() resolve ke DB lokal.
+  try {
+    const { mkdirSync } = require("node:fs") as typeof import("node:fs")
+    const { resolve: resolvePath, join: joinPath } =
+      require("node:path") as typeof import("node:path")
+    mkdirSync(joinPath(resolvePath(cwd ?? process.cwd()), ".minicode"), { recursive: true })
+  } catch {}
+  const db = open(cwd)
+  try {
+    return !!db.prepare(`SELECT id FROM memory WHERE id = ?`).get(id)
   } finally {
     db.close()
   }
@@ -729,11 +943,20 @@ async function syncMemoryFileToSupersession(
   cwd: string | undefined,
   oldId: string,
   newId: string,
+  oldText: string | null,
 ): Promise<void> {
+  const files = await import("../memory/files.ts")
+  // [Area E / D6] Buang fakta lama dari MEMORY.md. Sebelumnya hanya catatan
+  // supersession yang di-append, sehingga loadMemoryFiles (jalur retrieval
+  // file) tetap menyajikan fakta yang sudah digantikan.
+  if (oldText) {
+    try {
+      await files.deleteMemoryEntry(oldText, cwd)
+    } catch {}
+  }
   // Append catatan supersession ke MEMORY.md (best-effort; appendMemory hanya
-  // menerima (text, cwd?) — tanpa object opts).
-  const { appendMemory } = await import("../memory/files.ts")
-  await appendMemory(`[supersession] fact ${oldId} → ${newId} (superseded)`, cwd)
+  // menerima (text, cwd?) - tanpa object opts).
+  await files.appendMemory(`[supersession] fact ${oldId} → ${newId} (superseded)`, cwd)
 }
 
 export async function supersedeMemoryByIds(
@@ -746,11 +969,16 @@ export async function supersedeMemoryByIds(
   try {
     await withBusyRetry(() => {
       for (const oldId of oldIds) {
-        const oldRow = db.prepare(`SELECT id FROM memory WHERE id = ?`).get(oldId) as {
-          id: string
-        } | null
+        const oldRow = memoryEntryHeadId(db, oldId)
         if (oldRow) {
-          db.prepare(`UPDATE memory SET superseded_by = ? WHERE id = ?`).run(newId, oldId)
+          // Tombstone SELURUH entri lama (semua chunk berbagi kepala), bukan
+          // hanya id chunk yang diberikan (D8: entri bisa diberikan lewat
+          // chunk mana pun).
+          db.prepare(`UPDATE memory SET superseded_by = ? WHERE id = ? OR parent = ?`).run(
+            newId,
+            oldRow.headId,
+            oldRow.headId,
+          )
           n++
         }
       }
@@ -831,6 +1059,7 @@ export async function promoteOrRejectLessonsBySession(
 }
 
 type MemoryRow = {
+  id: string
   text: string
   embedding: Buffer | null
   dim: number | null
@@ -851,6 +1080,8 @@ type MemoryRow = {
 }
 
 export interface MemoryHit {
+  /** Id baris memory — diekspos agar `write_memory.supersedes_id` bisa menyasar id nyata (§7.5). */
+  id?: string
   text: string
   score: number
   createdAt: number
@@ -968,7 +1199,7 @@ export async function searchHybrid(
     // yang menampilkannya kembali (untuk forensik/audit).
     const notSuperseded =
       opts.includeSuperseded === true ? `1=1` : `(superseded_by IS NULL OR superseded_by = '')`
-    const cols = `text, embedding, dim, model, created_at, category, tags, session_id, turn_id, source_kind, source_ref, validation_status, supersedes, superseded_by`
+    const cols = `id, text, embedding, dim, model, created_at, category, tags, session_id, turn_id, source_kind, source_ref, validation_status, supersedes, superseded_by`
     if (keywords.length > 0) {
       const recentRows = db
         .prepare(
@@ -981,7 +1212,7 @@ export async function searchHybrid(
         try {
           keywordRows = db
             .prepare(
-              `SELECT m.text as text, m.embedding as embedding, m.dim as dim, m.model as model, m.created_at as created_at, m.category as category, m.tags as tags, m.session_id as session_id, m.turn_id as turn_id, m.source_kind as source_kind, m.source_ref as source_ref, m.validation_status as validation_status, m.supersedes as supersedes, m.superseded_by as superseded_by FROM memory_fts f JOIN memory m ON m.rowid = f.rowid WHERE ${notSuperseded} AND memory_fts MATCH ? ORDER BY rank LIMIT ${LIMITS.VECTOR_KEYWORD_LIMIT}`,
+              `SELECT m.id as id, m.text as text, m.embedding as embedding, m.dim as dim, m.model as model, m.created_at as created_at, m.category as category, m.tags as tags, m.session_id as session_id, m.turn_id as turn_id, m.source_kind as source_kind, m.source_ref as source_ref, m.validation_status as validation_status, m.supersedes as supersedes, m.superseded_by as superseded_by FROM memory_fts f JOIN memory m ON m.rowid = f.rowid WHERE ${notSuperseded} AND memory_fts MATCH ? ORDER BY rank LIMIT ${LIMITS.VECTOR_KEYWORD_LIMIT}`,
             )
             .all(ftsQ) as MemoryRow[]
         } catch {
@@ -1108,6 +1339,7 @@ export async function searchHybrid(
     const row = rowsByText.get(h.text)
     return {
       ...h,
+      id: row?.id,
       createdAt: createdByText.get(h.text) ?? Date.now(),
       provenance: row
         ? {
@@ -1142,6 +1374,36 @@ export async function searchHybrid(
   return hits
 }
 
+// [Area E / D9] Prune cap per ENTRI, bukan per baris: memotong offset baris
+// bisa membuang chunk 0 sambil menyisakan chunk 1..N (`parent` menggantung).
+// Kelompok = `COALESCE(parent, id)`; kelompok terbaru selalu dipertahankan
+// walau satu entri sendiri melebihi cap.
+function pruneMemoryCap(db: Database): number {
+  const groups = db
+    .prepare(
+      "SELECT COALESCE(parent, id) AS head, count(*) AS c, max(created_at) AS newest FROM memory GROUP BY COALESCE(parent, id) ORDER BY newest DESC, head DESC",
+    )
+    .all() as { head: string; c: number; newest: number }[]
+  let keptRows = 0
+  const remove: string[] = []
+  for (const group of groups) {
+    if (keptRows === 0 || keptRows + group.c <= LIMITS.MEMORY_MAX_ROWS) {
+      keptRows += group.c
+      continue
+    }
+    remove.push(group.head)
+  }
+  let deleted = 0
+  for (const head of remove) {
+    const before = db
+      .prepare("SELECT count(*) as c FROM memory WHERE id = ? OR parent = ?")
+      .get(head, head) as { c: number } | null
+    db.prepare("DELETE FROM memory WHERE id = ? OR parent = ?").run(head, head)
+    deleted += before?.c ?? 0
+  }
+  return deleted
+}
+
 // MEM-03 / Fase 5A: Prune TTL dengan virtual/injectable clock untuk deterministik testing.
 // Returns jumlah baris yang terhapus. `nowMs` default Date.now() bila tidak diinjeksi.
 export async function pruneTTL(cwd?: string, nowMs: number = Date.now()): Promise<number> {
@@ -1166,18 +1428,11 @@ export async function pruneTTL(cwd?: string, nowMs: number = Date.now()): Promis
       )
       deleted += result.changes ?? 0
     }
-    // CAP: potong ke MEMORY_MAX_rows bila melebihi batas
+    // CAP: potong ke MEMORY_MAX_rows bila melebihi batas (per entri utuh)
     const cnt =
       (db.prepare("SELECT count(*) as c FROM memory").get() as { c: number } | null)?.c ?? 0
     if (cnt > LIMITS.MEMORY_MAX_ROWS) {
-      const result = await withBusyRetry(() =>
-        db
-          .prepare(
-            `DELETE FROM memory WHERE id IN (SELECT id FROM memory ORDER BY created_at DESC LIMIT -1 OFFSET ${LIMITS.MEMORY_MAX_ROWS})`,
-          )
-          .run(),
-      )
-      deleted += result.changes ?? 0
+      deleted += await withBusyRetry(() => pruneMemoryCap(db))
     }
     return deleted
   } finally {
@@ -1218,12 +1473,15 @@ export async function revokeByProvenance(
         .get(...(values as [string | null])) as { c: number } | null
       const n = before?.c ?? 0
       if (n > 0) {
-        const result = await withBusyRetry(() =>
+        await withBusyRetry(() =>
           db
             .prepare(`DELETE FROM memory WHERE ${conditions.join(" AND ")}`)
             .run(...(values as [string | null])),
         )
-        vectorDeleted = result.changes ?? 0
+        // `changes` DELETE ikut terhitung tulis trigger FTS (bisa jauh lebih
+        // besar dari baris memory yang benar-benar cocok) — jumlah baris yang
+        // dihapus berasal dari penghitungannya SEBELUM delete.
+        vectorDeleted = n
       }
     } finally {
       db.close()
@@ -1252,39 +1510,38 @@ export async function revokeByProvenance(
     let del = 0
 
     for (const line of lines) {
-      // MEMORY.md format: `- YYYY-MM-DDTHH:MM:SS.sssZ text ... [tags: ...]`
-      // Ekstrak tag jika ada, lalu cek match criteria
-      const tagMatch = line.match(/\[tags:\s*([^\]]+)\]/)
-      let matched = false
-
+      // [Area E / D2] Kriteria provenance AND (sama dengan query vektor). Versi
+      // lama memakai OR gabungan `!criterion`: revoke dengan satu kriteria
+      // menghapus SEMUA baris tanpa tag, termasuk fakta sesi lain. Baris tanpa
+      // tag tak membuktikan provenance → dipertahankan (fail-closed). Regex
+      // greedy sampai `]` akhir baris karena tag berbentuk array JSON.
+      const tagMatch = line.match(/\[tags:\s*(.+)\]\s*$/)
       if (!tagMatch) {
-        // Tidak ada tag → hanya cocok bila query substring ada
+        kept.push(line)
+        continue
+      }
+      if (!sessionId && !turnId && !sourceKind) {
+        kept.push(line)
+        continue
+      }
+      let matched = false
+      try {
+        const tags = JSON.parse(tagMatch![1] as string) as string[]
+        const hasSessionId = sessionId
+          ? tags.some((t: string) => t.includes(`session:${sessionId as string}`))
+          : false
+        const hasTurnId = turnId
+          ? tags.some((t: string) => t.includes(`turn:${turnId as string}`))
+          : false
+        const hasSource = sourceKind
+          ? tags.some((t: string) => t.includes(`source:${sourceKind as string}`))
+          : false
         matched =
-          !sessionId ||
-          line.toLowerCase().includes((sessionId ?? "").toLowerCase()) ||
-          !turnId ||
-          line.toLowerCase().includes((turnId ?? "").toLowerCase()) ||
-          !sourceKind ||
-          line.toLowerCase().includes((sourceKind ?? "").toLowerCase())
-      } else {
-        // Parse JSON tags dan cek match
-        try {
-          const tags = JSON.parse(tagMatch![1] as string) as string[]
-          const hasSessionId = sessionId
-            ? tags.some((t: string) => t.includes(`session:${sessionId as string}`))
-            : false
-          const hasTurnId = turnId
-            ? tags.some((t: string) => t.includes(`turn:${turnId as string}`))
-            : false
-          const hasSource = sourceKind
-            ? tags.some((t: string) => t.includes(`source:${sourceKind as string}`))
-            : false
-          matched = hasSessionId || hasTurnId || hasSource
-        } catch {
-          // Tag corrupted / bukan JSON → skip
-          kept.push(line)
-          continue
-        }
+          (!sessionId || hasSessionId) && (!turnId || hasTurnId) && (!sourceKind || hasSource)
+      } catch {
+        // Tag corrupted / bukan JSON → skip
+        kept.push(line)
+        continue
       }
 
       if (matched) {
@@ -1329,21 +1586,102 @@ export function computeRecallAtK(retrievedIds: string[], relevantIds: string[], 
   return relevantIds.length > 0 ? correct / relevantIds.length : 0
 }
 
+/**
+ * [Area E / D3] Gabungkan chunk ber-overlap jadi teks entri utuh.
+ *
+ * `splitMemoryChunks` memotong [0,2000), [1800,3800), … sehingga chunk
+ * berikut berbagi prefix dengan sufiks sebelumnya. Urutan baris DB tak
+ * dijamin → sambung berulang sampai tak ada pasangan cocok; chunk yang tak
+ * bisa disambung tetap disertakan (dipisah newline) agar data tak hilang.
+ */
+function mergeChunkTexts(parts: readonly string[]): string {
+  const pool = parts.filter((p) => p.length > 0)
+  if (pool.length === 0) return ""
+  let merged = pool.shift() as string
+  let progress = true
+  while (pool.length > 0 && progress) {
+    progress = false
+    for (let i = 0; i < pool.length; i++) {
+      const next = pool[i]!
+      const max = Math.min(merged.length, next.length)
+      let overlap = 0
+      for (let k = max; k > 0; k--) {
+        if (merged.slice(-k) === next.slice(0, k)) {
+          overlap = k
+          break
+        }
+      }
+      if (overlap > 0) {
+        merged += next.slice(overlap)
+        pool.splice(i, 1)
+        progress = true
+        break
+      }
+    }
+  }
+  if (pool.length > 0) merged = [merged, ...pool].join("\n")
+  return merged
+}
+
 // MEM-04 / Fase 5A: Rekonsiliasi split-brain antara vektor DB & file store.
-// Menyelaraskan ketidakcocokan setelah crash:
-//   - Vector-only rows → hapus jika tidak ada di file (atau sebaliknya sesuai mode)
-//   - File-only rows → tulis ulang ke vektor jika belum ada
-// Returns { reconciled: number; vectorOnlyRemoved: number; fileOnlyAdded: number }
+// Menyelaraskan ketidakcocokan setelah crash TANPA menghapus data:
+//   - Vector-only entry → ditulis ke MEMORY.md (adopt), bukan dihapus
+//   - File-only entry → ditulis ke vektor (adopt)
+// Returns { reconciled, vectorOnlyAdopted, fileOnlyAdded }
 export async function reconcileMemoryStores(cwd?: string): Promise<{
   reconciled: number
-  vectorOnlyRemoved: number
+  vectorOnlyAdopted: number
   fileOnlyAdded: number
+  /** P1.3: baris file lama yang dihapus karena entrinya sudah superseded. */
+  supersededFileRemoved: number
+  /** P1.3: baris vektor superseded yang sengaja TIDAK diadopsi kembali. */
+  supersededSkipped: number
+  /** P2.3: baris file legacy yang hanya PARTIAL-match superseded — di-quarantine. */
+  legacySuspectLines: number
+  legacySuspectSamples: string[]
 }> {
   const db = open(cwd)
   try {
-    // Ambil semua text dari vektor
-    const vectorRows = db.prepare("SELECT text FROM memory").all() as { text: string }[]
+    // P1.3: reconcile hanya boleh menghidupkan fakta AKTIF. Tanpa filter ini,
+    // baris superseded (yang sudah dihapus dari MEMORY.md) dianggap
+    // "vector-only" lalu ditulis ulang ke file — resurrect ke retrieval +
+    // system prompt. Kelompokkan per ENTRI (chunk berbagi `parent`) hanya dari
+    // baris live; teks superseded dipakai untuk membersihkan file, bukan adopsi.
+    const allRows = db.prepare("SELECT id, text, parent, superseded_by FROM memory").all() as {
+      id: string
+      text: string
+      parent: string | null
+      superseded_by: string | null
+    }[]
+    const isLive = (r: { superseded_by: string | null }): boolean =>
+      r.superseded_by === null || r.superseded_by === ""
+    const vectorRows = allRows.filter(isLive)
+    const supersededRows = allRows.filter((r) => !isLive(r))
+    const groups = new Map<string, string[]>()
+    for (const row of vectorRows) {
+      const key = row.parent ?? row.id
+      const list = groups.get(key) ?? []
+      list.push(row.text)
+      groups.set(key, list)
+    }
     const vectorTexts = new Set(vectorRows.map((r) => r.text))
+    // Entri superseded dikelompokkan per parent lalu digabung: file menyimpan
+    // ENTRI utuh, sedangkan DB menyimpan chunk. Pencocokan harus exact agar
+    // baris fakta BARU yang kebetulan memuat teks lama sebagai substring tidak
+    // ikut terhapus.
+    const supersededGroups = new Map<string, string[]>()
+    for (const row of supersededRows) {
+      const key = row.parent ?? row.id
+      const list = supersededGroups.get(key) ?? []
+      list.push(row.text)
+      supersededGroups.set(key, list)
+    }
+    const supersededEntries = new Set<string>()
+    for (const parts of supersededGroups.values()) {
+      const merged = mergeChunkTexts(parts)
+      if (merged) supersededEntries.add(merged)
+      for (const p of parts) if (p) supersededEntries.add(p)
+    }
 
     // Baca MEMORY.md dan extract unique texts
     const { readFile } = await import("node:fs/promises")
@@ -1358,7 +1696,7 @@ export async function reconcileMemoryStores(cwd?: string): Promise<{
       // [Fase 9 / 9.2] File MEMORY.md ABSENT bukan berarti "clean slate" —
       // vector.db yang sudah punya baris (crash "after_vector_before_file")
       // berarti split-brain vector-only. Perlakukan file kosong (bukan early
-      // return) agar baris vector-only tetap terdeteksi & dibersihkan.
+      // return) agar entri vector-only tetap terdeteksi & diadopsi.
       txt = ""
     }
 
@@ -1388,42 +1726,87 @@ export async function reconcileMemoryStores(cwd?: string): Promise<{
       }
     }
 
-    let vectorOnlyRemoved = 0
+    let vectorOnlyAdopted = 0
     let fileOnlyAdded = 0
     let reconciled = 0
+    let supersededFileRemoved = 0
+    let legacySuspectLines = 0
+    const legacySuspectSamples: string[] = []
+    const fileHas = (text: string): boolean =>
+      Array.from(fileTexts).some((ft) => ft.toLowerCase().includes(text.toLowerCase()))
 
-    // 1. Hapus vector-only rows (exist in DB but not in file)
-    const vectorToKeep: string[] = []
-    for (const text of vectorTexts) {
-      const found = Array.from(fileTexts).some((ft) =>
-        ft.toLowerCase().includes(text.toLowerCase()),
-      )
-      if (found) {
-        vectorToKeep.push(text)
-        reconciled++
-      } else {
-        // Delete from DB
-        await withBusyRetry(() => db.prepare("DELETE FROM memory WHERE text = ?").run(text))
-        vectorOnlyRemoved++
+    // 1. Adopsi entri vector-only ke MEMORY.md — JANGAN hapus. Menghapus baris
+    //    vektor karena file tidak memuatnya membuang fakta sah saat crash
+    //    "after_vector_before_file" (justru arah yang harus dipulihkan).
+    const { appendMemory, deleteMemoryEntry } = await import("../memory/files.ts")
+    for (const parts of groups.values()) {
+      const present = parts.filter((text) => fileHas(text))
+      if (present.length === parts.length) {
+        reconciled += parts.length
+        continue
       }
+      // Baris file yang hanya memuat sebagian entri (legacy truncation 1000
+      // karakter) dibuang dulu agar tidak ada dua representasi entri yang sama.
+      for (const text of present) {
+        try {
+          await deleteMemoryEntry(text, cwd)
+        } catch {}
+      }
+      const full = mergeChunkTexts(parts)
+      if (!full) continue
+      await appendMemory(full, cwd)
+      vectorOnlyAdopted++
+      reconciled += parts.length
     }
 
-    // 2. Tambah file-only rows yang belum ada di vector
+    // 2. Tambah file-only rows yang belum ada di vector — KECUALI yang cocok
+    // dengan entri superseded: itu sisa file lama yang harus dibersihkan,
+    // bukan diindeks ulang (P1.3 no-resurrection).
     for (const text of fileTexts) {
-      if (!vectorTexts.has(text)) {
-        // Insert into vector (without embedding, keyword-only fallback)
-        await withBusyRetry(() =>
-          db
-            .prepare(
-              "INSERT OR IGNORE INTO memory (id, text, embedding, created_at, category, session_id, turn_id, source_kind, source_ref) VALUES (?, ?, NULL, ?, 'manual', NULL, NULL, NULL, NULL)",
-            )
-            .run(randomUUID(), text, Date.now()),
-        )
-        fileOnlyAdded++
+      const representedByLive = Array.from(vectorTexts).some(
+        (vt) => vt.length > 0 && (vt === text || text.includes(vt) || vt.includes(text)),
+      )
+      if (representedByLive) continue
+      const representedBySuperseded = supersededEntries.has(text)
+      if (representedBySuperseded) {
+        // Exact match: aman dibersihkan (provenance supersession terdukung).
+        try {
+          await deleteMemoryEntry(text, cwd)
+          supersededFileRemoved++
+        } catch {}
+        continue
       }
+      // P2.3: PARTIAL match (mis. baris legacy ter-truncate) TIDAK dihapus dan
+      // TIDAK diindeks ulang — keduanya berisiko (hapus fakta sah / resurrect
+      // fakta superseded). Quarantine: biarkan di file, laporkan ke operator.
+      const partialSuperseded = Array.from(supersededEntries).some(
+        (e) => e.length > 0 && (e.includes(text) || text.includes(e)),
+      )
+      if (partialSuperseded) {
+        legacySuspectLines++
+        if (legacySuspectSamples.length < 5) legacySuspectSamples.push(text.slice(0, 160))
+        continue
+      }
+      // Insert into vector (without embedding, keyword-only fallback)
+      await withBusyRetry(() =>
+        db
+          .prepare(
+            "INSERT OR IGNORE INTO memory (id, text, embedding, created_at, category, session_id, turn_id, source_kind, source_ref) VALUES (?, ?, NULL, ?, 'manual', NULL, NULL, NULL, NULL)",
+          )
+          .run(randomUUID(), text, Date.now()),
+      )
+      fileOnlyAdded++
     }
 
-    return { reconciled, vectorOnlyRemoved, fileOnlyAdded }
+    return {
+      reconciled,
+      vectorOnlyAdopted,
+      fileOnlyAdded,
+      supersededFileRemoved,
+      supersededSkipped: supersededRows.length,
+      legacySuspectLines,
+      legacySuspectSamples,
+    }
   } finally {
     db.close()
   }
@@ -1431,6 +1814,9 @@ export async function reconcileMemoryStores(cwd?: string): Promise<{
 
 export interface MemoryStats {
   rows: number
+  /** P1.3: baris aktif vs superseded — operator bisa memeriksa provenance. */
+  liveRows: number
+  supersededRows: number
   dbBytes: number
   walBytes: number
   shmBytes: number
@@ -1447,6 +1833,14 @@ export function getMemoryStats(cwd?: string): MemoryStats {
   try {
     const rows =
       (db.prepare("SELECT count(*) as c FROM memory").get() as { c: number } | null)?.c ?? 0
+    const liveRows =
+      (
+        db
+          .prepare(
+            "SELECT count(*) as c FROM memory WHERE superseded_by IS NULL OR superseded_by = ''",
+          )
+          .get() as { c: number } | null
+      )?.c ?? 0
     const bounds = db
       .prepare("SELECT min(created_at) as oldest, max(created_at) as newest FROM memory")
       .get() as { oldest: number | null; newest: number | null } | null
@@ -1475,6 +1869,8 @@ export function getMemoryStats(cwd?: string): MemoryStats {
     }
     return {
       rows,
+      liveRows,
+      supersededRows: Math.max(0, rows - liveRows),
       dbBytes: sizeOf(p),
       walBytes: sizeOf(`${p}-wal`),
       shmBytes: sizeOf(`${p}-shm`),

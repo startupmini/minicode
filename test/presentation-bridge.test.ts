@@ -185,6 +185,40 @@ const fixtures: Record<DomainEventType, DomainEvent> = {
     method: "filesystem-read-back",
     observedAt: 2000,
   },
+  "consequence.decided": {
+    ...base(27),
+    type: "consequence.decided",
+    verdict: "FAIL",
+    failureClass: "FUNCTIONAL_TEST_FAIL",
+    nextAction: "ANALYZE_FAILURE",
+    rationale: "tidak ada bukti hijau",
+    newEvidenceSinceLastAttempt: false,
+  },
+  "context.window": {
+    ...base(28),
+    type: "context.window",
+    usedTokens: 1200,
+    windowTokens: 8192,
+    percent: 14.6,
+    costUsd: 0.0601,
+    providerModel: "acme::deepseek-v4",
+  },
+  "context.cutoff": {
+    ...base(29),
+    type: "context.cutoff",
+    reason: "budget exceeded",
+    usedTokens: 9000,
+    windowTokens: 8192,
+  },
+  "task.status": {
+    ...base(30),
+    type: "task.status",
+    taskId: "t1",
+    status: "COMPLETED",
+    parentId: "t0",
+    dependsOn: ["t0"],
+    revision: 2,
+  },
 }
 
 describe("canonical presentation bridge", () => {
@@ -242,9 +276,15 @@ describe("canonical presentation bridge", () => {
         parentToolCallId: "dt_1",
         childSessionId: "sub_aa11",
         parentSessionId: "parent-1",
+        runId: "run_aa11",
       },
     }
-    expect(toPresentationEvent(childFinding)).toMatchObject({ parentToolCallId: "dt_1" })
+    expect(toPresentationEvent(childFinding)).toMatchObject({
+      parentToolCallId: "dt_1",
+      childSessionId: "sub_aa11",
+      runId: "run_aa11",
+      sessionId: "s1",
+    })
     expect(toPresentationEvent(fixtures["diagnostic.raised"])).toMatchObject({
       category: "recovery",
       message: "partial evidence",

@@ -37,6 +37,37 @@ Laporan audit Closure/Handoff/QA di root adalah **artefak historis yang
 terikat checkpoint** — pakai untuk memahami keputusan, jangan pakai sebagai
 klaim "status sekarang".
 
+### Status terkini (2026-11-05) — Final Integration & Repository Consolidation
+
+Fase aktif proyek adalah **Final Integration & Repository Consolidation**
+(bukan fase produk baru; **tidak ada P3**). P0, P1, P2, dan penutupan P2.3
+telah mencapai **stage-scoped closure** dengan bukti di `docs/audit/`:
+
+- `P0_FOUNDATION_HARDENING_REPORT_2026-11-04.md`, `P0_FINAL_CLOSURE_VERIFICATION_REPORT_2026-11-04.md`
+- `P1_CORRECTNESS_OBSERVABILITY_UX_REPORT_2026-11-05.md`
+- `P2_OPERATIONAL_QUALITY_ARCHITECTURE_REPORT_2026-11-05.md`
+- `P2_3_OPERATIONAL_CLOSURE_AND_FINAL_INTEGRATION_REPORT_2026-11-05.md`
+- `FINAL_INTEGRATION_AND_REPOSITORY_CONSOLIDATION_REPORT_2026-11-05.md`
+
+**Peta dokumen kanonik:**
+
+| Subjek | Dokumen kanonik |
+|---|---|
+| Aturan agent & status fase | `AGENTS.md` (ini) |
+| Peta arsitektur/stuktur | `docs/ARCHITECTURE.html` |
+| Kontrak terminal/output (FROZEN) | `docs/TERMINAL_CONTRACT.md` |
+| Roadmap arsitektur (master pemilik) | `ROADMAP.md` (salinan draft; bukan untuk ditulis ulang agent) |
+| Ledger legacy 0.9.x | `PLAN.md` |
+| Panduan operasional | `docs/*.md` (cli, tools, memory-sessions, mcp-lsp, exec, security, dll.) |
+| Audit & verifikasi historis | `docs/audit/**`, root `P*_*.md`, `PHASE-*.md` |
+
+**Limitasi yang masih berlaku (jangan diklaim selesai):** MCP
+subscriptions/notifications belum didukung; producer `FAILED`/`RETRYING` belum
+ada (keputusan produk); daemon tidak auto-resume setelah restart; manual TUI
+UAT dan gateway cache **UNVERIFIED**; `gate:pack` gagal **size-only**
+(3.902 KB, efisiensi — bukan blocker correctness). Selalu bedakan klaim
+stage-scoped dari klaim release-ready.
+
 ### Disambiguasi nomor P (baca sebelum menyebut "P12"/"P13")
 
 | Prefix | Arti | Contoh |
@@ -82,9 +113,10 @@ bun x tsc --noEmit && bun run lint && bun test && bun run gate:coverage && bun r
 
 Coverage naik → naikkan juga minimum di `scripts/coverage-gate.ts` (per 2026-10-25:
 `MIN_FUNCS` 87 / `MIN_LINES` 86 + 19 lantai per-berkas modul kritis; funcs
-dinaikkan 86 → 87 pada P13.5). Budget ukuran paket = **3.584 KiB (3,5 MiB)**,
-satu sumber di `scripts/pack-budget.ts` — jangan menaikkan tanpa bukti baru +
-persetujuan pemilik.
+dinaikkan 86 → 87 pada P13.5). Budget ukuran paket = **3.840 KiB (3,75 MiB)**,
+satu sumber di `scripts/pack-budget.ts` (`PACK_SIZE_BUDGET_KIB`) — jangan
+menaikkan tanpa bukti baru + persetujuan pemilik. (Angka `3,5 MiB` adalah
+budget historis pra-P13; dikoreksi 2026-11-05 saat consolidasi.)
 
 Status roadmap & next action arsitektur: [ROADMAP.md](ROADMAP.md).
 Audit dokumentasi terakhir (snapshot, bukan sumber roadmap):

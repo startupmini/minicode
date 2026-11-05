@@ -186,6 +186,42 @@ function eventsOf(seen: ServerMessage[]): Extract<ServerMessage, { t: "event" }>
   return seen.filter((m): m is Extract<ServerMessage, { t: "event" }> => m.t === "event")
 }
 
+/** Klien mentah yang pause SEBELUM subscribe → server tidak bisa flush replay. */
+async function pausedReplaySubscriber(host: DaemonHost, who = "slowreplay") {
+  const capability = host.issueCapability({ scopes: ["subscribe"], who })
+  const sock = connect({ host: "127.0.0.1", port: host.port })
+  await new Promise<void>((resolve, reject) => {
+    sock.once("connect", () => resolve())
+    sock.once("error", reject)
+  })
+  sock.on("error", () => {})
+  const decoder = new FrameDecoder()
+  const seen: ServerMessage[] = []
+  let welcomed = false
+  let tailMarker = false
+  sock.on("data", (chunk: Buffer) => {
+    for (const raw of decoder.push(chunk)) {
+      const msg = raw as ServerMessage
+      seen.push(msg)
+      if (msg.t === "welcome") welcomed = true
+      if (msg.t === "tail_marker") tailMarker = true
+    }
+  })
+  sock.write(encodeFrame({ t: "hello", protocol: DAEMON_PROTOCOL, cap: capability, consumer: who }))
+  await waitFor(() => welcomed, "replay subscriber tidak menerima welcome")
+  sock.pause()
+  sock.write(encodeFrame({ t: "subscribe", sid: SID, from: 0, consumer: who }))
+  return {
+    sock,
+    seen,
+    register(e: ServerMessage[]): void {
+      for (const m of e) seen.push(m)
+    },
+    tailSeen: () => tailMarker,
+    resume: () => sock.resume(),
+  }
+}
+
 function errorsOf(seen: ServerMessage[]): string[] {
   return seen
     .filter((m): m is Extract<ServerMessage, { t: "error" }> => m.t === "error")
@@ -482,6 +518,28 @@ describe("P13.4 — dua konsumen pada runtime yang sama", () => {
     observer.close()
     observer2.close()
     subscriber.close()
+  })
+
+  test("replay socket backpressure berhenti, resume menuntaskan tanpa kehilangan event", async () => {
+    const host = await startHost()
+    // 200 event besar (~6 MB) → satu halaman replay melebihi buffer socket.
+    for (let seq = 1; seq <= 200; seq++) {
+      feed.append(event(seq, "x".repeat(32_000)))
+    }
+    const sub = await pausedReplaySubscriber(host)
+    try {
+      await waitFor(
+        () => host.telemetry.get("replay.paused") > 0,
+        "replay tidak berhenti meski socket backpressure",
+      )
+      sub.resume()
+      await waitFor(() => sub.tailSeen(), "replay tidak tuntas setelah resume")
+      expect(host.telemetry.get("replay.resumed")).toBeGreaterThan(0)
+      const seqs = new Set(eventsOf(sub.seen).map((e) => e.seq))
+      expect(seqs.size).toBe(200)
+    } finally {
+      sub.sock.destroy()
+    }
   })
 
   test("overflow satu konsumen tidak melewati konsumen lain atau runtime", async () => {

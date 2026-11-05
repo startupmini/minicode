@@ -96,6 +96,8 @@ interface Conn {
   subs: Map<string, Subscription>
   paused: boolean
   closed: boolean
+  /** P2.3: replay yang berhenti karena socket backpressure; dilanjutkan saat drain. */
+  pendingReplay?: { sid: string; consumer: string; fromSeq: number; head: number }
 }
 
 let connSeq = 0
@@ -178,6 +180,13 @@ export class DaemonServer {
     })
     socket.on("drain", () => {
       conn.paused = false
+      const pending = conn.pendingReplay
+      if (pending) {
+        conn.pendingReplay = undefined
+        this.#deps.telemetry.inc("replay.resumed")
+        if (!this.#replayRange(conn, pending.sid, pending.consumer, pending.fromSeq, pending.head))
+          return
+      }
       this.#pump(conn)
     })
     const teardown = () => this.#teardown(conn)
@@ -414,9 +423,29 @@ export class DaemonServer {
       fromSeq,
       cursor: sub.cursor,
       snapshotRejected: rejected,
+      // [Area C · PROMPT 06] Fase Awal stream, dibaca dari latch per-subscription
+      // (bukan dihitung ulang di sini): `SubscriptionRegistry.attach` sudah
+      // menetapkan "replay" bila fromSeq <= head. Sumber tunggal = latch.
+      phase: sub.phase,
     })
 
-    // 4) replay — hanya bila memang ada yang harus dikirim.
+    // 4-6) replay → replay_done → tail_marker → pump. Helper mengembalikan
+    // false bila socket backpressure memaksa replay berhenti; drain melanjutkan
+    // dari cursor yang tersimpan (bukan mengulang dari awal atau membuang sisa).
+    if (!this.#replayRange(conn, sid, consumer, fromSeq, head)) return
+    this.#pump(conn)
+  }
+
+  /**
+   * P2.3: replay yang resumable. `#send` menandai `conn.paused` saat
+   * `socket.write()` mengembalikan false; loop berhenti SEBELUM buffer tumbuh
+   * tanpa batas, lalu `drain` memanggil helper ini lagi dengan cursor lanjut.
+   */
+  #replayRange(conn: Conn, sid: string, consumer: string, fromSeq: number, head: number): boolean {
+    const sub = conn.subs.get(sid)
+    if (!sub) return true
+    const feed = this.#deps.feeds.get(sid)
+    if (!feed) return true
     let replayTo = sub.cursor
     if (fromSeq <= head) {
       let cursor = fromSeq - 1
@@ -426,13 +455,15 @@ export class DaemonServer {
         for (const ev of page.events) {
           const seq = numberOr(ev.eventSeq, -1)
           if (seq < fromSeq) continue
-          if (
-            !this.#send(conn, { t: "event", sid, consumer, seq, provenance: "REPLAY", event: ev })
-          )
-            return
+          this.#send(conn, { t: "event", sid, consumer, seq, provenance: "REPLAY", event: ev })
           cursor = seq
           sub.cursor = seq
           this.#deps.telemetry.inc("events.replayed")
+          if (conn.paused) {
+            conn.pendingReplay = { sid, consumer, fromSeq: cursor + 1, head }
+            this.#deps.telemetry.inc("replay.paused")
+            return false
+          }
         }
         if (page.events.length < REPLAY_PAGE_LIMIT) break
       }
@@ -441,10 +472,15 @@ export class DaemonServer {
     this.#send(conn, { t: "replay_done", sid, consumer, upToSeq: replayTo })
     // 5) penanda live-tail: segala sesuatu SETELAH pesan ini adalah LIVE dan
     //    boleh saja belum durable — konsumen harus memperlakukannya beda.
-    this.#send(conn, { t: "tail_marker", sid, consumer, atSeq: replayTo })
-    // 6) kosongkan antrean live yang terkumpul selama replay (yang seq-nya
-    //    sudah terkirim otomatis terbuang di #pump).
-    this.#pump(conn)
+    //    F-DAEMON-1: badge transisi REPLAY→LIVE dibawa eksplisit di pesan ini
+    //    (`phase: "live"`), dan latch per-subscription diputar ke live.
+    //    [Area C · PROMPT 06] Latch diputar SEBELUM pesan dikirim, dan nilai
+    //    di wire diambil DARI latch — jadi `Subscription.phase` bukan lagi
+    //    state mati: ia adalah sumber tunggal fase yang terlihat konsumen.
+    sub.markLive()
+    this.#send(conn, { t: "tail_marker", sid, consumer, atSeq: replayTo, phase: sub.phase })
+    conn.pendingReplay = undefined
+    return true
   }
 
   #onAck(conn: Conn, raw: Record<string, unknown>): void {

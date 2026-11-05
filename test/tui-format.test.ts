@@ -10,9 +10,11 @@ import {
   getLastTurnText,
   getLastTurnTexts,
   MAX_COPY_TURNS,
+  resetCopyBuffer,
   takePendingError,
   writeClipboardOsc52,
 } from "../src/ui/assistant/simple.ts"
+import { setSectionMinimized } from "../src/ui/render/collapse.ts"
 import { detail, setCompactMode } from "../src/ui/render/detail.ts"
 import {
   formatArgsPreview,
@@ -331,11 +333,14 @@ describe("reasoning: satu state untuk /thinking", () => {
     expect(setReasoningVisible(false)).toBe(false)
   })
 
-  test("env disinkronkan supaya sub-proses mewarisi pilihan", () => {
+  test("state module-local: tidak menulis process.env (F-ENV-1)", () => {
+    delete process.env.MINICODE_SHOW_THINKING
     setReasoningVisible(true)
-    expect(process.env.MINICODE_SHOW_THINKING).toBe("1")
+    expect(reasoning.visible).toBe(true)
+    // Sebelumnya env ditulis agar sub-proses mewarisi pilihan — kini TIDAK bocor.
+    expect(process.env.MINICODE_SHOW_THINKING).toBeUndefined()
     setReasoningVisible(false)
-    expect(process.env.MINICODE_SHOW_THINKING).toBe("0")
+    expect(process.env.MINICODE_SHOW_THINKING).toBeUndefined()
   })
 })
 
@@ -356,11 +361,36 @@ describe("detail: state compact", () => {
     expect(setCompactMode(false)).toBe(false)
   })
 
-  test("env disinkronkan supaya sub-proses mewarisi pilihan", () => {
+  test("state module-local: tidak menulis process.env (F-ENV-1)", () => {
+    delete process.env.MINICODE_COMPACT
     setCompactMode(true)
-    expect(process.env.MINICODE_COMPACT).toBe("1")
+    expect(detail.compact).toBe(true)
+    expect(process.env.MINICODE_COMPACT).toBeUndefined()
     setCompactMode(false)
-    expect(process.env.MINICODE_COMPACT).toBe("0")
+    expect(process.env.MINICODE_COMPACT).toBeUndefined()
+  })
+})
+
+describe("collapse: state minimize tidak menulis process.env (F-ENV-1)", () => {
+  afterEach(() => {
+    setSectionMinimized("tool", false)
+    setSectionMinimized("answer", false)
+  })
+
+  test("toggle tool/answer tidak membocorkan pilihan ke env (isolasi antar instance)", () => {
+    delete process.env.MINICODE_MINIMIZE_TOOL
+    delete process.env.MINICODE_MINIMIZE_ANSWER
+    setSectionMinimized("tool", true)
+    setSectionMinimized("answer", true)
+    // Pilihan tampilan adalah state module-local proses ini. Env TIDAK ditulis,
+    // sehingga renderer lain/sub-proses (yang mewarisi process.env) TIDAK melihat
+    // toggle ini — ini batas isolasi dua instance/dua renderer (F-ENV-1).
+    expect(process.env.MINICODE_MINIMIZE_TOOL).toBeUndefined()
+    expect(process.env.MINICODE_MINIMIZE_ANSWER).toBeUndefined()
+    setSectionMinimized("tool", false)
+    setSectionMinimized("answer", false)
+    expect(process.env.MINICODE_MINIMIZE_TOOL).toBeUndefined()
+    expect(process.env.MINICODE_MINIMIZE_ANSWER).toBeUndefined()
   })
 })
 
@@ -441,8 +471,11 @@ describe("simple logger (one-shot)", () => {
     tty = undefined
     setCompactMode(false)
     setReasoningVisible(false)
-    delete process.env.MINICODE_MINIMIZE_TOOL
-    delete process.env.MINICODE_MINIMIZE_ANSWER
+    setSectionMinimized("tool", false)
+    setSectionMinimized("answer", false)
+    // [Area A] Buffer /copy kini milik state sesi dan TIDAK di-wipe saat
+    // attach — jadi reset eksplisit per test (batasnya jelas).
+    resetCopyBuffer()
   })
 
   const attach = (verbose = false, rows = 24) => {

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { getArg, promptFromArgs } from "../cli/args.ts"
+import { flagsAfterPromptBoundary, getArg, promptFromArgs } from "../cli/args.ts"
 
 test("getArg returns value after flag", () => {
   expect(getArg(["--cwd", "src", "refactor"], "--cwd")).toBe("src")
@@ -116,4 +116,40 @@ test("bentuk --flag=value juga dibuang untuk semua value flag", () => {
   expect(promptFromArgs(["kerjakan", "--provider=gorouter", "--timeout=1000"])).toBe(
     "kerjakan --provider=gorouter --timeout=1000",
   )
+})
+
+// ── [Live Hardening 0.13.x §8.3] flags after prompt boundary ──────────────────
+
+test("flagsAfterPromptBoundary mendeteksi flag dikenal setelah kata prompt pertama", () => {
+  // Kasus stage5: prompt paling depan, flag runtime setelahnya → dibuang diam-diam.
+  expect(flagsAfterPromptBoundary(["self-repair", "--resume", "minipulse-a4"])).toEqual([
+    "--resume",
+  ])
+  expect(
+    flagsAfterPromptBoundary(["self-repair", "--cwd", "src", "--allow-all", "--timeout", "60"]),
+  ).toEqual(["--cwd", "--allow-all", "--timeout"])
+  expect(flagsAfterPromptBoundary(["self-repair", "--work-mode", "PLAN"])).toEqual(["--work-mode"])
+})
+
+test("flagsAfterPromptBoundary kosong bila flag sebelum prompt", () => {
+  expect(flagsAfterPromptBoundary(["--resume", "minipulse-a4"])).toEqual([])
+  expect(flagsAfterPromptBoundary(["--cwd", "src", "--allow-all", "kerjakan"])).toEqual([])
+  expect(flagsAfterPromptBoundary([])).toEqual([])
+})
+
+test("flagsAfterPromptBoundary menghargai separator --", () => {
+  expect(flagsAfterPromptBoundary(["--work-mode", "PLAN", "--", "--model", "x"])).toEqual([
+    "--model",
+  ])
+})
+
+test("flagsAfterPromptBoundary melewati nilai flag bentuk --flag=value dan dedupe", () => {
+  // value flag setelah boundary: nilai berikutnya bukan flag dikenal.
+  expect(flagsAfterPromptBoundary(["p", "--model", "gpt-4o"])).toEqual(["--model"])
+  // bentuk =value dinormalisasi ke nama flag.
+  expect(flagsAfterPromptBoundary(["p", "--model=gpt-4o"])).toEqual(["--model"])
+  // flag berulang di-dedupe menjaga urutan.
+  expect(
+    flagsAfterPromptBoundary(["p", "--model", "x", "--model", "y", "--work-mode", "PLAN"]),
+  ).toEqual(["--model", "--work-mode"])
 })

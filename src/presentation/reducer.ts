@@ -72,13 +72,35 @@ function isTurnTerminal(status: TurnStatus): boolean {
   return TURN_TERMINAL.has(status)
 }
 
+// P2.2: index non-enumerable untuk `order`. Tanpa ini `addOrder`/`removeOrder`
+// melakukan scan linear pada SETIAP event; saat transkrip panjang (cap 4096)
+// burst 5k event menjadi O(n²). Index dibangun lazy dan tidak ikut serialisasi
+// (cloneState/replay membangun ulang dari `order`).
+const ORDER_KEYS = Symbol("minicode.orderKeys")
+type OrderKeyedState = PresentationState & { [ORDER_KEYS]?: Set<string> }
+const orderKey = (kind: string, id: string): string => `${kind}\u0000${id}`
+
+function orderKeys(state: PresentationState): Set<string> {
+  const holder = state as OrderKeyedState
+  let keys = holder[ORDER_KEYS]
+  if (!keys) {
+    keys = new Set(state.order.map((o) => orderKey(o.kind, o.id)))
+    Object.defineProperty(state, ORDER_KEYS, { value: keys, enumerable: false, configurable: true })
+  }
+  return keys
+}
+
 function addOrder(
   state: PresentationState,
   kind: PresentationState["order"][number]["kind"],
   id: string,
   seq: number,
 ): void {
-  if (!state.order.some((o) => o.kind === kind && o.id === id)) state.order.push({ kind, id, seq })
+  const keys = orderKeys(state)
+  const key = orderKey(kind, id)
+  if (keys.has(key)) return
+  keys.add(key)
+  state.order.push({ kind, id, seq })
 }
 
 function removeOrder(
@@ -86,8 +108,15 @@ function removeOrder(
   kind: PresentationState["order"][number]["kind"],
   id: string,
 ): void {
-  for (let i = state.order.length - 1; i >= 0; i--) {
-    if (state.order[i]!.kind === kind && state.order[i]!.id === id) state.order.splice(i, 1)
+  const keys = orderKeys(state)
+  keys.delete(orderKey(kind, id))
+  // Scan dari depan: entri yang dievict adalah yang paling tua, jadi biasanya
+  // ketemu di awal. Satu key hanya punya satu entri order.
+  for (let i = 0; i < state.order.length; i++) {
+    if (state.order[i]!.kind === kind && state.order[i]!.id === id) {
+      state.order.splice(i, 1)
+      return
+    }
   }
 }
 
@@ -315,11 +344,21 @@ function trimState(state: PresentationState): void {
     removable: (value: T) => boolean,
   ): void => {
     while (values.size > MAX_STATE_ENTRIES) {
-      const entry = [...values.entries()].find(([, value]) => removable(value))
-      if (!entry) return
-      values.delete(entry[0])
-      state.evicted.push({ kind, id: entry[0], seq: entry[1].seq, reason: "bounded" })
-      removeOrder(state, kind, entry[0])
+      // P2.2: iterasi langsung, bukan `[...entries()].find()` — versi lama
+      // mengalokasikan array berisi ribuan entri untuk SETIAP eviction.
+      let removedKey: string | undefined
+      let removedValue: T | undefined
+      for (const [key, value] of values) {
+        if (removable(value)) {
+          removedKey = key
+          removedValue = value
+          break
+        }
+      }
+      if (removedKey === undefined || removedValue === undefined) return
+      values.delete(removedKey)
+      state.evicted.push({ kind, id: removedKey, seq: removedValue.seq, reason: "bounded" })
+      removeOrder(state, kind, removedKey)
     }
   }
   trimMap(state.turns, "turn", (v) => isTurnTerminal(v.status))
@@ -330,8 +369,11 @@ function trimState(state: PresentationState): void {
   trimMap(state.results, "result", () => true)
   if (state.evicted.length > MAX_STATE_ENTRIES)
     state.evicted.splice(0, state.evicted.length - MAX_STATE_ENTRIES)
-  if (state.order.length > MAX_STATE_ENTRIES * 2)
-    state.order.splice(0, state.order.length - MAX_STATE_ENTRIES * 2)
+  if (state.order.length > MAX_STATE_ENTRIES * 2) {
+    const removed = state.order.splice(0, state.order.length - MAX_STATE_ENTRIES * 2)
+    const keys = orderKeys(state)
+    for (const entry of removed) keys.delete(orderKey(entry.kind, entry.id))
+  }
 }
 
 export function reduce(
@@ -388,6 +430,10 @@ export function reduce(
           toolCallId: event.toolCallId,
           sessionId: event.sessionId,
           ...(event.parentLink ? { parentToolCallId: event.parentLink.parentToolCallId } : {}),
+          ...(event.parentLink?.childSessionId
+            ? { childSessionId: event.parentLink.childSessionId }
+            : {}),
+          ...(event.parentLink?.runId ? { runId: event.parentLink.runId } : {}),
           identity: event.identity,
           ...(target ? { target } : {}),
           status: "running",
@@ -487,6 +533,11 @@ export function reduce(
           toolCallId: event.toolCallId ?? "",
           identity: event.identity,
           state: "requested",
+          // F-APPROVAL-1: tier risiko + pratinjau diff diteruskan utuh ke model
+          // (bukan ditelan) agar proyeksi/machine punya bukti yang sama dengan
+          // yang user lihat di kartu approval.
+          ...(event.riskTier ? { riskTier: event.riskTier } : {}),
+          ...(event.diffPreview ? { diffPreview: event.diffPreview } : {}),
         }
         state.approvals.set(key, entry)
         addOrder(state, "approval", key, seq)
@@ -755,6 +806,79 @@ export function reduce(
       case "model.delta":
       case "reasoning.delta":
         return state
+      // F-CTX-1: meter jendela konteks live — NON-durable, murni untuk footer /
+      // machine. Tidak menyentuh state (tidak boleh di-replay jadi histori).
+      case "context.window":
+        return state
+      // F-CTRL-1/F-CTRL-2: keputusan consequence terstruktur (ACE). Masuk
+      // diagnostics sebagai kategori "ACE" agar terlihat terstruktur, bukan
+      // stderr yang hilang.
+      case "consequence.decided": {
+        ensureTurn(state, event.sessionId, event.turnId, seq, event.ts)
+        const id = `${event.sessionId}:${event.turnId}:ace:${seq}`
+        const entry: DiagnosticEntry = {
+          kind: "diagnostic",
+          id,
+          seq,
+          sessionId: event.sessionId,
+          turnId: event.turnId,
+          category: "ACE",
+          severity: event.verdict === "FAIL" || event.verdict === "BLOCKED" ? "error" : "warning",
+          message: event.rationale,
+          verdict: event.verdict,
+          cause: event.failureClass,
+          action: event.nextAction,
+          ...(event.newEvidenceSinceLastAttempt !== undefined
+            ? { newEvidenceSinceLastAttempt: event.newEvidenceSinceLastAttempt }
+            : {}),
+        }
+        state.diagnostics.push(entry)
+        addOrder(state, "diagnostic", id, seq)
+        return state
+      }
+      // F-CTX-2: pemotongan mi-stream yang durable — masuk transkrip.
+      case "context.cutoff": {
+        ensureTurn(state, event.sessionId, event.turnId, seq, event.ts)
+        const id = `${event.sessionId}:${event.turnId}:cutoff:${seq}`
+        const entry: DiagnosticEntry = {
+          kind: "diagnostic",
+          id,
+          seq,
+          sessionId: event.sessionId,
+          turnId: event.turnId,
+          category: "CONTEXT_CUTOFF",
+          severity: "warning",
+          message: event.reason,
+        }
+        state.diagnostics.push(entry)
+        addOrder(state, "diagnostic", id, seq)
+        return state
+      }
+      // F-TASK-1: transisi status task kanonik + DAG (notice system).
+      case "task.status": {
+        ensureTurn(state, event.sessionId, event.turnId, seq, event.ts)
+        const id = `${event.sessionId}:${event.turnId}:task:${event.taskId}:${seq}`
+        const deps = event.dependsOn?.length ? `dependsOn=[${event.dependsOn.join(",")}]` : ""
+        const entry: SystemEntry = {
+          kind: "system",
+          id,
+          seq,
+          sessionId: event.sessionId,
+          turnId: event.turnId,
+          systemKind: "notice",
+          text: `${event.taskId} ${event.status.toLowerCase()}`,
+          reason: deps || undefined,
+          severity: "info",
+          taskId: event.taskId,
+          taskStatus: event.status,
+          ...(event.parentId ? { parentId: event.parentId } : {}),
+          ...(event.dependsOn?.length ? { dependsOn: [...event.dependsOn] } : {}),
+          ...(event.revision !== undefined ? { revision: event.revision } : {}),
+        }
+        state.system.push(entry)
+        addOrder(state, "system", id, seq)
+        return state
+      }
       default: {
         diag.unknownEvent++
         return state

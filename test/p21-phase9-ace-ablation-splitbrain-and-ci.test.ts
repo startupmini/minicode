@@ -227,7 +227,7 @@ describe("9.1b compareAceAblation — deterministic safety + quality gate", () =
 // 9.2 — Fault-Injection Split-Brain Recovery (MEM-04 / U7 / LOOP-INV-18)
 // ─────────────────────────────────────────────────────────────────────────────
 describe("9.2 fault-injection split-brain recovery via reconcileMemoryStores", () => {
-  test("crash after vector, before file → vector-only entry is removed (no dup)", async () => {
+  test("crash after vector, before file → vector-only entry is adopted (no loss)", async () => {
     const dir = tmpRoot()
     // Injector melempar tepat di boundary "after_vector_before_file": vector.db
     // sudah commit, MEMORY.md belum → entri vector-only.
@@ -244,13 +244,16 @@ describe("9.2 fault-injection split-brain recovery via reconcileMemoryStores", (
     setMemoryWriteFaultInjectorForTest(null)
 
     // Sebelum rekonsiliasi: vector punya entri, file tidak.
-    // Rekonsiliasi menghapus entri vector-only → konsisten (0 baris, 0 file).
+    // [Area E / D3] Rekonsiliasi MENGADOPSI entri vector-only ke MEMORY.md —
+    // menghapusnya (perilaku lama) membuang fakta sah yang sempat ter-commit.
     const result = await reconcileMemoryStores(dir)
-    expect(result.vectorOnlyRemoved).toBe(1)
+    expect(result.vectorOnlyAdopted).toBe(1)
 
-    // Tidak ada duplikasi: searchHybrid pun nol setelah entri yatim dihapus.
+    // Fakta tetap dapat ditemukan dan tidak terduplikasi.
     const hits = await searchHybrid("vector-only", { cwd: dir, trackAccess: false })
-    expect(hits.filter((h) => h.text.includes("vector-only entry"))).toHaveLength(0)
+    expect(hits.filter((h) => h.text.includes("vector-only entry"))).toHaveLength(1)
+    const file = readFileSync(join(dir, ".minicode", "MEMORY.md"), "utf8")
+    expect(file).toContain("vector-only entry")
   })
 
   test("crash after file, before vector → file-only entry is adopted (no dup, no loss)", async () => {

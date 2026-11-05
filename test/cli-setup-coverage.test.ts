@@ -421,6 +421,94 @@ describe("cli/setup: permissionMode & timeout & budget", () => {
   })
 })
 
+describe("cli/setup: WorkMode resume transparency (D-2)", () => {
+  const baseOpts = (cwd: string) => ({
+    cwd,
+    allowLocalConfig: true,
+    prompt: "hi",
+    enterRepl: false,
+    verbose: false,
+    allowAll: false,
+    ask: false,
+    plan: false,
+    allowlist: false,
+    verify: false,
+  })
+
+  async function resumeProbe(opts: {
+    savedWorkMode?: "DISCUSS" | "PLAN" | "EXECUTE" | null
+    workMode?: "DISCUSS" | "PLAN" | "EXECUTE"
+    workModeExplicit?: boolean
+  }): Promise<{ stderr: string; effective: "DISCUSS" | "PLAN" | "EXECUTE" }> {
+    const cwd = makeWorkspace()
+    const first = await createCliSession({
+      ...baseOpts(cwd),
+      sessionId: "wm-resume-src",
+      workMode: opts.savedWorkMode ?? "EXECUTE",
+    })
+    await first.persistCurrent({})
+    await first.close()
+    if (opts.savedWorkMode === null) {
+      // Simulasikan sesi legacy sebelum kolom work_mode ada (work_mode = NULL).
+      const { Database } = await import("bun:sqlite")
+      const { resolveDbPath } = await import("../src/lib/db-path.ts")
+      const db = new Database(resolveDbPath("sessions.db", cwd))
+      try {
+        db.run("UPDATE sessions SET work_mode = NULL WHERE id = ?", ["wm-resume-src"])
+      } finally {
+        db.close()
+      }
+    }
+
+    const captured: string[] = []
+    const orig = process.stderr.write.bind(process.stderr)
+    process.stderr.write = ((chunk: unknown) => {
+      captured.push(String(chunk))
+      return true
+    }) as typeof process.stderr.write
+    try {
+      const second = await createCliSession({
+        ...baseOpts(cwd),
+        sessionId: "wm-resume-dst",
+        resumeId: "wm-resume-src",
+        ...(opts.workMode !== undefined ? { workMode: opts.workMode } : {}),
+        ...(opts.workModeExplicit !== undefined ? { workModeExplicit: opts.workModeExplicit } : {}),
+      })
+      const effective = second.workMode
+      await second.close()
+      return { stderr: captured.join(""), effective }
+    } finally {
+      process.stderr.write = orig
+    }
+  }
+
+  // P0.2 (Q5=A5, menggantikan D-2): WorkMode DIPERSIST ke `sessions.work_mode`
+  // dan dipulihkan saat `--resume` bila operator tidak memberi sinyal eksplisit.
+  test("resume sesi DISCUSS/PLAN tanpa sinyal eksplisit → pulihkan WorkMode tersimpan", async () => {
+    const r = await resumeProbe({ savedWorkMode: "DISCUSS" })
+    expect(r.effective).toBe("DISCUSS")
+    expect(r.stderr).toContain("[resume] WorkMode DISCUSS restored from session")
+  })
+
+  test("resume sesi legacy (work_mode NULL) tanpa sinyal eksplisit → fallback EXECUTE transparan", async () => {
+    const r = await resumeProbe({ savedWorkMode: null })
+    expect(r.effective).toBe("EXECUTE")
+    expect(r.stderr).toContain(
+      "[resume] WorkMode default EXECUTE (legacy session without saved workMode)",
+    )
+  })
+
+  test("resume dengan WorkMode eksplisit → override WorkMode tersimpan secara transparan", async () => {
+    const r = await resumeProbe({
+      savedWorkMode: "DISCUSS",
+      workMode: "PLAN",
+      workModeExplicit: true,
+    })
+    expect(r.effective).toBe("PLAN")
+    expect(r.stderr).toContain("[resume] WorkMode PLAN (overriding saved DISCUSS)")
+  })
+})
+
 describe("last-model: default = terakhir dipakai", () => {
   const withHome = async <T>(fn: (home: string) => Promise<T>): Promise<T> => {
     const prev = process.env.MINICODE_HOME

@@ -28,7 +28,11 @@ export function shouldRunHooks(
   permissionMode: string,
   workMode?: "DISCUSS" | "PLAN" | "EXECUTE",
 ): boolean {
-  if (workMode === "DISCUSS") return false
+  // P0.2 (Q3): hooks berjalan di luar permission system dengan akses penuh
+  // Node.js/filesystem/jaringan, sehingga DILARANG di DISCUSS maupun PLAN
+  // untuk seluruh PermissionMode. Hanya WorkMode EXECUTE (atau pemanggil
+  // legacy tanpa argumen workMode) yang boleh menjalankan hooks.
+  if (workMode !== undefined && workMode !== "EXECUTE") return false
   return permissionMode !== "plan" && permissionMode !== "readonly"
 }
 

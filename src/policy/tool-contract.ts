@@ -57,6 +57,15 @@ export interface ToolContractMetadata {
   readonly allowedInExplore: boolean
   /** Boleh dijalankan pada eksekusi otonom/background. */
   readonly allowedInAutonomous: boolean
+  /**
+   * Diizinkan tanpa persetujuan di mode permission `readonly`/`plan` (dan
+   * tanpa prompt di `ask`/`auto`): tool yang tidak mengubah workspace maupun
+   * state internal minicode — membaca saja. `bash_output` sengaja `false`
+   * (hanya bermakna bila ada job `bash` yang sedang berjalan, yang dilarang
+   * readonly); `web_fetch`/`web_search` sengaja `true` walau bertier eksternal
+   * karena efeknya baca-jaringan, bukan mutasi lokal/irreversibel arsip.
+   */
+  readonly allowedInReadonly: boolean
   /** Efek yang diulang dengan input sama tidak menggandakan hasil. */
   readonly idempotent: boolean
   /** Butuh pasangan intent/terminal di jurnal mutasi (lihat catatan di atas). */
@@ -78,6 +87,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: true,
     allowedInAutonomous: true,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -88,6 +98,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: true,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -98,6 +109,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: true,
     allowedInAutonomous: true,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -108,6 +120,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: true,
     allowedInAutonomous: true,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -118,6 +131,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: true,
     allowedInAutonomous: true,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -128,6 +142,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: true,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -138,6 +153,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: true,
     allowedInAutonomous: true,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -148,6 +164,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: true,
     allowedInAutonomous: true,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -158,6 +175,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: true,
     allowedInAutonomous: true,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -168,6 +186,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: true,
     allowedInAutonomous: true,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -178,6 +197,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: true,
     allowedInAutonomous: true,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -188,6 +208,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: true,
     allowedInAutonomous: true,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -198,6 +219,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: true,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -208,6 +230,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: true,
     allowedInAutonomous: true,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -218,6 +241,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: true,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -228,6 +252,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: true,
     allowedInAutonomous: true,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -238,6 +263,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: true,
     journalMutation: false,
   }),
@@ -250,6 +276,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: true,
     journalMutation: true,
   }),
@@ -260,6 +287,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: false,
     journalMutation: true,
   }),
@@ -270,6 +298,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: false,
     journalMutation: true,
   }),
@@ -280,6 +309,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: false,
     journalMutation: true,
   }),
@@ -290,6 +320,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: true,
     journalMutation: true,
   }),
@@ -302,6 +333,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: false,
     journalMutation: true,
   }),
@@ -312,6 +344,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: false,
     journalMutation: false,
   }),
@@ -323,6 +356,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: false,
     journalMutation: true,
   }),
@@ -333,6 +367,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: false,
     journalMutation: true,
   }),
@@ -343,6 +378,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: true,
     journalMutation: true,
   }),
@@ -353,6 +389,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: true,
     journalMutation: false,
   }),
@@ -363,6 +400,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: false,
     journalMutation: false,
   }),
@@ -373,6 +411,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: true,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: false,
     journalMutation: false,
   }),
@@ -385,6 +424,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: true,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: false,
     journalMutation: true,
   }),
@@ -395,6 +435,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: true,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: false,
     journalMutation: true,
   }),
@@ -405,6 +446,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: true,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: false,
     journalMutation: true,
   }),
@@ -415,6 +457,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: true,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: true,
     journalMutation: false,
   }),
@@ -425,6 +468,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: true,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: false,
     idempotent: true,
     journalMutation: false,
   }),
@@ -435,6 +479,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -445,6 +490,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: false,
+    allowedInReadonly: true,
     idempotent: true,
     journalMutation: false,
   }),
@@ -497,6 +543,37 @@ export const EXPLORE_TOOL_NAMES: readonly string[] = TOOL_CONTRACTS.filter(
 export const AUTONOMOUS_TOOL_NAMES: readonly string[] = TOOL_CONTRACTS.filter(
   (c) => c.allowedInAutonomous,
 ).map((c) => c.name)
+
+/**
+ * Derivasi: tool yang diizinkan tanpa persetujuan di mode permission
+ * `readonly`/`plan` (dan tanpa prompt di `ask`/`auto`) — baca-saja, tanpa
+ * mutasi workspace maupun state internal. Sumber tunggal untuk `READONLY_TOOLS`
+ * di src/policy/permission.ts; menambah/mengganti tool berarti mengubah
+ * `allowedInReadonly` di registry ini, bukan mengedit dua daftar terpisah.
+ */
+export const READONLY_TOOL_NAMES: ReadonlySet<string> = new Set(
+  TOOL_CONTRACTS.filter((c) => c.allowedInReadonly).map((c) => c.name),
+)
+
+/**
+ * Derivasi P0.2 (Q1/Q2): semua 16 tool `PURE_READ` lokal yang diizinkan pada
+ * ceiling `DISCUSS` (`visible === callable`, nol mutasi workspace/DB, nol
+ * network read). Diturunkan dari `TOOL_CONTRACTS` tanpa daftar manual kedua.
+ */
+export const LOCAL_READONLY_TOOL_NAMES: readonly string[] = TOOL_CONTRACTS.filter(
+  (c) => c.allowedInReadonly && c.sideEffectTier === "PURE_READ",
+).map((c) => c.name)
+
+/**
+ * Derivasi P0.2 (Q2): tool baca jaringan (`web_fetch`, `web_search`) —
+ * `allowedInReadonly` untuk `EXECUTE`, ditolak penuh di `DISCUSS`, dan wajib
+ * melewati gerbang approval prompt di `PLAN` (headless = deny).
+ */
+export const NETWORK_READ_TOOL_NAMES: ReadonlySet<string> = new Set(
+  TOOL_CONTRACTS.filter((c) => c.allowedInReadonly && c.sideEffectTier !== "PURE_READ").map(
+    (c) => c.name,
+  ),
+)
 
 /**
  * Derivasi klasifikasi jurnal. Tool tak dikenal = "unknown", dan pemanggil

@@ -552,7 +552,13 @@ export const delegateTaskTool: Tool = {
         // event forward seperti biasa — hanya jurnal yang skip.
         const tagForwarded = (e: unknown): void => {
           try {
-            ;(e as { forwardedChild?: string }).forwardedChild = childId
+            const tag = e as { forwardedChild?: string; childRunId?: string }
+            tag.forwardedChild = childId
+            // F-AGENT-1: bawa id Run kanonik anak ke event forward agar adaptor
+            // parent bisa menautkan identitas run (bukan hanya childSessionId).
+            // Fallback childId hanya untuk observasi defensif — createChildSession
+            // di atas sudah menjamin childRunId non-null di titik ini.
+            tag.childRunId = childRunId ?? childId
           } catch {}
         }
         const offUsage = session.events.on("provider:extension", (e) => {

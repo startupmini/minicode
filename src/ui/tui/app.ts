@@ -368,12 +368,16 @@ export class TuiApp {
         ;(this.repaintTimer as unknown as { unref?: () => void }).unref?.()
       } catch {}
     }
-    const sub = (type: Parameters<UiBus["on"]>[0], handler?: (event: any) => void) => {
+    // [F-TYPE-1] Payload tiap call-site dianotasi; `sub` generik (E diinfer dari
+    // handler) menjaga anotasi itu, bukan melunturkannya ke `any`. `UiBus.on`
+    // tetap longgar di tepi (dokumentasi src/ui/contract.ts:62-71); satu-satunya
+    // cast `event as E` menandai perpindahan unknown → bentuk call-site.
+    const sub = <E = unknown>(type: Parameters<UiBus["on"]>[0], handler?: (event: E) => void) => {
       try {
         this.busUnsubs.push(
-          this.host.bus.on(type, (event: any) => {
+          this.host.bus.on(type, (event: unknown) => {
             try {
-              handler?.(event)
+              handler?.(event as E)
             } finally {
               requestPaint()
             }

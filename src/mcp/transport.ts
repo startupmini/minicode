@@ -21,6 +21,11 @@ export class McpTransport {
   // abort HANYA saat close() — bukan timeout, agar server tidak mati sendiri
   private killSignal = new AbortController()
 
+  /** P2.3: liveness untuk reconnect policy (bukan sekadar proke ada). */
+  get isClosed(): boolean {
+    return this.closed || this.proc === null || this.proc.exitCode !== null
+  }
+
   async connect(command: string, args: string[], env: Record<string, string> = {}): Promise<void> {
     if (this.proc) throw new Error("transport already connected")
 

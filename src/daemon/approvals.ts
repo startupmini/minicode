@@ -14,6 +14,7 @@
 
 import { randomUUID } from "node:crypto"
 import type { PermissionAsk } from "../policy/permission.ts"
+import { scrubSecrets } from "../policy/scrub.ts"
 import { hashArgs } from "../session/journal.ts"
 import type { ApprovalView, RefusalBody } from "./protocol.ts"
 import { sanitizeLabel } from "./sanitize.ts"
@@ -338,7 +339,11 @@ export class ApprovalBroker {
         sid,
         runId: opts.runId ? opts.runId() : null,
         tool,
-        summary: summarizeArgs(call?.args),
+        // [Area B · PROMPT 06] Bukti yang sama dengan prompt TUI: preview
+        // per-tool yang SUDAH di-scrub secret oleh policy + tier risiko.
+        // Sebelumnya daemon melihat JSON args mentah (hanya sanitizeLabel) —
+        // konsumen daemon bisa melihat secret yang tak pernah tampil di TUI.
+        summary: approvalSummary(call?.riskTier, call?.diffPreview, call?.args),
         // [Fase 2 / LOOP-INV-08] Ikat keputusan ke argumen kanonis + id call.
         argsHash: hashArgs(call?.args ?? {}),
         invocationId: typeof call?.id === "string" && call.id !== "" ? call.id : null,
@@ -346,6 +351,25 @@ export class ApprovalBroker {
       return decision === "allow" ? "allow" : "deny"
     }
   }
+}
+
+/**
+ * Ringkasan approval untuk konsumen daemon.
+ *
+ * Urutan prioritas: preview per-tool dari policy (sudah di-scrub) → fallback
+ * JSON args yang juga di-scrub. Tier risiko didahulukan sebagai tag agar
+ * konsumen tanpa renderer diff tetap tahu efeknya. Tak ada jalur yang
+ * mengirim args mentah ke luar proses.
+ */
+function approvalSummary(
+  riskTier: string | undefined,
+  diffPreview: string | undefined,
+  args: unknown,
+): string {
+  const body = diffPreview?.trim() || scrubSecrets(summarizeArgs(args)).trim()
+  const tier = riskTier?.trim() ? riskTier.trim() : ""
+  if (!tier) return body
+  return body ? `[${tier}] ${body}` : `[${tier}]`
 }
 
 /** Ringkasan args untuk ditampilkan konsumen — dipangkas, dibasuh, dibatasi. */

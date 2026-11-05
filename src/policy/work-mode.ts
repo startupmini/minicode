@@ -12,8 +12,25 @@
 
 import type { PermissionHandler, ToolCall } from "#minicore"
 import { createPermissionHandler, type PermissionMode } from "./permission.ts"
+import { NETWORK_READ_TOOL_NAMES } from "./tool-contract.ts"
 
 export type WorkMode = "DISCUSS" | "PLAN" | "EXECUTE"
+
+/**
+ * Error kebijakan startup saat `--verify` digabung dengan WorkMode non-EXECUTE
+ * (keputusan owner P0.2 Q4: fail-closed di startup, bukan diam-diam menjalankan
+ * shell verify atau menelannya tanpa penolakan).
+ */
+export class VerifyWorkModeConflictError extends Error {
+  readonly workMode: Exclude<WorkMode, "EXECUTE">
+  constructor(workMode: Exclude<WorkMode, "EXECUTE">) {
+    super(
+      `[work-mode] --verify cannot be combined with WorkMode ${workMode} (verification runs shell commands and self-heal turns; use --work-mode EXECUTE or omit --verify)`,
+    )
+    this.name = "VerifyWorkModeConflictError"
+    this.workMode = workMode
+  }
+}
 
 /** WorkMode yang memasang ceiling. EXECUTE = identitas (base dipakai apa adanya). */
 export type RestrictiveWorkMode = Exclude<WorkMode, "EXECUTE">
@@ -21,6 +38,7 @@ export type RestrictiveWorkMode = Exclude<WorkMode, "EXECUTE">
 type ModeControl = {
   __setMode(m: PermissionMode): void
   __getMode(): PermissionMode
+  __promptGated?(call: ToolCall, deps?: unknown): Promise<"allow" | "deny">
 }
 
 export type WorkModePermissionHandler = PermissionHandler &
@@ -78,6 +96,14 @@ export function createWorkModePermissionHandler(opts: {
       root: opts.root,
     }) as unknown as PermissionHandler,
   }
+  const discussNetworkDeny: PermissionHandler = {
+    async check() {
+      return "deny"
+    },
+    describeDenial() {
+      return "work-mode DISCUSS: network read disabled"
+    },
+  }
 
   // Pemilik keputusan deny per-call, supaya `describeDenial` membaca seam
   // handler yang benar (ceiling vs base) dengan semantik hapus-saat-baca.
@@ -121,6 +147,12 @@ export function createWorkModePermissionHandler(opts: {
       // awal EXECUTE (compose mengembalikan base) TIDAK menyediakan __setWorkMode —
       // jalur ini dipakai createMinicodeSession yang SELALU membungkus.
       if (wm === "EXECUTE") return opts.base.check(call, _deps as never)
+      // P0.2 (Q2): DISCUSS melarang network read (`web_fetch`, `web_search`) di
+      // SEMUA PermissionMode tanpa pernah menyentuh base (0 prompt).
+      if (wm === "DISCUSS" && NETWORK_READ_TOOL_NAMES.has(call.name)) {
+        rememberDeny(call, discussNetworkDeny)
+        return "deny"
+      }
       // Baca mode PM sekarang: `__setMode` runtime menggeser seleksi ceiling
       // (PLAN × allowlist/readonly = read-only), bukan membekukan yang lama.
       // Baca WorkMode sekarang (`wm` mutable) — __setWorkMode runtime menggeser
@@ -136,7 +168,23 @@ export function createWorkModePermissionHandler(opts: {
       // Di dalam ceiling: keputusan mutlak handler PM asli (termasuk prompt
       // gated `delegate_task` untuk PLAN × auto/ask — owner decision S2.1).
       const decision = await opts.base.check(call, _deps as never)
-      if (decision !== "allow") rememberDeny(call, opts.base)
+      if (decision !== "allow") {
+        rememberDeny(call, opts.base)
+        return decision
+      }
+      // P0.2 (Q2): di PLAN, network read (`web_fetch`, `web_search`) hanya boleh
+      // berjalan lewat approval prompt eksplisit (headless/tanpa __promptGated =
+      // fail-closed deny). Dipasang SETELAH `opts.base.check` agar Invariant #1
+      // terjaga (WorkMode tak pernah melonggarkan penolakan base).
+      if (wm === "PLAN" && NETWORK_READ_TOOL_NAMES.has(call.name)) {
+        if (typeof ctrl.__promptGated !== "function") {
+          rememberDeny(call, discussNetworkDeny)
+          return "deny"
+        }
+        const gated = await ctrl.__promptGated(call, _deps)
+        if (gated !== "allow") rememberDeny(call, opts.base)
+        return gated
+      }
       return decision
     },
     __setMode(m: PermissionMode): void {

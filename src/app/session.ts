@@ -1,10 +1,18 @@
+import { resolve } from "node:path"
 import type { RecoveryAction } from "#minicore/core/errors.ts"
 import { ProviderError } from "#minicore/core/errors.ts"
-import type { PermissionHandler, Session, SessionConfig } from "#minicore/core/index.ts"
+import type {
+  ModelProvider,
+  PermissionHandler,
+  Session,
+  SessionConfig,
+} from "#minicore/core/index.ts"
 import { createSession as createCoreSession } from "#minicore/core/index.ts"
 import { defaultRecoveryPolicy } from "#minicore/core/recovery.ts"
 import { estimateMessages, estimateSystem, estimateTools } from "#minicore/core/tokens.ts"
 import { LIMITS } from "../constants.ts"
+// [Area B · PROMPT 06] Binding persetujuan ↔ operasi yang dieksekusi.
+import { ApprovalBindingStore, verifyApprovalBinding } from "../policy/approval-binding.ts"
 import {
   buildSystemPrompt,
   createCalibratedEstimator,
@@ -12,6 +20,7 @@ import {
 } from "../policy/context.ts"
 import { parallelExecutor } from "../policy/executor.ts"
 import {
+  canonicalArgsHash,
   createNoProgressDetector,
   type NoProgressDetector,
   type NoProgressOptions,
@@ -71,6 +80,38 @@ export type WorkModeControl = {
   getWorkMode(): WorkMode
 }
 
+/**
+ * Guidance system-prompt ber-keyed WorkMode (lapis intent), BUKAN PermissionMode.
+ *
+ * DISCUSS = investigasi baca-saja yang berorientasi diskusi: model membaca,
+ * mencari, dan bernalar, lalu MENYAJIKAN temuan/opsi/trade-off untuk didiskusikan
+ * dengan user — bukan menulis atau mengeksekusi apa pun. PLAN = investigasi/
+ * planning formal dengan prompt SENDIRI (independen dari `planHint` milik
+ * PermissionMode di bawah; lapisan intent ≠ lapisan permission). EXECUTE = tidak
+ * menambah apa pun (identitas).
+ *
+ * Ini *guidance* (behavior), bukan enforcement — enforcement tetap milik ceiling
+ * handler `work-mode.ts`. Diekspor agar teruji langsung (pola repo pure/export).
+ */
+export function workModeHint(workMode: WorkMode): string {
+  if (workMode === "DISCUSS") {
+    return (
+      "\n\nDISCUSS MODE: You are in read-only investigation and discussion mode. " +
+      "Do NOT modify files, run bash, or use write/edit tools. " +
+      "Read, search, and reason — investigate the question, then discuss findings, options, and trade-offs with the user. " +
+      "Do not implement or execute any change."
+    )
+  }
+  if (workMode === "PLAN") {
+    return (
+      "\n\nPLAN MODE: You are in planning mode. " +
+      "Do NOT modify files, run bash, or use write/edit tools. " +
+      "Only read, search, and reason — investigate thoroughly, then produce a concrete implementation plan."
+    )
+  }
+  return ""
+}
+
 export async function createMinicodeSession(
   opts: Partial<
     Omit<SessionConfig, "permissions" | "estimator" | "recovery" | "system" | "executor">
@@ -104,6 +145,15 @@ export async function createMinicodeSession(
     noProgress?: NoProgressOptions | false
     /** Hook opsional agar composition root dapat mereset riwayat osilasi saat verify hijau. */
     onNoProgress?: (detector: NoProgressDetector) => void
+    /**
+     * [Area B · PROMPT 06] Penyimpanan binding persetujuan milik SESI.
+     *
+     * Default: dibuat baru per sesi (lihat implementasi). Composition root
+     * boleh mengoper instance sendiri bila perlu membagikannya dengan lapisan
+     * lain; bila tidak, tiap sesi punya store sendiri sehingga bukti
+     * persetujuan tak pernah lintas sesi.
+     */
+    approvalBindings?: ApprovalBindingStore
     /** Menerima handle kontrol mode permission. Kernel tidak mengekspos
      * `config`, jadi satu-satunya cara mengubah mode saat runtime (mis.
      * Shift+Tab di TUI) adalah menangkap handler di sini. */
@@ -160,13 +210,15 @@ export async function createMinicodeSession(
       `createMinicodeSession: workMode ${resolvedWorkMode} dengan permissionHandler terinjeksi belum didukung (fail-closed S2.1)`,
     )
   }
-  const planHint =
-    opts.permissionMode === "plan"
-      ? "\n\nPLAN MODE: You are in read-only planning mode. Do NOT modify files, run bash, or use write/edit tools. Only read, search, and reason — then output a concrete implementation plan."
-      : ""
-  const system = await buildSystemPrompt({
+  const PLAN_PM_HINT =
+    "\n\nPLAN MODE: You are in read-only planning mode. Do NOT modify files, run bash, or use write/edit tools. Only read, search, and reason — then output a concrete implementation plan."
+  // P0.2 (G-PROMPT-RT): rakit bagian dasar sekali, lalu tambahkan `planHint`
+  // (PermissionMode) + `workModeHint` (WorkMode) secara LIVE per-turn lewat
+  // pembungkus provider supaya transisi runtime `/work-mode` maupun `/mode`
+  // tercermin langsung di StreamRequest.system tanpa mengedit vendor/minicore.
+  const baseSystem = await buildSystemPrompt({
     cwd: opts.cwd,
-    extra: (opts.systemExtra ?? "") + planHint,
+    extra: opts.systemExtra ?? "",
     signal: (opts as unknown as { signal?: AbortSignal }).signal,
   })
   const {
@@ -189,9 +241,16 @@ export async function createMinicodeSession(
     maxTurns,
     noProgress,
     onNoProgress,
+    approvalBindings: _approvalBindings,
     ...rest
   } = opts
   if (!provider) throw new Error("createMinicodeSession: provider is required")
+  // [Area B · PROMPT 06] Penyimpanan binding persetujuan milik SESI ini.
+  // Dibuat di sini (bukan global) supaya dua sesi dalam satu proses tak
+  // saling memakai bukti persetujuan. Root = cwd sesi (sama dengan yang
+  // dipakai tool untuk resolve path target).
+  const approvalBindings =
+    _approvalBindings ?? new ApprovalBindingStore(resolve(cwd ?? process.cwd()))
   // F-09: sanitasi batas di lapisan app (mencakup pemanggil library langsung,
   // bukan hanya CLI yang sudah sanitasi di cli/setup.ts + cli/index.ts).
   // Tanpa ini: timeoutMs NaN/negatif = abort instan; maxSteps 0/negatif =
@@ -237,6 +296,9 @@ export async function createMinicodeSession(
         ask,
         allowLocalConfig,
         onApprovalEvent,
+        // [Area B · PROMPT 06] Store per-sesi: persetujuan dari sesi A tak
+        // bisa dipakai sebagai bukti di sesi B.
+        approvalBindings,
       }),
       root: cwd,
     })
@@ -250,7 +312,7 @@ export async function createMinicodeSession(
     __getWorkMode?(): WorkMode
   }
   const registeredTools = rest.tools ?? []
-  const allToolsPureRead =
+  const isAllToolsPureRead = (): boolean =>
     registeredTools.length > 0 &&
     registeredTools.every((t) => contractForTool(t.name)?.sideEffectTier === "PURE_READ")
   const livePosture = (): NoProgressPosture => {
@@ -261,7 +323,7 @@ export async function createMinicodeSession(
     const wm = wmCtl.__getWorkMode?.() ?? resolvedWorkMode
     if (wm === "DISCUSS") return "readonly"
     if (wm === "PLAN") return "plan"
-    if (allToolsPureRead) return "explore"
+    if (isAllToolsPureRead()) return "explore"
     return "active"
   }
   const effectiveRoot = cwd ?? process.cwd()
@@ -278,24 +340,64 @@ export async function createMinicodeSession(
   //   1. `detector.assertBeforeCall` memblokir panggilan yang terdeteksi
   //      no-progress / osilasi SEBELUM intent jurnal ditulis & sebelum efek.
   //   2. `detector.capturePreMutation` merekam hash pra-efek untuk osilasi.
-  //   3. `beforeToolEffect` menulis intent jurnal secara awaited.
-  const withEffectBarrier: PermissionHandler =
-    detector === null && beforeToolEffect === undefined
-      ? permissions
-      : {
-          ...permissions,
-          check: async (call, deps) => {
-            const decision = await permissions.check(call, deps)
-            if (decision !== "allow") return decision
-            if (detector !== null) {
-              await detector.beforeToolEffectCheck(call, effectiveRoot)
-            }
-            if (beforeToolEffect !== undefined) {
-              await beforeToolEffect(call)
-            }
-            return "allow"
-          },
+  //   3. `beforeToolEffect` writes intent jurnal secara awaited.
+  //
+  // [Area B · PROMPT 06] Barrier ini juga BATAS EKSEKUSI verifikasi
+  // persetujuan: setelah awaital intent jurnal + no-progress di atas, yang
+  // tersisa ke `tool.execute` hanya kode sinkron kernel
+  // (`permissions.check` → `validateArgs` → emit → execute), jadi verifikasi
+  // di sini efektif sama dengan memeriksa tepat sebelum eksekusi. Membungkus
+  // tool TIDAK dipakai: itu mengganti objek di array tool LIVE yang dipegang
+  // kernel/`setWorkMode` (regresi `test/work-mode-runtime.test.ts`).
+  //
+  // Alasan deny "approval stale" dicatat terpisah karena handler base
+  // menyimpan alasannya di peta privat; kernel membacanya lewat
+  // `describeDenial` yang kita override.
+  const staleDenyReasons = new Map<string, string>()
+  // Barrier selalu dipasang (bukan hanya bila detector/journal ada): di sini
+  // verifikasi persetujuan terjadi, dan ia harus berlaku di SETIAP konfigurasi
+  // — termasuk sesi tanpa jurnal dan tanpa detektor.
+  const withEffectBarrier: PermissionHandler = {
+    ...permissions,
+    check: async (call, deps) => {
+      const decision = await permissions.check(call, deps)
+      if (decision !== "allow") return decision
+      // Ambil (konsumsi) bukti persetujuan milik call ini — sekali saja.
+      // Diambil SEBELUM await supaya tak ada binding tersisa kalau barrier
+      // memblokir call (tak ada deny lalu tak ada jejak).
+      const binding = approvalBindings.take(call.name, canonicalArgsHash(call.args))
+      if (detector !== null) {
+        await detector.beforeToolEffectCheck(call, effectiveRoot)
+      }
+      if (beforeToolEffect !== undefined) {
+        await beforeToolEffect(call)
+      }
+      // Verifikasi lapis-2 (batas eksekusi): fail-closed saat target berubah
+      // sejak user menyetujui.
+      const verdict = verifyApprovalBinding(binding)
+      if (verdict.kind === "stale") {
+        const id = (call as { id?: string } | null)?.id
+        if (id) {
+          if (staleDenyReasons.size > 500)
+            staleDenyReasons.delete(staleDenyReasons.keys().next().value as string)
+          staleDenyReasons.set(id, `approval stale: ${verdict.reason}`)
         }
+        return "deny"
+      }
+      return "allow"
+    },
+    describeDenial: (call) => {
+      const id = (call as { id?: string } | null)?.id
+      if (id) {
+        const reason = staleDenyReasons.get(id)
+        if (reason) {
+          staleDenyReasons.delete(id)
+          return reason
+        }
+      }
+      return permissions.describeDenial?.(call)
+    },
+  }
   // [PHASE 6U] An INJECTED handler is not a mode, and has no mode control.
   //
   // [DESIGN DECISION] `onPermissions` and `livePermissionMode` are deliberately NOT
@@ -326,17 +428,33 @@ export async function createMinicodeSession(
   // Teruskan mode live ke kernel agar ToolContext.permissionMode selalu
   // mencerminkan Shift+Tab saat itu (bukan snapshot saat sesi dibuat).
   const livePermissionMode = (): PermissionMode => (injected ? "readonly" : withMode.__getMode())
+  const computeLiveSystem = (): string => {
+    const pm = injected ? opts.permissionMode : withMode.__getMode()
+    const wm = injected ? resolvedWorkMode : (wmCtl.__getWorkMode?.() ?? resolvedWorkMode)
+    const planHint = pm === "plan" ? PLAN_PM_HINT : ""
+    return baseSystem + planHint + workModeHint(wm)
+  }
+  const dynamicProvider: ModelProvider = {
+    id: provider.id,
+    get models() {
+      return provider.models
+    },
+    stream(req, signal) {
+      return provider.stream({ ...req, system: computeLiveSystem() }, signal)
+    },
+  }
   // [Fase 3 / CTX-03] Estimator terkalibrasi terhadap usage aktual provider.
   const calibration = createCalibratedEstimator()
-  const toolSchemasForEstimate = registeredTools.map((t) => ({
-    name: t.name,
-    description: t.description,
-    parameters: t.parameters,
-  }))
+  const liveToolSchemas = () =>
+    registeredTools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    }))
   const core = createCoreSession({
     ...rest,
-    provider,
-    system,
+    provider: dynamicProvider,
+    system: computeLiveSystem(),
     permissions: withEffectBarrier,
     permissionMode: livePermissionMode,
     estimator: calibration.estimator,
@@ -354,8 +472,8 @@ export async function createMinicodeSession(
     const d = e.data as { inputTokens?: number; totalTokens?: number } | undefined
     if (!d) return
     const baseLocal =
-      estimateSystem(system, minicodeEstimator) +
-      estimateTools(toolSchemasForEstimate, minicodeEstimator) +
+      estimateSystem(computeLiveSystem(), minicodeEstimator) +
+      estimateTools(liveToolSchemas(), minicodeEstimator) +
       estimateMessages(core.state.history, minicodeEstimator)
     calibration.observeProviderUsage({
       localEstimatedTokens: baseLocal,

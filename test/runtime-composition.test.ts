@@ -2,7 +2,7 @@
 // Hermetic: SQLite tmp per test; tanpa network/provider/UI/CLI/spawn.
 
 import { expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createRuntimeComposition, type RuntimeComposition } from "../src/runtime/composition.ts"
@@ -167,7 +167,8 @@ test("M14 I4: journal wajib yang tak bisa dibuka = kegagalan konstruksi", async 
   // Direktori sebagai path DB: open pasti gagal (bukan kondisi jauh).
   const asDir = join(dir, "journal-as-dir")
   rmSync(asDir, { force: true })
-  Bun.spawnSync({ cmd: ["cmd", "/c", "mkdir", asDir] })
+  // Portabel lintas OS: mkdir langsung, bukan `cmd /c mkdir` (Windows-only).
+  mkdirSync(asDir, { recursive: true })
   expect(() => compose(dir, { journalPath: asDir })).toThrow(/journal/i)
   await cleanup(dir)
 })

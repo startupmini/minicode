@@ -28,7 +28,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, relative } from "node:path"
 
 import { TaskGraph } from "../src/task/graph.ts"
 import type { Task, TaskStatus } from "../src/task/model.ts"
@@ -969,10 +969,11 @@ describe("J. migration, legacy, static architecture", () => {
       // what must be unique is the module that WRITES them.
       const code = text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ")
       if (code.includes("exec_generation") || code.includes("attempt_generation")) {
-        users.push(files[i]!.replace(`${root}\\`, "").replace(/\//g, "\\"))
+        // relatif + slash-normalisasi: portabel lintas OS (Windows `\` vs POSIX `/`)
+        users.push(relative(root, files[i]!).replace(/\\/g, "/"))
       }
     })
-    expect(users).toEqual(["src\\task\\store.ts"])
+    expect(users).toEqual(["src/task/store.ts"])
   }, 60_000)
 
   test("J7. production constructs a Scheduler in exactly ONE gated place", async () => {
@@ -1001,14 +1002,14 @@ describe("J. migration, legacy, static architecture", () => {
     const contents = await Promise.all(files.map((f) => readFile(f, "utf8")))
     const offenders: string[] = []
     contents.forEach((text, i) => {
-      const rel = files[i]!.replace(`${root}\\`, "").replace(/\//g, "\\")
-      if (rel === "src\\task\\scheduler.ts") return
+      const rel = relative(root, files[i]!).replace(/\\/g, "/")
+      if (rel === "src/task/scheduler.ts") return
       const code = text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ")
       if (/new\s+Scheduler\s*\(/.test(code)) offenders.push(rel)
     })
     // Exactly one construction site in the whole of src/, and it is the
     // composition root this phase added.
-    expect(offenders).toEqual(["src\\task\\production-scheduler.ts"])
+    expect(offenders).toEqual(["src/task/production-scheduler.ts"])
 
     // And that site is genuinely gated: the construction is unreachable unless the
     // gate is open, because the early return precedes it.

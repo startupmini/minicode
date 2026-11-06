@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { isolateGitConfigForTests } from "./helpers/isolated-git-config.ts"
 
 // Blok git_commit men-spawn git berkali-kali per test (init+config+add+commit
 // di beforeEach, lalu rev-parse+add+commit+log di dalam tool). Di Windows satu
@@ -31,7 +32,13 @@ import {
 } from "../src/providers/oauth.ts"
 import { gitCommitTool } from "../src/tools/git.ts"
 
-const ctx = { signal: new AbortController().signal, emit() {} } as unknown as ToolContext
+const ctx = {
+  signal: new AbortController().signal,
+  cwd: process.cwd(),
+  emit() {},
+} as unknown as ToolContext
+
+isolateGitConfigForTests()
 
 // ── OAuth: server device-flow lokal ──
 // Mekanismenya diuji end-to-end terhadap server nyata, bukan mock fetch, karena

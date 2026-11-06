@@ -34,7 +34,7 @@ test("fuzzy-edit: editTool replaces fuzzy matched content", async () => {
       oldString: "const a = 1;\nreturn a;",
       newString: "const a = 2;\nreturn a * 2;",
     },
-    { signal: new AbortController().signal } as never,
+    { signal: new AbortController().signal, cwd: process.cwd() } as never,
   )
 
   const updated = await readFile(testFile, "utf8")

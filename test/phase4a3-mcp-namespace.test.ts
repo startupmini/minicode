@@ -89,14 +89,14 @@ test("D. namespace is independent of todo content", async () => {
   const ctxA = newMcpContextId()
   const ctxB = newMcpContextId()
 
-  const mkctx = () => ({ signal: new AbortController().signal }) as never
+  const mkctx = (cwd: string) => ({ signal: new AbortController().signal, cwd }) as never
   todoSession.id = ctxA
   todoSession.cwd = dirA
-  await todoWriteTool.execute({ todos: [{ content: "identical", status: "pending" }] }, mkctx())
+  await todoWriteTool.execute({ todos: [{ content: "identical", status: "pending" }] }, mkctx(dirA))
 
   todoSession.id = ctxB
   todoSession.cwd = dirB
-  await todoWriteTool.execute({ todos: [{ content: "identical", status: "pending" }] }, mkctx())
+  await todoWriteTool.execute({ todos: [{ content: "identical", status: "pending" }] }, mkctx(dirB))
 
   // same content, different namespaces, and the files land under different
   // session-scoped names

@@ -23,8 +23,12 @@ import {
   todoWriteTool,
 } from "../src/tools/todo.ts"
 
-const ctx = { signal: new AbortController().signal, emit() {} } as unknown as ToolContext
 const tmp = ".tmp-phase1-test"
+const ctx = {
+  signal: new AbortController().signal,
+  emit() {},
+  cwd: process.cwd(),
+} as unknown as ToolContext
 
 afterEach(async () => {
   killAllBackgroundJobs()
@@ -71,6 +75,27 @@ describe("read_file: paging + nomor baris", () => {
   test("baris sangat panjang dipotong per baris", () => {
     const long = "x".repeat(LIMITS.READ_FILE_MAX_LINE_CHARS + 500)
     expect(formatLines(long).text).toContain("[line truncated]")
+  })
+
+  test("paged read memformat streaming line sama dengan formatter murni", async () => {
+    await mkdir(tmp, { recursive: true })
+    const cases = [
+      { raw: "", offset: 1, limit: 2 },
+      { raw: "a\n", offset: 1, limit: 2 },
+      { raw: "α🙂 first\nsecond\nthird", offset: 2, limit: 1 },
+      { raw: `${"x".repeat(4000)}\nkeep\n`, offset: 1, limit: 2 },
+      { raw: "a\nb", offset: 99, limit: 2 },
+    ]
+    for (const [index, item] of cases.entries()) {
+      const path = `${tmp}/stream-${index}.txt`
+      await writeFile(path, item.raw, "utf8")
+      const expected = formatLines(item.raw, { offset: item.offset, limit: item.limit }).text
+      const actual = (await readFileTool.execute(
+        { path, offset: item.offset, limit: item.limit },
+        ctx,
+      )) as string
+      expect(actual).toBe(expected)
+    }
   })
 
   test("file besar bisa dibaca per bagian, tanpa offset tetap ditolak", async () => {
@@ -208,15 +233,16 @@ describe("todo_write / todo_read", () => {
     const prev = { id: todoSession.id, cwd: todoSession.cwd }
     todoSession.id = "sesi-uji"
     todoSession.cwd = tmp
+    const todoCtx = { ...ctx, cwd: tmp } as ToolContext
     try {
       const written = (await todoWriteTool.execute(
         { todos: [{ content: "langkah satu", status: "in_progress" }] },
-        ctx,
+        todoCtx,
       )) as string
       // [Fase 8 / 8.3] id di-adopsi: render memuat prefix `t1 — `.
       expect(written).toContain("langkah satu")
       expect(written).toContain("[~]")
-      const read = (await todoReadTool.execute({}, ctx)) as string
+      const read = (await todoReadTool.execute({}, todoCtx)) as string
       expect(read).toContain("langkah satu")
       // [Fase 8 / 8.3] First id-less write kini DIADOPSI: id dialokasikan
       // TaskStore dan ditulis balik, jadi item membawa taskId kanonik.
@@ -233,8 +259,9 @@ describe("todo_write / todo_read", () => {
     const prev = { id: todoSession.id, cwd: todoSession.cwd }
     todoSession.id = "sesi-belum-ada"
     todoSession.cwd = tmp
+    const todoCtx = { ...ctx, cwd: tmp } as ToolContext
     try {
-      expect((await todoReadTool.execute({}, ctx)) as string).toContain("no todos yet")
+      expect((await todoReadTool.execute({}, todoCtx)) as string).toContain("no todos yet")
     } finally {
       todoSession.id = prev.id
       todoSession.cwd = prev.cwd
@@ -336,6 +363,7 @@ describe("bash background", () => {
     const chunks: string[] = []
     const emitCtx = {
       signal: new AbortController().signal,
+      cwd: process.cwd(),
       emit(e: { kind?: string; data?: unknown }) {
         if (e.kind === "bash-output") chunks.push(String((e.data as { text?: string }).text ?? ""))
       },

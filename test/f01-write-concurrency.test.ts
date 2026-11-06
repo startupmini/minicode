@@ -98,6 +98,41 @@ test("F-01: dua bash tidak overlap pada writeConcurrency > 1", async () => {
   expect(log).toEqual(["bash:enter", "bash:exit", "bash:enter", "bash:exit"])
 })
 
+test("EXEC-02: code_run dimutasi exclusive terhadap mutasi dan reader satu batch", async () => {
+  const g1 = makeGate()
+  const g2 = makeGate()
+  const g3 = makeGate()
+  const log: string[] = []
+  const exec = parallelExecutor({ concurrency: 6, writeConcurrency: 3 })
+  const p = exec.execute(
+    [
+      { id: "1", name: "code_run", args: { lang: "node", code: "write A" } },
+      { id: "2", name: "read_file", args: { path: "A" } },
+      { id: "3", name: "code_run", args: { lang: "node", code: "write A again" } },
+    ],
+    depsOf([gatedTool("code_run", [g1, g3], log), gatedTool("read_file", [g2], log)]),
+  )
+  await g1.entered
+  await quiesce()
+  expect(enteredCount(log)).toBe(1)
+  g1.open()
+  await g2.entered
+  await quiesce()
+  expect(enteredCount(log)).toBe(2)
+  g2.open()
+  await g3.entered
+  g3.open()
+  await p
+  expect(log).toEqual([
+    "code_run:enter",
+    "code_run:exit",
+    "read_file:enter",
+    "read_file:exit",
+    "code_run:enter",
+    "code_run:exit",
+  ])
+})
+
 test("F-01: bash tidak overlap dengan write path pada writeConcurrency > 1", async () => {
   const g1 = makeGate()
   const g2 = makeGate()

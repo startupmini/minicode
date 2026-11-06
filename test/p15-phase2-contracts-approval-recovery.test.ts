@@ -120,7 +120,7 @@ describe("TOOL-01/LOOP-INV-04 — registry kontrak tool = sumber tunggal", () =>
     )
     // EXCLUSIVE_TOOLS = tanpa path tunggal → batch penuh sekuensial
     expect(setOf([...EXCLUSIVE_TOOLS])).toEqual(
-      new Set(["bash", "write_memory", "forget_memory", "todo_write"]),
+      new Set(["bash", "code_run", "git_commit", "write_memory", "forget_memory", "todo_write"]),
     )
     // GATED_TOOLS = di-gate approval secara default
     expect(setOf([...GATED_TOOLS])).toEqual(
@@ -225,7 +225,7 @@ describe("TOOL-01/LOOP-INV-04 — registry kontrak tool = sumber tunggal", () =>
 
 describe("LOOP-INV-07 — timeout tool menghasilkan outcome UNKNOWN end-to-end", () => {
   test("bash timeout melempar tag deterministik (isError) + parser membacanya", async () => {
-    const ctx = { signal: new AbortController().signal } as never
+    const ctx = { signal: new AbortController().signal, cwd: process.cwd() } as never
     const cmd = `${JSON.stringify(process.execPath)} -e "setInterval(()=>{},1000)"`
     let message = ""
     try {

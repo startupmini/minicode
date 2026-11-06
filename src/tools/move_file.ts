@@ -3,6 +3,7 @@ import { dirname } from "node:path"
 import type { Tool } from "#minicore"
 import { resolveSafePath } from "../lib/safe-open.ts"
 import { trashFile } from "../lib/trash.ts"
+import { requireToolCwd } from "./context.ts"
 
 export const moveFileTool: Tool = {
   name: "move_file",
@@ -19,7 +20,7 @@ export const moveFileTool: Tool = {
   },
   async execute({ from, to }, ctx) {
     ctx.signal.throwIfAborted()
-    const root = ctx.cwd ?? process.cwd()
+    const root = requireToolCwd(ctx)
     const f = from as string
     const t = to as string
     // Verifikasi kedua ujung via pemilik tunggal (logis + target nyata) —

@@ -17,7 +17,7 @@ import { resolveTrustedExecutable } from "./trusted-exec.ts"
 //   index user (LFS/semantik clean milik user, lihat git.ts). Pengecualian:
 //   protokol `filter.<d>.process` diutamakan git di atas clean/smudge, jadi
 //   neutralizer selalu mematikannya (nilai kosong = fallback ke clean/smudge)
-//   di SEMUA jalur plumbing; jalur user-index hanya diperingatkan, bukan diubah.
+//   di SEMUA jalur plumbing; `git_commit` menolak filter sebelum staging.
 
 /** Netralisasi universal: tanpa hooks, tanpa fsmonitor, tanpa pager. */
 export const GIT_SAFE_BASE: readonly string[] = [
@@ -31,7 +31,7 @@ export const GIT_SAFE_BASE: readonly string[] = [
 /** Netralisasi driver konten untuk diff/log (tanpa eksekusi repo). */
 export const GIT_NO_DIFF_DRIVERS: readonly string[] = ["--no-ext-diff", "--no-textconv"]
 
-const DRIVER_RE = /^filter\.([A-Za-z0-9_.-]+)\.(?:clean|smudge|process)\b/
+const DRIVER_RE = /^filter\.([A-Za-z0-9_.-]+)\.(clean|smudge|process)$/i
 
 export interface FilterDriver {
   name: string
@@ -42,30 +42,35 @@ export interface FilterDriver {
 
 /**
  * Daftar driver filter yang TERKONFIGURASI di repo (discovery read-only via
- * `git config`, tanpa hook/filter/pager). Dipakai neutralizer plumbing DAN
- * peringatan jalur user-index (git_commit) agar eksekusi filter repo tidak
- * pernah diam-diam.
+ * `git config`, tanpa hook/filter/pager). Kegagalan discovery melempar error:
+ * pemanggil tidak boleh menganggap ketidakmampuan memeriksa sebagai tidak ada
+ * filter. Dipakai neutralizer plumbing dan preflight `git_commit`.
  */
 export async function discoverFilterDrivers(cwd: string): Promise<FilterDriver[]> {
-  try {
-    const r = spawnSync(
-      resolveTrustedExecutable("git"),
-      ["config", "--get-regexp", "^filter\\..*\\.(clean|smudge|process)$"],
-      { cwd, encoding: "utf8", timeout: 10_000 },
-    )
-    if (r.status !== 0 || !r.stdout) return []
-    const drivers = new Map<string, FilterDriver>()
-    for (const line of r.stdout.split("\n")) {
-      const m = DRIVER_RE.exec(line.trim())
-      if (!m?.[1]) continue
-      const d = drivers.get(m[1]) ?? { name: m[1], hasProcess: false }
-      if (line.includes(".process")) d.hasProcess = true
-      drivers.set(m[1], d)
-    }
-    return [...drivers.values()].sort((a, b) => (a.name < b.name ? -1 : 1))
-  } catch {
-    return []
+  const r = spawnSync(
+    resolveTrustedExecutable("git"),
+    ["config", "--name-only", "--get-regexp", "^filter\\..*\\.(clean|smudge|process)$"],
+    { cwd, encoding: "utf8", timeout: 10_000 },
+  )
+  if (r.error) throw new Error(`unable to inspect Git filter configuration: ${r.error.message}`)
+  if (r.status === 1 && !r.stdout?.trim()) return []
+  if (r.status !== 0) {
+    throw new Error(`unable to inspect Git filter configuration (git exited ${String(r.status)})`)
   }
+  if (!r.stdout?.trim()) return []
+  const drivers = new Map<string, FilterDriver>()
+  for (const line of r.stdout.split("\n")) {
+    const key = line.trim()
+    if (!key) continue
+    const m = DRIVER_RE.exec(key)
+    if (!m?.[1] || !m[2]) {
+      throw new Error("unable to safely parse Git filter configuration")
+    }
+    const d = drivers.get(m[1]) ?? { name: m[1], hasProcess: false }
+    if (m[2].toLowerCase() === "process") d.hasProcess = true
+    drivers.set(m[1], d)
+  }
+  return [...drivers.values()].sort((a, b) => (a.name < b.name ? -1 : 1))
 }
 
 /**

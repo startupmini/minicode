@@ -44,7 +44,14 @@ function resetSharedUiState(): void {
 
 describe("F2: kebijakan ANSI per stream", () => {
   test("TTY: SGR utuh dipertahankan", () => {
-    expect(cleanUntrusted(`${ESC}[31mRed${ESC}[0m`, true)).toBe(`${ESC}[31mRed${ESC}[0m`)
+    const noColor = process.env.NO_COLOR
+    delete process.env.NO_COLOR
+    try {
+      expect(cleanUntrusted(`${ESC}[31mRed${ESC}[0m`, true)).toBe(`${ESC}[31mRed${ESC}[0m`)
+    } finally {
+      if (noColor === undefined) delete process.env.NO_COLOR
+      else process.env.NO_COLOR = noColor
+    }
   })
 
   test("non-TTY: SGR model menjadi teks polos", () => {
@@ -69,6 +76,8 @@ describe("F2: kebijakan ANSI per stream", () => {
 describe("F2: cabang TTY tidak over-strip", () => {
   test("TTY: SGR model tetap lolos end-to-end", () => {
     const prev = process.stdout.isTTY
+    const noColor = process.env.NO_COLOR
+    delete process.env.NO_COLOR
     Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true })
     const chunks: string[] = []
     const prevWrite = process.stdout.write.bind(process.stdout)
@@ -87,6 +96,8 @@ describe("F2: cabang TTY tidak over-strip", () => {
     } finally {
       ;(process.stdout as unknown as { write: (s: string) => boolean }).write = prevWrite
       Object.defineProperty(process.stdout, "isTTY", { value: prev, configurable: true })
+      if (noColor === undefined) delete process.env.NO_COLOR
+      else process.env.NO_COLOR = noColor
       resetSharedUiState()
     }
   })

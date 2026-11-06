@@ -15,9 +15,11 @@ import { shouldRunHooks } from "../src/hooks/run.ts"
 import { gitFilterNeutralizers } from "../src/lib/git-hardening.ts"
 import { formatVerifyNotice } from "../src/policy/verifier.ts"
 import { isolateHomeForTests } from "./helpers/hermetic-home.ts"
+import { isolateGitConfigForTests } from "./helpers/isolated-git-config.ts"
 
 // Hermetic: config global/state mesin tak boleh menentukan verifyCommand/provider.
 isolateHomeForTests()
+isolateGitConfigForTests()
 
 const gitAvailable = spawnSync("git", ["--version"], { stdio: "ignore" }).status === 0
 
@@ -137,20 +139,30 @@ const ctxFor = (dir: string) => ({ signal: AbortSignal.timeout(20000), cwd: dir 
 // ── §17–§19 Git: operasi minicode tak menjalankan kode repo ──
 
 describe.skipIf(!gitAvailable)("git supply chain", () => {
-  test("git_commit: hooks repo diam, commit tetap sukses + HEAD", async () => {
+  test("git_commit: filter repo ditolak sebelum staging dan hook diam", async () => {
     const repo = await makeEvilRepo("commit")
     try {
       await repo.reset()
       const { gitCommitTool } = await import("../src/tools/git.ts")
       writeFileSync(join(repo.dir, "c.txt"), "x\n")
-      const out = (await gitCommitTool.execute(
-        { message: "uji", paths: ["c.txt"] },
-        ctxFor(repo.dir),
-      )) as string
-      expect(out).toContain("HEAD:")
-      // pre/post-commit repo TIDAK berjalan (audit #10 P0).
-      expect(repo.fired()).not.toContain("precommit")
-      expect(repo.fired()).not.toContain("postcommit")
+      const headBefore = spawnSync("git", ["rev-parse", "HEAD"], {
+        cwd: repo.dir,
+        encoding: "utf8",
+      }).stdout.trim()
+      await expect(
+        gitCommitTool.execute({ message: "uji", paths: ["c.txt"] }, ctxFor(repo.dir)),
+      ).rejects.toThrow(/blocked before staging.*filter\.evil/)
+      // Custom filter dan pre/post-commit hook sama-sama belum berjalan.
+      expect(repo.fired()).toEqual([])
+      expect(
+        spawnSync("git", ["diff", "--cached", "--name-only"], {
+          cwd: repo.dir,
+          encoding: "utf8",
+        }).stdout.trim(),
+      ).toBe("")
+      expect(
+        spawnSync("git", ["rev-parse", "HEAD"], { cwd: repo.dir, encoding: "utf8" }).stdout.trim(),
+      ).toBe(headBefore)
     } finally {
       repo.cleanup()
     }

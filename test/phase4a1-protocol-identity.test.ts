@@ -41,7 +41,7 @@ async function ownedDir(): Promise<string> {
   return dir
 }
 
-const mkctx = () => ({ signal: new AbortController().signal }) as never
+const mkctx = (cwd = process.cwd()) => ({ signal: new AbortController().signal, cwd }) as never
 
 const prevId = todoSession.id
 const prevCwd = todoSession.cwd
@@ -151,7 +151,7 @@ test("E. todo_read exposes the taskId it was given", async () => {
     ],
     dir,
   )
-  const out = (await todoReadTool.execute({}, mkctx())) as string
+  const out = (await todoReadTool.execute({}, mkctx(dir))) as string
   expect(out).toContain("t1")
   expect(out).toContain("First task")
   expect(out).toContain("t2")
@@ -209,7 +209,7 @@ test("F2. taskId written through the todo_write tool itself round-trips", async 
 
   await todoWriteTool.execute(
     { todos: [{ taskId: "t3", content: "lewat tool", status: "completed" }] },
-    mkctx(),
+    mkctx(dir),
   )
   const [read] = await loadTodos("p4a-tool", dir)
   expect(read?.taskId).toBe("t3")

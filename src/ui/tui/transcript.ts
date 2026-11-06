@@ -177,6 +177,11 @@ export class Transcript {
   private nextOrder = 1
   private pending = ""
   private pendingTruncated = false
+  private activeProviderAttempt: {
+    id: number
+    pendingLength: number
+    pendingTruncated: boolean
+  } | null = null
   private maxPendingChars: number
   /** Hitung monotonik baris yang pernah ditambah — basis indikator "baru"
    * yang kebal evict cap 5000 (size() menyusut saat tertua dibuang). */
@@ -250,6 +255,39 @@ export class Transcript {
 
   /** Chunk reasoning (`provider:extension` kind reasoning, data {text}). */
   extension(e: { kind: string; data: unknown }): void {
+    if (e.kind === "minicode:attempt") {
+      const data = e.data as {
+        phase?: unknown
+        attemptId?: unknown
+        hadVisibleOutput?: unknown
+      } | null
+      const id = data?.attemptId
+      if (typeof id !== "number" || !Number.isSafeInteger(id) || id < 1) return
+      if (data?.phase === "started") {
+        this.activeProviderAttempt = {
+          id,
+          pendingLength: this.pending.length,
+          pendingTruncated: this.pendingTruncated,
+        }
+      } else if (data?.phase === "completed") {
+        if (this.activeProviderAttempt?.id === id) this.activeProviderAttempt = null
+      } else if (data?.phase === "invalidated" && this.activeProviderAttempt?.id === id) {
+        this.pending = this.pending.slice(0, this.activeProviderAttempt.pendingLength)
+        this.pendingTruncated = this.activeProviderAttempt.pendingTruncated
+        this.activeProviderAttempt = null
+        // Reasoning dari attempt yang gagal tidak boleh tertinggal sebagai
+        // konten aktif/collapsible. Baris reasoning yang sudah dipaint tetap
+        // diberi marker append-only di bawah.
+        this.thinkingBuf = ""
+        this.thinkingTail = ""
+        if (data.hadVisibleOutput === true) {
+          this.push(c.warning(t("ts.providerAttemptDiscarded", { attempt: id })), {
+            kind: "diagnostic",
+          })
+        }
+      }
+      return
+    }
     if (e.kind !== "reasoning") return
     const text = (e.data as { text?: string } | null)?.text ?? ""
     if (!text) return
@@ -333,6 +371,7 @@ export class Transcript {
     this.meta = []
     this.pending = ""
     this.pendingTruncated = false
+    this.activeProviderAttempt = null
     this.thinkingBuf = ""
     this.thinkingTail = ""
     this.evicted = 0

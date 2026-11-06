@@ -644,6 +644,9 @@ export async function spawnTui(opts: SpawnTuiOptions = {}): Promise<TuiPtyHandle
     // jalur kode anak — kredensial provider host juga tak diwarisi.
     env: cleanEnvForChild({
       NO_COLOR: "1",
+      // Terminfo ambient `dumb` dari host PowerShell bukan kemampuan PTY yang
+      // baru dibuat; pin capability ke terminal name yang diminta saat spawn.
+      TERM: "xterm-256color",
       MINICODE_HOME: home,
       HOME: home,
       USERPROFILE: home,

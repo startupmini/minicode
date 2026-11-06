@@ -25,7 +25,7 @@ import {
   listBackgroundJobs,
 } from "../src/tools/bash.ts"
 
-const ctx = { signal: new AbortController().signal } as never
+const ctx = { signal: new AbortController().signal, cwd: process.cwd() } as never
 // Interpreter = runtime sendiri (bun) agar hermetic: `node` tak ada di image
 // minimal (pola yang sama dipakai test/bash-cap.test.ts).
 const rt = JSON.stringify(process.execPath)

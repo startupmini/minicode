@@ -5,6 +5,7 @@ import {
   extractMcpText,
   getMcpPrompt,
   getMcpServerIds,
+  McpCallOutcomeUnknownError,
   mcpInventory,
   readMcpResource,
 } from "../mcp/client.ts"
@@ -50,7 +51,7 @@ export const mcpCallTool: Tool = {
   description:
     "Call a tool on a connected MCP server. Parameters: server id, tool name, and arguments. " +
     "The server runs OUTSIDE minicode policy: a call may read/write files, network, or processes " +
-    "on the server side — one approval covers one server+tool+args call only.",
+    "on the server side — one approval covers one server+tool+args call only. If transport aborts after dispatch, the outcome is unknown; inspect remote state before retrying.",
   parameters: {
     type: "object",
     properties: {
@@ -91,6 +92,7 @@ export const mcpCallTool: Tool = {
         ? capped
         : fenceUntrustedToolOutput(`mcp_call:${sid}.${tn}`, capped)
     } catch (e) {
+      if (e instanceof McpCallOutcomeUnknownError) throw e
       return `[mcp] error: ${scrubSecrets((e as Error).message)}`
     }
   },

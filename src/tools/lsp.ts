@@ -12,6 +12,7 @@ import {
 } from "../lsp/client.ts"
 import { isPathOutsideRoot, isRealPathOutsideRoot, isSensitive } from "../policy/jail.ts"
 import { scrubSecrets } from "../policy/scrub.ts"
+import { requireToolCwd } from "./context.ts"
 
 const SEVERITY = ["Error", "Warn", "Info", "Hint"]
 
@@ -126,7 +127,7 @@ function posTool(
     },
     async execute(args, ctx) {
       ctx.signal.throwIfAborted()
-      const cwd = ctx.cwd ?? process.cwd()
+      const cwd = requireToolCwd(ctx)
       try {
         const resolved = await resolvePosition(args as PosArgs, cwd)
         if (typeof resolved === "string") return resolved
@@ -168,7 +169,7 @@ export const lspDiagnosticsTool: Tool = {
   },
   async execute({ file }, ctx) {
     ctx.signal.throwIfAborted()
-    const cwd = ctx.cwd ?? process.cwd()
+    const cwd = requireToolCwd(ctx)
     try {
       const { abs, text } = await readTarget(String(file), cwd)
       const { items } = await raceAbort(lspDiagnostics(abs, text, undefined, cwd), ctx.signal)
@@ -225,7 +226,7 @@ export const lspSymbolsTool: Tool = {
   },
   async execute({ file }, ctx) {
     ctx.signal.throwIfAborted()
-    const cwd = ctx.cwd ?? process.cwd()
+    const cwd = requireToolCwd(ctx)
     try {
       const { abs, text } = await readTarget(String(file), cwd)
       const result = await raceAbort(
@@ -273,7 +274,7 @@ export const lspWorkspaceSymbolsTool: Tool = {
     if (getConfiguredExts().length === 0)
       return "(no LSP servers configured — add via minicode config lsp add)"
     try {
-      const cwd = ctx.cwd ?? process.cwd()
+      const cwd = requireToolCwd(ctx)
       const symbols = await raceAbort(
         workspaceSymbols((query as string) ?? "", 5000, cwd),
         ctx.signal,

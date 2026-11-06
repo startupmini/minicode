@@ -38,7 +38,7 @@ async function ownedDir(): Promise<string> {
   owned.push(dir)
   return dir
 }
-const mkctx = () => ({ signal: new AbortController().signal }) as never
+const mkctx = (cwd = process.cwd()) => ({ signal: new AbortController().signal, cwd }) as never
 const prevId = todoSession.id
 const prevCwd = todoSession.cwd
 afterEach(async () => {
@@ -333,7 +333,7 @@ test("M. when the JSON write fails, TaskStore is never touched", async () => {
   try {
     const out = await todoWriteTool.execute(
       { todos: [{ taskId: "t1", title: "A", status: "pending" }] },
-      mkctx(),
+      mkctx(dir),
     )
     expect(String((out as { isError?: boolean }).isError)).toBe("false")
   } catch {
@@ -355,7 +355,7 @@ test("N. a TaskStore failure surfaces as a tool error, so no plan can publish", 
   try {
     await todoWriteTool.execute(
       { todos: [{ taskId: "t42", content: "ghost", status: "pending" }] },
-      mkctx(),
+      mkctx(dir),
     )
   } catch {
     threw = true
@@ -405,7 +405,7 @@ test("S2. the tool path uses todoSession.id as the TaskStore session", async () 
         { content: "brand new", status: "pending" },
       ],
     },
-    mkctx(),
+    mkctx(dir),
   )
   const store = new TaskStore(dir)
   // the new task landed under the caller's own session namespace. Ids compared

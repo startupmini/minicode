@@ -10,6 +10,7 @@
 // Bila skenario gagal di kode lama, ia menguji yang dikiranya (Prinsip 3).
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { spawnSync } from "node:child_process"
+import { randomUUID } from "node:crypto"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -123,6 +124,24 @@ function porcelain(dir: string): string {
     encoding: "utf8",
   })
   return (r.stdout ?? "").replaceAll("\0", "|")
+}
+
+async function withIsolatedGitConfig<T>(run: () => Promise<T>): Promise<T> {
+  const config = join(tmpdir(), `minicode-agent-git-config-${randomUUID()}`)
+  const previousGlobal = process.env.GIT_CONFIG_GLOBAL
+  const previousNoSystem = process.env.GIT_CONFIG_NOSYSTEM
+  await writeFile(config, "", "utf8")
+  process.env.GIT_CONFIG_GLOBAL = config
+  process.env.GIT_CONFIG_NOSYSTEM = "1"
+  try {
+    return await run()
+  } finally {
+    if (previousGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL
+    else process.env.GIT_CONFIG_GLOBAL = previousGlobal
+    if (previousNoSystem === undefined) delete process.env.GIT_CONFIG_NOSYSTEM
+    else process.env.GIT_CONFIG_NOSYSTEM = previousNoSystem
+    await rm(config, { force: true }).catch(() => {})
+  }
 }
 
 function reqText(req: unknown): string {
@@ -434,44 +453,45 @@ describe("audit #12: error evidence + no blind re-execution", () => {
 describe("audit #12: git behavior", () => {
   test.skipIf(!gitAvailable)(
     "commit scoped: hanya paths yang di-commit, B tetap dirty (§11)",
-    async () => {
-      const dir = await mkdtemp(join(tmpdir(), "beh-"))
-      try {
-        await gitRepo(dir, { "A.txt": "a1\n", "B.txt": "b-unrelated\n" })
-        await writeFile(join(dir, "A.txt"), "a2-fixed\n", "utf8")
-        await writeFile(join(dir, "B.txt"), "b-dirty\n", "utf8")
-        const provider = new FakeProvider([
-          { events: [toolCall("git_status", {}), finish("tool_calls")] },
-          {
-            events: [
-              toolCall("git_commit", { message: "fix A", paths: ["A.txt"] }),
-              finish("tool_calls"),
-            ],
-          },
-          { events: [text("committed A only"), finish("stop")] },
-        ])
-        const session = await createMinicodeSession({
-          provider,
-          tools: [gitStatusTool, gitCommitTool],
-          permissionMode: "allow-all",
-          cwd: dir,
-        })
-        const calls: string[] = []
-        session.events.on("execution:started", (e) => calls.push(e.execution.call.name))
-        await session.run("commit A", {})
-        expect(calls).toEqual(["git_status", "git_commit"])
-        const head = spawnSync("git", ["show", "--name-only", "--format="], {
-          cwd: dir,
-          encoding: "utf8",
-        })
-        expect((head.stdout ?? "").trim().split("\n")).toEqual(["A.txt"])
-        // B tetap dirty & unstaged — commit scoped tak menyeretnya.
-        expect(porcelain(dir)).toContain("B.txt")
-        expect(porcelain(dir)).not.toContain("A.txt")
-      } finally {
-        await cleanup(dir)
-      }
-    },
+    async () =>
+      withIsolatedGitConfig(async () => {
+        const dir = await mkdtemp(join(tmpdir(), "beh-"))
+        try {
+          await gitRepo(dir, { "A.txt": "a1\n", "B.txt": "b-unrelated\n" })
+          await writeFile(join(dir, "A.txt"), "a2-fixed\n", "utf8")
+          await writeFile(join(dir, "B.txt"), "b-dirty\n", "utf8")
+          const provider = new FakeProvider([
+            { events: [toolCall("git_status", {}), finish("tool_calls")] },
+            {
+              events: [
+                toolCall("git_commit", { message: "fix A", paths: ["A.txt"] }),
+                finish("tool_calls"),
+              ],
+            },
+            { events: [text("committed A only"), finish("stop")] },
+          ])
+          const session = await createMinicodeSession({
+            provider,
+            tools: [gitStatusTool, gitCommitTool],
+            permissionMode: "allow-all",
+            cwd: dir,
+          })
+          const calls: string[] = []
+          session.events.on("execution:started", (e) => calls.push(e.execution.call.name))
+          await session.run("commit A", {})
+          expect(calls).toEqual(["git_status", "git_commit"])
+          const head = spawnSync("git", ["show", "--name-only", "--format="], {
+            cwd: dir,
+            encoding: "utf8",
+          })
+          expect((head.stdout ?? "").trim().split("\n")).toEqual(["A.txt"])
+          // B tetap dirty & unstaged — commit scoped tak menyeretnya.
+          expect(porcelain(dir)).toContain("B.txt")
+          expect(porcelain(dir)).not.toContain("A.txt")
+        } finally {
+          await cleanup(dir)
+        }
+      }),
   )
 
   test.skipIf(!gitAvailable)("commit tanpa paths+all: tool error, HEAD utuh (§11)", async () => {

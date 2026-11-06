@@ -1,13 +1,14 @@
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
-import { readdir, readFile, stat } from "node:fs/promises"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { readdir } from "node:fs/promises"
 import { join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 import { LIMITS, LSP_SYMBOL_KINDS } from "../constants.ts"
 import { homeDir } from "../lib/db-path.ts"
 import { GIT_SAFE_BASE } from "../lib/git-hardening.ts"
+import { safeReadFileCapped } from "../lib/safe-open.ts"
 import { resolveTrustedExecutable } from "../lib/trusted-exec.ts"
 import { isRealPathOutsideRoot } from "../policy/jail.ts"
 
@@ -233,10 +234,8 @@ async function readSourceContents(
   for (const f of files) {
     try {
       const abs = resolve(cwd, f)
-      const st = await stat(abs)
-      if (!st.isFile() || st.size > MAX_FILE_BYTES) continue
-      const content = await readFile(abs, "utf8")
-      out.push({ path: f, content })
+      const loaded = await safeReadFileCapped(abs, cwd, MAX_FILE_BYTES)
+      if (!loaded.truncated) out.push({ path: f, content: loaded.text })
     } catch {}
   }
   return out
@@ -358,15 +357,15 @@ export async function buildRepoMap(
 // disajikan tanpa baca ulang. Dengan sig isi, cache palsu hanya cocok bila
 // isinya benar-benar sama — dan bila sama, petanya pun benar. Cache lama
 // (format mtime) otomatis miss → dibangun ulang sekali, tanpa migrasi.
-function signature(files: string[], cwd: string): string {
+async function signature(files: string[], cwd: string): Promise<string> {
   const h = createHash("sha256")
   for (const f of files.slice(0, 80)) {
     try {
       const abs = resolve(cwd, f)
-      const st = statSync(abs)
-      if (!st.isFile() || st.size > MAX_FILE_BYTES) continue
+      const loaded = await safeReadFileCapped(abs, cwd, MAX_FILE_BYTES)
+      if (loaded.truncated) continue
       h.update(f)
-      h.update(readFileSync(abs))
+      h.update(loaded.text)
     } catch {}
   }
   return `v2:${h.digest("hex")}`
@@ -412,7 +411,7 @@ export async function loadRepoMap(cwd: string = process.cwd()): Promise<string> 
   const forceRegex = process.env.MINICODE_REPOMAP === "regex"
   const files = await listSourceFiles(cwd, MAX_FILES)
   if (files.length === 0) return ""
-  const sig = signature(files, cwd)
+  const sig = await signature(files, cwd)
   const cp = cachePath(cwd)
   // Cache hit → langsung pakai (tanpa LSP, cepat)
   try {

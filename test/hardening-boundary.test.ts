@@ -30,6 +30,9 @@ import {
   delegateTaskTool,
   setSubAgentSessionFactory,
 } from "../src/tools/task.ts"
+import { isolateGitConfigForTests } from "./helpers/isolated-git-config.ts"
+
+isolateGitConfigForTests()
 
 function tmpRoot(): string {
   return mkdtempSync(join(tmpdir(), "mc-hard-"))
@@ -174,7 +177,7 @@ test("LSP workspace/symbol yang menggantung kalah oleh abort", async () => {
     // ext unik agar tak mencemari registry global antar file test.
     configureServers([{ ext: "mockhz", command: process.execPath, args: [stub] }])
     const c = new AbortController()
-    const ctx = { signal: c.signal } as never
+    const ctx = { signal: c.signal, cwd: tmpdir() } as never
     const p = lspWorkspaceSymbolsTool.execute({ query: "x" }, ctx) as Promise<string>
     setTimeout(() => c.abort(new Error("batal-induk")), 200)
     const t0 = Date.now()

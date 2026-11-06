@@ -1,8 +1,10 @@
+import type { FileHandle } from "node:fs/promises"
 import { isAbsolute, resolve } from "node:path"
 import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { safeOpenRead } from "../lib/safe-open.ts"
 import { scrubSecrets } from "../policy/scrub.ts"
+import { requireToolCwd } from "./context.ts"
 
 // defense-in-depth: also jail inside tool (permission layer is primary)
 
@@ -66,6 +68,88 @@ export function formatLines(
   return { text: body + footer, totalLines, from, to }
 }
 
+async function formatHandleRange(
+  handle: FileHandle,
+  from: number,
+  limit: number,
+  signal: AbortSignal,
+): Promise<string> {
+  const chunk = Buffer.alloc(64 * 1024)
+  const decoder = new TextDecoder()
+  const selected: string[] = []
+  const end = from + limit - 1
+  let line = ""
+  let lineNumber = 1
+  let totalLines = 0
+  let position = 0
+  let sawBytes = false
+  let endedWithNewline = false
+
+  const appendSegment = (segment: string): void => {
+    if (!segment) return
+    const keep = LIMITS.READ_FILE_MAX_LINE_CHARS + 1 - line.length
+    if (keep > 0) line += segment.slice(0, keep)
+  }
+  const finishLine = (): void => {
+    if (lineNumber >= from && lineNumber <= end) selected.push(line)
+    totalLines++
+    lineNumber++
+    line = ""
+  }
+  const consume = (text: string): void => {
+    if (!text) return
+    let start = 0
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] !== "\n") continue
+      appendSegment(text.slice(start, i))
+      finishLine()
+      endedWithNewline = true
+      start = i + 1
+    }
+    if (start < text.length) {
+      appendSegment(text.slice(start))
+      endedWithNewline = false
+    }
+  }
+
+  while (true) {
+    signal.throwIfAborted()
+    const { bytesRead } = await handle.read(chunk, 0, chunk.length, position)
+    if (bytesRead === 0) break
+    sawBytes = true
+    position += bytesRead
+    consume(decoder.decode(chunk.subarray(0, bytesRead), { stream: true }))
+  }
+  consume(decoder.decode())
+  // String.split treats an empty file as one empty line and does not add a
+  // phantom line after a final newline; keep the same paging contract.
+  if (!endedWithNewline || !sawBytes) finishLine()
+  totalLines = Math.max(1, totalLines)
+
+  if (from > totalLines)
+    return `(offset ${from} is past the end of the file — ${totalLines} lines total)`
+
+  const to = Math.min(totalLines, end)
+  const width = String(to).length
+  const body = selected
+    .map((raw, index) => {
+      const capped =
+        raw.length > LIMITS.READ_FILE_MAX_LINE_CHARS
+          ? `${raw.slice(0, LIMITS.READ_FILE_MAX_LINE_CHARS)}… [line truncated]`
+          : raw
+      return `${String(from + index).padStart(width, " ")}: ${capped}`
+    })
+    .join("\n")
+  const remaining = totalLines - to
+  const footer =
+    remaining > 0
+      ? `\n… ${remaining} more lines (continue: offset=${to + 1})`
+      : from > 1
+        ? "\n(end of file)"
+        : ""
+  return body + footer
+}
+
 export const readFileTool: Tool = {
   name: "read_file",
   description:
@@ -83,7 +167,7 @@ export const readFileTool: Tool = {
   async execute({ path, offset, limit }, ctx) {
     ctx.signal.throwIfAborted()
     const p = path as string
-    const root = ctx.cwd ?? process.cwd()
+    const root = requireToolCwd(ctx)
     const abs = isAbsolute(p) ? resolve(p) : resolve(root, p)
     // Semua verifikasi path (jail + sensitif + O_NOFOLLOW) terjadi di SATU
     // titik saat open — detail di safe-open.ts. Tidak ada resolve/stat
@@ -116,6 +200,15 @@ export const readFileTool: Tool = {
         throw new Error(
           `file too large: ${p} (${st.size} bytes > ${LIMITS.READ_FILE_MAX_BYTES}) — read it in chunks with offset/limit`,
         )
+      }
+      if (paged) {
+        const rawOffset = Number(offset ?? 1)
+        const from = Number.isFinite(rawOffset) ? Math.max(1, Math.floor(rawOffset)) : 1
+        const rawLimit = Number(limit ?? LIMITS.READ_FILE_DEFAULT_LINE_LIMIT)
+        const pageLimit = Number.isFinite(rawLimit)
+          ? Math.min(Math.max(1, Math.floor(rawLimit)), LIMITS.READ_FILE_MAX_LINE_LIMIT)
+          : LIMITS.READ_FILE_DEFAULT_LINE_LIMIT
+        return scrubSecrets(await formatHandleRange(handle, from, pageLimit, ctx.signal))
       }
       raw = await handle.readFile("utf8")
     } finally {

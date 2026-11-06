@@ -286,7 +286,9 @@ export function installFakeTty(opts: FakeTtyOptions = {}): FakeTty {
   // warna. Fake TTY harus tampak seperti terminal modern, kalau tidak assertion
   // gagal karena alasan yang salah (glyph jadi ASCII).
   if (opts.vt !== false && isTTY) {
-    process.env.TERM = process.env.TERM || "xterm-256color"
+    // TERM=dumb dari shell/container adalah input ambient, bukan kemampuan
+    // terminal yang sedang disimulasikan. Paksa VT agar jalur alt-screen diuji.
+    process.env.TERM = "xterm-256color"
     process.env.WT_SESSION = process.env.WT_SESSION || "fake-tty"
   }
   if (opts.vt === false) {
@@ -523,6 +525,8 @@ export function createFakeBus(): FakeBus {
 import { resetLocaleState, setSessionLocale } from "../../src/ui/i18n/locale.ts"
 import { displayWidth } from "../../src/ui/render/width"
 
+const screenSegmenter = new Intl.Segmenter("und", { granularity: "grapheme" })
+
 export function parseScreenBuffer(out: string, columns: number, rows: number): string[] {
   const grid: string[][] = Array.from({ length: rows }, () => [])
   let x = 0
@@ -633,14 +637,25 @@ export function parseScreenBuffer(out: string, columns: number, rows: number): s
       i++
       continue
     }
-    // Karakter tampil (termasuk emoji/CJK 2 kolom — placeholder kolom kedua).
-    const w = Math.max(1, displayWidth(ch))
-    clamp()
-    const row = grid[y]!
-    row[x] = ch
-    if (w >= 2 && x + 1 < columns) row[x + 1] = ""
-    x += w
-    i++
+    // Segmen teks per grapheme (bukan per UTF-16 code unit): parser PTY
+    // harus mengukur frame dengan kebijakan yang sama dengan renderer agar
+    // emoji ZWJ/flag/keycap tidak membuat assertion posisi palsu.
+    let end = i + 1
+    while (end < out.length) {
+      const next = out[end]!
+      if (next === "\x1b" || next === "\r" || next === "\n") break
+      end++
+    }
+    const run = out.slice(i, end)
+    for (const { segment } of screenSegmenter.segment(run)) {
+      const w = Math.max(1, displayWidth(segment))
+      clamp()
+      const row = grid[y]!
+      row[x] = segment
+      if (w >= 2 && x + 1 < columns) row[x + 1] = ""
+      x += w
+    }
+    i = end
   }
   return grid.map((row) => {
     let s = ""

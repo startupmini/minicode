@@ -355,6 +355,11 @@ export function createPresentationAdapter(
   let currentStep = 0
   let reasoningText = ""
   let reasoningTruncated = false
+  let activeProviderAttempt: {
+    id: number
+    reasoningLength: number
+    reasoningTruncated: boolean
+  } | null = null
   const toolStarts = new Map<string, number>()
   const openTools = new Map<
     string,
@@ -445,6 +450,7 @@ export function createPresentationAdapter(
     })
     reasoningText = ""
     reasoningTruncated = false
+    activeProviderAttempt = null
   }
   // Pemetaan task domain → plan presentational. Sengaja memakai
   // `normalizeTodos` (pemilik semantik domain) alih-alih memetakan status
@@ -729,6 +735,7 @@ export function createPresentationAdapter(
     currentStep = 0
     reasoningText = ""
     reasoningTruncated = false
+    activeProviderAttempt = null
     turnStartTs = Date.now()
     resetTurnCounters()
     publish({
@@ -1023,10 +1030,59 @@ export function createPresentationAdapter(
 
   sub("provider:text", (e: { text?: unknown }) => {
     if (typeof e?.text !== "string" || !e.text) return
-    publish({ ...base(currentTurn), type: "model.delta", turnId: currentTurn, delta: e.text })
+    publish({
+      ...base(currentTurn),
+      type: "model.delta",
+      turnId: currentTurn,
+      delta: e.text,
+      ...(activeProviderAttempt ? { attemptId: activeProviderAttempt.id } : {}),
+    })
   })
 
   sub("provider:extension", (e: { kind?: unknown; data?: unknown }) => {
+    if (e?.kind === "minicode:attempt") {
+      const data = e.data as {
+        phase?: unknown
+        attemptId?: unknown
+        hadVisibleOutput?: unknown
+      } | null
+      if (
+        typeof data?.attemptId === "number" &&
+        Number.isSafeInteger(data.attemptId) &&
+        data.attemptId > 0
+      ) {
+        if (data.phase === "started") {
+          activeProviderAttempt = {
+            id: data.attemptId,
+            reasoningLength: reasoningText.length,
+            reasoningTruncated,
+          }
+        } else if (activeProviderAttempt?.id === data.attemptId && data.phase === "completed") {
+          activeProviderAttempt = null
+        } else if (activeProviderAttempt?.id === data.attemptId && data.phase === "invalidated") {
+          reasoningText = reasoningText.slice(0, activeProviderAttempt.reasoningLength)
+          reasoningTruncated = activeProviderAttempt.reasoningTruncated
+          activeProviderAttempt = null
+        }
+      }
+      if (
+        data?.phase === "invalidated" &&
+        data.hadVisibleOutput === true &&
+        typeof data.attemptId === "number" &&
+        Number.isSafeInteger(data.attemptId)
+      ) {
+        publish({
+          ...base(currentTurn),
+          type: "diagnostic.raised",
+          turnId: currentTurn,
+          category: "PROVIDER_ATTEMPT_INVALIDATED",
+          severity: "warning",
+          message: `Provider attempt ${data.attemptId} streamed partial output; it was discarded and is excluded from the final answer.`,
+          attemptId: data.attemptId,
+        })
+      }
+      return
+    }
     if (e?.kind === "error") {
       const data = e.data as { message?: unknown; error?: unknown } | null
       const message =
@@ -1055,7 +1111,13 @@ export function createPresentationAdapter(
     } else {
       reasoningTruncated = true
     }
-    publish({ ...base(currentTurn), type: "reasoning.delta", turnId: currentTurn, delta: text })
+    publish({
+      ...base(currentTurn),
+      type: "reasoning.delta",
+      turnId: currentTurn,
+      delta: text,
+      ...(activeProviderAttempt ? { attemptId: activeProviderAttempt.id } : {}),
+    })
   })
 
   sub("context:compacted", (e: { reason?: unknown }) => {

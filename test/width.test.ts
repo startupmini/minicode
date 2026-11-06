@@ -81,9 +81,17 @@ describe("displayWidth", () => {
     expect(displayWidth("e\u0301")).toBe(1)
   })
 
-  test("emoji dengan variation selector tetap dua kolom", () => {
-    expect(displayWidth("❤\ufe0f")).toBe(1) // ❤ BMP = 1 kolom + VS16 = 0
+  test("emoji sequence mengikuti lebar grapheme terminal", () => {
+    expect(displayWidth("❤️")).toBe(2)
+    expect(displayWidth("👍🏽")).toBe(2)
+    expect(displayWidth("👨‍👩‍👧‍👦")).toBe(2)
+    expect(displayWidth("🇮🇩")).toBe(2)
+    expect(displayWidth("1️⃣")).toBe(2)
     expect(displayWidth("🩰")).toBe(2)
+  })
+
+  test("combining mark Unicode di luar tabel blok tetap nol kolom", () => {
+    expect(displayWidth("a\u{1e4ec}")).toBe(1)
   })
 
   test("string kosong nol", () => {
@@ -152,6 +160,12 @@ describe("truncateToWidth", () => {
     expect(out).not.toContain("\ufffd")
   })
 
+  test("truncate tidak memisahkan grapheme ZWJ atau variation selector", () => {
+    const family = "👨‍👩‍👧‍👦"
+    expect(truncateToWidth(`A${family}B`, 2, "")).toBe("A")
+    expect(truncateToWidth(`❤\ufe0fB`, 2, "")).toBe("❤\ufe0f")
+  })
+
   test("width 0 mengembalikan kosong", () => {
     expect(truncateToWidth("apa saja", 0)).toBe("")
   })
@@ -210,6 +224,10 @@ describe("chunkByWidth", () => {
       expect(ch).not.toContain("\ufffd")
       expect(Buffer.from(ch, "utf8").toString("utf8")).toBe(ch)
     }
+  })
+  test("wrap memindahkan seluruh grapheme emoji sebagai satu unit", () => {
+    const family = "👨‍👩‍👧‍👦"
+    expect(chunkByWidth(`a${family}b`, 2)).toEqual(["a", family, "b"])
   })
   test("semua SGR terbuka terbawa (bold+warna), bukan hanya 1", () => {
     // Audit TUI P2-3a: kode lama hanya ingat 1 SGR — bold hilang di potongan 2.

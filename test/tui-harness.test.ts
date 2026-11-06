@@ -3,6 +3,20 @@
 import { expect, test } from "bun:test"
 import { installFakeTty } from "./helpers/tui-harness.ts"
 
+test("harness: fake VT mengganti TERM=dumb ambient dan memulihkannya", () => {
+  const prior = process.env.TERM
+  process.env.TERM = "dumb"
+  const tty = installFakeTty()
+  try {
+    expect(process.env.TERM).toBe("xterm-256color")
+  } finally {
+    tty.restore()
+    if (prior === undefined) delete process.env.TERM
+    else process.env.TERM = prior
+  }
+  expect(process.env.TERM).toBe(prior)
+})
+
 test("harness: waitForOutput pulang saat marker muncul", async () => {
   const tty = installFakeTty()
   try {

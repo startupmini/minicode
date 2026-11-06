@@ -56,6 +56,12 @@ secara default dan tidak boleh dianggap machine contract.
 | SGR | boleh bila color gate | tidak perlu; `NO_COLOR` menang |
 | raw OSC/CSI dari untrusted text | Forbidden | Forbidden |
 
+Saat `--interactive` gagal membuka fullscreen (pipe/non-TTY atau terminal tidak
+mampu), CLI menulis diagnostik ke stderr dan keluar nonzero tanpa fallback linear
+dan tanpa byte UI pada stdout. Saat TUI aktif, stdout dimiliki `App` untuk frame;
+diagnostik yang tidak transient masuk transcript/system node atau jalur diagnostic
+yang memang diizinkan kontrak. Output machine tetap terpisah dari kedua jalur UI.
+
 `App` adalah pemilik tunggal frame TUI. Foreign writer ke stdout tidak boleh aktif
 saat `TuiApp` memegang layar; diagnostic stderr yang tidak transient harus masuk ke
 transcript atau competing-ownership guard.

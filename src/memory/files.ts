@@ -3,6 +3,7 @@ import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { LIMITS } from "../constants.ts"
 import { homeDir } from "../lib/db-path.ts"
+import { safeReadFileCapped } from "../lib/safe-open.ts"
 import { isRealPathOutsideRoot } from "../policy/jail.ts"
 import { scrubSecrets } from "../policy/scrub.ts"
 
@@ -36,8 +37,15 @@ export async function loadMemoryFiles(cwd = process.cwd()): Promise<string> {
       // symlink keluar workspace. globalMem (home) sengaja dikecualikan —
       // di luar cwd by design. Samakan rules/ di bawah ke realpath.
       if (p !== globalMem && isRealPathOutsideRoot(p, cwd)) continue
-      const txt = await readFile(p, "utf8")
-      if (txt.trim()) parts.push(`# ${tildePath(p)}\n${scrubSecrets(txt.slice(0, 6000))}`)
+      const { text, truncated } = await safeReadFileCapped(
+        p,
+        p === globalMem ? dirname(p) : cwd,
+        6000,
+      )
+      if (text.trim())
+        parts.push(
+          `# ${tildePath(p)}\n${scrubSecrets(text)}${truncated ? "\n… [truncated: showing first 6000 bytes]" : ""}`,
+        )
     } catch {}
   }
   // Load .minicode/rules/*.md (Kiro steering style)
@@ -57,8 +65,11 @@ export async function loadMemoryFiles(cwd = process.cwd()): Promise<string> {
       try {
         const full = join(rulesDir, f as string)
         if (isRealPathOutsideRoot(full, cwd)) continue
-        const txt = await readFile(full, "utf8")
-        if (txt.trim()) parts.push(`# rules/${f}\n${scrubSecrets(txt.slice(0, 3000))}`)
+        const { text, truncated } = await safeReadFileCapped(full, cwd, 3000)
+        if (text.trim())
+          parts.push(
+            `# rules/${f}\n${scrubSecrets(text)}${truncated ? "\n… [truncated: showing first 3000 bytes]" : ""}`,
+          )
       } catch {}
     }
   } catch {}

@@ -54,15 +54,21 @@ export const webSearchTool: Tool = {
             signal: controller.signal,
           })
           if (res.ok) {
-            const data = (await res.json()) as {
+            const body = await readBodyCapped(res, controller)
+            if (body.truncated) throw new Error("Tavily response exceeds body byte cap")
+            const data = JSON.parse(body.text) as {
               results?: { title: string; url: string; content: string }[]
             }
             const results = (data.results ?? []).slice(0, n)
             const out = results
               .map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${cutSnippet(r.content)}`)
               .join("\n\n")
-            return capTotal(`[tavily ${results.length} results for "${q}"]\n${out}`, 20000)
+            const content = capTotal(`[tavily ${results.length} results for "${q}"]\n${out}`, 20000)
+            return isAlreadyFenced(content)
+              ? content
+              : fenceUntrustedToolOutput("web_search", content)
           }
+          await res.body?.cancel().catch(() => {})
         } finally {
           clearTimeout(t)
           ctx.signal.removeEventListener("abort", onAbort)
@@ -88,7 +94,9 @@ export const webSearchTool: Tool = {
             },
           )
           if (res.ok) {
-            const data = (await res.json()) as {
+            const body = await readBodyCapped(res, controller)
+            if (body.truncated) throw new Error("Brave response exceeds body byte cap")
+            const data = JSON.parse(body.text) as {
               web?: { results?: { title: string; url: string; description: string }[] }
             }
             const results = (data.web?.results ?? []).slice(0, n)
@@ -99,9 +107,16 @@ export const webSearchTool: Tool = {
                     `${i + 1}. ${r.title}\n   ${r.url}\n   ${cutSnippet(r.description ?? "")}`,
                 )
                 .join("\n\n")
-              return capTotal(`[brave ${results.length} results for "${q}"]\n${out}`, 20000)
+              const content = capTotal(
+                `[brave ${results.length} results for "${q}"]\n${out}`,
+                20000,
+              )
+              return isAlreadyFenced(content)
+                ? content
+                : fenceUntrustedToolOutput("web_search", content)
             }
           }
+          await res.body?.cancel().catch(() => {})
         } finally {
           clearTimeout(t)
           ctx.signal.removeEventListener("abort", onAbort)
@@ -125,7 +140,8 @@ export const webSearchTool: Tool = {
         })
         // Cap streaming seperti web_fetch (bug-hunt 2026-09-19: res.text()
         // tanpa batas = transient ~2x body di heap untuk halaman raksasa).
-        const html = await readBodyCapped(res, controller)
+        const body = await readBodyCapped(res, controller)
+        const html = body.text
         const scrubbed = scrubSecrets(html)
         // DDG markup berubah-ubah; coba dua pola kelas umum.
         const resRe = /<a[^>]+class="result__url"[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/g
@@ -142,18 +158,21 @@ export const webSearchTool: Tool = {
           }
         }
         if (results.length) {
+          const truncation = body.truncated ? " · response truncated at byte cap" : ""
           const content = capTotal(
-            `[duckduckgo ${results.length} results for "${q}"]\n${results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}`).join("\n")}`,
+            `[duckduckgo ${results.length} results for "${q}"${truncation}]\n${results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}`).join("\n")}`,
             8000,
           )
           return isAlreadyFenced(content)
             ? content
-            : fenceUntrustedToolOutput("web_search", content, `query=${q}`)
+            : fenceUntrustedToolOutput("web_search", content)
         }
-        const fallback = `[web_search] no structured results for "${q}" — coba set TAVILY_API_KEY atau BRAVE_API_KEY untuk hasil lebih baik.`
+        const fallback = body.truncated
+          ? `[web_search] DuckDuckGo response exceeded the byte cap before structured results could be parsed for "${q}" — coba set TAVILY_API_KEY atau BRAVE_API_KEY.`
+          : `[web_search] no structured results for "${q}" — coba set TAVILY_API_KEY atau BRAVE_API_KEY untuk hasil lebih baik.`
         return isAlreadyFenced(fallback)
           ? fallback
-          : fenceUntrustedToolOutput("web_search", fallback, `query=${q}`)
+          : fenceUntrustedToolOutput("web_search", fallback)
       } finally {
         clearTimeout(t)
         ctx.signal.removeEventListener("abort", onAbort)

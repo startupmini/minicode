@@ -25,13 +25,7 @@ import {
 import { formatError } from "../render/errors.ts"
 import { sanitizeAnsi, sanitizeAnsiLine, stripSgr } from "../render/sanitize.ts"
 import { c } from "../render/theme.ts"
-import {
-  charWidth,
-  chunkByWidth,
-  displayWidth,
-  escapeLength,
-  truncateToWidth,
-} from "../render/width.ts"
+import { chunkByWidth, displayWidth, escapeLength, truncateToWidth } from "../render/width.ts"
 import { motionReduced } from "../runtime/motion.ts"
 import { type AltScreen, forceRestoreScreenForSignal, openAltScreen } from "../runtime/screen.ts"
 import type { Transcript, TranscriptPoint, TranscriptRow } from "./transcript.ts"
@@ -67,7 +61,7 @@ export interface TuiHost {
 }
 
 export interface TuiRunResult {
-  /** False = layar tak mampu (non-TTY/dumb/sempit) — caller fallback REPL. */
+  /** False = layar tak mampu; caller reports the refusal and sets a failing exit code. */
   started: boolean
   frames: number
 }
@@ -157,21 +151,24 @@ function highlightColumns(text: string, start: number, end: number): string {
         continue
       }
     }
-    const codePoint = text.codePointAt(i)!
-    const char = String.fromCodePoint(codePoint)
-    const width = charWidth(codePoint)
-    const next = column + width
-    const inside = column < end && next > start
-    if (inside && !active) {
-      out += "\x1b[7m"
-      active = true
-    } else if (!inside && active) {
-      out += "\x1b[27m"
-      active = false
+    let endOfRun = text.indexOf("\x1b", i)
+    if (endOfRun < 0) endOfRun = text.length
+    if (endOfRun === i) endOfRun++
+    for (const grapheme of toGraphemes(text.slice(i, endOfRun))) {
+      const width = displayWidth(grapheme)
+      const next = column + width
+      const inside = column < end && next > start
+      if (inside && !active) {
+        out += "\x1b[7m"
+        active = true
+      } else if (!inside && active) {
+        out += "\x1b[27m"
+        active = false
+      }
+      out += grapheme
+      column = next
     }
-    out += char
-    column = next
-    i += char.length
+    i = endOfRun
   }
   if (active) out += "\x1b[27m"
   return out
@@ -208,6 +205,8 @@ export class TuiApp {
   private frames = 0
   private quitRequested = false
   private finish: (() => void) | null = null
+  private runtimeFailure: { error: unknown } | null = null
+  private cleanupDone = false
   private decoder: DecoderState = createDecoderState()
   private pump: KeyStreamPump | null = null
   private onData: ((chunk: Buffer) => void) | null = null
@@ -269,209 +268,256 @@ export class TuiApp {
       return { started: false, frames: 0 }
     }
     const stdin = process.stdin as unknown as RawStdin
-    this.stdin = stdin
-    try {
-      this.wasRaw =
-        (stdin as unknown as { isRaw?: boolean }).isRaw ??
-        (process.stdin as unknown as { isRaw?: boolean }).isRaw ??
-        false
-    } catch {
-      this.wasRaw = false
-    }
-    const done = new Promise<void>((resolve) => (this.finish = resolve))
-    this.pump = createKeyStreamPump({
-      state: this.decoder,
-      onKeys: (keys) => this.handleKeys(keys),
-    })
-    this.onData = (chunk: Buffer) => this.pump?.push(new Uint8Array(chunk))
-    this.onResize = () => {
-      // Saat popup fokus, view popup yang melukis ulang regionnya sendiri;
-      // repaint penuh App akan menghapus popup dari layar.
-      if (this.suspended > 0) return
-      // Lukis layar AKTIF (bukan handle `screen` run() yang basi setelah
-      // release+reacquire gagal — dulu repaint/resize melukis ke handle
-      // tertutup sekaligus menimpa currentScreen baru dengannya).
-      this.paintCurrent()
-    }
-    try {
-      stdin.setRawMode(true)
-    } catch {}
-    try {
-      stdin.resume()
-    } catch {}
-    stdin.on("data", this.onData)
     const stdout = process.stdout as unknown as {
       on(e: string, fn: () => void): void
       removeListener(e: string, fn: () => void): void
     }
-    stdout.on("resize", this.onResize)
-    // Sinyal fatal (temuan audit TUI-001): default kernel-kill TIDAK
-    // menjalankan handler "exit" Node — terminal bisa tertinggal alt-screen
-    // + raw mode. Dipasang per-run, dilepas di cleanup (pasangan ketat).
-    // Handler TERPISAH per sinyal: Bun TIDAK menyampaikan nama sinyal ke
-    // handler (argumen undefined — beda dengan Node), jadi satu handler
-    // bersama tak bisa membedakan TERM vs HUP dari parameternya.
-    // WAJIB tetap di blok sinkron yang sama dengan openAltScreen() di atas
-    // (tanpa await di antaranya): sinyal hanya disampaikan antar-tick event
-    // loop, jadi tak ada jendela nyata; sisipkan await di antara keduanya =
-    // membuka race SIGTERM sebelum handler terpasang.
-    const restoreAndExit = (code: number) => {
-      try {
-        stdin.setRawMode(false)
-      } catch {}
-      try {
-        stdin.pause()
-      } catch {}
-      try {
-        stdin.removeListener("data", this.onData!)
-      } catch {}
-      this.setMouseMode("off")
-      forceRestoreScreenForSignal()
-      // exit() eksplisit memicu handler "exit" yang tersisa (spinner,
-      // turn-status) — best-effort sinkron. 128+n = konvensi "mati oleh
-      // sinyal n" (SIGTERM=15 → 143, SIGHUP=1 → 129) agar automation
-      // tetap bisa membedakan sebab.
-      process.exit(code)
-    }
-    this.onSignalTerm = () => restoreAndExit(143)
-    this.onSignalHup = () => restoreAndExit(129)
-    this.onSignalInt = () => this.requestAbort()
+    this.cleanupDone = false
+    this.runtimeFailure = null
+    this.currentScreen = screen
+    this.stdin = stdin
     try {
-      process.on("SIGTERM", this.onSignalTerm)
-    } catch {
-      this.onSignalTerm = null
-    }
-    try {
-      process.on("SIGHUP", this.onSignalHup)
-    } catch {
-      this.onSignalHup = null
-    }
-    try {
-      process.on("SIGINT", this.onSignalInt)
-    } catch {
-      this.onSignalInt = null
-    }
-    this.onExit = () => this.setMouseMode("off")
-    try {
-      process.on("exit", this.onExit)
-    } catch {
-      this.onExit = null
-    }
-    // Repaint live mengikuti event bus (stream teks, ledger, thinking).
-    // Suspend menahan repaint (popup melukis sendiri); quit menahan semua.
-    const requestPaint = () => {
-      if (this.quitRequested || this.suspended > 0 || this.released) return
-      if (this.repaintTimer !== undefined) return
-      this.repaintTimer = setTimeout(() => {
-        this.repaintTimer = undefined
-        if (!this.quitRequested && this.suspended === 0 && !this.released) this.paintCurrent()
-      }, 30)
       try {
-        ;(this.repaintTimer as unknown as { unref?: () => void }).unref?.()
-      } catch {}
-    }
-    // [F-TYPE-1] Payload tiap call-site dianotasi; `sub` generik (E diinfer dari
-    // handler) menjaga anotasi itu, bukan melunturkannya ke `any`. `UiBus.on`
-    // tetap longgar di tepi (dokumentasi src/ui/contract.ts:62-71); satu-satunya
-    // cast `event as E` menandai perpindahan unknown → bentuk call-site.
-    const sub = <E = unknown>(type: Parameters<UiBus["on"]>[0], handler?: (event: E) => void) => {
+        this.wasRaw =
+          (stdin as unknown as { isRaw?: boolean }).isRaw ??
+          (process.stdin as unknown as { isRaw?: boolean }).isRaw ??
+          false
+      } catch {
+        this.wasRaw = false
+      }
+      const done = new Promise<void>((resolve) => (this.finish = resolve))
+      this.pump = createKeyStreamPump({
+        state: this.decoder,
+        onKeys: (keys) => {
+          try {
+            return this.handleKeys(keys)
+          } catch (error) {
+            this.stopAfterRuntimeError(error)
+            return true
+          }
+        },
+      })
+      this.onData = (chunk: Buffer) => {
+        try {
+          this.pump?.push(new Uint8Array(chunk))
+        } catch (error) {
+          this.stopAfterRuntimeError(error)
+        }
+      }
+      this.onResize = () => {
+        // Saat popup fokus, view popup yang melukis ulang regionnya sendiri;
+        // repaint penuh App akan menghapus popup dari layar.
+        if (this.suspended > 0) return
+        // Lukis layar AKTIF (bukan handle `screen` run() yang basi setelah
+        // release+reacquire gagal — dulu repaint/resize melukis ke handle
+        // tertutup sekaligus menimpa currentScreen baru dengannya).
+        this.paintCurrent()
+      }
+      stdin.setRawMode(true)
+      stdin.resume()
+      stdin.on("data", this.onData)
+      stdout.on("resize", this.onResize)
+      // Sinyal fatal (temuan audit TUI-001): default kernel-kill TIDAK
+      // menjalankan handler "exit" Node — terminal bisa tertinggal alt-screen
+      // + raw mode. Dipasang per-run, dilepas di cleanup (pasangan ketat).
+      // Handler TERPISAH per sinyal: Bun TIDAK menyampaikan nama sinyal ke
+      // handler (argumen undefined — beda dengan Node), jadi satu handler
+      // bersama tak bisa membedakan TERM vs HUP dari parameternya.
+      // WAJIB tetap di blok sinkron yang sama dengan openAltScreen() di atas
+      // (tanpa await di antaranya): sinyal hanya disampaikan antar-tick event
+      // loop, jadi tak ada jendela nyata; sisipkan await di antara keduanya =
+      // membuka race SIGTERM sebelum handler terpasang.
+      const restoreAndExit = (code: number) => {
+        // Selesaikan loop lebih dulu: cleanup melepas referensi resolver.
+        // Ini juga penting saat process.exit di-stub oleh test atau host.
+        this.quitRequested = true
+        this.finish?.()
+        this.cleanupRun(stdin, stdout, screen)
+        forceRestoreScreenForSignal()
+        // exit() eksplisit memicu handler "exit" yang tersisa (spinner,
+        // turn-status) — best-effort sinkron. 128+n = konvensi "mati oleh
+        // sinyal n" (SIGTERM=15 → 143, SIGHUP=1 → 129) agar automation
+        // tetap bisa membedakan sebab.
+        process.exit(code)
+      }
+      this.onSignalTerm = () => restoreAndExit(143)
+      this.onSignalHup = () => restoreAndExit(129)
+      this.onSignalInt = () => {
+        try {
+          this.requestAbort()
+        } catch (error) {
+          this.stopAfterRuntimeError(error)
+        }
+      }
       try {
-        this.busUnsubs.push(
-          this.host.bus.on(type, (event: unknown) => {
-            try {
-              handler?.(event as E)
-            } finally {
-              requestPaint()
-            }
-          }),
-        )
-      } catch {}
+        process.on("SIGTERM", this.onSignalTerm)
+      } catch {
+        this.onSignalTerm = null
+      }
+      try {
+        process.on("SIGHUP", this.onSignalHup)
+      } catch {
+        this.onSignalHup = null
+      }
+      try {
+        process.on("SIGINT", this.onSignalInt)
+      } catch {
+        this.onSignalInt = null
+      }
+      this.onExit = () => this.setMouseMode("off")
+      try {
+        process.on("exit", this.onExit)
+      } catch {
+        this.onExit = null
+      }
+      // Repaint live mengikuti event bus (stream teks, ledger, thinking).
+      // Suspend menahan repaint (popup melukis sendiri); quit menahan semua.
+      const requestPaint = () => {
+        if (this.quitRequested || this.suspended > 0 || this.released) return
+        if (this.repaintTimer !== undefined) return
+        this.repaintTimer = setTimeout(() => {
+          this.repaintTimer = undefined
+          if (!this.quitRequested && this.suspended === 0 && !this.released) this.paintCurrent()
+        }, 30)
+        try {
+          ;(this.repaintTimer as unknown as { unref?: () => void }).unref?.()
+        } catch {}
+      }
+      // [F-TYPE-1] Payload tiap call-site dianotasi; `sub` generik (E diinfer dari
+      // handler) menjaga anotasi itu, bukan melunturkannya ke `any`. `UiBus.on`
+      // tetap longgar di tepi (dokumentasi src/ui/contract.ts:62-71); satu-satunya
+      // cast `event as E` menandai perpindahan unknown → bentuk call-site.
+      const sub = <E = unknown>(type: Parameters<UiBus["on"]>[0], handler?: (event: E) => void) => {
+        try {
+          this.busUnsubs.push(
+            this.host.bus.on(type, (event: unknown) => {
+              try {
+                handler?.(event as E)
+              } catch (error) {
+                this.stopAfterRuntimeError(error)
+              } finally {
+                try {
+                  requestPaint()
+                } catch (error) {
+                  this.stopAfterRuntimeError(error)
+                }
+              }
+            }),
+          )
+        } catch {}
+      }
+      sub("turn:started", () => {
+        this.thinkingActive = false
+        this.turnStartedAt = Date.now()
+        this.startActivityClock()
+      })
+      sub("provider:extension", (event: { kind?: string }) => {
+        if (event?.kind === "reasoning") this.thinkingActive = true
+      })
+      sub("provider:text", () => {
+        this.thinkingActive = false
+      })
+      sub("execution:started", () => {
+        this.thinkingActive = false
+      })
+      sub("execution:completed", () => {
+        this.thinkingActive = false
+      })
+      sub("turn:completed", () => {
+        this.thinkingActive = false
+      })
+      sub("context:compacted")
+      this.tailSize = this.transcript.total()
+      this.scrollBase = this.tailSize
+      this.setMouseMode(mouseSelectionEnabled() ? "drag" : "off")
+      this.paint(screen)
+      await done
+      this.throwRuntimeFailure()
+      return { started: true, frames: this.frames }
+    } finally {
+      this.cleanupRun(stdin, stdout, screen)
     }
-    sub("turn:started", () => {
-      this.thinkingActive = false
-      this.turnStartedAt = Date.now()
-      this.startActivityClock()
-    })
-    sub("provider:extension", (event: { kind?: string }) => {
-      if (event?.kind === "reasoning") this.thinkingActive = true
-    })
-    sub("provider:text", () => {
-      this.thinkingActive = false
-    })
-    sub("execution:started", () => {
-      this.thinkingActive = false
-    })
-    sub("execution:completed", () => {
-      this.thinkingActive = false
-    })
-    sub("turn:completed", () => {
-      this.thinkingActive = false
-    })
-    sub("context:compacted")
-    this.tailSize = this.transcript.total()
-    this.scrollBase = this.tailSize
-    this.setMouseMode(mouseSelectionEnabled() ? "drag" : "off")
-    this.paint(screen)
-    await done
-    // Cleanup: urutan penting — lepas listener dulu agar byte liar pasca-quit
-    // tak memicu repaint ke layar yang sudah dikembalikan.
-    stdin.removeListener("data", this.onData)
-    stdout.removeListener("resize", this.onResize)
+  }
+
+  /** Tutup resource sesi TUI satu kali, termasuk bila setup berhenti separuh jalan. */
+  private cleanupRun(
+    stdin: RawStdin,
+    stdout: { removeListener(e: string, fn: () => void): void },
+    initialScreen: AltScreen,
+  ): void {
+    if (this.cleanupDone) return
+    this.cleanupDone = true
+    try {
+      if (this.onData) stdin.removeListener("data", this.onData)
+    } catch {}
+    try {
+      if (this.onResize) stdout.removeListener("resize", this.onResize)
+    } catch {}
     if (this.repaintTimer !== undefined) {
       clearTimeout(this.repaintTimer)
       this.repaintTimer = undefined
     }
     this.stopActivityClock()
-    for (const u of this.busUnsubs) {
+    for (const unsubscribe of this.busUnsubs.splice(0)) {
       try {
-        u()
+        unsubscribe()
       } catch {}
     }
-    this.busUnsubs = []
-    this.suspended = 0
-    this.released = false
-    if (this.onSignalTerm) {
+    for (const [event, listener] of [
+      ["SIGTERM", this.onSignalTerm],
+      ["SIGHUP", this.onSignalHup],
+      ["SIGINT", this.onSignalInt],
+      ["exit", this.onExit],
+    ] as const) {
+      if (!listener) continue
       try {
-        process.off("SIGTERM", this.onSignalTerm)
+        process.off(event, listener)
       } catch {}
-      this.onSignalTerm = null
     }
-    if (this.onSignalHup) {
+    this.onSignalTerm = null
+    this.onSignalHup = null
+    this.onSignalInt = null
+    this.onExit = null
+    const activeScreen = this.currentScreen
+    this.currentScreen = null
+    try {
+      this.setMouseMode("off")
+    } catch {}
+    try {
+      activeScreen?.close()
+    } catch {}
+    if (activeScreen !== initialScreen) {
       try {
-        process.off("SIGHUP", this.onSignalHup)
+        initialScreen.close()
       } catch {}
-      this.onSignalHup = null
     }
-    if (this.onSignalInt) {
-      try {
-        process.off("SIGINT", this.onSignalInt)
-      } catch {}
-      this.onSignalInt = null
-    }
-    if (this.onExit) {
-      try {
-        process.off("exit", this.onExit)
-      } catch {}
-      this.onExit = null
-    }
-    this.stdin = null
-    this.pump.dispose()
+    try {
+      this.pump?.dispose()
+    } catch {}
     this.pump = null
+    this.onData = null
+    this.onResize = null
     try {
       stdin.setRawMode(this.wasRaw)
     } catch {}
     try {
       stdin.pause()
     } catch {}
-    try {
-      // Tutup layar AKTIF (bisa diganti reacquireTerminal setelah spawn
-      // gagal — menutup handle run() yang basi akan meninggalkan alt-screen
-      // yatim; close() idempoten sehingga aman dua kali).
-      this.setMouseMode("off")
-      this.currentScreen?.close()
-    } catch {}
-    this.currentScreen = null
-    return { started: true, frames: this.frames }
+    this.stdin = null
+    this.finish = null
+    this.suspended = 0
+    this.released = false
+  }
+
+  private stopAfterRuntimeError(error: unknown): void {
+    if (!this.runtimeFailure) this.runtimeFailure = { error }
+    this.quitRequested = true
+    this.finish?.()
+  }
+
+  private throwRuntimeFailure(): void {
+    const failure = this.runtimeFailure
+    if (failure) throw failure.error
   }
 
   // ── Penanganan key ──
@@ -748,7 +794,11 @@ export class TuiApp {
     try {
       if (this.onData) this.stdin?.removeListener("data", this.onData)
     } catch {}
-    this.paintDimmed()
+    try {
+      this.paintDimmed()
+    } catch (error) {
+      this.stopAfterRuntimeError(error)
+    }
   }
 
   /**
@@ -847,9 +897,7 @@ export class TuiApp {
     const layout = this.buildLayout(rows, cols, snap)
     this.lastLayout = layout
     const dimmed = layout.frame.map((ln) => TuiApp.applyBackdropDim(ln))
-    try {
-      screen.paint(dimmed)
-    } catch {}
+    screen.paint(dimmed)
     this.frames++
   }
 
@@ -979,6 +1027,7 @@ export class TuiApp {
       this.activityTimer = undefined
       if (!this.isBusy() || this.quitRequested) return
       if (this.suspended === 0 && !this.released) this.paintCurrent()
+      if (this.quitRequested) return
       this.startActivityClock()
     }
     this.activityTimer = setTimeout(tick, DOT_INTERVAL_MS)
@@ -1044,7 +1093,12 @@ export class TuiApp {
   }
 
   private paintCurrent(): void {
-    if (this.currentScreen) this.paint(this.currentScreen)
+    if (!this.currentScreen || this.quitRequested) return
+    try {
+      this.paint(this.currentScreen)
+    } catch (error) {
+      this.stopAfterRuntimeError(error)
+    }
   }
 
   /**
@@ -1364,17 +1418,13 @@ export class TuiApp {
       const w = Math.max(1, cols)
       const frame = [c.warning(truncateToWidth(t("tui.tooSmall"), w))]
       while (frame.length < Math.max(1, rows)) frame.push("")
-      try {
-        screen.paint(frame.slice(0, Math.max(1, rows)))
-      } catch {}
+      screen.paint(frame.slice(0, Math.max(1, rows)))
       this.frames++
       return
     }
     const layout = this.buildLayout(rows, cols, this.host.getStatus())
     this.lastLayout = layout
-    try {
-      screen.paint(layout.frame, layout.cursor)
-    } catch {}
+    screen.paint(layout.frame, layout.cursor)
     this.frames++
   }
 

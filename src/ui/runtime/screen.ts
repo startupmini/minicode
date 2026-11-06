@@ -54,7 +54,7 @@ export interface AltScreen {
   readonly ok: boolean
   readonly cols: number
   readonly rows: number
-  /** Lukis satu frame penuh (tepat `rows` baris dari dialog.ts). */
+  /** Lukis frame penuh; exception writer dipropagasikan agar owner menutup sesi. */
   paint(lines: string[], cursor?: { row: number; col: number }): void
   /**
    * Lukis REGION TANPA clear: popup di atas konten pemilik layar (App TUI).
@@ -102,6 +102,14 @@ export function openAltScreen(): AltScreen {
       process.stdout.write(RESET_REGION)
       process.stdout.write(ENTER)
     } catch {
+      // ENTER mungkin sudah terkirim sebelum writer melempar; pulihkan
+      // buffer utama sebelum menyatakan terminal tidak mampu.
+      try {
+        process.stdout.write(EXIT)
+      } catch {}
+      try {
+        process.stdout.write(RESET_REGION)
+      } catch {}
       return nullScreen()
     }
   }
@@ -130,48 +138,44 @@ export function openAltScreen(): AltScreen {
     },
     paint(lines: string[], cursor?: { row: number; col: number }): void {
       if (closed) return
-      try {
-        process.stdout.write(SYNC_START)
-        process.stdout.write(HOME)
-        process.stdout.write(CLEAR_ALL)
-        process.stdout.write(lines.join("\r\n"))
-        if (cursor) {
-          const row = Math.max(1, Math.floor(cursor.row))
-          const col = Math.max(1, Math.floor(cursor.col))
-          process.stdout.write(`\x1b[?25l\x1b[${row};${col}H\x1b[?25h`)
-        }
-        process.stdout.write(SYNC_END)
-      } catch {}
+      process.stdout.write(SYNC_START)
+      process.stdout.write(HOME)
+      process.stdout.write(CLEAR_ALL)
+      process.stdout.write(lines.join("\r\n"))
+      if (cursor) {
+        const row = Math.max(1, Math.floor(cursor.row))
+        const col = Math.max(1, Math.floor(cursor.col))
+        process.stdout.write(`\x1b[?25l\x1b[${row};${col}H\x1b[?25h`)
+      }
+      process.stdout.write(SYNC_END)
     },
     paintRegion(lines: string[], topRow: number): void {
       if (closed) return
       // Melukis nol baris = no-op murni (bukan clear): pemanggil yang ingin
       // menghapus memakai clearRegion() eksplisit.
       if (!lines.length) return
-      try {
-        const top = Math.max(1, Math.floor(topRow) || 1)
-        const h = lines.length
-        // Union region lama + baru: kotak yang menyusut/bergeser (filter,
-        // notice hilang) harus menghapus sisa bingkainya sendiri — pemilik
-        // layar tak tahu geometri popup.
-        let clearTop = top
-        let clearBottom = top + Math.max(0, h - 1)
-        if (lastRegion) {
-          clearTop = Math.min(clearTop, lastRegion.top)
-          clearBottom = Math.max(clearBottom, lastRegion.top + lastRegion.height - 1)
-        }
-        let out = SYNC_START
-        for (let r = clearTop; r <= clearBottom; r++) {
-          const i = r - top
-          // Baris diasumsi satu-baris-tersanitasi dari dialogBox (tanpa \n —
-          // \n akan menggeser kursor dan merusak baris berikut; split defensif).
-          const row = i >= 0 && i < h ? ((lines[i] ?? "").split("\n")[0] ?? "") : ""
-          out += `\x1b[${r};1H\x1b[2K${row}`
-        }
-        out += SYNC_END
-        process.stdout.write(out)
-        lastRegion = h > 0 ? { top, height: h } : null
-      } catch {}
+      const top = Math.max(1, Math.floor(topRow) || 1)
+      const h = lines.length
+      // Union region lama + baru: kotak yang menyusut/bergeser (filter,
+      // notice hilang) harus menghapus sisa bingkainya sendiri — pemilik
+      // layar tak tahu geometri popup.
+      let clearTop = top
+      let clearBottom = top + Math.max(0, h - 1)
+      if (lastRegion) {
+        clearTop = Math.min(clearTop, lastRegion.top)
+        clearBottom = Math.max(clearBottom, lastRegion.top + lastRegion.height - 1)
+      }
+      let out = SYNC_START
+      for (let r = clearTop; r <= clearBottom; r++) {
+        const i = r - top
+        // Baris diasumsi satu-baris-tersanitasi dari dialogBox (tanpa \n —
+        // \n akan menggeser kursor dan merusak baris berikut; split defensif).
+        const row = i >= 0 && i < h ? ((lines[i] ?? "").split("\n")[0] ?? "") : ""
+        out += `\x1b[${r};1H\x1b[2K${row}`
+      }
+      out += SYNC_END
+      process.stdout.write(out)
+      lastRegion = h > 0 ? { top, height: h } : null
     },
     clearRegion(): void {
       if (closed) return
@@ -196,6 +200,9 @@ export function openAltScreen(): AltScreen {
       depth = Math.max(0, depth - 1)
       if (depth === 0) {
         try {
+          process.stdout.write(SYNC_END)
+        } catch {}
+        try {
           process.stdout.write(EXIT)
         } catch {}
         try {
@@ -219,7 +226,12 @@ export function altScreenDepth(): number {
 export function forceRestoreScreenForSignal(): void {
   if (depth > 0) {
     try {
+      process.stdout.write(SYNC_END)
+    } catch {}
+    try {
       process.stdout.write(EXIT)
+    } catch {}
+    try {
       process.stdout.write(RESET_REGION)
     } catch {}
     depth = 0

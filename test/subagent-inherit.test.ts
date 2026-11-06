@@ -70,6 +70,7 @@ describe("sub-agent mewarisi model parent", () => {
     })
     const ctx = {
       signal: new AbortController().signal,
+      cwd: process.cwd(),
       emit: () => {},
       state: { model: "prov::m1" },
     } as never
@@ -88,7 +89,11 @@ describe("sub-agent mewarisi model parent", () => {
         run: async () => ({ finalText: "ok", usage: { steps: 1 } }),
       }
     })
-    const ctx = { signal: new AbortController().signal, emit: () => {} } as never
+    const ctx = {
+      signal: new AbortController().signal,
+      cwd: process.cwd(),
+      emit: () => {},
+    } as never
     await delegateTaskTool.execute({ prompt: "x" }, ctx)
     expect(seen?.model).toBeUndefined()
   })
@@ -181,6 +186,7 @@ describe("sub-agent mewarisi mode allowlist parent", () => {
     })
     const ctx = {
       signal: new AbortController().signal,
+      cwd: process.cwd(),
       emit: () => {},
       state: { model: "prov::m1" },
       permissionMode: "allowlist",
@@ -201,6 +207,7 @@ describe("sub-agent mewarisi mode allowlist parent", () => {
     })
     const ctx = {
       signal: new AbortController().signal,
+      cwd: process.cwd(),
       emit: () => {},
       state: { model: "prov::m1" },
     } as never

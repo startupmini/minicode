@@ -50,7 +50,7 @@ function track(name: string): string {
 }
 
 const tmp = track(".tmp-extreme")
-const ctx: any = { signal: new AbortController().signal }
+const ctx: any = { signal: new AbortController().signal, cwd: process.cwd() }
 
 afterAll(async () => {
   for (const p of TRACKED) await rm(p, { recursive: true, force: true }).catch(() => {})

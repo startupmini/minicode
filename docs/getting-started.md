@@ -63,22 +63,24 @@ Docker **tidak** dipakai otomatis meski tersedia — menarik image tanpa diminta
 ## Update & uninstall
 
 Membuka `minicode` interaktif (TTY) selalu cek versi terbaru ke registry:
-bila ada, paket di-install (`npm install -g minicode-ai@latest`) lalu
-minicode restart sendiri ke versi baru — tanpa update manual. Berlaku hanya
-untuk salinan ter-install (checkout source tidak disentuh) dan tidak pernah
-memblokir: install gagal/offline = lanjut versi lama + pesan manual.
+versi SemVer tepat yang ditemukan diverifikasi dahulu lewat instalasi sementara
+dan `npm audit signatures` (signature registry + provenance). Skrip instalasi
+paket dimatikan; hanya graph tanpa dependency runtime yang diterima. Setelah
+itu versi yang sama dipasang dari registry resmi, versi di package terpasang
+dibaca ulang, lalu minicode restart sendiri. Ketidakcocokan mencoba memulihkan
+versi sebelumnya; bila pemulihan gagal, proses berhenti agar tidak berjalan
+dengan instalasi campuran. Berlaku hanya untuk salinan ter-install (checkout
+source tidak disentuh). Npm lama, paket tanpa bukti signature/provenance,
+offline, atau install gagal menahan auto-update dan memberi instruksi manual.
 One-shot, `exec`, pipe, dan CI hanya menampilkan notifikasi (tanpa install).
 
-> Model ancaman yang jujur: auto-update mengeksekusi kode dari registry
-> tanpa verifikasi tanda tangan client-side (attestasi Sigstore npm butuh
-> infrastruktur verifikasi di luar jangkauan CLI zero-dep — sudah diteliti,
-> bundelnya tak membawa identitas repo yang bisa dicek offline). Percayakan
-> TLS registry + rilis hanya dari CI repo ini; yang butuh jaminan lebih,
-> matikan auto-update (`MINICODE_AUTO_UPDATE=0`) dan update manual setelah
-> memeriksa rilis di GitHub.
+> Verifikasi memakai kemampuan npm, bukan verifier Sigstore yang dibundel
+> MiniCode. Gagal-verifikasi selalu menghentikan update otomatis. Pemilik tetap
+> dapat mematikan jalur ini (`MINICODE_AUTO_UPDATE=0`) dan mengelola update
+> manual sesuai kebijakan organisasinya.
 
 ```bash
-npm update -g minicode-ai   # manual, bila auto-update dimatikan
+npm install -g minicode-ai@<versi> # manual, gunakan versi yang sudah ditinjau
 minicode sync          # refresh model baru dari semua provider
 minicode pricing sync  # refresh cache harga (3.162 model, ~213 KB)
 ```

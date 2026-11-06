@@ -3,7 +3,8 @@
 // Hormat offline: gagal fetch = diam. Hormat NO_UPDATE_CHECK=1 / CI=1.
 
 import { spawnSync } from "node:child_process"
-import { homedir } from "node:os"
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 
 const PKG_NAME = "minicode-ai"
@@ -175,14 +176,38 @@ export async function checkForUpdateFresh(
   return isNewer(currentVersion, eff) ? eff : null
 }
 
-export type InstallRunner = (cmd: string, args: string[]) => { status: number | null }
+export type InstallRunner = (
+  cmd: string,
+  args: string[],
+  opts?: { cwd?: string },
+) => { status: number | null }
 
-/** Install versi latest via npm global. Return true bila exit 0. Tak melempar. */
-export function installUpdate(runner?: InstallRunner): boolean {
+const NPM_REGISTRY = "https://registry.npmjs.org/"
+
+export function verifyInstalledVersion(expected: string, readVersion: () => string): boolean {
+  try {
+    return readVersion() === expected
+  } catch {
+    return false
+  }
+}
+
+const SEMVER_VERSION_RE =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/
+
+/**
+ * Verifikasi versi dari registry (signature + provenance) di prefix sementara,
+ * lalu pasang versi persis dari registry yang sama secara global. Skrip paket
+ * tidak dijalankan. Npm lama atau paket tanpa bukti registry tepercaya = gagal
+ * tertutup; pemanggil tetap melanjutkan versi yang sedang berjalan.
+ */
+export function installUpdate(version: string, runner?: InstallRunner): boolean {
+  if (version.length > 128 || !SEMVER_VERSION_RE.test(version)) return false
+  let verifyRoot: string | undefined
   try {
     const run: InstallRunner =
       runner ??
-      ((cmd, args) => {
+      ((cmd, args, opts) => {
         // Windows: npm adalah .cmd → butuh shell; stdio inherit agar user
         // melihat progres install (interaktif, bukan CI).
         // Timeout 120 dtk: tanpa ini spawnSync memblokir event-loop selamanya
@@ -192,12 +217,64 @@ export function installUpdate(runner?: InstallRunner): boolean {
         const r = spawnSync(cmd, args, {
           stdio: "inherit",
           shell: process.platform === "win32",
+          ...(opts?.cwd ? { cwd: opts.cwd } : {}),
           timeout: 120_000,
         })
         return { status: typeof r.status === "number" ? r.status : null }
       })
-    return run("npm", ["install", "-g", `${PKG_NAME}@latest`]).status === 0
+    verifyRoot = mkdtempSync(join(tmpdir(), "minicode-update-verify-"))
+    writeFileSync(
+      join(verifyRoot, "package.json"),
+      JSON.stringify({ name: "minicode-update-verification", version: "1.0.0", private: true }),
+      "utf8",
+    )
+    const verifiedInstall = run(
+      "npm",
+      [
+        "install",
+        "--ignore-scripts",
+        "--no-audit",
+        "--save-exact",
+        "--package-lock=true",
+        "--registry",
+        NPM_REGISTRY,
+        `${PKG_NAME}@${version}`,
+      ],
+      { cwd: verifyRoot },
+    )
+    if (verifiedInstall.status !== 0) return false
+    const lock = JSON.parse(readFileSync(join(verifyRoot, "package-lock.json"), "utf8")) as {
+      packages?: Record<string, unknown>
+    }
+    const installedPackages = Object.keys(lock.packages ?? {}).filter((path) =>
+      path.startsWith("node_modules/"),
+    )
+    // Global npm install does not consume this local lockfile. Today this CLI
+    // has no runtime dependencies; refuse silent graph drift until updater can
+    // install and verify every locked dependency identically.
+    if (installedPackages.length !== 1 || installedPackages[0] !== `node_modules/${PKG_NAME}`)
+      return false
+    const signatures = run("npm", ["audit", "signatures", "--registry", NPM_REGISTRY], {
+      cwd: verifyRoot,
+    })
+    if (signatures.status !== 0) return false
+    return (
+      run("npm", [
+        "install",
+        "-g",
+        "--ignore-scripts",
+        "--registry",
+        NPM_REGISTRY,
+        `${PKG_NAME}@${version}`,
+      ]).status === 0
+    )
   } catch {
     return false
+  } finally {
+    if (verifyRoot && existsSync(verifyRoot)) {
+      try {
+        rmSync(verifyRoot, { recursive: true, force: true })
+      } catch {}
+    }
   }
 }

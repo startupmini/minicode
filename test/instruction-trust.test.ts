@@ -7,6 +7,8 @@ import { mkdirSync, mkdtempSync, symlinkSync, unlinkSync, writeFileSync } from "
 import { rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { FakeProvider } from "#minicore/test/fakes.ts"
+import { createMinicodeSession } from "../src/app/session.ts"
 import { buildSystemPrompt } from "../src/policy/context.ts"
 import { createPermissionHandler } from "../src/policy/permission.ts"
 import { findSkill, invalidateSkillCache, loadSkills, renderSkill } from "../src/skills/loader.ts"
@@ -37,6 +39,13 @@ function trySymlinkFile(target: string, linkPath: string): boolean {
   } catch {
     return false
   }
+}
+
+async function providerSystemPrompt(cwd: string): Promise<string> {
+  const provider = new FakeProvider([])
+  const session = await createMinicodeSession({ provider, tools: [], cwd })
+  await session.run("context boundary check")
+  return JSON.stringify(provider.requests[0] ?? {})
 }
 
 // ── 1. Skill symlink escape (P1, reproducer audit) ──
@@ -145,6 +154,46 @@ test("instruksi: AGENTS symlink keluar ditolak; precedence deterministik", async
     const sys2 = await buildSystemPrompt({ cwd: dir })
     expect(sys2).toContain("MENANG-UNIK-4")
     expect(sys2).not.toContain("\n# CLAUDE.md\n")
+  } finally {
+    await cleanup(dir, outside)
+  }
+})
+
+test("CTX-06: file symlink di fallback steering tidak mencapai prompt atau provider", async () => {
+  const dir = tmpRoot()
+  const outside = tmpRoot()
+  try {
+    const marker = "CTX06-SECRET-FILE-SYMLINK-UNIK"
+    writeFileSync(join(outside, "secret.md"), marker)
+    mkdirSync(join(dir, ".minicode", "steering"), { recursive: true })
+    if (
+      !trySymlinkFile(
+        join(outside, "secret.md"),
+        join(dir, ".minicode", "steering", "01-secret.md"),
+      )
+    )
+      return
+    const prompt = await buildSystemPrompt({ cwd: dir })
+    const request = await providerSystemPrompt(dir)
+    expect(prompt).not.toContain(marker)
+    expect(request).not.toContain(marker)
+  } finally {
+    await cleanup(dir, outside)
+  }
+})
+
+test("CTX-06: direktori steering junction keluar tidak mencapai prompt atau provider", async () => {
+  const dir = tmpRoot()
+  const outside = tmpRoot()
+  try {
+    const marker = "CTX06-SECRET-DIRECTORY-JUNCTION-UNIK"
+    writeFileSync(join(outside, "secret.md"), marker)
+    mkdirSync(join(dir, ".minicode"), { recursive: true })
+    if (!tryJunction(outside, join(dir, ".minicode", "steering"))) return
+    const prompt = await buildSystemPrompt({ cwd: dir })
+    const request = await providerSystemPrompt(dir)
+    expect(prompt).not.toContain(marker)
+    expect(request).not.toContain(marker)
   } finally {
     await cleanup(dir, outside)
   }

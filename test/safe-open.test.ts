@@ -11,6 +11,7 @@ import {
   resolveSafePath,
   safeOpenRead,
   safeReadFile,
+  safeReadFileCapped,
   safeStat,
 } from "../src/lib/safe-open.ts"
 import { trashDir, trashFile } from "../src/lib/trash.ts"
@@ -50,6 +51,22 @@ test("safeReadFile: dalam root terbaca, luar root ditolak", async () => {
   } finally {
     rmSync(w, { recursive: true, force: true })
     rmSync(o, { recursive: true, force: true })
+  }
+})
+
+test("safeReadFileCapped: membatasi byte yang dialokasikan dan menandai truncation", async () => {
+  const w = makeRoot()
+  try {
+    writeFileSync(join(w, "large.txt"), "x".repeat(4096))
+    writeFileSync(join(w, "exact.txt"), "y".repeat(32))
+    const large = await safeReadFileCapped(join(w, "large.txt"), w, 32)
+    expect(large.text).toBe("x".repeat(32))
+    expect(large.truncated).toBe(true)
+    const exact = await safeReadFileCapped(join(w, "exact.txt"), w, 32)
+    expect(exact.text).toBe("y".repeat(32))
+    expect(exact.truncated).toBe(false)
+  } finally {
+    rmSync(w, { recursive: true, force: true })
   }
 })
 

@@ -301,7 +301,7 @@ describe("8.3 Todo→TaskStore sync — first id-less write populates tasks", ()
     todoSession.cwd = dir
     const out = (await todoWriteTool.execute(
       { todos: [{ content: "step one", status: "pending" }] } as never,
-      { signal: new AbortController().signal } as never,
+      { signal: new AbortController().signal, cwd: dir } as never,
     )) as string
     expect(out).toContain("canonical-tasks")
     // Live Test §3.1: tasks table now HAS rows, not 0.

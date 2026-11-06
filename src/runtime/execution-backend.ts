@@ -16,10 +16,9 @@
 // - Backend tak membuat executionId (M1); handle `be_*` = namespace backend
 //   sendiri, opaque, non-user-controlled, bukan lifecycle authority.
 // - Opaque handle: caller tak pernah memegang raw ChildProcess.
-// - Sandbox shims membungkus runner existing run-to-completion; kill
-//   preemptif mid-flight = unsupported yang DINYATAKAN (jujur, sesuai evidence
-//   code_run: abort menghentikan penungguan, container bisa hidup sampai
-//   timeout runner). Jangan klaim D untuk container.
+// - Sandbox shims membungkus runner existing run-to-completion. Docker runner
+//   meminta daemon menghapus container saat timeout; cancel dari backend tetap
+//   belum mengirim signal fisik ke runner. Jangan klaim D untuk container.
 // - MCP/LSP/background-jobs TIDAK dibungkus di sini (lifecycle berbeda:
 //   closeAll/closeAllLsp tetap pemilik; background = tool scope, detached = M7).
 // - Security parity: spawn SELALU via sanitizeSpawnEnv + resolveTrustedExecutable
@@ -72,7 +71,7 @@ export interface BackendCapability {
  * - host: killTree grup/taskkill ADA (bash.ts:96-124); tanpa flag CPU/mem/pids;
  *   network hanya guard; FS hanya jail pre-check (TOCTOU terdokumentasi).
  * - docker: invocation --cpus/--memory/--pids-limit/--network/--read-only ADA
- *   (docker.ts:58-87); kill eksplisit container TAK ADA (hanya wrapper SIGKILL).
+ *   (docker.ts:58-87); timeout meminta daemon menjalankan `docker rm --force`.
  * - bwrap: --unshare-net/--die-with-parent/--cap-drop/bind ADA, tanpa limit
  *   CPU/mem/pids (os.ts:104-135). seatbelt: deny default + deny network* ADA,
  *   policy = restriksi BUKAN kill guarantee (os.ts:91-98).
@@ -109,10 +108,10 @@ export const BACKEND_CAPABILITIES: Record<BackendKind, BackendCapability> = {
     network: "SUPPORTED",
     fs: "SUPPORTED",
     notes: [
-      "A: timeout wrapper SIGKILL + close observation (docker.ts:116-127).",
+      "A: timeout wrapper meminta daemon remove lalu menunggu close Docker CLI (docker.ts).",
       "B: DELEGATED_TO_RUNTIME — logical stop diputuskan runtime.",
-      "C: BEST_EFFORT — kill eksplisit container TAK ADA di invocation; hanya wrapper.",
-      "D: BEST_EFFORT — close wrapper ≠ bukti container mati; jangan klaim D container.",
+      "C: BEST_EFFORT — timeout meminta docker rm --force; kegagalan daemon dilaporkan.",
+      "D: BEST_EFFORT — permintaan remove bukan bukti fisik mandiri; jangan klaim D container.",
       "CPU/mem/PID/net/FS: --cpus/--memory/--pids-limit 32/--network none/--read-only+cap-drop+user (docker.ts:58-87).",
     ],
   },

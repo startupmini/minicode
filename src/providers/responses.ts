@@ -1,6 +1,12 @@
 import { ProviderError } from "#minicore/core/errors.ts"
 import type { ModelProvider, ProviderEvent, StreamRequest } from "#minicore/core/provider.ts"
 import { allowedEfforts, thinkingFamily } from "./effort.ts"
+import {
+  appendToolArgument,
+  boundedSseBody,
+  parseProviderToolArguments,
+  readProviderErrorBody,
+} from "./sse-bounds.ts"
 
 export interface ResponsesConfig {
   id?: string
@@ -131,7 +137,7 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
         throw new ProviderError("network", e instanceof Error ? e.message : String(e))
       }
       if (!res.ok) {
-        const txt = await res.text().catch(() => "")
+        const txt = await readProviderErrorBody(res).catch(() => "")
         const retryAfter = res.headers.get("retry-after")
         if (res.status === 429) {
           const ms = retryAfter ? Number(retryAfter) * 1000 : undefined
@@ -169,7 +175,8 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
       }
       if (!res.body) throw new ProviderError("network", "empty response body")
       // Simplified SSE: forward text deltas
-      const reader = res.body.getReader()
+      const boundedBody = boundedSseBody(res.body, signal, "Responses")
+      const reader = boundedBody.getReader()
       const decoder = new TextDecoder()
       let buf = ""
       // F-01: akumulasi function_call per item (Responses tidak punya delta
@@ -177,16 +184,12 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
       // response.function_call_arguments.delta lalu item final via
       // response.output_item.done). Tanpa ini tool yang dideklarasikan di
       // request tidak pernah dieksekusi — agen tampak selesai padahal buta.
-      const pendingCalls = new Map<string, { id: string; name: string; args: string }>()
+      const pendingCalls = new Map<
+        string,
+        { id: string; name: string; args: string; argsBytes: number }
+      >()
+      let pendingToolArgBytes = 0
       let finished = false
-      const parseCallArgs = (raw: string): unknown => {
-        if (!raw) return {}
-        try {
-          return JSON.parse(raw)
-        } catch {
-          return { raw }
-        }
-      }
       const yieldCall = function* (
         id: string,
         name: string,
@@ -197,13 +200,22 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
           // eksekusi ganda diam-diam — gagal keras sebagai network retryable.
           throw new ProviderError("network", "tool call after finish")
         }
-        yield { type: "tool_call", id: id || name, name, args: parseCallArgs(argsRaw) }
+        yield {
+          type: "tool_call",
+          id: id || name,
+          name,
+          args: parseProviderToolArguments(argsRaw, "Responses"),
+        }
       }
+      let reachedEof = false
       try {
         while (true) {
           if (signal.aborted) throw new DOMException("Aborted", "AbortError")
           const { done, value } = await reader.read()
-          if (done) break
+          if (done) {
+            reachedEof = true
+            break
+          }
           buf += decoder.decode(value, { stream: true })
           let idx = buf.indexOf("\n")
           while (idx >= 0) {
@@ -219,20 +231,22 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
                   yield* yieldCall(acc.id, acc.name, acc.args)
                 }
                 pendingCalls.clear()
+                pendingToolArgBytes = 0
                 if (!finished) {
                   finished = true
                   yield { type: "finish", reason: "stop" }
                 }
                 return
               }
-              // Hanya JSON rusak yang di-skip di sini: error dari yieldCall
-              // (mis. tool-setelah-finish) HARUS merambat ke kernel, jangan
-              // sampai tertelan catch di bawah.
+              if (!payload) {
+                idx = buf.indexOf("\n")
+                continue
+              }
               let data: Record<string, unknown>
               try {
                 data = JSON.parse(payload) as Record<string, unknown>
               } catch {
-                continue
+                throw new ProviderError("invalid_request", "Responses returned malformed SSE JSON")
               }
               // response.completed → simpan id untuk chaining turn berikut.
               // Format nyata: {type:"response.completed", response:{id:"resp_…"}}.
@@ -300,10 +314,22 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
                       ? item.call_id
                       : `item_${pendingCalls.size}`
                 const cid = typeof item.call_id === "string" && item.call_id ? item.call_id : key
+                const prior = pendingCalls.get(key)
+                if (prior) pendingToolArgBytes -= prior.argsBytes
+                const initialArgs = typeof item.arguments === "string" ? item.arguments : ""
+                const boundedArgs = appendToolArgument(
+                  "",
+                  0,
+                  initialArgs,
+                  pendingToolArgBytes,
+                  "Responses",
+                )
+                pendingToolArgBytes = boundedArgs.pendingBytes
                 pendingCalls.set(key, {
                   id: cid,
                   name: typeof item.name === "string" ? item.name : "",
-                  args: typeof item.arguments === "string" ? item.arguments : "",
+                  args: boundedArgs.value,
+                  argsBytes: boundedArgs.bytes,
                 })
               } else if (dtype === "response.function_call_arguments.delta") {
                 const key =
@@ -311,7 +337,18 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
                     ? data.item_id
                     : ([...pendingCalls.keys()].pop() ?? "")
                 const acc = pendingCalls.get(key)
-                if (acc && typeof data.delta === "string") acc.args += data.delta
+                if (acc && typeof data.delta === "string") {
+                  const boundedArgs = appendToolArgument(
+                    acc.args,
+                    acc.argsBytes,
+                    data.delta,
+                    pendingToolArgBytes,
+                    "Responses",
+                  )
+                  acc.args = boundedArgs.value
+                  acc.argsBytes = boundedArgs.bytes
+                  pendingToolArgBytes = boundedArgs.pendingBytes
+                }
               } else if (dtype === "response.output_item.done" && item?.type === "function_call") {
                 const key =
                   typeof item.id === "string" && pendingCalls.has(item.id)
@@ -323,6 +360,7 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
                 const argsRaw =
                   (typeof item.arguments === "string" && item.arguments) || acc?.args || ""
                 pendingCalls.delete(key)
+                if (acc) pendingToolArgBytes -= acc.argsBytes
                 if (name) yield* yieldCall(id, name, argsRaw)
               } else if (data.type === "function_call" && typeof data.name === "string") {
                 const id =
@@ -364,16 +402,16 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
           }
         }
       } finally {
+        if (!reachedEof) await reader.cancel().catch(() => {})
         reader.releaseLock()
       }
-      // Provider quirky bisa berakhir tanpa finish eksplisit: flush sisa
-      // function_call yang terakumulasi (argumen parsial → {raw}, ditolak
-      // validateArgs sebagai observasi error — aman), lalu finish stop agar
-      // kernel tidak menganggap stream terputus.
+      // Gateway yang menyelesaikan stream tanpa output_item.done tetap flush
+      // item tertahan; parser sudah membatasi dan memvalidasi JSON argumennya.
       for (const [, acc] of pendingCalls) {
         yield* yieldCall(acc.id, acc.name, acc.args)
       }
       pendingCalls.clear()
+      pendingToolArgBytes = 0
       if (!finished) yield { type: "finish", reason: "stop" }
     },
   }

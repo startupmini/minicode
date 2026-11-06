@@ -29,6 +29,9 @@ import { gitCommitTool } from "../src/tools/git.ts"
 import { forgetMemoryTool } from "../src/tools/memory.ts"
 import { moveFileTool } from "../src/tools/move_file.ts"
 import { writeFileTool } from "../src/tools/write_file.ts"
+import { isolateGitConfigForTests } from "./helpers/isolated-git-config.ts"
+
+isolateGitConfigForTests()
 
 function tmpRoot(): string {
   const dir = mkdtempSync(join(tmpdir(), "mc-rec08fx-"))

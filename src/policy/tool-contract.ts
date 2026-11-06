@@ -22,13 +22,8 @@
 // keduanya akan mengubah perilaku recovery yang sudah teruji. Karena itu
 // `journalMutation` dieksplisitkan, bukan disimpulkan.
 //
-// KEPUTUSAN PENTING — `code_run` sengaja `parallel-read`:
-//
-// Executor hari ini memperlakukan `code_run` sebagai non-write (bukan anggota
-// WRITE_TOOLS/EXCLUSIVE_TOOLS), sehingga batch membacanya paralel. Mengubahnya
-// menjadi `exclusive` di sini akan mengubah penjadwalan yang sudah teruji, yang
-// bukan tujuan Fase 2. Klasifikasi disamakan dengan perilaku nyata; perbaikan
-// penjadwalan (bila diinginkan) harus menjadi perubahan terpisah dengan bukti.
+// `code_run` mutasi workspace melalui sandbox RW. Karena itu ia harus menjadi
+// exclusive di batch yang juga dapat membaca atau menulis file yang sama.
 
 /** Kelas efek samping yang dideklarasikan sebuah tool. */
 export type SideEffectTier =
@@ -348,11 +343,10 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     idempotent: false,
     journalMutation: false,
   }),
-  // Lihat catatan modul: perilaku paralel `code_run` dipertahankan apa adanya.
   C({
     name: "code_run",
     sideEffectTier: "LOCAL_ENV_MUTATION",
-    concurrencyClass: "parallel-read",
+    concurrencyClass: "exclusive",
     gatedByDefault: false,
     allowedInExplore: false,
     allowedInAutonomous: false,
@@ -420,7 +414,7 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
   C({
     name: "git_commit",
     sideEffectTier: "EXTERNAL_IRREVERSIBLE",
-    concurrencyClass: "parallel-read",
+    concurrencyClass: "exclusive",
     gatedByDefault: true,
     allowedInExplore: false,
     allowedInAutonomous: false,

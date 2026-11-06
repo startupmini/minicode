@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { delegateTaskTool, setSubAgentSessionFactory } from "../src/tools/task.ts"
 
-const ctx = { signal: new AbortController().signal, emit: () => {} } as never
+const ctx = { signal: new AbortController().signal, cwd: process.cwd(), emit: () => {} } as never
 
 test("delegate_task tanpa factory injeksi fail-closed", async () => {
   const out = await delegateTaskTool.execute({ prompt: "x" }, ctx)

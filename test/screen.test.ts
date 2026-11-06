@@ -72,19 +72,75 @@ test("TERM=dumb = null-screen", () => {
   expect(tty.all()).toBe("")
 })
 
-test("paint tak pernah melempar walau stdout rusak", () => {
+test("open yang gagal setelah ENTER mencoba memulihkan alternate-screen", () => {
+  tty = installFakeTty()
+  const output = process.stdout as unknown as { write(chunk: string | Uint8Array): boolean }
+  const originalWrite = output.write
+  let failEnter = true
+  output.write = (chunk) => {
+    if (failEnter && String(chunk) === "\x1b[?1049h") {
+      failEnter = false
+      throw new Error("ENTER write gagal")
+    }
+    return originalWrite.call(process.stdout, chunk)
+  }
+  try {
+    const screen = openAltScreen()
+    expect(screen.ok).toBe(false)
+  } finally {
+    output.write = originalWrite
+  }
+  expect(tty.all()).toContain("\x1b[?1049l")
+  expect(tty.all()).toContain("\x1b[r")
+  expect(altScreenDepth()).toBe(0)
+})
+
+test("paint propagates writer failure so owner can clean up", () => {
   tty = installFakeTty()
   const s = openAltScreen()
-  const orig = process.stdout.write
-  process.stdout.write = (() => {
-    throw new Error("rusak")
-  }) as never
+  const output = process.stdout as unknown as { write(chunk: string | Uint8Array): boolean }
+  const originalWrite = output.write
+  let failPaint = true
+  output.write = (chunk) => {
+    if (failPaint && String(chunk) === "\x1b[?2026h") {
+      failPaint = false
+      throw new Error("paint write gagal")
+    }
+    return originalWrite.call(process.stdout, chunk)
+  }
   try {
-    expect(() => s.paint(["x"])).not.toThrow()
+    expect(() => s.paint(["x"])).toThrow("paint write gagal")
     expect(() => s.close()).not.toThrow()
   } finally {
-    process.stdout.write = orig
+    output.write = originalWrite
   }
+  expect(tty.all()).toContain("\x1b[?2026l")
+  expect(tty.all()).toContain("\x1b[?1049l")
+  expect(altScreenDepth()).toBe(0)
+})
+
+test("paintRegion propagates writer failure and close restores the screen", () => {
+  tty = installFakeTty()
+  const s = openAltScreen()
+  const output = process.stdout as unknown as { write(chunk: string | Uint8Array): boolean }
+  const originalWrite = output.write
+  let failRegion = true
+  output.write = (chunk) => {
+    if (failRegion && String(chunk).includes("\x1b[1;1H\x1b[2K")) {
+      failRegion = false
+      throw new Error("region write gagal")
+    }
+    return originalWrite.call(process.stdout, chunk)
+  }
+  try {
+    expect(() => s.paintRegion(["popup"], 1)).toThrow("region write gagal")
+    expect(() => s.close()).not.toThrow()
+  } finally {
+    output.write = originalWrite
+  }
+  expect(tty.all()).toContain("\x1b[?2026l")
+  expect(tty.all()).toContain("\x1b[?1049l")
+  expect(altScreenDepth()).toBe(0)
 })
 
 test("paintRegion: tulis region tanpa clear — konten luar tak tersentuh", () => {

@@ -17,7 +17,10 @@ import { join } from "node:path"
 // - debug: guard verbose/env, tidak pernah default
 
 const INVENTORY: Record<string, { max: number; owner: string }> = {
-  "cli/auto-update.ts": { max: 4, owner: "human-cmd" },
+  // [CTL-01] 4 -> 7 for the version-mismatch warning, successful rollback
+  // notice, and unrecoverable rollback failure. Each path must tell the
+  // operator whether the installed version was verified or needs manual repair.
+  "cli/auto-update.ts": { max: 7, owner: "human-cmd" },
   // [PHASE 6AB] 29 -> 30 for exactly one `/scheduler` writer. The first draft used
   // a `console.log` per output line (23 writers) and this audit failed it, which
   // is the audit working: the command now collects into an array and emits once.
@@ -57,7 +60,10 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // compatibility handling per the migration contract; the operator must see the
   // deprecated flag rather than have it silently reinterpreted. Declared, not
   // absorbed, per the rule above.
-  "cli/index.ts": { max: 33, owner: "human-cmd" },
+  // [UI-COMPAT-01] 33 -> 34 for the explicit interactive-startup failure
+  // diagnostic. Failure is reported on stderr and sets a nonzero exit status;
+  // it must never be treated as a successful empty interactive session.
+  "cli/index.ts": { max: 34, owner: "human-cmd" },
   "cli/model-manager.ts": { max: 2, owner: "human-cmd" },
   "cli/provider-manager.ts": { max: 3, owner: "human-cmd" },
   // [P2.1] 26 -> 27 for exactly ONE writer: the canonical identity line
@@ -187,7 +193,10 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   "src/ui/assistant/turn-status.ts": { max: 1, owner: "diagnostic" },
   "src/ui/input/input.ts": { max: 40, owner: "screen" },
   "src/ui/runtime/bus-debug.ts": { max: 1, owner: "debug" },
-  "src/ui/runtime/screen.ts": { max: 15, owner: "screen" },
+  // [UI-RENDER-02] 15 -> 19 for best-effort restore writes: failed ENTER
+  // independently attempts EXIT + scroll-region reset; close and fatal-signal
+  // restoration independently close a possibly open synchronized update.
+  "src/ui/runtime/screen.ts": { max: 19, owner: "screen" },
   "src/ui/runtime/spinner.ts": { max: 4, owner: "diagnostic" },
   "src/ui/runtime/statusline.ts": { max: 13, owner: "diagnostic" },
   "src/ui/screens/dialog.ts": { max: 0, owner: "screen" },

@@ -211,6 +211,20 @@ describe("PTY: boot & kontrak layar", () => {
     })
   })
 
+  ptyTest("terminal terlalu kecil: diagnostik tanpa alt-screen", async () => {
+    const tui = await spawnTui({ cols: 80, rows: 8 })
+    try {
+      await tui.waitFor((raw) => raw.includes("fullscreen"), 20_000)
+      const raw = tui.raw()
+      expect(raw).not.toContain("\x1b[?1049h")
+      expect(raw).toContain("≥10")
+      const result = await tui.exit()
+      if (typeof result.exitCode === "number") expect(result.exitCode).toBe(1)
+    } finally {
+      tui.dispose()
+    }
+  })
+
   ptyTest("turn penuh: submit → jawaban model → idle timer", async () => {
     await withTui({}, async (tui) => {
       await tui.waitFor((raw) => raw.includes("00.00.00"))
@@ -220,6 +234,22 @@ describe("PTY: boot & kontrak layar", () => {
       tui.send("\x04")
       await tui.waitFor((raw) => raw.includes("\x1b[?1049l"), 10000)
       // Exit code: dijaga test terpisah (lihat catatan pada test boot di atas).
+    })
+  })
+
+  ptyTest("teks Unicode kompleks tetap utuh pada frame produksi", async () => {
+    const reply = "漢字 👨‍👩‍👧‍👦 🇮🇩 👩🏽‍💻 1️⃣ ❤️"
+    await withTui({ reply: { kind: "text", text: reply } }, async (tui) => {
+      await tui.waitFor((raw) => raw.includes("00.00.00"))
+      tui.send("unicode\r")
+      // Byte stream dapat berisi teks saat frame sync masih ditulis; tunggu
+      // sampai parser grid melihat teks pada frame yang lengkap.
+      await waitForScreenText(tui, reply, 30000)
+      const screen = parseScreenBuffer(tui.raw(), PTY_COLS, PTY_ROWS)
+      expect(screen.join("\n")).toContain(reply)
+      expect(screen[PTY_ROWS - 1]).toContain("gpt-4o-mini")
+      tui.send("\x04")
+      await tui.waitFor((raw) => raw.includes("\x1b[?1049l"), 10000)
     })
   })
 

@@ -30,7 +30,7 @@ Keamanan HTTP: host privat ditolak kecuali `--allow-private` (penjaga sama denga
 
 Izin: semua MCP bertitik selalu di-gate — `auto` minta konfirmasi sekali per tool (`[a] Always` persist ke allowlist); `readonly`/`plan`/`allowlist` menolak. Tanpa wildcard auto-allow (proteksi supply-chain).
 
-Model kepercayaan: permission hanya kontrol *pemanggilan*. Capability di balik server (filesystem, network, proses, API) tak bisa diketahui statis — anggap setiap `mcp_call` external capability arbitrer. Pembatalan hentikan penungguan, tapi tidak bunuh proses stdio maupun batalkan efek yang sudah terjadi.
+Model kepercayaan: permission hanya kontrol *pemanggilan*. Capability di balik server (filesystem, network, proses, API) tak bisa diketahui statis — anggap setiap `mcp_call` external capability arbitrer. Pembatalan menghentikan penungguan lokal, tetapi tidak membuktikan bahwa server berhenti atau membatalkan efek yang sudah diterima. Jika koneksi terputus setelah request dikirim, tool mengembalikan error `outcome unknown`; periksa state remote sebelum mencoba lagi.
 
 Ekspos balik (stdio saja — tanpa mode HTTP, jadi tak ada permukaan jaringan):
 

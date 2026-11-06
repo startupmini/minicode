@@ -40,6 +40,7 @@ export const id: Record<MsgKey, string> = {
   "appr.tier.unknown": "efek tidak diketahui",
   "dlg.more": "… {n} lagi",
   "ts.compacted": "… dipadatkan: {reason}",
+  "ts.providerAttemptDiscarded": "percobaan provider {attempt} gagal; output parsial dibuang",
   "ts.thinking": "… berpikir",
   "ts.evictMarker": "… {n} baris awal di luar viewport — riwayat penuh di model",
   "ts.statusRunning": "berjalan",
@@ -279,6 +280,8 @@ export const id: Record<MsgKey, string> = {
   "one.answerOpen": "  − jawaban\n",
   "one.answerMin": "  + jawaban ({n} karakter{cap}) — /expand untuk baca\n",
   "one.answerCap": ", dibatasi 1MB",
+  "one.providerAttemptDiscarded":
+    "\n[percobaan provider {attempt} gagal; output parsial di atas tidak termasuk jawaban akhir]\n",
   "one.thinkOpen": "  − berpikir\n",
   "one.thinkMin": "  + berpikir\n",
   "one.more3": "\n    ... ({n} lagi)",

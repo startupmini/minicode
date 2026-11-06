@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process"
-import { readFile } from "node:fs/promises"
-import { resolve } from "node:path"
+import { readdir, realpath } from "node:fs/promises"
+import { join, resolve } from "node:path"
 import { promisify } from "node:util"
 import type { TokenEstimator } from "#minicore"
 import { DEFAULT_CHARS_PER_TOKEN } from "#minicore/core/tokens.ts"
 import { LIMITS } from "../constants.ts"
 import { GIT_SAFE_BASE } from "../lib/git-hardening.ts"
+import { safeReadFileCapped } from "../lib/safe-open.ts"
 import { resolveTrustedExecutable } from "../lib/trusted-exec.ts"
 import { loadMemoryFiles } from "../memory/files.ts"
 import { loadRepoMap } from "../repo/repomap.ts"
@@ -259,13 +260,13 @@ export async function buildSystemPrompt(
   for (const p of agentFiles) {
     if (signal.aborted) throw new Error("aborted")
     try {
-      // Symlink escape (temuan audit #06): AGENTS.md symlink keluar workspace
-      // ikut terbaca tanpa ini. Samakan dengan guard rules/ di bawah.
       const full = resolve(cwd, p)
-      if (isRealPathOutsideRoot(full, cwd)) continue
-      const txt = await readFile(full, "utf8")
+      const loaded = await safeReadFileCapped(full, cwd, 3000)
       if (signal.aborted) throw new Error("aborted")
-      parts.push(`\n# ${p}\n${cutMarked(txt, 3000)}`)
+      const body = loaded.truncated
+        ? `${loaded.text}\n… [truncated: showing first 3000 bytes]`
+        : loaded.text
+      parts.push(`\n# ${p}\n${cutMarked(body, 3000)}`)
       loadedAgent = true
       if (p === "AGENTS.md") break // prefer AGENTS.md, else collect all
     } catch (e) {
@@ -275,13 +276,20 @@ export async function buildSystemPrompt(
   // Also load steering if not already
   if (!loadedAgent) {
     try {
-      const { readdir } = await import("node:fs/promises")
-      const steeringDir = `${cwd}/.minicode/steering`
-      const files = await readdir(steeringDir).catch(() => [] as unknown as string[])
-      for (const f of (files as string[]).slice(0, 3)) {
+      const steeringDir = resolve(cwd, ".minicode/steering")
+      // Resolve direktori sebelum enumerasi: junction/reparse yang keluar
+      // workspace tidak boleh menjadi sumber instruksi fallback.
+      const realSteeringDir = await realpath(steeringDir)
+      if (isRealPathOutsideRoot(realSteeringDir, cwd))
+        throw new Error("steering directory outside workspace")
+      const files = (await readdir(realSteeringDir)).sort().slice(0, 3)
+      for (const f of files) {
         try {
-          const txt = await readFile(`${steeringDir}/${f}`, "utf8")
-          parts.push(`\n# steering/${f}\n${cutMarked(txt, 2000)}`)
+          const loaded = await safeReadFileCapped(join(realSteeringDir, f), cwd, 2000)
+          const body = loaded.truncated
+            ? `${loaded.text}\n… [truncated: showing first 2000 bytes]`
+            : loaded.text
+          parts.push(`\n# steering file\n${cutMarked(body, 2000)}`)
         } catch {}
       }
     } catch {}

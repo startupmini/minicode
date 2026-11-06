@@ -186,6 +186,7 @@ export interface DiagnosticEntry {
   category: string
   severity: SemanticSeverity
   message: string
+  attemptId?: number
   cause?: string
   action?: string
   /** F-CTRL-1: verdict consequence terstruktur (absen = bukan consequence). */

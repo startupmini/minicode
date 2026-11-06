@@ -21,7 +21,11 @@ import {
   listBackgroundJobs,
 } from "../src/tools/bash.ts"
 
-const ctx = { signal: new AbortController().signal, emit() {} } as unknown as ToolContext
+const ctx = {
+  signal: new AbortController().signal,
+  cwd: process.cwd(),
+  emit() {},
+} as unknown as ToolContext
 const isWin = process.platform === "win32"
 const echoCmd = "echo halo-f03"
 const sleepCmd = isWin ? "ping -n 30 127.0.0.1" : "sleep 30"

@@ -3099,7 +3099,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         )
         return
       }
-      // Perilaku lama dipertahankan untuk error non-pagar: persist best-effort.
+      // Histori adalah bukti durable untuk turn ini. Error selain epoch harus
+      // naik ke pemanggil agar one-shot tidak mengaku berhasil saat pesan hilang.
+      throw e
     }
   }
 

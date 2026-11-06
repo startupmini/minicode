@@ -693,21 +693,24 @@ export async function runTui(ctx: CliSession): Promise<void> {
   // Approval sebagai warga TUI: blok pertanyaan + keputusan tercatat di
   // transkrip dan terlihat sebelum menjawab (tanpa sink = tulis langsung).
   const { setApprovalSink } = await import("../src/ui/tui/transcript.ts")
-  setApprovalSink({
-    pushBlock: (lines) => transcript.pushInfo(lines),
-    repaint: () => app.repaint(),
-    suspend: () => app.suspend(),
-    resume: () => app.resume(),
-  })
-  const res = await app.run()
-  setApprovalSink(null)
-  if (!res.started) {
-    // Terminal tak mampu (non-TTY/dumb/sempit): tak ada tampilan yang bisa
-    // dibuka. Satu baris jujur, bukan fallback setengah (REPL dihapus).
-    console.log(t("tui.noTty"))
+  try {
+    setApprovalSink({
+      pushBlock: (lines) => transcript.pushInfo(lines),
+      repaint: () => app.repaint(),
+      suspend: () => app.suspend(),
+      resume: () => app.resume(),
+    })
+    const res = await app.run()
+    if (!res.started) {
+      // Kegagalan startup adalah diagnostik, bukan keluaran program. App
+      // sudah menolak membuka layar dan tidak ada fallback linear yang sah.
+      process.stderr.write(`${t("tui.noTty")}\n`)
+      process.exitCode = 1
+      return
+    }
+  } finally {
+    setApprovalSink(null)
+    transcript.dispose()
     await close()
-    return
   }
-  transcript.dispose()
-  await close()
 }

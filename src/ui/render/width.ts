@@ -1,12 +1,8 @@
-// Lebar tampil karakter di terminal.
+// Lebar tampil teks dalam kolom terminal.
 //
-// Semua kode UI sebelumnya menganggap 1 karakter = 1 kolom. Itu salah untuk CJK,
-// Hangul, kana, emoji, dan simbol lebar-penuh — semuanya memakan DUA kolom.
-// Akibatnya nyata: 38 code point CJK menempati 73 kolom di terminal 40 kolom,
-// baris membungkus sendiri, dan frame TUI (yang dihitung per baris) rusak.
-//
-// Karakter penggabung (combining marks, variation selector, ZWJ) sebaliknya
-// memakan NOL kolom — "é" sebagai e+U+0301 adalah satu kolom, bukan dua.
+// Ukur per grapheme, bukan per code point: satu emoji keluarga atau flag
+// tersusun dari beberapa scalar tetapi tampil sebagai satu glyph dua kolom.
+// Combining marks melekat pada base dan tidak menambah lebar sendiri.
 //
 // Referensi: EastAsianWidth (UAX #11) kategori W dan F. Rentang di bawah adalah
 // blok utama yang relevan untuk keluaran terminal; tidak perlu tabel lengkap
@@ -58,7 +54,76 @@ const ZERO: [number, number][] = [
   [0xfe20, 0xfe2f], // Combining Half Marks
   [0xfeff, 0xfeff], // BOM / ZWNBSP
   [0xe0100, 0xe01ef], // Variation Selectors Supplement
+  [0xe0020, 0xe007f], // Tag characters used by emoji flag sequences
 ]
+
+const UNICODE_MARK = /\p{Mark}/u
+const EMOJI = /\p{Emoji}/u
+const EMOJI_PRESENTATION = /\p{Emoji_Presentation}/u
+const EXTENDED_PICTOGRAPHIC = /\p{Extended_Pictographic}/u
+let widthSegmenter: Intl.Segmenter | undefined
+
+function segmentGraphemes(text: string): string[] {
+  try {
+    widthSegmenter ??= new Intl.Segmenter("und", { granularity: "grapheme" })
+    return Array.from(widthSegmenter.segment(text), (part) => part.segment)
+  } catch {
+    // Bun yang didukung MiniCode menyediakan Intl.Segmenter; fallback ini
+    // menjaga module tetap bisa dipakai di runtime tertanam yang lebih tua.
+    return Array.from(text)
+  }
+}
+
+function graphemeWidth(grapheme: string): number {
+  const points = Array.from(grapheme, (part) => part.codePointAt(0)!)
+  const has = (from: number, to: number): boolean => points.some((cp) => cp >= from && cp <= to)
+  const containsEmoji = points.some((cp) => EMOJI.test(String.fromCodePoint(cp)))
+  const containsPictograph = points.some((cp) =>
+    EXTENDED_PICTOGRAPHIC.test(String.fromCodePoint(cp)),
+  )
+  if (
+    has(0x20e3, 0x20e3) || // keycap
+    has(0x1f1e6, 0x1f1ff) || // regional-indicator flag (including a lone RI, conservatively)
+    has(0x1f3fb, 0x1f3ff) || // skin-tone modifier
+    (has(0x200d, 0x200d) && containsPictograph) || // emoji ZWJ sequence
+    (has(0xfe0f, 0xfe0f) && containsEmoji) || // explicit emoji presentation
+    points.some((cp) => EMOJI_PRESENTATION.test(String.fromCodePoint(cp)))
+  ) {
+    return 2
+  }
+  let width = 0
+  for (const cp of points) width += charWidth(cp)
+  return width
+}
+
+interface DisplayToken {
+  text: string
+  width: number
+  escape: boolean
+}
+
+/** Token terminal: escape utuh atau grapheme utuh dengan lebar display yang sama. */
+function* displayTokens(s: string): Generator<DisplayToken> {
+  let i = 0
+  while (i < s.length) {
+    if (s[i] === "\x1b") {
+      const length = escapeLength(s, i)
+      if (length > 0) {
+        yield { text: s.slice(i, i + length), width: 0, escape: true }
+        i += length
+        continue
+      }
+    }
+    let end = s.indexOf("\x1b", i)
+    if (end < 0) end = s.length
+    if (end === i) end = i + 1
+    const run = s.slice(i, end)
+    for (const text of segmentGraphemes(run)) {
+      yield { text, width: graphemeWidth(text), escape: false }
+    }
+    i = end
+  }
+}
 
 function inRanges(cp: number, ranges: [number, number][]): boolean {
   let lo = 0
@@ -83,31 +148,19 @@ export function charWidth(cp: number): number {
   if (cp === 0x09) return 8
   // C0/C1 control: tidak menempati kolom (dan seharusnya tidak sampai ke layar).
   if (cp < 0x20 || (cp >= 0x7f && cp < 0xa0)) return 0
-  if (inRanges(cp, ZERO)) return 0
+  if (inRanges(cp, ZERO) || UNICODE_MARK.test(String.fromCodePoint(cp))) return 0
   if (inRanges(cp, WIDE)) return 2
   return 1
 }
 
 /**
  * Lebar tampil string dalam kolom terminal. Sekuens ANSI dan karakter
- * penggabung tidak dihitung; CJK/emoji dihitung dua.
+ * penggabung tidak dihitung; CJK/fullwidth dan emoji presentation dihitung
+ * dua kolom per grapheme. Lebar glyph spesifik terminal tidak diprobe.
  */
 export function displayWidth(s: string): number {
   let w = 0
-  let i = 0
-  while (i < s.length) {
-    // Lewati sekuens escape — tidak menempati kolom.
-    if (s[i] === "\x1b") {
-      const len = escapeLength(s, i)
-      if (len > 0) {
-        i += len
-        continue
-      }
-    }
-    const cp = s.codePointAt(i)!
-    w += charWidth(cp)
-    i += cp > 0xffff ? 2 : 1
-  }
+  for (const token of displayTokens(s)) if (!token.escape) w += token.width
   return w
 }
 
@@ -237,36 +290,23 @@ export function truncateToWidth(s: string, width: number, ellipsis = "..."): str
   let w = 0
   let sawSgr = false
   let cut = false
-  let i = 0
-  while (i < s.length) {
-    if (s[i] === "\x1b") {
-      const len = escapeLength(s, i)
-      if (len > 0) {
-        const seq = s.slice(i, i + len)
-        // Hanya SGR yang disalin — sekuens kontrol lain (clear, alternate
-        // screen, OSC) DIBUANG di sini agar satu pemanggil yang lupa sanitasi
-        // tidak menjadi injeksi terminal (defense-in-depth, bukan pengganti
-        // sanitizeAnsi di batas input tak-terpercaya).
-        if (!isSgrSeq(seq)) {
-          i += len
-          continue
-        }
-        if (seq.endsWith("m")) sawSgr = true
-        out += seq
-        i += len
-        continue
-      }
+  for (const token of displayTokens(s)) {
+    if (token.escape) {
+      // Hanya SGR yang disalin — sekuens kontrol lain (clear, alternate
+      // screen, OSC) DIBUANG di sini agar satu pemanggil yang lupa sanitasi
+      // tidak menjadi injeksi terminal (defense-in-depth, bukan pengganti
+      // sanitizeAnsi di batas input tak-terpercaya).
+      if (!isSgrSeq(token.text)) continue
+      if (token.text.endsWith("m")) sawSgr = true
+      out += token.text
+      continue
     }
-    const cp = s.codePointAt(i)!
-    const cw = charWidth(cp)
-    if (w + cw > budget) {
+    if (w + token.width > budget) {
       cut = true
       break
     }
-    const size = cp > 0xffff ? 2 : 1
-    out += s.slice(i, i + size)
-    w += cw
-    i += size
+    out += token.text
+    w += token.width
   }
   const tail = cut && width > ellW ? ellipsis : ""
   return sawSgr ? `${out}\x1b[0m${tail}` : out + tail
@@ -290,7 +330,6 @@ export function chunkByWidth(s: string, width: number): string[] {
   const out: string[] = []
   let cur = ""
   let w = 0
-  let i = 0
   // Sekuens SGR yang masih "terbuka" — disuntikkan ke potongan berikutnya
   // agar warna tidak hilang saat kata berwarna panjang dipecah. SEMUA pembuka
   // diingat (bukan satu): `\x1b[1m\x1b[31m…` yang terbelah harus membawa bold
@@ -304,39 +343,28 @@ export function chunkByWidth(s: string, width: number): string[] {
     cur = openSgr.join("") // lanjutkan warna ke potongan berikutnya
     w = 0
   }
-  while (i < s.length) {
-    if (s[i] === "\x1b") {
-      const len = escapeLength(s, i)
-      if (len > 0) {
-        const seq = s.slice(i, i + len)
-        if (!isSgrSeq(seq)) {
-          i += len
-          continue
+  for (const token of displayTokens(s)) {
+    if (token.escape) {
+      const seq = token.text
+      if (!isSgrSeq(seq)) continue
+      if (seq.endsWith("m")) {
+        const params = seq.slice(2, -1).split(/[:;]/)
+        if (params.some((p) => SGR_OFF.has(p) || p === "")) openSgr = []
+        if (params.some((p) => p !== "" && !SGR_OFF.has(p))) {
+          openSgr.push(seq)
+          // Batas tumpukan: input patologis (ganti warna tiap karakter tanpa
+          // reset) tak boleh membuat tiap potongan membawa ratusan sekuens.
+          if (openSgr.length > 8) openSgr = openSgr.slice(-8)
         }
-        if (seq.endsWith("m")) {
-          const params = seq.slice(2, -1).split(/[:;]/)
-          if (params.some((p) => SGR_OFF.has(p) || p === "")) openSgr = []
-          if (params.some((p) => p !== "" && !SGR_OFF.has(p))) {
-            openSgr.push(seq)
-            // Batas tumpukan: input patologis (ganti warna tiap karakter tanpa
-            // reset) tak boleh membuat tiap potongan membawa ratusan sekuens.
-            if (openSgr.length > 8) openSgr = openSgr.slice(-8)
-          }
-        }
-        cur += seq
-        i += len
-        continue
       }
+      cur += seq
+      continue
     }
-    const cp = s.codePointAt(i)!
-    const cw = charWidth(cp)
-    const size = cp > 0xffff ? 2 : 1
-    if (w + cw > width && cur !== "") {
+    if (w + token.width > width && cur !== "") {
       pushChunk()
     }
-    cur += s.slice(i, i + size)
-    w += cw
-    i += size
+    cur += token.text
+    w += token.width
   }
   if (cur !== "") pushChunk()
   return out.length ? out : [""]

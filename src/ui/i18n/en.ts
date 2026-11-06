@@ -39,6 +39,7 @@ export const en = {
   "appr.tier.unknown": "unknown effect",
   "dlg.more": "… {n} more",
   "ts.compacted": "… compacted: {reason}",
+  "ts.providerAttemptDiscarded": "provider attempt {attempt} failed; partial output was discarded",
   "ts.thinking": "… thinking",
   "ts.evictMarker": "… {n} early lines outside viewport — full history in model",
   "ts.statusRunning": "running",
@@ -277,6 +278,8 @@ export const en = {
   "one.answerOpen": "  − answer\n",
   "one.answerMin": "  + answer ({n} chars{cap}) — /expand to read\n",
   "one.answerCap": ", capped 1MB",
+  "one.providerAttemptDiscarded":
+    "\n[provider attempt {attempt} failed; partial output above is excluded from the final response]\n",
   "one.thinkOpen": "  − thinking\n",
   "one.thinkMin": "  + thinking\n",
   "one.more3": "\n    ... ({n} more)",

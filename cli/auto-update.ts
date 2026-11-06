@@ -11,6 +11,7 @@ import {
   isInstalledCopy,
   shouldAutoUpdate,
   UPDATE_GUARD_ENV,
+  verifyInstalledVersion,
 } from "../src/policy/update-check.ts"
 import { c } from "../src/ui/render/theme.ts"
 
@@ -44,7 +45,7 @@ export function waitChildExit(child: ChildProcess): Promise<number | null> {
 export async function maybeAutoUpdate(
   version: string,
   signal?: AbortSignal,
-  opts?: { onLongOp?: () => void },
+  opts?: { onLongOp?: () => void; getInstalledVersion?: () => string },
 ): Promise<void> {
   let decision: ReturnType<typeof shouldAutoUpdate>
   try {
@@ -77,7 +78,7 @@ export async function maybeAutoUpdate(
   process.stderr.write(c.dim("Menginstall pembaruan otomatis…\n"))
   let ok = false
   try {
-    ok = installUpdate()
+    ok = installUpdate(latest)
   } catch {
     ok = false
   }
@@ -88,6 +89,35 @@ export async function maybeAutoUpdate(
       ),
     )
     return
+  }
+  const installedMatches = (expected: string): boolean => {
+    if (!opts?.getInstalledVersion) return true
+    return verifyInstalledVersion(expected, opts.getInstalledVersion)
+  }
+  if (!installedMatches(latest)) {
+    process.stderr.write(
+      c.yellow(
+        `Versi terpasang tidak cocok dengan target ${latest}; mencoba memulihkan ${version}…\n`,
+      ),
+    )
+    let restored = false
+    try {
+      restored = installUpdate(version) && installedMatches(version)
+    } catch {
+      restored = false
+    }
+    if (restored) {
+      process.stderr.write(
+        c.yellow(`Auto-update dibatalkan; versi ${version} berhasil dipulihkan.\n`),
+      )
+      return
+    }
+    process.stderr.write(
+      c.error(
+        `Auto-update tidak dapat memverifikasi atau memulihkan instalasi. Keluar; pulihkan dengan: npm install -g minicode-ai@${version}\n`,
+      ),
+    )
+    process.exit(1)
   }
   // Restart ke kode baru dengan argv identik; guard env cegah loop bila
   // versi ter-install ternyata masih dilaporkan lebih tua.

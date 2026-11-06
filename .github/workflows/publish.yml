@@ -14,6 +14,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Require version tag ref
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" != "tag" || ! "${GITHUB_REF}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Publish requires a semantic-version v* tag; refusing ${GITHUB_REF}"
+            exit 1
+          fi
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [[ "${GITHUB_REF}" != "refs/tags/v${PKG_VERSION}" ]]; then
+            echo "Tag ${GITHUB_REF#refs/tags/v} != package.json ${PKG_VERSION} — abort"
+            exit 1
+          fi
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -31,18 +43,15 @@ jobs:
         run: bun run lint
       - name: Test
         run: bun test
+      - name: Coverage gate
+        run: bun run gate:coverage
       - name: Pack check
         run: bun run gate:pack
+      - name: Harness evaluation
+        run: bun run audit:harness
       - name: Build web
         run: bun run web:build && bun run web:check
       - name: Publish to npm
-        run: |
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          TAG_VERSION=${GITHUB_REF#refs/tags/v}
-          if [ "${GITHUB_REF}" != "refs/tags/v${PKG_VERSION}" ] && [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            echo "Tag $TAG_VERSION != package.json $PKG_VERSION — abort"
-            exit 1
-          fi
-          npm publish --access public --provenance
+        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

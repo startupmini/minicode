@@ -1,4 +1,8 @@
-# Kontrak Terminal MiniCode (TUI fullscreen — v7.4, 2026-10-20)
+# Kontrak Terminal MiniCode (TUI fullscreen — v7.5, 2026-11-06)
+
+Perubahan v7.5: kepemilikan frame stdout interaktif diperjelas; cleanup `TuiApp.run()`
+berpasangan melalui `finally`; gap proteksi teardown, startup, spacer, layar kecil,
+dan writer ownership ditutup dengan test app/subprocess/PTY.
 
 Perubahan v7.4 (P12 S2.2 WorkMode): invarian baru I35 — WorkMode (lapis
 intent `DISCUSS`/`PLAN`/`EXECUTE`) sebagai dimensi TERPISAH dari permission
@@ -61,7 +65,7 @@ proteksi").
 
 | Stream | Isi | Catatan |
 |---|---|---|
-| stdout | Output PROGRAM yang bermakna: teks model, receipt perubahan (`› write_file …`), daftar/artefak perintah | Harus bersih dari cursor-control pada non-TTY |
+| stdout | Permanent output pada non-interaktif; frame TUI saat sesi interaktif | `App` satu-satunya pemilik frame interaktif; machine output tetap murni |
 | stderr | Human-facing progress/diagnostic: ledger tool (`› …` hijau/merah), reasoning (verbose), warning, error | Boleh transient rendering bila stderr TTY |
 | keduanya | Warna hanya bila stream TTY (`stdout.isTTY`); `NO_COLOR` menang; TERM/COLORTERM env TIDAK menyalakan warna pada pipe/redirect | Lihat `src/ui/render/theme.ts` `colorLevel()` |
 
@@ -82,9 +86,11 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
 
 ## Ownership
 
-- `App` pemilik tunggal layar (alt-screen enter saat start, exit saat quit —
-  selalu berpasangan, termasuk exception/SIGINT via handler `process.on("exit")`
-  sinkron best-effort). Turn berjalan = indikator spark pada status bar.
+- `App` pemilik tunggal layar (alt-screen enter saat start, exit saat quit).
+  `TuiApp.run()` melepas listener/timer/subscription, memulihkan raw mode, dan
+  menutup layar lewat `finally` idempoten pada jalur sukses maupun exception.
+  Hook `process.on("exit")` hanya jaring best-effort terakhir, bukan pengganti
+  cleanup lifecycle. Turn berjalan = indikator spark pada status bar.
 - **Sinyal fatal** (I31): saat sesi TUI hidup, `App.run()` memasang
   `process.on("SIGTERM")`/`process.on("SIGHUP")` (handler terpisah karena Bun
   tak menyampaikan nama sinyal — satu handler bersama tak bisa membedakan)
@@ -227,6 +233,14 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      tetap pada ledger tool, status tool final memakai glyph + kata
      (`completed`/`failed`/`denied`/`cancelled`/`interrupted`), retry dan grup
      anak mengikuti model, serta ringkasan turn masuk sebagai system entry.
+     **Retry provider:** setiap `model.delta`/`reasoning.delta` live membawa
+     `attemptId`. Bila attempt gagal setelah mengirim konten, TUI membuang
+     ekor attempt yang belum di-commit dan menambah diagnostic invalidasi.
+     Sink linear/pipe bersifat append-only: byte yang sudah ditulis tetap ada,
+     sehingga sink wajib menulis marker invalidasi sebelum output attempt
+     berikutnya. Konten attempt gagal dikeluarkan dari `/copy`, reasoning
+     durable, dan jawaban akhir; usage provider tetap dihitung karena request
+     tersebut sudah terjadi.
      **Grup anak (F-AGENT-1):** tool anak yang punya identitas run
      (`childSessionId`/`runId` — dari `ChildSessionLink`) tampil sebagai baris
      run sendiri, diindented `↳ <marker> <tool> <target> <status>` dengan
@@ -531,15 +545,19 @@ panjang).
   resume > default EXECUTE; nilai invalid → EXECUTE + peringatan; `--verify`
   ditolak fail-closed pada DISCUSS/PLAN; ACP `workMode` + fallback env; daemon
   `workMode` parity).
-- `test/tui-app.test.ts`, `test/tui-popup.test.ts` — I13/I17 (composer
-  editing/busy, dots clock, timer, cursor, resize, popup). *Klausul "satu baris
-  kosong memisahkan composer dari footer" TIDAK punya assertion — lihat
-  [Gap proteksi](#gap-proteksi-terbukti-belum-ditutup).*
+- `test/tui-app.test.ts`, `test/tui-popup.test.ts` — I13/I14/I17 (composer
+  editing/busy, dots clock, timer, cursor, resize, popup; teardown saat initial,
+  frame, event/timer, dan resize repaint gagal; abort/scroll saat layar menciut;
+  spacer composer-footer).
 - `test/markdown-table.test.ts` — I8/I11 (pipe-table parser, streaming
   parity, ANSI/CJK width, TTY/non-TTY, TUI resize, machine-output policy).
 - `test/terminal-contract.test.ts` — I2/I3/I7/I8/I9 (split stdout/stderr,
   kepemilikan layar tunggal, ledger satu baris per tool, streaming tanpa
   duplikasi, foreign writer boleh mentah).
+- `test/provider-retry-output.test.ts`, `test/tui-transcript.test.ts`, dan
+  `test/presentation-events.test.ts` — invalidasi attempt provider gagal;
+  TUI/transkrip/history/`/copy` tidak menggabungkan teks gagal dengan jawaban
+  final, sementara sink linear memberi marker dan usage tetap tercatat.
 - `test/transient-arbitration.test.ts` — I3/I9/I27 (hold layar interaktif:
   picker/askLine, nesting, delayMs).
 - `test/statusline-bun-guard.test.ts` — I4 (painter Bun/Windows: painter
@@ -563,7 +581,12 @@ panjang).
 - `test/repl-linear.test.ts`, `test/footer-chrome.test.ts`,
   `test/info-window.test.ts` — DIHAPUS bersama REPL/chrome/jendela.
 - `test/cli-commands.test.ts` — /status cetak, /sessions popup.
-- `test/screen.test.ts` — I16 (pairing + paintRegion).
+- `test/screen.test.ts` — I16 (pairing + paintRegion; open/paint writer failure
+  mencoba memulihkan alt-screen dan reset region).
+- `test/screen-buffer.test.ts` — parser grid ANSI/CUP dengan pengukuran grapheme
+  yang sama dengan renderer (termasuk emoji ZWJ dua kolom).
+- `test/tui-startup-failure.test.ts` — UI-COMPAT-01 (CLI subprocess non-TTY:
+  diagnostik stderr, stdout kosong, exit 1, provider tidak dipanggil).
 - `test/dialog.test.ts` — I11/I16/I20 (geometri, backdrop, box).
 - `test/tui-overlay.test.ts` — I11/I16 (popup region + gate layar).
 - `test/ui-boundary.test.ts` — I1/I3 (src/ui tak impor keluar).
@@ -579,8 +602,9 @@ panjang).
   wizard, form error).
 - `test/sanitize.test.ts` — I2 (C1/bidi/tag dibuang, ZWJ dipertahankan;
   NO_COLOR menang di cleanUntrusted).
-- `test/width.test.ts` — I2/I7 (tab 8 kolom; truncate/chunk hanya-SGR +
-  auto-reset; chunk(0) kosong).
+- `test/width.test.ts` — I2/I7 + UI-RENDER-01 (VS16, skin tone, ZWJ, regional
+  indicator, keycap, combining mark; truncate/chunk tidak memecah grapheme;
+  tab 8 kolom; hanya-SGR + auto-reset; chunk(0) kosong).
 - `test/exit-codes.test.ts` — I28 (0/1/2 di semua handler; lookup tetap 1;
   hermetic subprocess).
 - `test/exec-json-envelope.test.ts` — I28 (summary ok:false di stdout saat
@@ -608,12 +632,13 @@ panjang).
   ESC[5;2~; hint abort pertama), I13 (MINICODE_MOTION=0: spark statis,
   env dibaca saat dipakai), I25 (kursor CUP parkir di dalam blok ?2026 yang
   sama), I21 (konstanta idle form 80+10 dtk + teks peringatan).
-- `test/pty.test.ts` — I13/I17/I31/I28 via BYTE STREAM NYATA (harness PTY
-  `test/helpers/pty-harness.ts`, CLI di pseudo-terminal sesungguhan +
-  provider fake hermetic): boot → ?1049h + timer idle, turn penuh end-to-end,
-  drag-selection mouse SGR → Ctrl+C → OSC52 (koordinat mouse dihitung dari
-  LAYAR NYATA, bukan hardcoded), resize → repaint, SIGTERM → restore + exit
-  143 (POSIX). *Klausa "exec --json bersih tanpa ANSI" di test ini berjalan
+- `test/pty.test.ts` — I13/I17/I31/I28 + UI-RENDER-01 via BYTE STREAM NYATA
+  (harness PTY `test/helpers/pty-harness.ts`, CLI di pseudo-terminal
+  sesungguhan + provider fake hermetic): boot → ?1049h + timer idle, terminal
+  terlalu kecil menolak alt-screen, turn penuh, teks Unicode kompleks pada
+  frame produksi, drag-selection mouse SGR → Ctrl+C → OSC52 (koordinat mouse
+  dihitung dari LAYAR NYATA, bukan hardcoded), resize → repaint, SIGTERM →
+  restore + exit 143 (POSIX). *Klausa "exec --json bersih tanpa ANSI" di test ini berjalan
   sebagai proses biasa tanpa PTY (lihat komentar di berkasnya) — jadi ia
   bukan bukti byte stream; bukti envelope ada di `test/exec-json-envelope.test.ts`.*
   Platform tak mampu (ConPTY rusak) = SKIP beralasan, bukan hijau palsu.
@@ -629,18 +654,19 @@ panjang).
   skip senyap. Parser SGR dan selection SGR tetap terverifikasi terpisah di
   `test/prompt-engine.test.ts` dan `test/tui-app.test.ts` (fake TTY).
 
-### Gap proteksi (terbukti, belum ditutup)
+### Peta proteksi dan gap tersisa
 
-Bagian ini menahan klaim yang **benar secara implementasi tetapi belum punya
-assertion** yang menjaganya. Menutup gap = menambah test; mengubah
-kata-kata di sini TIDAK menutup gap.
+Baris berstatus "ditutup" menunjukkan bukti yang tersedia saat ini. Gap tersisa
+tetap UNVERIFIED; keberadaan implementasi saja bukan bukti UAT.
 
 | Klaim | Status implementasi | Yang hilang |
 |---|---|---|
-| I14 — "berlaku juga saat layar MENCIUT: abort+scroll selalu lolos" | Terimplementasi (`src/ui/tui/app.ts`: scroll/abort tetap lolos saat `tooSmall()`) | Tidak ada assertion. `test/tui-app.test.ts` ("terminal menciut tengah sesi") hanya asserting bahwa ketikan diabaikan + `Ctrl+D` keluar. |
-| I13/I17 — "satu baris kosong memisahkan composer dari footer" | Terimplementasi (`src/ui/tui/app.ts` merender satu spacer per frame) | Kata "spacer" tidak muncul di berkas test mana pun — tak ada assertion tinggi-geometry maupun rendah. |
+| I14 — "berlaku juga saat layar MENCIUT: abort+scroll selalu lolos" | Terimplementasi (`src/ui/tui/app.ts`: PgUp/PgDn dan Esc diintercept sebelum `tooSmall()`) | Ditutup: `test/tui-app.test.ts` membuktikan scroll posisi baca bertahan saat layar dipulihkan dan Esc memanggil abort; `Ctrl+D` tetap jalan keluar terakhir. |
+| I13/I17 — "satu baris kosong memisahkan composer dari footer" | Terimplementasi (`src/ui/tui/app.ts` merender satu spacer per frame) | Ditutup: `test/tui-app.test.ts` meng-assert baris spacer dalam frame penuh 14 baris. |
 | I20 — lebar kotak popup tetap per permukaan | Terimplementasi | `test/tui-app.test.ts` menandai salah satu test-nya sebagai `(I20)`, padahal test itu milik I13 (status bar). Lebar popup diverifikasi di `test/tui-geometry.test.ts` + `test/dialog.test.ts`; label di `tui-app` menyesatkan. |
 | I5 — tak ada popup yatim / input bocor setelah success/failure/cancel/SIGINT/session end | Tak terverifikasi | `test/turn-status.test.ts` dan `test/statusline-bun-guard.test.ts` tidak meng-assert apa pun soal popup yatim atau kebocoran input. |
 | I26 pada jalur presentasi | i18n ada dan dijaga terpisah | `test/presentation-projections.test.ts` mengunci locale `en` di setiap test dan tak pernah menguji locale `id`; klaim i18n dijaga `test/i18n.test.ts` + `test/i18n-hardcode.test.ts`. |
 | I2/I6/I28 pada proyeksi linear/ACP | Alur linear/ACP ada | `test/presentation-linear-acp.test.ts` tak meng-assert split stdout/stderr, absence cursor-control, maupun exit code secara langsung. |
-| I3 — tak ada byte stdout bocor selama alternate-screen | Terimplementasi (TUI menulis UI ke stderr; stdout khusus pipe/envelope) | Belum ada test PTY yang meng-assert "stream stdout kosong selama alt-screen aktif" (hanya fake-TTY). Juga: job `ci-windows` TIDAK pernah menjalankan `pty*.test.ts` — suite PTY hanya tercapai lewat glob `test/p*.test.ts` di job ubuntu. |
+| I3 — kepemilikan frame tunggal selama alternate-screen | `App` merender frame ke stdout; `simple` quiet dan transient stderr ditahan selama layar dimiliki TUI | Ditutup untuk jalur yang diuji: `test/terminal-contract.test.ts` memastikan printer linear quiet tetap tidak menulis, `test/pty.test.ts` mengamati frame produksi, dan `test/writer-inventory.test.ts` mengunci daftar writer. Suite PTY berjalan pada CI Linux; Windows ConPTY tidak menjalankan seluruh kasus PTY. |
+| UI-COMPAT-01 — startup TUI gagal | Non-TTY/terminal tak mampu menolak fullscreen tanpa fallback linear; diagnostik stderr dan exit 1 | Ditutup: `test/tui-startup-failure.test.ts` menguji CLI produksi via subprocess; `test/pty.test.ts` menguji terminal di bawah minimum tanpa `?1049h`. Exit code PTY hanya diklaim jika platform mengembalikan angka. |
+| UI-RENDER-02 — exception render melewati teardown | `TuiApp.run()` melakukan cleanup idempoten di `finally`; write frame melempar ke owner | Ditutup untuk initial paint, writer frame, dan event repaint: `test/tui-app.test.ts` + `test/screen.test.ts` memverifikasi alt-screen, raw mode, listener, subscription, timer dan sync-update. Sinyal POSIX diperiksa terpisah; Windows melewati test sinyal POSIX. |

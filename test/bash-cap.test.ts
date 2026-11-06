@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { bashTool } from "../src/tools/bash.ts"
 
-const ctx = { signal: new AbortController().signal } as never
+const ctx = { signal: new AbortController().signal, cwd: process.cwd() } as never
 
 test("bash caps huge output during streaming (no OOM, marker set)", async () => {
   // Interpreter = runtime sendiri (bun) agar hermetic: `node` tak ada di

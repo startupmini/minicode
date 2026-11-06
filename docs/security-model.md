@@ -58,7 +58,7 @@ Minicode **tidak menyediakan tool** untuk (terverifikasi di `src/tools/`):
 - `git reset`, `amend`, `rebase`, `checkout`, `branch -D`, `stash drop`
 - Eksekusi remote / deploy bawaan
 
-Catatan jujur: operasi itu tetap BISA diketik lewat `bash` (tunduk pada bash-guard + jail, BUKAN larangan). Dan `git` via bash menjalankan konfigurasi repo apa adanya (hook/filter/driver milik repo) — beda dengan tool `git_*` yang dinetralkan. Di repo tak-terpercaya, utamakan tool `git_status`/`git_diff`/`git_log` dan pahami trust stock-git sebelum `add`/`checkout` via bash.
+Catatan jujur: operasi itu tetap BISA diketik lewat `bash` (tunduk pada bash-guard + jail, BUKAN larangan). `git` via bash menjalankan konfigurasi repo apa adanya (hook/filter/driver milik repo). Tool baca `git_*` dinetralkan; `git_commit` menolak sebelum staging bila filter Git terkonfigurasi. Di repo tak-terpercaya, utamakan tool baca dan tinjau konfigurasi sebelum memakai Git manual.
 
 ## Recovery
 
@@ -76,7 +76,7 @@ Kejujuran yang disengaja: crash ambiguity TETAP MUNGKIN (filesystem dan database
 
 ## Limitations
 
-- **Repo hooks/filter/driver:** `git` via bash mengeksekusinya (semantik stock-git); tool `git_*` tidak.
+- **Repo hooks/filter/driver:** `git` via bash mengeksekusinya (semantik stock-git); tool baca `git_*` menetralkan filter, sedangkan `git_commit` menolak bila menemukan filter terkonfigurasi.
 - **Bash arbitrer:** guard adalah analisis statis; substitusi dinamis (`$(curl …)`) butuh sandbox OS/docker untuk isolasi nyata.
 - **Efek eksternal MCP:** setelah terjadi, tak bisa dibatalkan dari sini.
 - **Provider/network:** data melewati provider pilihan Anda; Minicode tak menambahkan transmisi sendiri.

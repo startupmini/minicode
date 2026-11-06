@@ -133,6 +133,8 @@ async function main(): Promise<void> {
   // Distribusi global antar semua task — jawaban "harness ini matinya bagaimana".
   const globalFail: Record<BenchFailClass, number> = emptyFailClasses()
   let globalErrors = 0
+  let totalStepsUsed = 0
+  let totalStepBudget = 0
   const perTask = new Map<
     string,
     {
@@ -166,6 +168,7 @@ async function main(): Promise<void> {
       process.env.MINICODE_HOME = homeTmp
       let memoryHits = 0
       let steps = 0
+      let observedSteps = 0
       let error: string | undefined
       try {
         // Seed memory global run ini (hanya bila memory on + task memintanya).
@@ -196,6 +199,9 @@ async function main(): Promise<void> {
           ...(benchTimeoutMs ? { timeoutMs: benchTimeoutMs } : {}),
         })
         const usage = createUsageCollector(session.events)
+        session.events.on("step:started", () => {
+          observedSteps++
+        })
         const t0 = Date.now()
         let finalText = ""
         try {
@@ -204,6 +210,9 @@ async function main(): Promise<void> {
           finalText = (res as { finalText?: string }).finalText ?? ""
         } catch (e) {
           error = (e as Error).message
+          // `session.run()` tidak mengembalikan usage saat loop melempar
+          // (mis. max_steps_exceeded); event step tetap memberi hitungan aktual.
+          steps = observedSteps
         }
         const durationMs = Date.now() - t0
         const u = usage.get()
@@ -262,6 +271,8 @@ async function main(): Promise<void> {
         )
         await task.cleanup(dir).catch(() => {})
       } finally {
+        totalStepsUsed += steps
+        totalStepBudget += runMaxSteps
         await rm(homeTmp, { recursive: true, force: true }).catch(() => {})
       }
     }
@@ -308,8 +319,11 @@ async function main(): Promise<void> {
   const metrics = {
     taskCompletionRate: tasksTotal > 0 ? Number((tasksCompleted / tasksTotal).toFixed(4)) : 0,
     verificationPassRate: totalRuns > 0 ? Number((totalPassed / totalRuns).toFixed(4)) : 0,
-    stepsUsed: benchMaxSteps ?? 0,
-    maxSteps: benchMaxSteps ?? 0,
+    // Rasio agregat berbobot seluruh run: jumlah step aktual dibanding jumlah
+    // batas step yang disediakan. Jangan substitusi batas konfigurasi sebagai
+    // pemakaian aktual, karena itu membuat skor adherence selalu nol.
+    stepsUsed: totalStepsUsed,
+    maxSteps: totalStepBudget,
     safetyViolations: totalSafetyViolations,
     tasksTotal,
     tasksCompleted,

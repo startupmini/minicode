@@ -25,6 +25,7 @@ interface EvalSummary {
   resolveRate?: number
   results?: TaskResult[]
   runsPerTask?: number
+  fake?: boolean
   model?: string | null
   timestamp?: string
 }
@@ -51,28 +52,88 @@ export interface GateVerdict {
 export function evaluateGate(summary: EvalSummary, opts: GateOptions): GateVerdict {
   const failures: string[] = []
   const warnings: string[] = []
-  const rate = typeof summary.resolveRate === "number" ? summary.resolveRate : NaN
-  if (!Number.isFinite(rate)) {
-    failures.push("resolveRate hilang/bukan angka di results")
-  } else if (rate < opts.minRate) {
+  const rate = typeof summary?.resolveRate === "number" ? summary.resolveRate : NaN
+  if (summary?.fake !== false) {
+    failures.push("hasil harus menyatakan fake:false; hasil --fake hanya untuk smoke")
+  }
+  if (!Number.isFinite(opts.minRate) || opts.minRate < 0 || opts.minRate > 1) {
+    failures.push("minRate harus finite dalam rentang [0,1]")
+  }
+  if (!Number.isFinite(opts.maxMedianTokens) || opts.maxMedianTokens < 0) {
+    failures.push("maxMedianTokens harus finite dan >= 0")
+  }
+  if (!Number.isFinite(rate) || rate < 0 || rate > 1) {
+    failures.push("resolveRate hilang/bukan angka dalam rentang [0,1] di results")
+  } else if (Number.isFinite(opts.minRate) && rate < opts.minRate) {
     failures.push(`resolve rate ${rate} < min ${opts.minRate}`)
   }
-  const results = Array.isArray(summary.results) ? summary.results : []
+  const results = Array.isArray(summary?.results) ? summary.results : []
   if (results.length === 0) failures.push("tidak ada hasil task di results")
+  const configuredRuns = summary?.runsPerTask
+  if (
+    configuredRuns !== undefined &&
+    (!Number.isSafeInteger(configuredRuns) || configuredRuns <= 0)
+  ) {
+    failures.push("runsPerTask harus integer positif")
+  }
+  let validCounts = results.length > 0
+  let resolvedTasks = 0
   for (const r of results) {
-    const id = r.id ?? "(tanpa-id)"
-    const runs = r.runs ?? summary.runsPerTask ?? 1
-    const passed = r.passedCount ?? 0
+    if (!r || typeof r !== "object") {
+      failures.push("hasil task bukan object")
+      validCounts = false
+      continue
+    }
+    const id = typeof r.id === "string" && r.id.length > 0 ? r.id : "(tanpa-id)"
+    const runs = r.runs ?? configuredRuns
+    const passed = r.passedCount
+    if (typeof runs !== "number" || !Number.isSafeInteger(runs) || runs <= 0) {
+      failures.push(`task ${id}: runs harus integer positif`)
+      validCounts = false
+      continue
+    }
+    if (
+      typeof passed !== "number" ||
+      !Number.isSafeInteger(passed) ||
+      passed < 0 ||
+      passed > runs
+    ) {
+      failures.push(`task ${id}: passedCount harus integer dalam [0,${runs}]`)
+      validCounts = false
+      continue
+    }
+    if (configuredRuns !== undefined && runs !== configuredRuns) {
+      failures.push(`task ${id}: runs ${runs} tidak cocok dengan runsPerTask ${configuredRuns}`)
+      validCounts = false
+    }
+    if (passed === runs) resolvedTasks++
     if (passed < runs && !(opts.allowPartial && passed > 0)) {
       failures.push(`task ${id}: ${passed}/${runs} lolos`)
     }
-    if (opts.maxMedianTokens > 0 && typeof r.medianTokens === "number") {
+    if (opts.maxMedianTokens > 0) {
+      if (
+        typeof r.medianTokens !== "number" ||
+        !Number.isFinite(r.medianTokens) ||
+        r.medianTokens < 0
+      ) {
+        failures.push(`task ${id}: medianTokens hilang/bukan angka finite >= 0`)
+        continue
+      }
       const msg = `task ${id}: median ${r.medianTokens} token > max ${opts.maxMedianTokens}`
       // Mode observasi: catat, jangan gagalkan (ambang belum dikunci).
       if (r.medianTokens > opts.maxMedianTokens) {
         if (opts.observeTokens) warnings.push(`[observe] ${msg}`)
         else failures.push(msg)
       }
+    }
+  }
+  if (validCounts && Number.isFinite(rate) && rate >= 0 && rate <= 1) {
+    // Runner menyimpan resolveRate dengan pembulatan 3 desimal. Pastikan
+    // agregat itu sesuai dengan hitungan task lengkap agar JSON tak bisa
+    // menyatakan rate lulus saat hasil per-task mengatakan sebaliknya.
+    const derivedRate = Number((resolvedTasks / results.length).toFixed(3))
+    if (rate !== derivedRate) {
+      failures.push(`resolveRate ${rate} tidak cocok dengan hasil task (${derivedRate})`)
     }
   }
   const ok = failures.length === 0
@@ -303,48 +364,84 @@ export function computeDeterministicEvalScore(
   opts: { threshold?: number } = {},
 ): DeterministicEvalScore {
   const failures: string[] = []
-  const threshold =
-    typeof opts.threshold === "number" && Number.isFinite(opts.threshold)
-      ? opts.threshold
-      : DEFAULT_EVAL_PASS_THRESHOLD
+  const requestedThreshold = opts.threshold ?? DEFAULT_EVAL_PASS_THRESHOLD
+  const validThreshold =
+    typeof requestedThreshold === "number" &&
+    Number.isFinite(requestedThreshold) &&
+    requestedThreshold >= 0 &&
+    requestedThreshold <= 1
+  const threshold = validThreshold ? requestedThreshold : DEFAULT_EVAL_PASS_THRESHOLD
+  if (!validThreshold) failures.push("threshold harus finite dalam rentang [0,1]")
+
+  const input = metrics && typeof metrics === "object" ? metrics : {}
+  if (input !== metrics) failures.push("metrics harus berupa object")
+
+  const boundedRate = (value: unknown, label: string): number => {
+    const n = finiteOr(value)
+    if (n === null || n < 0 || n > 1) {
+      failures.push(`${label} hilang/bukan angka dalam rentang [0,1]`)
+      return 0
+    }
+    return n
+  }
+  const nonNegativeInteger = (value: unknown, label: string): number | null => {
+    const n = finiteOr(value)
+    if (n === null || !Number.isSafeInteger(n) || n < 0) {
+      failures.push(`${label} harus integer finite >= 0`)
+      return null
+    }
+    return n
+  }
 
   // taskCompletion: eksplisit rate menang; fallback ke count; absen = 0 (fail-closed).
-  const explicitRate = finiteOr(metrics.taskCompletionRate)
-  const tasksTotal = finiteOr(metrics.tasksTotal)
-  const tasksCompleted = finiteOr(metrics.tasksCompleted)
+  const explicitCompletion = input.taskCompletionRate
   let taskCompletion = 0
-  if (explicitRate !== null) {
-    taskCompletion = clamp01(explicitRate)
-  } else if (tasksTotal !== null && tasksTotal > 0 && tasksCompleted !== null) {
-    taskCompletion = clamp01(tasksCompleted / tasksTotal)
+  if (explicitCompletion !== undefined) {
+    taskCompletion = boundedRate(explicitCompletion, "taskCompletionRate")
   } else {
-    failures.push("taskCompletionRate tidak tersedia")
+    const tasksTotal = nonNegativeInteger(input.tasksTotal, "tasksTotal")
+    const tasksCompleted = nonNegativeInteger(input.tasksCompleted, "tasksCompleted")
+    if (
+      tasksTotal !== null &&
+      tasksTotal > 0 &&
+      tasksCompleted !== null &&
+      tasksCompleted <= tasksTotal
+    ) {
+      taskCompletion = tasksCompleted / tasksTotal
+    } else {
+      if (tasksTotal === 0) failures.push("tasksTotal harus > 0")
+      if (tasksTotal !== null && tasksCompleted !== null && tasksCompleted > tasksTotal) {
+        failures.push("tasksCompleted tidak boleh melebihi tasksTotal")
+      }
+      if (tasksTotal === null || tasksCompleted === null)
+        failures.push("taskCompletionRate tidak tersedia")
+    }
   }
 
   // verificationPass: absen = 0 (tidak ada bukti hijau = tidak lulus).
-  const verificationPass = clamp01(finiteOr(metrics.verificationPassRate) ?? 0)
-  if (finiteOr(metrics.verificationPassRate) === null) {
-    failures.push("verificationPassRate tidak tersedia")
-  }
+  const verificationPass = boundedRate(input.verificationPassRate, "verificationPassRate")
 
-  // stepBudgetAdherence: 1 - used/max, diklamp [0,1]. Batas absen/0 = 0.
-  const stepsUsed = finiteOr(metrics.stepsUsed)
-  const maxSteps = finiteOr(metrics.maxSteps)
+  // stepBudgetAdherence: 1 - used/max. Input invalid tidak boleh dinormalisasi
+  // menjadi skor yang tampak sah.
+  const stepsUsed = nonNegativeInteger(input.stepsUsed, "stepsUsed")
+  const maxSteps = nonNegativeInteger(input.maxSteps, "maxSteps")
   let stepBudgetAdherence = 0
   if (stepsUsed !== null && maxSteps !== null && maxSteps > 0) {
     stepBudgetAdherence = clamp01(1 - stepsUsed / maxSteps)
     if (stepsUsed > maxSteps) failures.push(`steps ${stepsUsed} melebihi batas ${maxSteps}`)
   } else {
-    failures.push("stepsUsed/maxSteps tidak tersedia")
+    if (maxSteps === 0) failures.push("maxSteps harus > 0")
+    if (stepsUsed === null || maxSteps === null) failures.push("stepsUsed/maxSteps tidak tersedia")
   }
 
   // safetyCompliance: biner — nol pelanggaran = 1, selain itu 0. TAPI bila
   // metrik inti lain hilang (tidak ada bukti sama sekali), safetyCompliance
   // TIDAK boleh memberi "skor gratis" — perlakukan sebagai 0 (fail-closed).
-  const violations = finiteOr(metrics.safetyViolations) ?? 0
+  const violations = nonNegativeInteger(input.safetyViolations, "safetyViolations")
   const hasCoreEvidence = failures.length === 0
   const safetyCompliance = violations === 0 && hasCoreEvidence ? 1 : 0
-  if (violations > 0) failures.push(`${violations} pelanggaran keamanan/loop-guard`)
+  if (violations !== null && violations > 0)
+    failures.push(`${violations} pelanggaran keamanan/loop-guard`)
 
   const score =
     taskCompletion * EVAL_WEIGHTS.taskCompletion +

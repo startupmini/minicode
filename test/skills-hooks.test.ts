@@ -36,6 +36,27 @@ test("skills: load, find, render", async () => {
   await rm(tmp, { recursive: true, force: true })
 })
 
+test("RESOURCE-02: skill read stops at the byte cap and marks truncation", async () => {
+  const dir = ".tmp-skills-capped"
+  const secretTail = "SKILL_TAIL_MUST_NOT_LOAD"
+  await mkdir(`${dir}/.minicode/skills`, { recursive: true })
+  await writeFile(
+    `${dir}/.minicode/skills/large.md`,
+    `---\nname: large\n---\n${"x".repeat(40_000)}${secretTail}`,
+  )
+  try {
+    invalidateSkillCache()
+    const skill = (await loadSkills(dir)).find((s) => s.name === "large")
+    expect(skill).toBeDefined()
+    expect(skill!.body).toContain("skill truncated after first 32000 bytes")
+    expect(skill!.body).not.toContain(secretTail)
+    expect(Buffer.byteLength(skill!.body, "utf8")).toBeLessThan(33_000)
+  } finally {
+    invalidateSkillCache()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test("hooks allowlist match", () => {
   const call = { id: "1", name: "bash", args: { cmd: "echo hi" } }
   expect(matchAllowlist(call as never, [])).toBe(false)

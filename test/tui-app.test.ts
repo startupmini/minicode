@@ -9,8 +9,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import type { UiPresentationActivity } from "../src/ui/contract.ts"
 import { resetLocaleState, setSessionLocale } from "../src/ui/i18n/locale.ts"
-import { resetAltScreenDepth } from "../src/ui/runtime/screen.ts"
-import { formatTimer, TuiApp, type TuiHost, thinkingDots } from "../src/ui/tui/app.ts"
+import { altScreenDepth, resetAltScreenDepth } from "../src/ui/runtime/screen.ts"
+import {
+  formatTimer,
+  TuiApp,
+  type TuiHost,
+  type TuiStatusSnapshot,
+  thinkingDots,
+} from "../src/ui/tui/app.ts"
 import { Transcript } from "../src/ui/tui/transcript.ts"
 import { createFakeBus, installFakeTty, KEY } from "./helpers/tui-harness.ts"
 
@@ -30,7 +36,14 @@ afterEach(() => {
   resetLocaleState()
 })
 
-function setup(opts: { columns?: number; rows?: number; isTTY?: boolean } = {}) {
+function setup(
+  opts: {
+    columns?: number
+    rows?: number
+    isTTY?: boolean
+    getStatus?: () => TuiStatusSnapshot
+  } = {},
+) {
   const columns = opts.columns ?? 60
   const rows = opts.rows ?? 14
   tty = installFakeTty({ columns, rows, isTTY: opts.isTTY })
@@ -38,15 +51,18 @@ function setup(opts: { columns?: number; rows?: number; isTTY?: boolean } = {}) 
   const transcript = new Transcript(bus as never)
   const calls: string[] = []
   const copied: string[] = []
+  let abortCalls = 0
   let slowGate: (() => void) | null = null
   let pinnedActivity: UiPresentationActivity | undefined
   const host: TuiHost = {
     bus: bus as never,
-    getStatus: () => ({
-      footer: { mode: "auto", model: "test-model", cwd: "/kerja", context: "1k" },
-      busy: false,
-      ...(pinnedActivity ? { pinnedActivity } : {}),
-    }),
+    getStatus:
+      opts.getStatus ??
+      (() => ({
+        footer: { mode: "auto", model: "test-model", cwd: "/kerja", context: "1k" },
+        busy: false,
+        ...(pinnedActivity ? { pinnedActivity } : {}),
+      })),
     listCommands: (prefix) => ["/model", "/help", "/exit"].filter((c) => c.startsWith(prefix)),
     submit: async (text) => {
       calls.push(text)
@@ -62,7 +78,9 @@ function setup(opts: { columns?: number; rows?: number; isTTY?: boolean } = {}) 
       copied.push(text)
       return true
     },
-    abort: () => {},
+    abort: () => {
+      abortCalls++
+    },
     cycleWorkMode: () => {},
     togglePermissionMode: () => {},
     toggleCompact: () => {},
@@ -84,6 +102,7 @@ function setup(opts: { columns?: number; rows?: number; isTTY?: boolean } = {}) 
     app,
     calls,
     copied,
+    abortCalls: () => abortCalls,
     releaseSlow,
     screenText,
     setPinnedActivity: (next: UiPresentationActivity | undefined) => {
@@ -98,9 +117,11 @@ describe("TuiApp", () => {
     await tty!.ready()
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     expect(tty!.screen()).toHaveLength(14)
+    expect(tty!.screen()[12]).toBe("") // spacer memisahkan composer dan footer
     expect(tty!.all()).toContain("\x1b[?1049h")
     expect(tty!.all()).toContain("\x1b[?1002h")
     expect(tty!.all()).toContain("\x1b[?1006h")
+    expect(tty!.allErr()).toBe("")
     await tty!.send(KEY.ctrlD)
     const res = await runP
     expect(res.started).toBe(true)
@@ -109,6 +130,115 @@ describe("TuiApp", () => {
     expect(tty!.all()).toContain("\x1b[?1006l")
     expect(tty!.all()).toContain("\x1b[?1002l")
     expect(tty!.all()).toContain("\x1b[?1000l")
+  })
+  test("initial paint exception memulihkan layar, raw mode, listeners, dan timer", async () => {
+    const failure = new Error("status awal gagal")
+    const { app, bus } = setup({
+      getStatus: () => {
+        throw failure
+      },
+    })
+    const signalListeners = ["SIGTERM", "SIGHUP", "SIGINT", "exit"].map((event) =>
+      process.listenerCount(event),
+    )
+    const busListeners = bus.listenerCount("turn:started")
+
+    await expect(app.run()).rejects.toBe(failure)
+
+    expect(tty!.all()).toContain("\x1b[?1049h")
+    expect(tty!.all()).toContain("\x1b[?1049l")
+    expect(tty!.all()).toContain("\x1b[?1006l")
+    expect(tty!.isRaw()).toBe(false)
+    expect(tty!.promptListeners()).toBe(0)
+    expect(altScreenDepth()).toBe(0)
+    expect(bus.listenerCount("turn:started")).toBe(busListeners)
+    expect(
+      ["SIGTERM", "SIGHUP", "SIGINT", "exit"].map((event) => process.listenerCount(event)),
+    ).toEqual(signalListeners)
+    const output = tty!.all()
+    tty!.resize(61, 14)
+    expect(tty!.all()).toBe(output)
+    expect(tty!.failures()).toEqual([])
+  })
+  test("writer gagal di tengah frame: sync-update ditutup dan layar dipulihkan", async () => {
+    const { app } = setup()
+    const output = process.stdout as unknown as { write(chunk: string | Uint8Array): boolean }
+    const originalWrite = output.write
+    let failOnce = true
+    output.write = (chunk) => {
+      if (failOnce && String(chunk) === "\x1b[?2026h") {
+        failOnce = false
+        throw new Error("stdout putus saat frame")
+      }
+      return originalWrite.call(process.stdout, chunk)
+    }
+
+    try {
+      await expect(app.run()).rejects.toThrow("stdout putus saat frame")
+    } finally {
+      output.write = originalWrite
+    }
+
+    expect(tty!.all()).toContain("\x1b[?2026l")
+    expect(tty!.all()).toContain("\x1b[?1049l")
+    expect(tty!.isRaw()).toBe(false)
+    expect(altScreenDepth()).toBe(0)
+  })
+  test("event repaint exception stops the app and performs full teardown", async () => {
+    let fail = false
+    const failure = new Error("status saat repaint gagal")
+    const { app, bus } = setup({
+      getStatus: () => {
+        if (fail) throw failure
+        return {
+          footer: { mode: "auto", model: "test-model", cwd: "/kerja", context: "1k" },
+          busy: false,
+        }
+      },
+    })
+    const busListeners = bus.listenerCount("turn:started")
+    const run = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((output) => output.includes("00.00.00"))
+    fail = true
+    bus.emit("turn:started", { turn: 1 })
+
+    await expect(run).rejects.toBe(failure)
+
+    expect(tty!.all()).toContain("\x1b[?1049l")
+    expect(tty!.isRaw()).toBe(false)
+    expect(tty!.promptListeners()).toBe(0)
+    expect(altScreenDepth()).toBe(0)
+    expect(bus.listenerCount("turn:started")).toBe(busListeners)
+    expect(tty!.failures()).toEqual([])
+  })
+  test("resize repaint exception memulihkan layar dan melepas listener", async () => {
+    let fail = false
+    const failure = new Error("status saat resize gagal")
+    const { app, bus } = setup({
+      getStatus: () => {
+        if (fail) throw failure
+        return {
+          footer: { mode: "auto", model: "test-model", cwd: "/kerja", context: "1k" },
+          busy: false,
+        }
+      },
+    })
+    const busListeners = bus.listenerCount("turn:started")
+    const run = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((output) => output.includes("00.00.00"))
+    fail = true
+    tty!.resize(61, 14)
+
+    await expect(run).rejects.toBe(failure)
+
+    expect(tty!.all()).toContain("\x1b[?1049l")
+    expect(tty!.isRaw()).toBe(false)
+    expect(tty!.promptListeners()).toBe(0)
+    expect(altScreenDepth()).toBe(0)
+    expect(bus.listenerCount("turn:started")).toBe(busListeners)
+    expect(tty!.failures()).toEqual([])
   })
   test("MINICODE_MOUSE_SELECTION=0 mematikan tracking TUI", async () => {
     const previous = process.env.MINICODE_MOUSE_SELECTION
@@ -217,7 +347,7 @@ describe("TuiApp", () => {
     await tty!.send(KEY.ctrlD)
     await runP
   })
-  test("status bar: mode + model + konteks di baris dasar (I20)", async () => {
+  test("status bar: mode + model + konteks di baris dasar (I13)", async () => {
     const { app } = setup()
     const runP = app.run()
     await tty!.ready()
@@ -789,6 +919,33 @@ describe("TuiApp", () => {
     // Ctrl+D tetap keluar.
     await tty!.send(KEY.ctrlD)
     await runP
+    expect(tty!.all()).toContain("\x1b[?1049l")
+  })
+  test("terminal menciut saat busy: PgUp mempertahankan posisi baca dan Esc abort", async () => {
+    const { app, transcript, calls, releaseSlow, screenText, abortCalls } = setup({ rows: 14 })
+    transcript.pushInfo(Array.from({ length: 30 }, (_, i) => `history-${i}`))
+    const run = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((output) => output.includes("history-29"))
+    await tty!.send("/slow")
+    await tty!.send(KEY.enter)
+    // Marker transkrip yang sama sempat muncul saat teks masih di composer;
+    // tunggu bukti submit host agar abort menguji turn yang benar-benar aktif.
+    await Bun.sleep(0)
+    expect(calls).toContain("/slow")
+
+    tty!.resize(60, 5)
+    await tty!.waitForOutput((output) => output.includes("too small"))
+    for (let i = 0; i < 5; i++) await tty!.send(KEY.pgUp)
+    await tty!.send(KEY.esc, 90)
+    expect(abortCalls()).toBeGreaterThan(0)
+    expect(tty!.all()).not.toContain("\x1b[?1049l")
+
+    tty!.resize(60, 14)
+    expect(screenText()).not.toContain("history-29")
+    await tty!.send(KEY.ctrlD)
+    await releaseSlow()
+    await run
     expect(tty!.all()).toContain("\x1b[?1049l")
   })
   test("releaseTerminal keluar alt-screen + cooked; reacquire hidup lagi", async () => {

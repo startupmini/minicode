@@ -3,6 +3,7 @@ import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
 import { assertSafeWriteTarget, resolveSafePath, safeReadFile } from "../lib/safe-open.ts"
 import { appendLspDiagnostics } from "../policy/verifier.ts"
+import { requireToolCwd } from "./context.ts"
 import { applyHashline } from "./hashline.ts"
 
 function normalizeLf(s: string): string {
@@ -145,7 +146,7 @@ export const editTool: Tool = {
   async execute({ path, oldString, newString }, ctx) {
     ctx.signal.throwIfAborted()
     const p = path as string
-    const root = ctx.cwd ?? process.cwd()
+    const root = requireToolCwd(ctx)
     // Verifikasi path terpusat (logis + target nyata, induk symlink ikut
     // ter-resolusi) — symlink internal tetap bisa diedit, targetnya yang dicek.
     const { abs, real: realAbs } = await resolveSafePath(p, root)

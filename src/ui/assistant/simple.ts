@@ -176,8 +176,8 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   // aliran (model/reasoning/bash) agar state ekor tak tercampur. Ekor yang
   // tersisa saat turn selesai/detach DIBUANG (flush di bawah): escape tanpa
   // teks lanjutan tak punya efek tampak kecuali mutasi state terminal.
-  const textSan = createStreamSanitizer()
-  const reasoningSan = createStreamSanitizer()
+  let textSan = createStreamSanitizer()
+  let reasoningSan = createStreamSanitizer()
   const bashSan = createStreamSanitizer()
   // State fence dipegang DI SINI, bukan di decorateMarkdown: baris datang per
   // event streaming, sedangkan decorateMarkdown memproses satu teks utuh.
@@ -206,6 +206,14 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   // /copy tak tersentuh (rememberTurn selalu jalan sebelum sink).
   let answerBuf = ""
   let answerTruncated = false
+  let activeProviderAttempt: number | null = null
+  let attemptCopyText = ""
+  let attemptAnswerBuf = ""
+  let attemptAnswerTruncated = false
+  let attemptThinkingBuf = ""
+  let attemptReasoningLine = ""
+  let attemptThinkState: "off" | "min" | "exp" = "off"
+  let attemptFence: FenceMatch | null = null
   const ANSWER_BUF_MAX = 1_000_000
   // Jawaban tak pernah disembunyikan di pipa/CI (output mesin harus utuh)
   // dan --verbose selalu menampilkan semua.
@@ -565,6 +573,8 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       reasoningLine = ""
       answerBuf = ""
       answerTruncated = false
+      activeProviderAttempt = null
+      attemptCopyText = ""
       ui.clearCollapsedSections()
       ui.setActiveSection(null)
       archiveTurn(ui)
@@ -605,12 +615,71 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
         answerTruncated = false
       }
       const clean = cleanUntrusted(textSan.push(e.text), !!process.stdout.isTTY)
-      rememberTurn(ui, clean)
+      if (activeProviderAttempt === null) {
+        // Kompatibilitas untuk bus provider legacy yang tidak melewati guard.
+        rememberTurn(ui, clean)
+      } else if (attemptCopyText.length < ANSWER_BUF_MAX) {
+        attemptCopyText += clean.slice(0, ANSWER_BUF_MAX - attemptCopyText.length)
+      }
       consumeTableEvents(tableStream.push(clean))
     }),
   )
   offs.push(
     bus.on("provider:extension", (e) => {
+      if (e.kind === "minicode:attempt") {
+        const data = e.data as {
+          phase?: unknown
+          attemptId?: unknown
+          hadVisibleOutput?: unknown
+        } | null
+        const id = data?.attemptId
+        if (typeof id !== "number" || !Number.isSafeInteger(id) || id < 1) return
+        if (data?.phase === "started") {
+          // Batas attempt juga menjadi batas stream markdown dan ANSI. Teks
+          // attempt sebelumnya yang sudah diterima dipertahankan; state parsial
+          // yang belum dirender diselesaikan sebelum attempt baru dimulai.
+          flushTableStream()
+          tableStream.reset()
+          activeProviderAttempt = id
+          attemptCopyText = ""
+          attemptAnswerBuf = answerBuf
+          attemptAnswerTruncated = answerTruncated
+          attemptThinkingBuf = thinkingBuf
+          attemptReasoningLine = reasoningLine
+          attemptThinkState = thinkState
+          attemptFence = fence ? { ...fence } : null
+          textSan = createStreamSanitizer()
+          reasoningSan = createStreamSanitizer()
+        } else if (id === activeProviderAttempt && data?.phase === "completed") {
+          rememberTurn(ui, attemptCopyText)
+          activeProviderAttempt = null
+          attemptCopyText = ""
+          textSan.flush()
+          reasoningSan.flush()
+          textSan = createStreamSanitizer()
+          reasoningSan = createStreamSanitizer()
+        } else if (id === activeProviderAttempt && data?.phase === "invalidated") {
+          answerBuf = attemptAnswerBuf
+          answerTruncated = attemptAnswerTruncated
+          thinkingBuf = attemptThinkingBuf
+          reasoningLine = attemptReasoningLine
+          thinkState = attemptThinkState
+          fence = attemptFence ? { ...attemptFence } : null
+          plainLineBuffer = ""
+          tableStream.reset()
+          textSan.flush()
+          reasoningSan.flush()
+          textSan = createStreamSanitizer()
+          reasoningSan = createStreamSanitizer()
+          ui.setActiveSection(thinkState === "off" ? null : "thinking")
+          activeProviderAttempt = null
+          attemptCopyText = ""
+          if (data.hadVisibleOutput === true) {
+            wErr(c.warning(t("one.providerAttemptDiscarded", { attempt: id })))
+          }
+        }
+        return
+      }
       if (e.kind === "reasoning") {
         // Section thinking: reasoning.visible = expanded (stream), else
         // minimized (satu baris `  + thinking`, isi di-buffer untuk /expand).

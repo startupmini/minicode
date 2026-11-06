@@ -201,6 +201,8 @@ export async function createMinicodeSession(
     beforeToolEffect?: (call: { id: string; name: string; args: unknown }) => Promise<void>
   },
 ): Promise<Session> {
+  // Normalisasi root sekali di composition agar ToolContext selalu memiliki path tepercaya.
+  const defaultCwd = resolve(opts.cwd ?? process.cwd())
   // Fail-closed lebih awal (sebelum provider/system prompt): WorkMode non-
   // EXECUTE di atas handler terinjeksi belum punya komposisi yang terbukti
   // aman — jangan pernah membungkus atau melewati policy yang diinjeksi 6S.
@@ -217,14 +219,13 @@ export async function createMinicodeSession(
   // pembungkus provider supaya transisi runtime `/work-mode` maupun `/mode`
   // tercermin langsung di StreamRequest.system tanpa mengedit vendor/minicore.
   const baseSystem = await buildSystemPrompt({
-    cwd: opts.cwd,
+    cwd: defaultCwd,
     extra: opts.systemExtra ?? "",
     signal: (opts as unknown as { signal?: AbortSignal }).signal,
   })
   const {
     concurrency,
     writeConcurrency,
-    cwd,
     permissionMode,
     workMode: _workMode,
     allowLocalConfig,
@@ -249,8 +250,7 @@ export async function createMinicodeSession(
   // Dibuat di sini (bukan global) supaya dua sesi dalam satu proses tak
   // saling memakai bukti persetujuan. Root = cwd sesi (sama dengan yang
   // dipakai tool untuk resolve path target).
-  const approvalBindings =
-    _approvalBindings ?? new ApprovalBindingStore(resolve(cwd ?? process.cwd()))
+  const approvalBindings = _approvalBindings ?? new ApprovalBindingStore(defaultCwd)
   // F-09: sanitasi batas di lapisan app (mencakup pemanggil library langsung,
   // bukan hanya CLI yang sudah sanitasi di cli/setup.ts + cli/index.ts).
   // Tanpa ini: timeoutMs NaN/negatif = abort instan; maxSteps 0/negatif =
@@ -297,7 +297,7 @@ export async function createMinicodeSession(
       workMode: resolvedWorkMode,
       base: createPermissionHandler({
         mode: permissionMode ?? "auto",
-        root: cwd,
+        root: defaultCwd,
         ask,
         allowLocalConfig,
         onApprovalEvent,
@@ -306,7 +306,7 @@ export async function createMinicodeSession(
         // bisa dipakai sebagai bukti di sesi B.
         approvalBindings,
       }),
-      root: cwd,
+      root: defaultCwd,
     })
   const injected = opts.permissionHandler !== undefined
   const withMode = permissions as typeof permissions & {
@@ -332,7 +332,7 @@ export async function createMinicodeSession(
     if (isAllToolsPureRead()) return "explore"
     return "active"
   }
-  const effectiveRoot = cwd ?? process.cwd()
+  const effectiveRoot = defaultCwd
   const detector: NoProgressDetector | null =
     noProgress === false
       ? null
@@ -367,7 +367,11 @@ export async function createMinicodeSession(
     ...permissions,
     check: async (call, deps) => {
       const decision = await permissions.check(call, deps)
-      if (decision !== "allow") return decision
+      // Kernel vendored saat ini hanya memblokir literal "deny". Validasi di
+      // composition root ini menjaga production dispatch fail-closed tanpa
+      // mengubah salinan MiniCore yang wajib disinkronkan dari repo sumber.
+      // Handler ASK yang sah tetap menunggu approval lalu mengembalikan allow/deny.
+      if (decision !== "allow") return "deny"
       // Ambil (konsumsi) bukti persetujuan milik call ini — sekali saja.
       // Diambil SEBELUM await supaya tak ada binding tersisa kalau barrier
       // memblokir call (tak ada deny lalu tak ada jejak).
@@ -469,7 +473,7 @@ export async function createMinicodeSession(
       concurrency: safeConcurrency ?? LIMITS.EXECUTOR_CONCURRENCY,
       writeConcurrency: safeWriteConcurrency ?? LIMITS.EXECUTOR_WRITE_CONCURRENCY,
     }),
-    cwd,
+    cwd: defaultCwd,
     ...(turnCount !== undefined ? { turnCount } : {}),
     ...(stepCount !== undefined ? { stepCount } : {}),
   })

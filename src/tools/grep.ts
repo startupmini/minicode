@@ -7,6 +7,7 @@ import { isIgnored, loadIgnoreMatchers } from "../lib/ignore.ts"
 import { safeReadFile } from "../lib/safe-open.ts"
 import { isPathOutsideRoot, isSensitive } from "../policy/jail.ts"
 import { scrubSecrets } from "../policy/scrub.ts"
+import { requireToolCwd } from "./context.ts"
 
 async function walkGrep(
   dir: string,
@@ -219,7 +220,7 @@ export const grepTool: Tool = {
     additionalProperties: false,
   },
   async execute({ pattern, cwd, include, limit }, ctx) {
-    const sessionRoot = ctx.cwd ?? process.cwd()
+    const sessionRoot = requireToolCwd(ctx)
     const rawRoot = (cwd as string) ?? "."
     const root = resolve(sessionRoot, rawRoot)
     if (isPathOutsideRoot(root, sessionRoot)) throw new Error(`cwd outside workspace: ${rawRoot}`)

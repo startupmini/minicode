@@ -739,6 +739,9 @@ function isValidEventShape(value: Record<string, unknown>): boolean {
   const isStr = (k: string): boolean => typeof value[k] === "string"
   const isNum = (k: string): boolean => typeof value[k] === "number"
   const isArr = (k: string): boolean => Array.isArray(value[k])
+  const validAttemptId =
+    value.attemptId === undefined ||
+    (Number.isSafeInteger(value.attemptId) && (value.attemptId as number) > 0)
   if (!isValidParentLink(value.parentLink)) return false
   switch (value.type) {
     case "plan.updated":
@@ -778,7 +781,7 @@ function isValidEventShape(value: Record<string, unknown>): boolean {
       return true
     case "model.delta":
     case "reasoning.delta":
-      return isStr("delta")
+      return isStr("delta") && validAttemptId
     case "model.completed":
     case "reasoning.completed":
       return isStr("text")
@@ -805,7 +808,7 @@ function isValidEventShape(value: Record<string, unknown>): boolean {
     case "result.produced":
       return isStr("resultId") && !!value.status
     case "diagnostic.raised":
-      return isStr("category") && isStr("message")
+      return isStr("category") && isStr("message") && validAttemptId
     case "consequence.decided":
       return isStr("verdict") && isStr("failureClass") && isStr("nextAction") && isStr("rationale")
     case "context.cutoff":

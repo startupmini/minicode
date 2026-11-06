@@ -104,5 +104,11 @@ test("guard mempertahankan kind + id + models + props ekstra", async () => {
   expect(w.id).toBe("p")
   expect(w.models).toEqual(["m"])
   const evs = await collect(w)
-  expect(evs.map((e) => e.type)).toEqual(["text", "finish"])
+  expect(evs.map((e) => e.type)).toEqual(["extension", "text", "finish", "extension"])
+  const attempts = evs.filter((e) => e.type === "extension")
+  expect(attempts.map((e) => (e as { kind: string; data: { phase: string } }).data.phase)).toEqual([
+    "started",
+    "completed",
+  ])
+  expect(attempts.every((e) => (e as { kind: string }).kind === "minicode:attempt")).toBe(true)
 })

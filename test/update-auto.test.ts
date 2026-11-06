@@ -3,12 +3,15 @@
 // mode machine/CI). Install runner di-inject agar tanpa efek samping.
 
 import { describe, expect, test } from "bun:test"
+import { existsSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import {
   installUpdate,
   isInstalledCopy,
   isNewer,
   shouldAutoUpdate,
   UPDATE_GUARD_ENV,
+  verifyInstalledVersion,
 } from "../src/policy/update-check.ts"
 
 const BASE_ENV = {
@@ -82,18 +85,126 @@ describe("isInstalledCopy", () => {
 })
 
 describe("installUpdate", () => {
-  test("pakai npm install -g @latest; true hanya bila exit 0", () => {
-    const seen: string[][] = []
-    const ok = installUpdate((cmd, args) => {
-      seen.push([cmd, ...args])
+  test("verifikasi signature/provenance dahulu, lalu memasang versi tepat", () => {
+    const seen: { args: string[]; cwd?: string }[] = []
+    const ok = installUpdate("1.2.3", (cmd, args, opts) => {
+      expect(cmd).toBe("npm")
+      seen.push({ args, ...(opts?.cwd ? { cwd: opts.cwd } : {}) })
+      if (args[0] === "install" && opts?.cwd) {
+        writeFileSync(
+          join(opts.cwd, "package-lock.json"),
+          JSON.stringify({ packages: { "": {}, "node_modules/minicode-ai": {} } }),
+        )
+      }
       return { status: 0 }
     })
     expect(ok).toBe(true)
-    expect(seen).toEqual([["npm", "install", "-g", "minicode-ai@latest"]])
-    expect(installUpdate(() => ({ status: 1 }))).toBe(false)
+    expect(seen).toHaveLength(3)
+    expect(seen[0]?.args).toContain("minicode-ai@1.2.3")
+    expect(seen[0]?.args).toContain("--ignore-scripts")
+    expect(seen[1]?.args.slice(0, 2)).toEqual(["audit", "signatures"])
+    expect(seen[2]?.args).toContain("-g")
+    expect(seen[2]?.args).toContain("minicode-ai@1.2.3")
+    expect(seen[0]?.cwd).toBeDefined()
+    expect(seen[1]?.cwd).toBe(seen[0]?.cwd)
+    expect(seen[0]?.cwd && existsSync(seen[0].cwd)).toBe(false)
+  })
+
+  test("signature failure blocks global install; temp verification root is cleaned", () => {
+    const seen: { args: string[]; cwd?: string }[] = []
+    let calls = 0
     expect(
-      installUpdate(() => {
+      installUpdate("1.2.3", (cmd, args, opts) => {
+        expect(cmd).toBe("npm")
+        seen.push({ args, ...(opts?.cwd ? { cwd: opts.cwd } : {}) })
+        calls++
+        if (args[0] === "install" && opts?.cwd) {
+          writeFileSync(
+            join(opts.cwd, "package-lock.json"),
+            JSON.stringify({ packages: { "": {}, "node_modules/minicode-ai": {} } }),
+          )
+        }
+        return { status: calls === 2 ? 1 : 0 }
+      }),
+    ).toBe(false)
+    expect(seen).toHaveLength(2)
+    expect(seen[0]?.cwd).toBeDefined()
+    expect(seen[1]?.cwd).toBe(seen[0]?.cwd)
+    expect(seen[1]?.args.slice(0, 2)).toEqual(["audit", "signatures"])
+    expect(seen[0]?.cwd && existsSync(seen[0].cwd)).toBe(false)
+  })
+
+  test("unexpected runtime dependency graph blocks global install", () => {
+    let calls = 0
+    const roots: string[] = []
+    expect(
+      installUpdate("1.2.3", (_cmd, _args, opts) => {
+        calls++
+        if (opts?.cwd) {
+          roots.push(opts.cwd)
+          writeFileSync(
+            join(opts.cwd, "package-lock.json"),
+            JSON.stringify({
+              packages: {
+                "": {},
+                "node_modules/minicode-ai": {},
+                "node_modules/new-runtime-dependency": {},
+              },
+            }),
+          )
+        }
+        return { status: 0 }
+      }),
+    ).toBe(false)
+    expect(calls).toBe(1)
+    expect(roots[0] && existsSync(roots[0])).toBe(false)
+  })
+
+  test("install exit failure or runner error returns false", () => {
+    expect(installUpdate("1.2.3", () => ({ status: 1 }))).toBe(false)
+    expect(
+      installUpdate("1.2.3", () => {
         throw new Error("npm hilang")
+      }),
+    ).toBe(false)
+  })
+
+  test("global install failure is reported after successful signature verification", () => {
+    let calls = 0
+    expect(
+      installUpdate("1.2.3", (_cmd, args, opts) => {
+        calls++
+        if (args[0] === "install" && opts?.cwd) {
+          writeFileSync(
+            join(opts.cwd, "package-lock.json"),
+            JSON.stringify({ packages: { "": {}, "node_modules/minicode-ai": {} } }),
+          )
+        }
+        return { status: calls < 3 ? 0 : 1 }
+      }),
+    ).toBe(false)
+    expect(calls).toBe(3)
+  })
+
+  test("menolak target non-SemVer sebelum menjalankan npm", () => {
+    let called = false
+    expect(
+      installUpdate("latest; whoami", () => {
+        called = true
+        return { status: 0 }
+      }),
+    ).toBe(false)
+    expect(called).toBe(false)
+  })
+})
+
+describe("verifyInstalledVersion", () => {
+  test("restart hanya layak bila package.json yang dibaca cocok dengan target", () => {
+    expect(verifyInstalledVersion("1.2.3", () => "1.2.3")).toBe(true)
+    expect(verifyInstalledVersion("1.2.3", () => "1.2.2")).toBe(false)
+    expect(
+      verifyInstalledVersion("1.2.3", () => {
+        throw new Error("unreadable")
       }),
     ).toBe(false)
   })

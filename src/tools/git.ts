@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process"
-import { resolve } from "node:path"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join, resolve } from "node:path"
 import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import {
@@ -11,8 +13,14 @@ import {
 import { resolveTrustedExecutable } from "../lib/trusted-exec.ts"
 import { isCwdOutsideRoot, isPathOutsideRoot } from "../policy/jail.ts"
 import { sanitizeSpawnEnv, scrubSecrets } from "../policy/scrub.ts"
+import { requireToolCwd } from "./context.ts"
 
-function runGit(args: string[], cwd: string | undefined, signal: AbortSignal): Promise<string> {
+function runGit(
+  args: string[],
+  cwd: string | undefined,
+  signal: AbortSignal,
+  envPatch?: Record<string, string>,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     // Audit #10 P0: SEMUA pemanggilan git lewat sini membawa netralisasi
     // repo-controlled execution (hooks/fsmonitor/pager via GIT_SAFE_BASE).
@@ -24,7 +32,7 @@ function runGit(args: string[], cwd: string | undefined, signal: AbortSignal): P
       // env ini — kredensial (API_KEY/TOKEN/...) di-strip agar hook nakal tak
       // bisa memanen secret dari env. Auth tetap via credential helper / agen
       // SSH (SSH_AUTH_SOCK bukan pola secret) — lihat policy/scrub.ts.
-      env: sanitizeSpawnEnv(process.env),
+      env: sanitizeSpawnEnv(process.env, envPatch),
       // Timeout dari LIMITS, bukan hardcode: `git_commit` menjalankan beberapa
       // operasi berurutan (rev-parse → add → commit → log), dan di mesin yang
       // sibuk (mis. CI menjalankan test dengan coverage) spawn git bisa jauh
@@ -62,6 +70,24 @@ function runGit(args: string[], cwd: string | undefined, signal: AbortSignal): P
   })
 }
 
+const gitCommitLocks = new Map<string, Promise<void>>()
+
+async function withGitCommitLock<T>(cwd: string, operation: () => Promise<T>): Promise<T> {
+  const key = resolve(cwd)
+  const previous = gitCommitLocks.get(key) ?? Promise.resolve()
+  let release!: () => void
+  const current = new Promise<void>((resolvePromise) => (release = resolvePromise))
+  const queued = previous.then(() => current)
+  gitCommitLocks.set(key, queued)
+  await previous
+  try {
+    return await operation()
+  } finally {
+    release()
+    if (gitCommitLocks.get(key) === queued) gitCommitLocks.delete(key)
+  }
+}
+
 /** cwd tool harus di dalam workspace — sama seperti bash/glob/grep. */
 function assertCwd(cwd: string | undefined, sessionRoot: string): void {
   if (!cwd) return
@@ -92,7 +118,7 @@ export const gitStatusTool: Tool = {
   },
   async execute({ cwd }, ctx) {
     const c = cwd as string | undefined
-    const sessionRoot = ctx.cwd ?? process.cwd()
+    const sessionRoot = requireToolCwd(ctx)
     assertCwd(c, sessionRoot)
     const resolvedCwd = c ? resolve(sessionRoot, c) : sessionRoot
     if (!(await isGitRepo(resolvedCwd, ctx.signal))) return "not a git repository"
@@ -131,7 +157,7 @@ export const gitDiffTool: Tool = {
     additionalProperties: false,
   },
   async execute({ cwd, staged }, ctx) {
-    const sessionRoot = ctx.cwd ?? process.cwd()
+    const sessionRoot = requireToolCwd(ctx)
     assertCwd(cwd as string | undefined, sessionRoot)
     const resolvedCwd = (cwd as string | undefined)
       ? resolve(sessionRoot, cwd as string)
@@ -160,7 +186,7 @@ export const gitLogTool: Tool = {
     additionalProperties: false,
   },
   async execute({ cwd, limit }, ctx) {
-    const sessionRoot = ctx.cwd ?? process.cwd()
+    const sessionRoot = requireToolCwd(ctx)
     assertCwd(cwd as string | undefined, sessionRoot)
     const resolvedCwd = (cwd as string | undefined)
       ? resolve(sessionRoot, cwd as string)
@@ -200,7 +226,7 @@ function assertPaths(paths: unknown, cwd: string | undefined, sessionRoot: strin
 export const gitCommitTool: Tool = {
   name: "git_commit",
   description:
-    "Create a git commit. Stage specific paths (paths) or all tracked changes (all:true). Does not support push/amend/reset — that is beyond the agent's authority. Never runs repository hooks (--no-verify + isolated hooks path), unlike terminal git commit.",
+    "Create a git commit. Stage specific paths (paths) or all tracked changes (all:true). Does not support push/amend/reset — that is beyond the agent's authority. Never runs repository hooks and refuses configured custom filters before staging; use manual Git only after reviewing trusted filters.",
   parameters: {
     type: "object",
     properties: {
@@ -222,7 +248,7 @@ export const gitCommitTool: Tool = {
   async execute({ message, paths, all, cwd }, ctx) {
     ctx.signal.throwIfAborted()
     const c = cwd as string | undefined
-    const sessionRoot = ctx.cwd ?? process.cwd()
+    const sessionRoot = requireToolCwd(ctx)
     assertCwd(c, sessionRoot)
     const resolvedCwd = c ? resolve(sessionRoot, c) : sessionRoot
     const msg = String(message ?? "").trim()
@@ -244,58 +270,106 @@ export const gitCommitTool: Tool = {
     ).catch(() => "")
     if (!inside.startsWith("true")) throw new Error("not a git repository (git rev-parse failed)")
 
-    if (files.length > 0) {
-      // `--` memisahkan path dari opsi: nama file bernama `-f` tak jadi flag.
-      await runGit(["add", "--", ...files], resolvedCwd, ctx.signal)
-    }
-    // F-04: clean/smudge TIDAK dinetralkan di add/commit — semantik clean
-    // milik user (LFS), lihat git-hardening.ts. Sebagai gantinya, staging yang
-    // melewati filter repo yang DITEMUKAN dilaporkan eksplisit di hasil (bukan
-    // diam-diam): approval gate permission + peringatan ini adalah kontrolnya.
-    // Berlaku untuk paths MAUPUN all:true (`commit -a` juga menjalankan clean).
-    let filterWarning = ""
-    try {
+    return await withGitCommitLock(resolvedCwd, async () => {
+      ctx.signal.throwIfAborted()
+      // Tool authority tidak mencakup eksekusi command dari filter repo.
+      // Discovery juga fail-closed: kegagalan membaca config berhenti sebelum
+      // temporary index dibuat atau `git add` dapat menjalankan filter.
       const drivers = await discoverFilterDrivers(resolvedCwd)
       if (drivers.length > 0) {
         const names = drivers.map((d) => `filter.${d.name}`).join(", ")
-        filterWarning =
-          `\n\n[warn] repo defines custom git filters (${names}) that ran during staging — ` +
-          `review .gitattributes/.git/config in untrusted repos before committing.`
+        throw new Error(
+          `git_commit blocked before staging: repository Git filters are configured (${names}). ` +
+            "Review .gitattributes and Git config, then perform the commit manually if the filters are trusted.",
+        )
       }
-    } catch {}
 
-    // `-m` dengan pesan sebagai satu argumen: tak ada shell yang menginterpretasi
-    // isinya, jadi backtick/`$()` di pesan commit tidak dieksekusi.
-    // Audit #10 P0: `--no-verify` mematikan pre-commit/commit-msg repo;
-    // post-commit (+ override hooksPath repo) dimatikan GIT_SAFE_BASE di
-    // runGit. Commit agen tak pernah menjalankan kode repo — bedakan dari
-    // `git commit` terminal yang menjalankan hooks.
-    const args = ["commit", "--no-verify", "-m", msg]
-    if (files.length === 0 && all === true) args.push("-a")
-
-    const out = await runGit(args, resolvedCwd, ctx.signal)
-    // `git commit` keluar non-zero saat tak ada perubahan; runGit sudah
-    // meneruskan teksnya, jadi model membaca alasan sebenarnya.
-    if (/nothing to commit|no changes added/i.test(out)) {
-      // Audit #08 P1 (retry setelah sukses-yang-responsnya-hilang): tree
-      // bersih + subjek HEAD sama dengan pesan yang diminta = commit pertama
-      // sudah durable. Kembalikan SHA-nya (tanpa commit baru) agar pemanggil
-      // tak mengira tak ada yang ter-commit. Beda subjek = kondisi orang
-      // lain yang commit duluan → perilaku lama (tanpa klaim palsu).
+      const tempIndexDir = await mkdtemp(join(tmpdir(), "minicode-git-index-"))
+      const indexEnv = { GIT_INDEX_FILE: join(tempIndexDir, "index") }
       try {
-        const subject = (
-          await runGit(["log", "-1", "--format=%s"], resolvedCwd, ctx.signal).catch(() => "")
-        ).trim()
-        if (subject && subject === msg.split("\n")[0]?.trim()) {
-          const head = await runGit(["log", "--oneline", "-1"], resolvedCwd, ctx.signal).catch(
-            () => "",
-          )
-          return `already committed (retry aman — tanpa commit baru):\n${out}${head ? `\n\nHEAD: ${head}` : ""}${filterWarning}`
+        // Seed a private index from HEAD. Existing staged changes stay in the
+        // user's index and can never leak into this scoped commit.
+        const headRef = await runGit(
+          ["rev-parse", "--verify", "HEAD"],
+          resolvedCwd,
+          ctx.signal,
+        ).catch(() => "")
+        await runGit(
+          ["read-tree", headRef.trim() ? "HEAD" : "--empty"],
+          resolvedCwd,
+          ctx.signal,
+          indexEnv,
+        )
+        if (files.length > 0) {
+          // `--` memisahkan path dari opsi: nama file bernama `-f` tak jadi flag.
+          await runGit(["add", "--", ...files], resolvedCwd, ctx.signal, indexEnv)
         }
-      } catch {}
-      return `nothing to commit:\n${out}${filterWarning}`
-    }
-    const head = await runGit(["log", "--oneline", "-1"], resolvedCwd, ctx.signal).catch(() => "")
-    return `${out}${head ? `\n\nHEAD: ${head}` : ""}${filterWarning}`
+
+        // `-m` satu argumen; --no-verify menonaktifkan hook yang sudah
+        // dinetralkan GIT_SAFE_BASE. `-a` hanya berlaku pada index privat.
+        const args = ["commit", "--no-verify", "-m", msg]
+        if (files.length === 0 && all === true) args.push("-a")
+        const out = await runGit(args, resolvedCwd, ctx.signal, indexEnv)
+        if (/nothing to commit|no changes added/i.test(out)) {
+          try {
+            const subject = (
+              await runGit(["log", "-1", "--format=%s"], resolvedCwd, ctx.signal).catch(() => "")
+            ).trim()
+            if (subject && subject === msg.split("\n")[0]?.trim()) {
+              const head = await runGit(["log", "--oneline", "-1"], resolvedCwd, ctx.signal).catch(
+                () => "",
+              )
+              return `already committed (retry aman — tanpa commit baru):\n${out}${head ? `\n\nHEAD: ${head}` : ""}`
+            }
+          } catch {}
+          return `nothing to commit:\n${out}`
+        }
+        let indexWarning = ""
+        const newHead = await runGit(
+          ["rev-parse", "--verify", "HEAD"],
+          resolvedCwd,
+          ctx.signal,
+        ).catch(() => "")
+        if (newHead.trim() && newHead.trim() !== headRef.trim()) {
+          try {
+            const committedPaths = await runGit(
+              [
+                "--literal-pathspecs",
+                "diff-tree",
+                "--root",
+                "--no-renames",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                "-z",
+                "HEAD",
+              ],
+              resolvedCwd,
+              ctx.signal,
+            )
+            const paths = committedPaths.split("\0").filter(Boolean)
+            if (paths.length > 0) {
+              // Reconcile only committed entries in the shared index. This
+              // leaves unrelated staged paths intact while keeping the normal
+              // post-commit status clean for files this operation authorized.
+              await runGit(
+                ["--literal-pathspecs", "reset", "--quiet", "HEAD", "--", ...paths],
+                resolvedCwd,
+                ctx.signal,
+              )
+            }
+          } catch {
+            indexWarning =
+              "\n\n[warn] commit succeeded, but the shared index could not be reconciled; review `git status` before the next commit."
+          }
+        }
+        const head = await runGit(["log", "--oneline", "-1"], resolvedCwd, ctx.signal).catch(
+          () => "",
+        )
+        return `${out}${head ? `\n\nHEAD: ${head}` : ""}${indexWarning}`
+      } finally {
+        await rm(tempIndexDir, { recursive: true, force: true }).catch(() => {})
+      }
+    })
   },
 }

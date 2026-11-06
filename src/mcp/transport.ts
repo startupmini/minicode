@@ -1,11 +1,10 @@
 import { type ChildProcess, spawn } from "node:child_process"
-import { createInterface } from "node:readline"
 import { LIMITS } from "../constants.ts"
 import { sanitizeSpawnEnv } from "../policy/scrub.ts"
 
 export class McpTransport {
   private proc: ChildProcess | null = null
-  private rl: ReturnType<typeof createInterface> | null = null
+  private stdoutFrame = Buffer.alloc(0)
   private pending = new Map<
     string | number,
     {
@@ -43,29 +42,8 @@ export class McpTransport {
     this.proc.stderr?.on("data", (d: Buffer) =>
       process.stderr.write(`[mcp:${command}] ${d.toString().trim()}\n`),
     )
-    // ensure previous rl closed if reconnecting (defensive)
-    if (this.rl)
-      try {
-        this.rl.close()
-      } catch {}
-
-    this.rl = createInterface({ input: this.proc.stdout! })
-    this.rl.on("line", (line) => {
-      if (!line.trim()) return
-      try {
-        const msg = JSON.parse(line)
-        if (msg.id != null && this.pending.has(msg.id)) {
-          const p = this.pending.get(msg.id)!
-          clearTimeout(p.timer)
-          p.unsubscribe?.()
-          this.pending.delete(msg.id)
-          if (msg.error) p.reject(new Error(msg.error.message || JSON.stringify(msg.error)))
-          else p.resolve(msg.result)
-        }
-      } catch (e) {
-        process.stderr.write(`[mcp] ignoring invalid JSON from server: ${(e as Error).message}\n`)
-      }
-    })
+    this.stdoutFrame = Buffer.alloc(0)
+    this.proc.stdout!.on("data", (chunk: Buffer) => this.consumeStdout(chunk))
   }
 
   async request(
@@ -107,12 +85,11 @@ export class McpTransport {
   }
 
   async close(): Promise<void> {
-    if (this.closed) return
+    if (this.closed && !this.proc) return
     this.closed = true
     this.writeQueue = []
     this.draining = false
     this.failAll(new Error("transport closed"))
-    if (this.rl) this.rl.close()
     try {
       this.proc?.stdin?.end()
     } catch {}
@@ -171,6 +148,67 @@ export class McpTransport {
         break
       }
     }
+  }
+
+  /** Frame parsing stays incremental so a peer cannot make readline buffer an unlimited line. */
+  private consumeStdout(chunk: Buffer): void {
+    let start = 0
+    for (let i = 0; i < chunk.length; i++) {
+      if (chunk[i] !== 0x0a) continue
+      const part = chunk.subarray(start, i)
+      if (this.stdoutFrame.length + part.length > LIMITS.MCP_STDIO_FRAME_MAX_BYTES) {
+        this.rejectOversizedFrame(this.stdoutFrame.length + part.length)
+        return
+      }
+      const frame = this.stdoutFrame.length === 0 ? part : Buffer.concat([this.stdoutFrame, part])
+      this.stdoutFrame = Buffer.alloc(0)
+      this.handleFrame(frame)
+      if (this.closed) return
+      start = i + 1
+    }
+    if (start < chunk.length) {
+      const remainder = chunk.subarray(start)
+      if (this.stdoutFrame.length + remainder.length > LIMITS.MCP_STDIO_FRAME_MAX_BYTES) {
+        this.rejectOversizedFrame(this.stdoutFrame.length + remainder.length)
+        return
+      }
+      this.stdoutFrame =
+        this.stdoutFrame.length === 0
+          ? Buffer.from(remainder)
+          : Buffer.concat([this.stdoutFrame, remainder])
+    }
+  }
+
+  private handleFrame(frame: Buffer): void {
+    if (frame.length === 0) return
+    try {
+      const msg = JSON.parse(frame.toString("utf8"))
+      if (msg.id != null && this.pending.has(msg.id)) {
+        const p = this.pending.get(msg.id)!
+        clearTimeout(p.timer)
+        p.unsubscribe?.()
+        this.pending.delete(msg.id)
+        if (msg.error) p.reject(new Error(msg.error.message || "MCP server returned an error"))
+        else p.resolve(msg.result)
+      }
+    } catch {
+      process.stderr.write("[mcp] ignoring invalid JSON from server\n")
+    }
+  }
+
+  private rejectOversizedFrame(size: number): void {
+    const error = new Error(
+      `MCP stdio frame exceeds ${LIMITS.MCP_STDIO_FRAME_MAX_BYTES} bytes (at least ${size})`,
+    )
+    this.closed = true
+    this.stdoutFrame = Buffer.alloc(0)
+    this.writeQueue = []
+    this.draining = false
+    this.failAll(error)
+    this.killSignal.abort(error)
+    try {
+      this.proc?.kill("SIGKILL")
+    } catch {}
   }
 
   private failAll(err: Error) {

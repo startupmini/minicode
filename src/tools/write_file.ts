@@ -5,6 +5,7 @@ import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
 import { assertSafeWriteTarget, resolveSafePath } from "../lib/safe-open.ts"
 import { appendLspDiagnostics } from "../policy/verifier.ts"
+import { requireToolCwd } from "./context.ts"
 
 export const writeFileTool: Tool = {
   name: "write_file",
@@ -22,7 +23,7 @@ export const writeFileTool: Tool = {
   async execute({ path, content }, ctx) {
     ctx.signal.throwIfAborted()
     const p = path as string
-    const root = ctx.cwd ?? process.cwd()
+    const root = requireToolCwd(ctx)
     // Verifikasi path terpusat (logis + target nyata) — detail di safe-open.ts.
     const { real: realAbs } = await resolveSafePath(p, root)
     // Tolak menimpa symlink final (swap antara cek dan tulis gagal tutup).

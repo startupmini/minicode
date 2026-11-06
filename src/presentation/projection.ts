@@ -546,6 +546,7 @@ export interface MachineEventInput {
   summary?: unknown
   promptRef?: string
   delta?: unknown
+  attemptId?: unknown
   text?: unknown
   truncated?: boolean
   toolSummary?: unknown
@@ -780,6 +781,7 @@ export function machinePayload(event: MachineEventInput): Record<string, unknown
   put("truncated", typeof event.truncated === "boolean" ? event.truncated : undefined)
   put("toolSummary", asString(event.toolSummary))
   put("durationMs", asNumber(event.durationMs))
+  put("attemptId", asNumber(event.attemptId))
   put("tsStart", asNumber(event.tsStart))
   put(
     "paths",

@@ -12,7 +12,7 @@ const tmp = ".tmp-tools-test"
 test("write_file + read_file + edit", async () => {
   await mkdir(tmp, { recursive: true })
   const p = `${tmp}/a.txt`
-  const ctx: any = { signal: new AbortController().signal }
+  const ctx: any = { signal: new AbortController().signal, cwd: process.cwd() }
   await writeFileTool.execute({ path: p, content: "hello world" }, ctx)
   // read_file kini memberi nomor baris (`1: `) supaya model bisa merujuk baris.
   const r = (await readFileTool.execute({ path: p }, ctx)) as string
@@ -26,7 +26,7 @@ test("write_file + read_file + edit", async () => {
 test("edit fails on multiple matches", async () => {
   await mkdir(tmp, { recursive: true })
   const p = `${tmp}/b.txt`
-  const ctx: any = { signal: new AbortController().signal }
+  const ctx: any = { signal: new AbortController().signal, cwd: process.cwd() }
   await writeFile(p, "a a a")
   try {
     await editTool.execute({ path: p, oldString: "a", newString: "b" }, ctx)
@@ -41,7 +41,7 @@ test("glob finds files", async () => {
   await mkdir(`${tmp}/sub`, { recursive: true })
   await writeFile(`${tmp}/sub/x.ts`, "hi")
   await writeFile(`${tmp}/sub/y.js`, "hi")
-  const ctx: any = { signal: new AbortController().signal }
+  const ctx: any = { signal: new AbortController().signal, cwd: process.cwd() }
   const out = (await globTool.execute({ pattern: "**/*.ts", cwd: tmp }, ctx)) as string
   expect(out).toContain("x.ts")
   const outBrace = (await globTool.execute({ pattern: "sub/{*.ts,*.js}", cwd: tmp }, ctx)) as string
@@ -53,7 +53,7 @@ test("glob finds files", async () => {
 test("grep finds regex", async () => {
   await mkdir(tmp, { recursive: true })
   await writeFile(`${tmp}/f.txt`, "hello\nworld\nhello world")
-  const ctx: any = { signal: new AbortController().signal }
+  const ctx: any = { signal: new AbortController().signal, cwd: process.cwd() }
   const out = (await grepTool.execute({ pattern: "hello", cwd: tmp }, ctx)) as string
   expect(out.split("\n").length).toBe(2)
   await rm(tmp, { recursive: true, force: true })

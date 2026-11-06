@@ -61,11 +61,17 @@ Fuzz membangkitkan varian dari transformasi yang shell anggap setara (quote-spli
 | `--sandbox docker` | Container ephemeral (`--network none`, 512m, 1 CPU, `node:22-alpine`) |
 | `--sandbox docker` tapi daemon mati | TOLAK sebelum jalan (fail-closed) + cara opt-in fallback eksplisit; tidak pura-pura terisolasi |
 
+Container mendapat nama acak per-run. Saat batas waktu habis atau tool dibatalkan,
+runner meminta daemon menjalankan `docker rm --force` dengan timeout cleanup
+5 detik sebelum menghentikan penunggu CLI. Output membedakan cleanup yang
+dikonfirmasi daemon dari yang tidak terkonfirmasi. Ini tidak membatalkan efek
+workspace yang sudah terjadi sebelum container dihentikan.
+
 `MINICODE_SANDBOX_STRICT=1` = tak pernah fallback host (redundan dengan default fail-closed untuk request eksplisit, tetap dihormati). `MINICODE_SANDBOX_ALLOW_FALLBACK=1` = satu-satunya jalan fallback host yang sadar bila backend tak tersedia. `MINICODE_SANDBOX_IMAGE` ganti image (default `node:22-alpine` hanya bawa node). `code_run` selalu lewat sandbox runner dan menolak bila backend tak tersedia.
 
 ## Lapisan lain
 
-- **Path jail** realpath-based + symlink `realpath` di permission layer; `.env`/`.git/config`/`node_modules`/hive Windows deny; `.minicode/` terkunci penuh untuk tool tulis berdasarkan target NYATA (realpath best-effort `isOwnedStateReal` — junction/symlink internal ke `.minicode/` ikut ditahan; kecuali restore `.trash/` + skrip `hooks/`); bash-guard menahan PEMBUATAN link yang operannya sensitif/owned-state; TOCTOU `O_NOFOLLOW` (`src/lib/safe-open.ts`: `resolveSafePath` untuk penulis, `safeOpenRead` untuk pembaca; POSIX-only, Windows pre-check).
+- **Path jail** realpath-based + symlink `realpath` di permission layer; `.env`/`.git/config`/`node_modules`/hive Windows deny; `.minicode/` terkunci penuh untuk tool tulis berdasarkan target NYATA (realpath best-effort `isOwnedStateReal` — junction/symlink internal ke `.minicode/` ikut ditahan; kecuali restore `.trash/` + skrip `hooks/`); bash-guard menahan PEMBUATAN link yang operannya sensitif/owned-state. Untuk pembacaan, `safeOpenRead` memeriksa boundary ulang setelah stat dan mencocokkan `dev+ino` dari handle yang terbuka; `O_NOFOLLOW` juga dipakai pada POSIX. Stress test symlink tetap skip bila host tidak memberi privilege membuat symlink.
 - **Env scrub** `sanitizeSpawnEnv`: strip kata-kunci kredensial dari merge final; `GITHUB_WORKSPACE`/`REDIS_HOST`/`AWS_REGION` tetap ada, `GITHUB_TOKEN`/`AWS_SECRET_ACCESS_KEY`/`DATABASE_URL` tetap di-strip.
 - **web_fetch/web_search**: redirect manual 5 hop + DNS pinning 30 dtk + body 2 MB.
 - **Secret scrubber**: `sk-`, `ghp_`, `AKIA`, PEM, JWT, Bearer, `api_key=...` di-redact sebelum ke LLM (read_file/bash/grep) — tanpa whitelist kata.

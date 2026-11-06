@@ -3,7 +3,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { applyPatchTool } from "../src/tools/patch.ts"
 
 const tmp = ".tmp-patch-test"
-const ctx: any = { signal: new AbortController().signal }
+const ctx: any = { signal: new AbortController().signal, cwd: process.cwd() }
 
 test("apply_patch: replaces single block", async () => {
   await mkdir(tmp, { recursive: true })

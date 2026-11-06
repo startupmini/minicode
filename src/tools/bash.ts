@@ -4,6 +4,7 @@ import { resolve as resolvePath } from "node:path"
 import type { Tool, ToolContext } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { isCwdOutsideRoot, isPathOutsideRoot } from "../policy/jail.ts"
+import { requireToolCwd } from "./context.ts"
 
 // re-export untuk backward compat (helper kini terpusat di policy/scrub)
 export { SECRET_ENV_RE, sanitizeSpawnEnv, stripSecretsEnv } from "../policy/scrub.ts"
@@ -298,7 +299,7 @@ function makeBashTool(ownerSid: string | null): Tool {
       additionalProperties: false,
     },
     async execute({ cmd, cwd, timeoutMs, background }, ctx) {
-      const sessionRoot = ctx.cwd ?? process.cwd()
+      const sessionRoot = requireToolCwd(ctx)
       const c = cwd as string | undefined
       if (c && (isCwdOutsideRoot(c, sessionRoot) || isPathOutsideRoot(c, sessionRoot)))
         throw new Error(`cwd outside workspace: ${c}`)
@@ -336,10 +337,12 @@ function makeBashTool(ownerSid: string | null): Tool {
           const res = await runInDocker(cmd as string, effectiveCwd, {
             timeoutMs: timeout,
             env: sanitizeSpawnEnv(process.env) as Record<string, string>,
+            signal: ctx.signal,
           })
+          ctx.signal.throwIfAborted()
           const text = scrubSecrets(res.output)
-          if (res.code !== 0 && res.code !== null)
-            return `exit ${res.code}\n${capMarked(text, LIMITS.BASH_OUTPUT_MAX_CHARS)}`
+          if (res.code !== 0)
+            return `exit ${res.code ?? "unknown"}\n${capMarked(text, LIMITS.BASH_OUTPUT_MAX_CHARS)}`
           return capMarked(text, LIMITS.BASH_OUTPUT_MAX_CHARS)
         }
         if (sandboxStrict() || !sandboxExplicitFallbackAllowed()) {

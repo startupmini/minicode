@@ -2,7 +2,7 @@
 
 Referensi lengkap tool Minicode: filesystem, search, exec, git, web, memory, plan, agents, MCP, LSP.
 
-Pilih tool ini ketika: **file** untuk baca/tulis presisi (bukan `cat` via bash); **search** untuk menemukan kode (bukan `grep` via bash); **bash** untuk perintah yang memang butuh shell; **git tool** untuk status/diff/log/commit (bukan `git` mentah — tool dinetralkan dari hook/filter repo); **web** untuk sumber publik; **memory** untuk fakta lintas sesi (bukan tempelan prompt); **delegate** untuk penelahan paralel yang hasilnya diverifikasi parent.
+Pilih tool ini ketika: **file** untuk baca/tulis presisi (bukan `cat` via bash); **search** untuk menemukan kode (bukan `grep` via bash); **bash** untuk perintah yang memang butuh shell; **git tool** untuk status/diff/log/commit (bukan `git` mentah — operasi baca dinetralkan dan commit menolak custom filter repo); **web** untuk sumber publik; **memory** untuk fakta lintas sesi (bukan tempelan prompt); **delegate** untuk penelahan paralel yang hasilnya diverifikasi parent.
 
 Daftar pasti kapan pun:
 
@@ -23,7 +23,7 @@ bun -e "import {allTools} from './src/tools/index.ts'; console.log(allTools.map(
 | `apply_patch` | Blok SEARCH/REPLACE multi-hunk ala Aider | Satu call banyak patch |
 | `move_file` | Pindah/rename atomik | Dest yang ada dibackup ke trash dulu (catat path). Dijail di permission layer juga |
 | `delete_file` | Soft-delete ke `.minicode/.trash/` | Undo via `move_file`. Cap 100 terbaru, gitignored. Shared helper `src/lib/trash.ts` |
-| `read_image` | Gambar → konteks model | Base64 utuh + lapor `(bytes mime, tokens)` via `estimateImageTokens`. Cap file-size 2 MB. TOCTOU-safe (`safeOpenRead` + `handle.stat`) |
+| `read_image` | Gambar → konteks model | Base64 utuh + lapor `(bytes mime, tokens)` via `estimateImageTokens`. Cap file-size 2 MB. Pembukaan memeriksa target canonical, boundary ulang, identitas handle `dev+ino`, dan hardlink (`safeOpenRead`) |
 
 Contoh paging:
 
@@ -66,7 +66,7 @@ Batas `BASH_BACKGROUND_MAX_JOBS`; semua job mati saat CLI keluar.
 | `git_status` | `status --porcelain + diff --stat + log -10` | cwd jail |
 | `git_diff` | `diff` unstaged atau `--staged` | — |
 | `git_log` | `log --oneline -n` | — |
-| `git_commit` | Commit saja | **Di-gate** seperti `delegate_task` (TTY = minta sekali, non-TTY = tolak; `readonly/plan/allowlist` = tolak). Sub-agent tidak mendapatkannya. Yang sengaja tidak ada: push/amend/reset/rebase/checkout/branch -D/stash drop. Pesan via `-m` tunggal agar `$()`/backtick tidak dieksekusi; `git add -- <paths>` agar file `-weird.txt` tidak jadi flag |
+| `git_commit` | Commit saja | **Di-gate** seperti `delegate_task` (TTY = minta sekali, non-TTY = tolak; `readonly/plan/allowlist` = tolak). Menolak sebelum staging jika config Git efektif memuat custom filter; tinjau filter terpercaya lalu lakukan commit manual. Sub-agent tidak mendapatkannya. Yang sengaja tidak ada: push/amend/reset/rebase/checkout/branch -D/stash drop. Pesan via `-m` tunggal agar `$()`/backtick tidak dieksekusi; `git add -- <paths>` agar file `-weird.txt` tidak jadi flag |
 
 ## Web
 
@@ -97,7 +97,7 @@ Batas `BASH_BACKGROUND_MAX_JOBS`; semua job mati saat CLI keluar.
 | Tool | Spec | Catatan |
 |---|---|---|
 | `mcp_list` | `tools/list` + `resources/list` + `prompts/list` | Read-only, tidak di-gate. Panggil dulu |
-| `mcp_call` | `tools/call` | Di-gate. 1 approval = 1 call. Jalan di luar policy minicode |
+| `mcp_call` | `tools/call` | Di-gate. 1 approval = 1 call. Jalan di luar policy minicode. Abort/timeout setelah request dikirim dilaporkan sebagai `outcome unknown`; periksa state server sebelum retry |
 | `mcp_read` | `resources/read` | Di-gate **meski read-only** (konten pihak ketiga = jalur prompt-injection). Biner diganti penanda ukuran |
 | `mcp_prompt` | `prompts/get` | Di-gate, server merender argumen |
 

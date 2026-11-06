@@ -10,7 +10,7 @@ Istilah Minicode yang punya makna spesifik. Dokumentasi berbahasa Indonesia deng
 | **Tool scope** | `full` (semua 37) atau `explore` (subset read-only 12 tool) — flag `--tool-scope` |
 | **Permission mode** | Keputusan siapa yang memutuskan aksi: `auto / readonly / plan / allowlist / ask / allow-all` |
 | **Gate** | Tool wajib persetujuan manusia saat TTY; non-TTY selalu tolak (mis. `git_commit`, MCP, `delegate_task`) |
-| **Path jail** | Pembatasan akses file ke workspace (realpath + symlink + TOCTOU `O_NOFOLLOW`); aktif bahkan `--allow-all` |
+| **Path jail** | Pembatasan akses file ke workspace (realpath + symlink; `O_NOFOLLOW` pada POSIX dan pencocokan identitas handle `dev+ino` pada semua platform); aktif bahkan `--allow-all` |
 | **Bash-guard** | Normalisasi + blokir pola bash berbahaya sebelum eksekusi (quote-split, indirection, wrapper) |
 | **Sandbox OS** | bubblewrap (Linux) / seatbelt (macOS) — otomatis bila tersedia |
 | **Sandbox Docker** | Container ephemeral `--network none`, 512m, 1 CPU, `node:22-alpine` |

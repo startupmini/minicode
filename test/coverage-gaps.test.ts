@@ -5,7 +5,7 @@
 // memory tools, web_fetch/web_search (jalur argumen invalid), apply_patch.
 // Semua TANPA jaringan & TANPA menyentuh config/DB milik user.
 
-import { describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -15,10 +15,13 @@ import { McpTransport } from "../src/mcp/transport.ts"
 import { withMcpTools } from "../src/tools/index.ts"
 import { forgetMemoryTool, readMemoryTool, writeMemoryTool } from "../src/tools/memory.ts"
 import { applyPatchTool } from "../src/tools/patch.ts"
-import { webFetchTool } from "../src/tools/web_fetch.ts"
+import { readBodyCapped, webFetchTool } from "../src/tools/web_fetch.ts"
 import { webSearchTool } from "../src/tools/web_search.ts"
 
-const ctx = { signal: new AbortController().signal } as never
+const workspace = mkdtempSync(join(tmpdir(), "minicode-coverage-gaps-"))
+const ctx = { signal: new AbortController().signal, cwd: workspace } as never
+
+afterAll(() => rmSync(workspace, { recursive: true, force: true }))
 
 describe("withMcpTools: dedup nama tool", () => {
   const base = [{ name: "a" }, { name: "b" }] as never
@@ -29,6 +32,19 @@ describe("withMcpTools: dedup nama tool", () => {
 
   test("tanpa tool MCP mengembalikan base apa adanya", () => {
     expect(withMcpTools(base, [])).toHaveLength(2)
+  })
+})
+
+describe("HTTP body cap", () => {
+  test("batas diterapkan per byte dan ditandai sebelum JSON parsing", async () => {
+    const controller = new AbortController()
+    const body = await readBodyCapped(
+      new Response(new Uint8Array(2_000_001).fill(0x61)),
+      controller,
+    )
+    expect(body.text.length).toBe(2_000_000)
+    expect(body.truncated).toBe(true)
+    expect(controller.signal.aborted).toBe(true)
   })
 })
 
@@ -68,6 +84,18 @@ describe("McpTransport: jalur gagal tertutup", () => {
     await t.connect(process.execPath, ["-e", "setInterval(()=>{},1000)"])
     await expect(t.request("ping", {}, 30)).rejects.toThrow("timed out")
     await t.close()
+  })
+
+  test("frame stdio MCP oversized ditolak sebelum JSON parse dan child dihentikan", async () => {
+    const t = new McpTransport()
+    const code = `process.stdin.once("data",()=>process.stdout.write(JSON.stringify({jsonrpc:"2.0",id:1,result:{tools:[{name:"oversized",description:"x".repeat(1100000)}]}})+"\\n"))`
+    await t.connect(process.execPath, ["-e", code])
+    try {
+      await expect(t.request("tools/list", {}, 5000)).rejects.toThrow(/frame exceeds 1048576 bytes/)
+      expect(t.isClosed).toBe(true)
+    } finally {
+      await t.close()
+    }
   })
 
   test("close menolak pending request", async () => {
@@ -136,15 +164,15 @@ describe("web_fetch / web_search: validasi argumen", () => {
 
 describe("apply_patch: jalur murni", () => {
   test("patch search/replace diterapkan", async () => {
-    // Jail mengunci path ke workspace — pakai dir relatif di dalam repo.
-    const dir = ".tmp-coverage-gaps"
-    await Bun.write(`${dir}/a.txt`, "satu dua tiga\n")
+    const dir = mkdtempSync(join(tmpdir(), "minicode-coverage-patch-"))
+    const file = join(dir, "a.txt")
+    await Bun.write(file, "satu dua tiga\n")
     const r = (await applyPatchTool.execute(
-      { path: `${dir}/a.txt`, patches: [{ search: "dua", replace: "DUA" }] },
-      ctx,
+      { path: "a.txt", patches: [{ search: "dua", replace: "DUA" }] },
+      { signal: new AbortController().signal, cwd: dir } as never,
     )) as string
     expect(r).toBeTruthy()
-    expect(await Bun.file(`${dir}/a.txt`).text()).toContain("satu DUA tiga")
+    expect(await Bun.file(file).text()).toContain("satu DUA tiga")
     await rm(dir, { recursive: true, force: true })
   })
 })

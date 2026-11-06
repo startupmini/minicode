@@ -5,28 +5,41 @@ import { fenceUntrustedToolOutput, isAlreadyFenced, scrubSecrets } from "../poli
 
 const MAX_REDIRECTS = LIMITS.WEB_FETCH_MAX_REDIRECTS
 // Hard-cap pembacaan body SEBELUM slicing — cegah OOM dari response raksasa.
-const BODY_HARD_CAP_CHARS = LIMITS.WEB_FETCH_BODY_HARD_CAP_CHARS
+const BODY_HARD_CAP_BYTES = LIMITS.WEB_RESPONSE_BODY_HARD_CAP_BYTES
 
 // Diekspor untuk web_search (jalur DDG): satu kebijakan cap untuk semua fetch.
-export async function readBodyCapped(res: Response, controller: AbortController): Promise<string> {
-  if (!res.body) return ""
+export async function readBodyCapped(
+  res: Response,
+  controller: AbortController,
+): Promise<{ text: string; truncated: boolean }> {
+  if (!res.body) return { text: "", truncated: false }
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let out = ""
+  let bytesRead = 0
+  let truncated = false
   try {
     while (true) {
       const { done, value } = await reader.read()
-      if (done) break
-      out += decoder.decode(value, { stream: true })
-      if (out.length > BODY_HARD_CAP_CHARS) {
-        controller.abort(new Error("response exceeds body hard cap"))
+      if (done) {
+        out += decoder.decode()
         break
       }
+      const remaining = BODY_HARD_CAP_BYTES - bytesRead
+      if (value.byteLength > remaining) {
+        if (remaining > 0) out += decoder.decode(value.subarray(0, remaining), { stream: true })
+        truncated = true
+        controller.abort(new Error("response exceeds body byte cap"))
+        await reader.cancel().catch(() => {})
+        break
+      }
+      bytesRead += value.byteLength
+      out += decoder.decode(value, { stream: true })
     }
   } finally {
     reader.releaseLock()
   }
-  return out
+  return { text: out, truncated }
 }
 
 // Snippet body error dengan cap streaming (F-15): cukup untuk diagnosis,
@@ -147,11 +160,14 @@ export const webFetchTool: Tool = {
       }
 
       const contentType = res.headers.get("content-type") ?? ""
-      const raw = await readBodyCapped(res, controller)
-      const scrubbed = scrubSecrets(raw)
+      const body = await readBodyCapped(res, controller)
+      const scrubbed = scrubSecrets(body.text)
       const sliced = scrubbed.slice(0, limit)
-      const truncated =
+      const outputTruncation =
         scrubbed.length > limit ? `\n\n… truncated ${scrubbed.length - limit} chars` : ""
+      const byteTruncation = body.truncated
+        ? `\n\n… response truncated at ${BODY_HARD_CAP_BYTES} bytes`
+        : ""
       // Header tak boleh menggema kredensial: userinfo dihapus STRUKTURAL
       // (scrub pola tak kenal `user:pass@`), query disamarkan via scrubSecrets
       // (pola sama seperti body). Divalidasi e2e bug-hunt 2026-09-19 F4:
@@ -161,7 +177,7 @@ export const webFetchTool: Tool = {
       shown.username = ""
       shown.password = ""
       const header = `[${scrubSecrets(shown.toString())} ${res.status} ${contentType}]\n`
-      const content = (header + sliced + truncated).slice(0, limit + 500)
+      const content = (header + sliced + outputTruncation + byteTruncation).slice(0, limit + 500)
       // [Fase 4 / TOOL-05] Pagar data tak-terpercaya pada output web_fetch
       return isAlreadyFenced(content) ? content : fenceUntrustedToolOutput("web_fetch", content)
     } finally {

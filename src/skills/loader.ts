@@ -1,7 +1,9 @@
 import type { Dirent } from "node:fs"
-import { readdir, readFile, stat } from "node:fs/promises"
+import { readdir, stat } from "node:fs/promises"
 import { homedir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
+import { LIMITS } from "../constants.ts"
+import { safeReadFileCapped } from "../lib/safe-open.ts"
 import { isRealPathOutsideRoot } from "../policy/jail.ts"
 
 export interface Skill {
@@ -72,9 +74,20 @@ async function loadDir(dir: string, out: Skill[], root: string = dir) {
       continue
     }
     if (!e.isFile() || !e.name.endsWith(".md")) continue
-    const txt = await readFile(full, "utf8").catch(() => "")
+    let txt = ""
+    let truncated = false
+    try {
+      const loaded = await safeReadFileCapped(full, root, LIMITS.SKILL_FILE_MAX_BYTES)
+      txt = loaded.text
+      truncated = loaded.truncated
+    } catch {
+      continue
+    }
     if (!txt.trim()) continue
-    const { meta, body } = parseFrontmatter(txt)
+    const { meta, body: parsedBody } = parseFrontmatter(txt)
+    const body = truncated
+      ? `${parsedBody}\n\n… [skill truncated after first ${LIMITS.SKILL_FILE_MAX_BYTES} bytes]`
+      : parsedBody
     const rawName = meta.name ?? e.name.replace(/\.md$/, "")
     const name = rawName
       .toLowerCase()

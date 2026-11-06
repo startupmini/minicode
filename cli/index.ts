@@ -473,7 +473,10 @@ if (enterRepl) {
     // matikan spinner agar tak menulis ke stderr yang sama dengan anak selama
     // berjam-jam (stdio inherit) — itu yang terlihat sebagai hang/flicker.
     // Idempoten: aman dipanggil dua kali (sebelum install, sebelum restart).
-    await maybeAutoUpdate(readVersion(), ctrl.signal, { onLongOp: () => spin.stop() })
+    await maybeAutoUpdate(readVersion(), ctrl.signal, {
+      onLongOp: () => spin.stop(),
+      getInstalledVersion: readVersion,
+    })
   } catch {}
   clearTimeout(to)
   spin.stop()
@@ -579,7 +582,12 @@ if (enterRepl) {
   // Satu-satunya tampilan interaktif = TUI fullscreen (REPL linier dihapus).
   // One-shot/exec tak tersentuh (cabang else di bawah).
   const { runTui } = await import("./tui.ts")
-  await runTui(ctx)
+  try {
+    await runTui(ctx)
+  } catch (error) {
+    process.stderr.write(`[error] ${formatError(error)}\n`)
+    process.exitCode = 1
+  }
 } else {
   // P12 S2.2 (F-DISCUSS-4) + P0.2: one-shot linear memakai `ctx.workMode`
   // efektif (termasuk hasil pulihan `--resume`).

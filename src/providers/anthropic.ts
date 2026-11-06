@@ -5,6 +5,12 @@ import type { ToolSchema } from "#minicore/core/tool.ts"
 import type { Content, Message } from "#minicore/core/types.ts"
 import { LIMITS } from "../constants.ts"
 import { thinkingFamily } from "./effort.ts"
+import {
+  appendToolArgument,
+  boundedSseBody,
+  parseProviderToolArguments,
+  readProviderErrorBody,
+} from "./sse-bounds.ts"
 
 export interface AnthropicConfig {
   id?: string
@@ -128,13 +134,17 @@ export function createAnthropicProvider(config: AnthropicConfig): ModelProvider 
         throw new ProviderError("network", e instanceof Error ? e.message : String(e))
       }
       if (!response.ok) {
-        const txt = await response.text().catch(() => "")
+        const txt = await readProviderErrorBody(response).catch(() => "")
         throw toAnthropicError(response.status, txt, response.headers)
       }
       if (!response.body) throw new ProviderError("network", "empty response body")
 
       // buffer for tool inputs across deltas — per-stream (was global, now isolated)
-      const pendingTools = new Map<number, { id: string; name: string; args: string }>()
+      const pendingTools = new Map<
+        number,
+        { id: string; name: string; args: string; argsBytes: number }
+      >()
+      let pendingToolArgBytes = 0
 
       // Anthropic SSE: event: ...\ndata: {...}
       let currentEvent = ""
@@ -204,7 +214,12 @@ export function createAnthropicProvider(config: AnthropicConfig): ModelProvider 
             // [ST-5] Non-null guard: blok malformed tanpa id/name dikunci, bukan
             // dipaksa `block.id!`/`block.name!` yang bisa menyimpan undefined.
             if (typeof block.id !== "string" || typeof block.name !== "string") continue
-            pendingTools.set(raw.index ?? 0, { id: block.id, name: block.name, args: "" })
+            pendingTools.set(raw.index ?? 0, {
+              id: block.id,
+              name: block.name,
+              args: "",
+              argsBytes: 0,
+            })
           }
         }
         if (evType === "content_block_delta") {
@@ -212,7 +227,18 @@ export function createAnthropicProvider(config: AnthropicConfig): ModelProvider 
           if (d?.type === "input_json_delta") {
             const idx = raw.index ?? 0
             const p = pendingTools.get(idx)
-            if (p) p.args += d.partial_json ?? ""
+            if (p) {
+              const next = appendToolArgument(
+                p.args,
+                p.argsBytes,
+                d.partial_json ?? "",
+                pendingToolArgBytes,
+                "Anthropic",
+              )
+              p.args = next.value
+              p.argsBytes = next.bytes
+              pendingToolArgBytes = next.pendingBytes
+            }
           }
           if (d?.type === "thinking_delta" && typeof d.thinking === "string") {
             yield { type: "extension", kind: "reasoning", data: { text: d.thinking } }
@@ -222,17 +248,18 @@ export function createAnthropicProvider(config: AnthropicConfig): ModelProvider 
           const idx = raw.index ?? 0
           const p = pendingTools.get(idx)
           if (p) {
-            let args: unknown = p.args
-            try {
-              args = p.args ? JSON.parse(p.args) : {}
-            } catch {
-              args = { raw: p.args }
-            }
+            const args = parseProviderToolArguments(p.args, "Anthropic")
+            pendingToolArgBytes -= p.argsBytes
             yield { type: "tool_call", id: p.id, name: p.name, args }
             pendingTools.delete(idx)
           }
         }
       }
+      if (pendingTools.size > 0)
+        throw new ProviderError(
+          "invalid_request",
+          "Anthropic stream ended with incomplete tool arguments",
+        )
     },
   }
   return provider
@@ -392,15 +419,19 @@ async function* sseAnthropic(
   body: ReadableStream<Uint8Array>,
   signal: AbortSignal,
 ): AsyncGenerator<{ event: string; data: unknown }> {
-  const reader = body.getReader()
+  const boundedBody = boundedSseBody(body, signal, "Anthropic")
+  const reader = boundedBody.getReader()
   const decoder = new TextDecoder()
   let buffer = ""
   let evt = ""
+  let reachedEof = false
   try {
     while (true) {
-      if (signal.aborted) throw new DOMException("Aborted", "AbortError")
       const { done, value } = await reader.read()
-      if (done) break
+      if (done) {
+        reachedEof = true
+        break
+      }
       buffer += decoder.decode(value, { stream: true })
       let idx = buffer.indexOf("\n")
       while (idx >= 0) {
@@ -410,18 +441,20 @@ async function* sseAnthropic(
         else if (line.startsWith("data:")) {
           const payload = line.slice(5).trim()
           if (payload) {
+            let data: unknown
             try {
-              const data = JSON.parse(payload)
-              yield { event: evt, data }
-            } catch {}
+              data = JSON.parse(payload)
+            } catch {
+              throw new ProviderError("invalid_request", "Anthropic returned malformed SSE JSON")
+            }
+            yield { event: evt, data }
           }
-        } else if (line === "") {
-          evt = ""
-        }
+        } else if (line === "") evt = ""
         idx = buffer.indexOf("\n")
       }
     }
   } finally {
+    if (!reachedEof) await reader.cancel().catch(() => {})
     reader.releaseLock()
   }
 }

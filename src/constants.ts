@@ -14,11 +14,17 @@ export const LIMITS = {
   BASH_BACKGROUND_MAX_JOBS: 8,
   BASH_BACKGROUND_MAX_LIFETIME_MS: 3_600_000,
   DOCKER_OUTPUT_MAX_CHARS: 100_000,
+  /** Batas untuk meminta daemon Docker menghapus container yang timeout/abort. */
+  DOCKER_CLEANUP_TIMEOUT_MS: 5_000,
   MCP_OUTPUT_MAX_CHARS: 100_000,
+  /** Batas frame JSON-RPC stdio sebelum decode/parse; satu respons tools/list bisa besar. */
+  MCP_STDIO_FRAME_MAX_BYTES: 1_048_576,
   MCP_REQUEST_TIMEOUT_MS: 30_000,
   TASK_SUB_AGENT_MAX_TOKENS: 2_000,
   /** Context & memory */
   SYSTEM_PROMPT_MAX_CHARS: 8_000,
+  /** Batas baca per skill sebelum dirender sebagai instruksi pada prompt. */
+  SKILL_FILE_MAX_BYTES: 32_000,
   MEMORY_FILE_MAX_CHARS: 4_000,
   MEMORY_FILE_MAX_BYTES: 200_000,
   MEMORY_TRUNCATE_KEEP_BYTES: 150_000,
@@ -85,6 +91,16 @@ export const LIMITS = {
   /** Investigasi Phase 5: cap reasoning stream (terbukti TANPA cap = akumulasi
    * tak terbatas — satu-satunya jalur loop `reasoning +=` tanpa batas). */
   PROVIDER_REASON_MAX_CHARS: 2_000_000,
+  /** Frame SSE provider longgar untuk JSON tool besar (write_file menerima 5 MB chars). */
+  PROVIDER_SSE_FRAME_MAX_BYTES: 16_777_216,
+  /** Batas total satu respons stream provider, termasuk reasoning/tool args. */
+  PROVIDER_SSE_TOTAL_MAX_BYTES: 67_108_864,
+  /** Argumen tool besar tetap didukung; envelope JSON dapat menggandakan escape chars. */
+  PROVIDER_TOOL_ARGS_MAX_BYTES: 12_582_912,
+  /** Batas agregat argumen yang masih tertahan dari beberapa tool call. */
+  PROVIDER_TOOL_ARGS_PENDING_MAX_BYTES: 25_165_824,
+  /** Respons error provider cukup untuk diagnosis tanpa membaca body arbitrer. */
+  PROVIDER_ERROR_BODY_MAX_BYTES: 65_536,
   DOCKER_TIMEOUT_MS: 30_000,
   DETECT_MODELS_TIMEOUT_MS: 4_000,
   DETECT_GLOBAL_TIMEOUT_MS: 6_000,
@@ -99,6 +115,7 @@ export const LIMITS = {
   LSP_INIT_TIMEOUT_MS: 15_000,
   VERIFY_DEFAULT_TIMEOUT_MS: 30_000,
   WEB_FETCH_BODY_HARD_CAP_CHARS: 2_000_000,
+  WEB_RESPONSE_BODY_HARD_CAP_BYTES: 2_000_000,
   WEB_FETCH_MAX_REDIRECTS: 5,
   /** Glob/grep */
   SEARCH_DEFAULT_LIMIT: 100,

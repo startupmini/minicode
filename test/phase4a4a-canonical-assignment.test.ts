@@ -55,7 +55,7 @@ async function ownedDir(): Promise<string> {
   owned.push(dir)
   return dir
 }
-const mkctx = () => ({ signal: new AbortController().signal }) as never
+const mkctx = (cwd = process.cwd()) => ({ signal: new AbortController().signal, cwd }) as never
 const prevId = todoSession.id
 const prevCwd = todoSession.cwd
 afterEach(async () => {
@@ -91,7 +91,7 @@ const kinds = (t: CanonicalAssignmentTable | undefined) => t?.map((a) => a.kind)
 async function runTodoWrite(dir: string, todos: unknown[], sessionId = S): Promise<string> {
   todoSession.id = sessionId
   todoSession.cwd = dir
-  return (await todoWriteTool.execute({ todos } as never, mkctx())) as string
+  return (await todoWriteTool.execute({ todos } as never, mkctx(dir))) as string
 }
 
 function fakeBus(): EventBusLike & { emit: (type: string, payload: unknown) => void } {

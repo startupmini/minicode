@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { spawnSync } from "node:child_process"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { buildRepoMap, extractSymbols, loadRepoMap } from "../src/repo/repomap.ts"
@@ -57,4 +58,35 @@ test("loadRepoMap: caches to .minicode/repomap.json", async () => {
   expect(first).toBe(second)
   expect(first).toContain("b.ts")
   await rm(dir, { recursive: true, force: true })
+})
+
+test("loadRepoMap excludes tracked symlinks whose target is outside the workspace", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "minicode-repomap-link-"))
+  const outside = await mkdtemp(join(tmpdir(), "minicode-repomap-outside-"))
+  const previousMode = process.env.MINICODE_REPOMAP
+  try {
+    process.env.MINICODE_REPOMAP = "regex"
+    await mkdir(join(dir, "src"), { recursive: true })
+    const secretFile = join(outside, "secret.ts")
+    await writeFile(secretFile, "export function OUTSIDE_SECRET_SYMBOL() {}\n", "utf8")
+    const linkPath = join(dir, "src", "linked.ts")
+    try {
+      await symlink(secretFile, linkPath, "file")
+    } catch {
+      return
+    }
+    const init = spawnSync("git", ["init", "-q"], { cwd: dir, timeout: 5000 })
+    if (init.status !== 0) return
+    spawnSync("git", ["config", "core.symlinks", "true"], { cwd: dir, timeout: 5000 })
+    const add = spawnSync("git", ["add", "--", "src/linked.ts"], { cwd: dir, timeout: 5000 })
+    if (add.status !== 0) return
+    const map = await loadRepoMap(dir)
+    expect(map).not.toContain("OUTSIDE_SECRET_SYMBOL")
+    expect(map).not.toContain("secret.ts")
+  } finally {
+    if (previousMode === undefined) delete process.env.MINICODE_REPOMAP
+    else process.env.MINICODE_REPOMAP = previousMode
+    await rm(dir, { recursive: true, force: true }).catch(() => {})
+    await rm(outside, { recursive: true, force: true }).catch(() => {})
+  }
 })

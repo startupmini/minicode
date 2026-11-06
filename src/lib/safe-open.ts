@@ -1,13 +1,14 @@
 import { constants } from "node:fs"
 import type { FileHandle } from "node:fs/promises"
-import { open, realpath } from "node:fs/promises"
+import { open, realpath, stat as statPath } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from "node:path"
 import { isPathOutsideRoot, isSensitive } from "../policy/jail.ts"
 
-// O_NOFOLLOW mencegah open mengikuti symlink (TOCTOU swap).
-// Di Windows nilai tidak didefinisikan — fallback ke 0 dan pakai dev+ino check.
-const O_NOFOLLOW: number = (constants as unknown as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0x20000
+// O_NOFOLLOW mencegah open mengikuti symlink pada POSIX. Windows tidak
+// menyediakan flag Node yang setara; semua platform juga membandingkan dev+ino
+// stat sebelum open dengan identitas handle setelah open.
+const O_NOFOLLOW: number = (constants as unknown as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0
 const O_RDONLY = constants.O_RDONLY
 
 /**
@@ -39,17 +40,19 @@ export async function resolveSafePath(
 }
 
 /**
- * Buka file dengan O_NOFOLLOW pada path yang SUDAH terverifikasi di dalam root.
+ * Buka file dengan O_NOFOLLOW pada POSIX dan pemeriksaan identitas handle pada
+ * semua platform.
  *
- * Urutan: realpath(abs) → tolak bila di luar root → open(preReal, O_NOFOLLOW).
+ * Urutan: realpath + boundary check → stat identitas → realpath ulang +
+ * boundary check → open target canonical → fstat dan cocokkan dev+ino.
  * Membuka hasil resolusi (bukan abs asli) berarti symlink internal tetap bisa
- * dibaca (targetnya yang dibuka langsung), sementara swap jadi symlink lain
- * sebelum open gagal tutup (ELOOP) — tidak ada konten luar yang terbaca.
+ * dibaca. O_NOFOLLOW menutup swap leaf pada POSIX; pencocokan identitas handle
+ * menolak target berbeda yang terbuka setelah komponen path berubah, termasuk
+ * pada Windows yang tidak memiliki O_NOFOLLOW di API Node.
  *
- * POSIX-only: di Windows konstanta O_NOFOLLOW tidak didefinisikan (Node) dan
- * flag diabaikan libuv, sehingga proteksi = pre-check realpath saja (window
- * race sama seperti pola lama). Catatan jujur: klaim "0 lolos" hanya sah di
- * POSIX — lihat test/tool-toctou.test.ts (skip bila symlink EPERM).
+ * File system yang tidak menyediakan inode non-zero ditolak karena identitas
+ * handle tidak dapat dibuktikan. Stress test symlink tetap bergantung pada
+ * privilege platform; lihat test/tool-toctou.test.ts.
  */
 export async function safeOpenRead(
   abs: string,
@@ -64,37 +67,88 @@ export async function safeOpenRead(
   // di sini agar semua pembaca via open (read_file/read_image/stat) mewarisinya.
   if (isSensitive(preReal)) throw new Error(`blocked sensitive file: ${abs}`)
 
+  // Ambil identitas sebelum open, lalu periksa kembali boundary setelah stat.
+  // Ini menutup race di mana parent directory berubah menjadi junction/symlink
+  // keluar sesudah realpath pertama tetapi sebelum open.
+  const expected = await statPath(preReal, { bigint: true })
+  const checkedReal = await realpath(preReal)
+  if (isPathOutsideRoot(checkedReal, realRoot))
+    throw new Error(`symlink points outside workspace: ${abs}`)
+  if (isSensitive(checkedReal)) throw new Error(`blocked sensitive file: ${abs}`)
+  if (expected.ino === 0n)
+    throw new Error(`unable to verify opened file identity on this filesystem: ${abs}`)
+
   // Buka path terverifikasi — bukan abs (yang bisa di-swap setelah realpath).
   let handle: FileHandle
   try {
-    handle = await open(preReal, O_RDONLY | O_NOFOLLOW)
+    handle = await open(checkedReal, O_RDONLY | O_NOFOLLOW)
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code
     if (code === "ELOOP") throw new Error(`symlink swapped during open (O_NOFOLLOW): ${abs}`)
-    // EINVAL: O_NOFOLLOW tidak didukung → buka biasa (Windows: pre-check saja)
+    // EINVAL: O_NOFOLLOW tidak didukung → buka biasa; fstat di bawah tetap
+    // memastikan file yang dibuka sama dengan identitas yang sudah diperiksa.
     if (code === "EINVAL" && O_NOFOLLOW !== 0) {
-      handle = await open(preReal, O_RDONLY)
+      handle = await open(checkedReal, O_RDONLY)
     } else throw e
+  }
+  const opened = await handle.stat({ bigint: true }).catch(async (error: unknown) => {
+    await handle.close().catch(() => {})
+    throw error
+  })
+  if (opened.ino === 0n || opened.dev !== expected.dev || opened.ino !== expected.ino) {
+    await handle.close().catch(() => {})
+    throw new Error(`file changed during safe open; refusing to read unverified target: ${abs}`)
   }
   // Hardlink ke luar workspace tak terlihat oleh realpath (semua nama setara)
   // — baca via hardlink = baca konten luar. fstat pada handle yang SUDAH
   // terbuka: tepat untuk file ini, bebas race dengan swap nama. File normal
   // nlink=1; tolak sisanya dengan pesan yang bisa ditindaklanjuti.
-  const st = await handle.stat().catch(() => null)
   // Hardlink check hanya untuk file regular: direktori punya nlink >= 2
   // (`.` dan `..`) dan bukan target hardlink — biarkan tool yang menolak
   // direktori dengan pesan yang user-friendly.
-  if (st && !st.isDirectory() && st.nlink > 1) {
+  if (!opened.isDirectory() && opened.nlink > 1n) {
     await handle.close().catch(() => {})
-    throw new Error(`refusing to read file with multiple hardlinks (nlink=${st.nlink}): ${abs}`)
+    throw new Error(`refusing to read file with multiple hardlinks (nlink=${opened.nlink}): ${abs}`)
   }
-  return { handle, realPath: preReal }
+  return { handle, realPath: checkedReal }
 }
 
 export async function safeReadFile(abs: string, root: string): Promise<string> {
   const { handle } = await safeOpenRead(abs, root)
   try {
     return await handle.readFile("utf8")
+  } finally {
+    await handle.close().catch(() => {})
+  }
+}
+
+/**
+ * Baca file tepercaya dengan batas byte sebelum alokasi tumbuh mengikuti file.
+ * Satu byte tambahan membedakan file tepat pada batas dari file yang dipotong.
+ */
+export async function safeReadFileCapped(
+  abs: string,
+  root: string,
+  maxBytes: number,
+): Promise<{ text: string; truncated: boolean }> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
+    throw new RangeError("maxBytes must be a positive safe integer")
+  const { handle } = await safeOpenRead(abs, root)
+  try {
+    const st = await handle.stat()
+    if (!st.isFile()) throw new Error(`refusing to read non-regular file: ${abs}`)
+    const buffer = Buffer.alloc(maxBytes + 1)
+    let bytesRead = 0
+    while (bytesRead < buffer.length) {
+      const result = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead)
+      if (result.bytesRead === 0) break
+      bytesRead += result.bytesRead
+    }
+    const truncated = bytesRead > maxBytes || st.size > maxBytes
+    return {
+      text: buffer.subarray(0, Math.min(bytesRead, maxBytes)).toString("utf8"),
+      truncated,
+    }
   } finally {
     await handle.close().catch(() => {})
   }

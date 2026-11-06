@@ -4,6 +4,7 @@ import { scrubSecrets } from "../policy/scrub.ts"
 import { dockerAvailable, runInDocker } from "../sandbox/docker.ts"
 import { osSandboxAvailable, runInOsSandbox } from "../sandbox/os.ts"
 import { capMarked } from "./bash.ts"
+import { requireToolCwd } from "./context.ts"
 
 // code_run: snippet python/node dieksekusi LEWAT sandbox runner (docker atau
 // OS sandbox), bukan spawn host langsung — versi lama hanya mengecek env flag
@@ -14,8 +15,8 @@ import { capMarked } from "./bash.ts"
 //   fallback diam-diam ke host).
 // - docker image default (node:22-alpine) membawa node, bukan python3 —
 //   python butuh MINICODE_SANDBOX_IMAGE yang menyediakannya.
-// - Pembatalan menghentikan PENUNGGUAN; container/proses bisa hidup sampai
-//   timeout runner-nya sendiri (terdokumentasi, sama seperti MCP stdio).
+// - Timeout/abort meminta daemon menghapus container bernama; hasil cleanup
+//   dilaporkan, tetapi tetap best-effort bila daemon tak merespons.
 
 /** Escape untuk disisip sebagai satu argumen single-quoted di `sh -c`. */
 export function shSingleQuote(s: string): string {
@@ -46,7 +47,7 @@ export const codeRunTool: Tool = {
     }
     const src = code as string
     if (src.includes("\0")) throw new Error("code contains NUL byte")
-    const root = ctx.cwd ?? process.cwd()
+    const root = requireToolCwd(ctx)
     const timeoutMs =
       typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0 ? timeout : 10000
     // Tanpa shell perantara di sisi kita: kode jadi SATU argumen single-quoted
@@ -61,7 +62,7 @@ export const codeRunTool: Tool = {
             if (!dockerAvailable()) {
               throw new Error("code_run: MINICODE_SANDBOX=docker but docker is not available")
             }
-            return runInDocker(inner, root, { timeoutMs })
+            return runInDocker(inner, root, { timeoutMs, signal: ctx.signal })
           }
         : () => {
             if (!osSandboxAvailable()) {
@@ -90,7 +91,7 @@ export const codeRunTool: Tool = {
           ),
         ])
     const text = capMarked(scrubSecrets(settled.output), LIMITS.BASH_OUTPUT_MAX_CHARS).trim()
-    if (settled.code !== 0) return `exit ${settled.code}\n${text}`
+    if (settled.code !== 0) return `exit ${settled.code ?? "unknown"}\n${text}`
     return text
   },
 }

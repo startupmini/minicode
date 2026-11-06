@@ -204,7 +204,16 @@ arbitrator untuk transient, tetapi bukan pengganti semantic routing.
 
 ## 9. Geometry, text, dan fallback
 
-- `displayWidth()` menghitung terminal columns; CJK/emoji = dua kolom.
+- `displayWidth()` menghitung kolom terminal per grapheme dengan
+  `Intl.Segmenter("und", { granularity: "grapheme" })`. Karakter CJK/fullwidth
+  dihitung dua kolom; combining marks tidak menambah kolom. Cluster emoji yang
+  ditampilkan sebagai emoji (Emoji_Presentation/VS16), skin-tone, ZWJ, regional
+  indicator, dan keycap dihitung dua kolom sebagai satu unit. Kebijakan ini
+  mengikuti perilaku terminal umum; MiniCode tidak mengukur lebar glyph per
+  terminal, sehingga font/terminal yang menyimpang dapat tetap berbeda.
+- Wrapping, truncation/chunking, transcript selection, kursor prompt, dan
+  geometri frame memakai helper lebar bersama. `truncateToWidth()` dan
+  `chunkByWidth()` tidak memecah grapheme.
 - Sanitasi control bytes dilakukan sebelum output; SGR boleh hanya bila color gate.
 - Resize dibaca saat paint, bukan saat event.
 - `NO_COLOR`/legacy Windows memakai glyph ASCII atau status word.
@@ -212,7 +221,22 @@ arbitrator untuk transient, tetapi bukan pengganti semantic routing.
 - TTY table boleh aligned; machine/non-TTY tidak boleh berubah makna.
 - Copy/paste tidak bergantung pada warna.
 
-## 10. Parity matrix
+## 10. Visual system dan accessibility
+
+`src/ui/render/theme.ts` menyediakan token semantik (`success`, `error`,
+`warning`, `info`, `accent`, `muted`, `faint`) dengan getter runtime. Token
+warna hanya menegaskan status dan hierarki; status penting juga memakai kata
+atau glyph sehingga tetap dapat dibaca pada `NO_COLOR`/mono. Fallback ASCII
+dikendalikan oleh `MINICODE_ASCII` dan capability UTF-8 Windows.
+
+Interaksi tetap keyboard-first: PgUp/PgDn dan Home/End untuk transkrip, Esc
+untuk membatalkan/menutup selection, Ctrl+D untuk keluar, dan popup menahan
+fokus sampai ditutup. Tidak ada mode screen-reader terpisah karena kontrak
+fullscreen terminal dibekukan. Navigasi keyboard dan jalur mono memiliki test;
+screen-reader announcement, kontras fisik, dan manual assistive-technology UAT
+belum diverifikasi. Tampilan antar terminal tetap dapat berbeda.
+
+## 11. Parity matrix
 
 | Semantic | TUI | Linear | Exec | ACP |
 |---|---|---|---|---|
@@ -227,7 +251,7 @@ arbitrator untuk transient, tetapi bukan pengganti semantic routing.
 Parity diuji pada semantic object sebelum snapshot string. Test output tetap diperlukan
 untuk regressions visual dan protocol.
 
-## 11. Migration seams
+## 12. Migration seams
 
 1. `PresentationAdapter` dapat tetap emit raw-compatible events.
 2. `ProjectionBridge` aktif untuk semua surface; flag `MINICODE_PRESENTATION_V2` dihapus di Phase 8.
@@ -238,7 +262,7 @@ untuk regressions visual dan protocol.
    removed from user-facing TUI. Raw EventBus remains for streaming content and
    diagnostics/trace only.
 
-## 12. Definition of done renderer
+## 13. Definition of done renderer
 
 - Tidak ada renderer yang meng-status-kan teks.
 - TUI/linear/exec/ACP menghasilkan semantic fields yang sama.

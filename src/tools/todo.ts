@@ -14,6 +14,7 @@ import { type CanonicalAssignmentTable, encodeCanonicalAssignments } from "../ta
 import { isTaskId, TaskError } from "../task/model.ts"
 import { TaskStore } from "../task/store.ts"
 import { hasCanonicalIdentity, hasCanonicalTasks, synchronizeCanonicalTasks } from "../task/sync.ts"
+import { requireToolCwd } from "./context.ts"
 
 // Todo list per sesi — state eksplisit untuk task multi-langkah.
 // Tanpa ini agent tidak punya tempat menyimpan rencana antar step, sehingga
@@ -561,10 +562,8 @@ export const todoSession = { id: "default", cwd: undefined as string | undefined
  * so the operation stays bound to the session it was invoked with no matter what
  * another request does to the global.
  *
- * Resolution order (preserved from the original code, which preferred `ctx` over
- * the global):
- *   sessionId: ctx.sessionId  ->  todoSession.id
- *   cwd:       ctx.cwd        ->  todoSession.cwd  ->  process.cwd()
+ * Identitas boleh memakai default composition. Root workspace wajib dari
+ * request context agar tool tidak berpindah diam-diam ke cwd proses.
  *
  * `todoSession` remains the composition-root DEFAULT — `cli/setup.ts` binds it
  * once at startup and never mutates it during operation. It is read here exactly
@@ -575,7 +574,7 @@ export function todoOperationContext(ctx: unknown): { sessionId: string; cwd: st
   const c = (ctx ?? {}) as { sessionId?: string; cwd?: string }
   return {
     sessionId: typeof c.sessionId === "string" && c.sessionId !== "" ? c.sessionId : todoSession.id,
-    cwd: c.cwd ?? todoSession.cwd ?? process.cwd(),
+    cwd: requireToolCwd(c),
   }
 }
 

@@ -4,6 +4,7 @@ import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { isIgnored, loadIgnoreMatchers } from "../lib/ignore.ts"
 import { isPathOutsideRoot, isSensitive } from "../policy/jail.ts"
+import { requireToolCwd } from "./context.ts"
 
 async function walk(
   dir: string,
@@ -78,7 +79,7 @@ export const globTool: Tool = {
     additionalProperties: false,
   },
   async execute({ pattern, cwd, limit }, ctx) {
-    const sessionRoot = ctx.cwd ?? process.cwd()
+    const sessionRoot = requireToolCwd(ctx)
     const rawRoot = (cwd as string) ?? "."
     const root = resolve(sessionRoot, rawRoot)
     if (isPathOutsideRoot(root, sessionRoot)) throw new Error(`cwd outside workspace: ${rawRoot}`)

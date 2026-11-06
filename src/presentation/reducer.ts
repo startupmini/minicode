@@ -750,6 +750,7 @@ export function reduce(
           category: event.category,
           severity: event.severity,
           message: event.message,
+          ...(event.attemptId !== undefined ? { attemptId: event.attemptId } : {}),
           ...(event.cause ? { cause: event.cause } : {}),
           ...(event.action ? { action: event.action } : {}),
         }

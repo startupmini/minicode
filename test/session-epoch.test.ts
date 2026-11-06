@@ -636,21 +636,10 @@ test("P4-E09: turn sukses menutup run COMPLETED di kedua jalur host", async () =
   }
 })
 
-// P05-tail — non-guard persist failure saat ini DITELAN (best-effort).
-//
-// PERILAKU SAAT INI, BUKAN KLAIM KEBENARAN — menunggu kebijakan §13.2.
-// Taksonomi persistCurrent: StaleWriterError → flag basi jujur;
-// RefusedHistoryRewriteError → shrink eksplisit / tolak-jujur;
-// error LAIN (I/O disk, BUSY habis-retry, constraint, korupsi) → telan
-// diam-diam di catch terluar (setup.ts:2105-2113, "persist best-effort").
-// Test ini menyuntik kegagalan non-guard deterministik (trigger SQL yang
-// menggagalkan INSERT messages seketika — tanpa timing/lock) dan mem-pin
-// perilaku saat ini: resolve tanpa throw, TANPA flag basi, turn hilang dari
-// durable history. Rasional retensi: sesi TUI long-running tetap hidup
-// melewati gangguan transien; guard tetap berisik; jurnal (file) menyimpan
-// bukti untuk recovery. Bila kebijakan diputuskan sebaliknya (flag/throw),
-// test ini WAJIB diperbarui — jangan ubah perilaku diam-diam.
-test("P05-tail: non-guard persist failure saat ini ditelan tanpa flag", async () => {
+// P05-tail — kegagalan persist non-epoch harus tampak pada pemanggil.
+// Trigger SQL membuat INSERT gagal deterministik; turn tetap hilang dari
+// histori kanonik, sehingga pemanggil tidak boleh menerima resolve sukses.
+test("PERSIST-01: non-guard persist failure dilempar dan tidak menandai writer stale", async () => {
   const cwd = ws()
   const sid = "p05tail"
   await saveSession(
@@ -675,12 +664,19 @@ test("P05-tail: non-guard persist failure saat ini ditelan tanpa flag", async ()
     db.exec(
       "CREATE TRIGGER p05_probe_fault BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'P05 probe fault'); END",
     )
-    // Persist nyata → saveSession melempar non-guard → catch terluar menelan.
+    // Persist nyata → saveSession melempar non-guard → persistCurrent meneruskan.
     const u = cli.usage.getSession(cli.modelRef.current)
-    await cli.persistCurrent(u)
-    // Saat ini: tak melempar DAN tak menandai basi (bedakan dari guard path
-    // yang jujur via isWriterStale). Kanonik utuh tapi turn hilang.
+    let persistError: unknown
+    try {
+      await cli.persistCurrent(u)
+    } catch (error) {
+      persistError = error
+    }
+    expect(persistError).toBeInstanceOf(Error)
+    expect((persistError as Error).message).toContain("P05 probe fault")
+    // Error I/O bukan bukti writer epoch basi; bedakan dari guard path.
     expect(cli.isWriterStale()).toBe(false)
+    // Histori kanonik tidak mengandung turn yang gagal dipersist.
     expect(messageContents(cwd, sid)).toEqual(["A", "B"])
     expect(provider.requestCount()).toBe(1)
   } finally {

@@ -356,6 +356,51 @@ test("provider:text → model.delta; provider:extension reasoning → reasoning.
   a.dispose()
 })
 
+test("failed provider attempt emits correlated diagnostic and rolls back reasoning", () => {
+  const bus = fakeBus()
+  const a = createPresentationAdapter(bus, { sessionId: "s1" })
+  const events = collect(a)
+  bus.emit("turn:started", { turn: 1 })
+  bus.emit("provider:extension", {
+    kind: "minicode:attempt",
+    data: { phase: "started", attemptId: 7 },
+  })
+  bus.emit("provider:text", { text: "PARTIAL" })
+  bus.emit("provider:extension", { kind: "reasoning", data: { text: "failed-reasoning" } })
+  bus.emit("provider:extension", {
+    kind: "minicode:attempt",
+    data: { phase: "invalidated", attemptId: 7, hadVisibleOutput: true, reason: "stream-error" },
+  })
+  bus.emit("provider:extension", {
+    kind: "minicode:attempt",
+    data: { phase: "started", attemptId: 8 },
+  })
+  bus.emit("provider:text", { text: "FINAL" })
+  bus.emit("provider:extension", {
+    kind: "minicode:attempt",
+    data: { phase: "completed", attemptId: 8, hadVisibleOutput: true },
+  })
+  bus.emit("turn:completed", { result: { finalText: "FINAL" } })
+  expect(
+    events.find((event) => event.type === "model.delta" && event.delta === "PARTIAL"),
+  ).toMatchObject({
+    attemptId: 7,
+  })
+  expect(
+    events.find((event) => event.type === "model.delta" && event.delta === "FINAL"),
+  ).toMatchObject({
+    attemptId: 8,
+  })
+  expect(events.find((event) => event.type === "diagnostic.raised")).toMatchObject({
+    category: "PROVIDER_ATTEMPT_INVALIDATED",
+    attemptId: 7,
+    severity: "warning",
+  })
+  expect(events.find((event) => event.type === "model.completed")).toMatchObject({ text: "FINAL" })
+  expect(events.some((event) => event.type === "reasoning.completed")).toBe(false)
+  a.dispose()
+})
+
 test("reasoning delta dipromosikan menjadi completed dan result final", () => {
   const bus = fakeBus()
   const a = createPresentationAdapter(bus, { sessionId: "s1" })

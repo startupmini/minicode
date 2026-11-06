@@ -7,12 +7,13 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { closeAll, connectAll, mcpInventory } from "../src/mcp/client.ts"
 import { createPermissionHandler } from "../src/policy/permission.ts"
+import { mcpCallTool } from "../src/tools/mcp_call.ts"
 
 setDefaultTimeout(30_000)
 
 let server: ReturnType<typeof Bun.serve> | null = null
 
-type RpcHandler = (method: string, params: Record<string, unknown>) => unknown
+type RpcHandler = (method: string, params: Record<string, unknown>) => unknown | Promise<unknown>
 
 /** Server MCP HTTP minimal yang perilakunya ditentukan handler. */
 function serveMcp(handler: RpcHandler): string {
@@ -30,7 +31,7 @@ function serveMcp(handler: RpcHandler): string {
       if (body.id === undefined) return new Response("", { status: 202 })
       let result: unknown
       try {
-        result = handler(body.method, body.params ?? {})
+        result = await handler(body.method, body.params ?? {})
       } catch (e) {
         return new Response(
           JSON.stringify({
@@ -176,6 +177,49 @@ describe("MCP client: discovery resources & prompts", () => {
     const inv = mcpInventory()
     expect(inv[0]!.resources).toEqual([])
     expect(inv[0]!.prompts).toEqual([])
+  })
+
+  test("abort setelah server menerima tools/call melaporkan outcome unknown dan tidak retry", async () => {
+    let accepted!: () => void
+    const requestAccepted = new Promise<void>((resolve) => (accepted = resolve))
+    let remoteEffects = 0
+    let remoteCalls = 0
+    const url = serveMcp(async (method) => {
+      if (method === "initialize")
+        return { protocolVersion: "2025-06-18", capabilities: { tools: {} } }
+      if (method === "tools/list") return { tools: [{ name: "mutate" }] }
+      if (method === "tools/call") {
+        remoteCalls++
+        remoteEffects++
+        accepted()
+        // Server keeps working after the client aborts its HTTP request.
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        return { content: [{ type: "text", text: "completed remotely" }] }
+      }
+      throw new Error(`unsupported: ${method}`)
+    })
+    await connectAll([{ id: "ambiguous", url, allowPrivateHost: true }])
+
+    const preAborted = new AbortController()
+    preAborted.abort(new Error("cancelled before dispatch"))
+    await expect(
+      mcpCallTool.execute({ server: "ambiguous", tool: "mutate" }, {
+        signal: preAborted.signal,
+      } as never),
+    ).rejects.toThrow("cancelled before dispatch")
+    expect(remoteCalls).toBe(0)
+
+    const controller = new AbortController()
+    const execution = mcpCallTool.execute({ server: "ambiguous", tool: "mutate" }, {
+      signal: controller.signal,
+    } as never)
+    await requestAccepted
+    controller.abort(new Error("operator cancelled"))
+
+    await expect(execution).rejects.toThrow(/outcome is unknown.*may have accepted or completed/)
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    expect(remoteEffects).toBe(1)
+    expect(remoteCalls).toBe(1)
   })
 
   test("initialize mendeklarasikan kapabilitas yang benar-benar dikonsumsi", async () => {

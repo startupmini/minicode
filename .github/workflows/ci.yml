@@ -71,6 +71,31 @@ jobs:
           test/p23-*.test.ts
           test/p24-*.test.ts
 
+      # Evaluator kualitas murni: input invalid/fake harus gagal tanpa provider
+      # atau panggilan berbayar. `gate:eval` live tetap memakai artifact nyata.
+      - name: Deterministic eval gate tests
+        working-directory: minicode
+        run: bun test test/eval-gate.test.ts
+
+      # Regressions untuk batas permission, provider, provenance memori,
+      # update, dan hasil pencarian tanpa embedding harus ikut PR CI.
+      - name: Remediation regression tests
+        working-directory: minicode
+        run: >-
+          bun test
+          test/ctl07-permission-fail-closed.test.ts
+          test/provider-sse-bounds.test.ts
+          test/provider-retry-output.test.ts
+          test/memory-provenance-auth.test.ts
+          test/memory-no-embedding-call.test.ts
+          test/docker-cleanup.test.ts
+          test/update-auto.test.ts
+          test/git-commit-index.test.ts
+          test/git-filter-process.test.ts
+          test/web-search-boundary.test.ts
+          test/tool-context.test.ts
+          test/release-workflow.test.ts
+
       # Gate agregat nyata. `bun test --coverage` sendirian selalu lulus —
       # threshold Bun dievaluasi per-file sehingga tak bisa dipakai sebagai gate.
       - name: Coverage gate (aggregate)
@@ -110,6 +135,21 @@ jobs:
       - name: Benchmark smoke (fake provider)
         working-directory: minicode
         run: bun run bench:smoke
+
+      - name: Confirm fake smoke cannot satisfy eval gate
+        working-directory: minicode
+        shell: bash
+        run: |
+          if output="$(bun run gate:eval --results bench/results.json 2>&1)"; then
+            echo "$output"
+            echo "fake smoke output unexpectedly passed gate:eval"
+            exit 1
+          fi
+          if ! grep -Fq "hasil --fake hanya untuk smoke" <<<"$output"; then
+            echo "$output"
+            echo "gate:eval failed without rejecting fake smoke evidence"
+            exit 1
+          fi
 
       # Audit harness deterministik (tanpa API key): safety/guard/jail/budget.
       - name: Harness audit (60 checks)

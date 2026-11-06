@@ -1278,7 +1278,11 @@ export async function searchHybrid(
   if (rows.length === 0) return []
 
   let queryVec: number[] | null = null
-  if (opts.baseUrl && opts.apiKey) {
+  // F-07: bila semua kandidat hanya memiliki teks (mis. memori manual atau
+  // fallback provider tanpa embedding), vektor query tidak dapat mengubah
+  // skor satu pun. Jangan melakukan DNS/HTTP embedding yang hasilnya tak dipakai.
+  const hasVectorCandidates = rows.some((row) => row.embedding !== null)
+  if (hasVectorCandidates && opts.baseUrl && opts.apiKey) {
     const vecs = await embedTexts(opts.baseUrl, opts.apiKey, [query], opts.embeddingModel)
     if (vecs?.[0]) queryVec = vecs[0]
   }

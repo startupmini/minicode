@@ -7,6 +7,22 @@ import { scrubSecrets } from "../policy/scrub.ts"
 import { McpHttpTransport, type McpTransportLike } from "./http-transport.ts"
 import { McpTransport } from "./transport.ts"
 
+/**
+ * Transport interruption after a tools/call request can race with remote
+ * execution. Callers must not report this as a clean failure or retry blindly.
+ */
+export class McpCallOutcomeUnknownError extends Error {
+  readonly code = "MCP_CALL_OUTCOME_UNKNOWN"
+
+  constructor(toolName: string, cause: unknown) {
+    const detail = scrubSecrets(cause instanceof Error ? cause.message : String(cause))
+    super(
+      `MCP tool ${toolName} outcome is unknown: ${detail}. The server may have accepted or completed the operation; inspect remote state before retrying.`,
+    )
+    this.name = "McpCallOutcomeUnknownError"
+  }
+}
+
 // [Fase 8 / 8.2] MCP Schema Fingerprint Pinning.
 //
 // Bahaya yang ditutup: server MCP bisa mengubah skema toolnya SETELAH pin
@@ -515,15 +531,24 @@ class McpConnection {
     args: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<unknown> {
-    const result = (await this.transport.request(
-      "tools/call",
-      {
-        name,
-        arguments: args,
-      },
-      undefined,
-      signal,
-    )) as Record<string, unknown>
+    // Abort before entering transport is known not to have sent a request.
+    signal?.throwIfAborted()
+    let result: Record<string, unknown>
+    try {
+      result = (await this.transport.request(
+        "tools/call",
+        {
+          name,
+          arguments: args,
+        },
+        undefined,
+        signal,
+      )) as Record<string, unknown>
+    } catch (error) {
+      // Once the transport call begins, timeout/abort/connection failure does
+      // not prove the remote server stopped or rolled back the operation.
+      throw new McpCallOutcomeUnknownError(name, error)
+    }
     if (result && typeof result.isError === "boolean" && result.isError) {
       const content = Array.isArray(result.content)
         ? result.content.map((c: any) => c.text ?? JSON.stringify(c)).join("\n")

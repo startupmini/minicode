@@ -196,6 +196,8 @@ export interface TurnCancelledEvent extends Base {
 export interface ModelDeltaEvent extends Base {
   type: "model.delta"
   delta: string
+  /** Guard-local provider stream attempt; invalidation diagnostics reference it. */
+  attemptId?: number
 }
 export interface ModelCompletedEvent extends Base {
   type: "model.completed"
@@ -206,6 +208,8 @@ export interface ModelCompletedEvent extends Base {
 export interface ReasoningDeltaEvent extends Base {
   type: "reasoning.delta"
   delta: string
+  /** Guard-local provider stream attempt; failed reasoning is rolled back. */
+  attemptId?: number
 }
 export interface ReasoningCompletedEvent extends Base {
   type: "reasoning.completed"
@@ -374,6 +378,8 @@ export interface DiagnosticRaisedEvent extends Base {
   category: string
   severity: SemanticSeverity
   message: string
+  /** Provider attempt whose live output was invalidated, when applicable. */
+  attemptId?: number
   cause?: string
   action?: string
 }

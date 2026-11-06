@@ -14,6 +14,7 @@ import {
   recordCandidateLesson,
   searchHybrid,
 } from "../memory/vector.ts"
+import { requireToolCwd } from "./context.ts"
 import { subAgentWorkMode } from "./task.ts"
 
 export const readMemoryTool: Tool = {
@@ -31,7 +32,7 @@ export const readMemoryTool: Tool = {
   },
   async execute({ query, topK }, ctx) {
     ctx.signal.throwIfAborted()
-    const cwd = ctx.cwd ?? process.cwd()
+    const cwd = requireToolCwd(ctx)
     // Mode readonly/plan: retrieval tidak boleh menulis access_count/WAL —
     // permissionMode diteruskan kernel per turn (lihat task.ts).
     const pm = (ctx as unknown as { permissionMode?: string }).permissionMode
@@ -100,197 +101,191 @@ export const readMemoryTool: Tool = {
   },
 }
 
-export const writeMemoryTool: Tool = {
-  name: "write_memory",
-  description:
-    "Write a concise fact to project memory (MEMORY.md + vector store). Use for lasting facts, decisions, preferences, and verified snippets. Keep to 1-2 sentences.",
-  parameters: {
-    type: "object",
-    properties: {
-      text: { type: "string", description: "new memory, 1-2 concise sentences" },
-      category: {
-        type: "string",
-        enum: ["fact", "decision", "preference", "snippet", "summary"],
-        description:
-          "retrieval category: fact/decision/preference are durable, snippet is short-lived, summary for session summaries",
+export function createWriteMemoryTool(runtimeSessionId?: string): Tool {
+  return {
+    name: "write_memory",
+    description:
+      "Write a concise fact to project memory (MEMORY.md + vector store). Use for lasting facts, decisions, preferences, and verified snippets. Keep to 1-2 sentences.",
+    parameters: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "new memory, 1-2 concise sentences" },
+        category: {
+          type: "string",
+          enum: ["fact", "decision", "preference", "snippet", "summary"],
+          description:
+            "retrieval category: fact/decision/preference are durable, snippet is short-lived, summary for session summaries",
+        },
+        tags: { type: "array", items: { type: "string" } },
+        // [Fase 6A / ACE-03] Pelajaran kandidat wajib menjalani verifikasi dulu.
+        validation: {
+          type: "string",
+          enum: ["validated", "provisional"],
+          description:
+            "validated (default) = durable fact; provisional = candidate lesson hidden from retrieval until the next verification promotes it",
+        },
+        // [Fase 12 / LF-4] Identitas memori lama yang digantikan entri baru ini —
+        // teruskan untuk men-tombstone baris lama (supersession) lewat jalur tool.
+        supersedes_id: {
+          type: "string",
+          description:
+            "optional id of a previous memory row this new entry supersedes (replaces without deleting it)",
+        },
       },
-      tags: { type: "array", items: { type: "string" } },
-      // MEM-01 / Fase 5A: provenance metadata untuk forensik & revokasi selektif
-      sessionId: {
-        type: "string",
-        description: "session ID if this memory originates from a session",
-      },
-      turnId: {
-        type: "string",
-        description: "turn ID if this memory originates from a specific turn",
-      },
-      sourceKind: {
-        type: "string",
-        enum: ["user", "tool", "agent", "compaction", "manual", "legacy"],
-        description: "source category: user/manual input vs tool/agent auto-memory vs compaction",
-      },
-      sourceRef: {
-        type: "string",
-        description: "reference of the source (e.g., tool name, file path)",
-      },
-      // [Fase 6A / ACE-03] Pelajaran kandidat wajib menjalani verifikasi dulu.
-      validation: {
-        type: "string",
-        enum: ["validated", "provisional"],
-        description:
-          "validated (default) = durable fact; provisional = candidate lesson hidden from retrieval until the next verification promotes it",
-      },
-      // [Fase 12 / LF-4] Identitas memori lama yang digantikan entri baru ini —
-      // teruskan untuk men-tombstone baris lama (supersession) lewat jalur tool.
-      supersedes_id: {
-        type: "string",
-        description:
-          "optional id of a previous memory row this new entry supersedes (replaces without deleting it)",
-      },
+      required: ["text"],
+      additionalProperties: false,
     },
-    required: ["text"],
-    additionalProperties: false,
-  },
-  async execute(
-    { text, category, tags, sessionId, turnId, sourceKind, sourceRef, validation, supersedes_id },
-    ctx,
-  ) {
-    ctx.signal.throwIfAborted()
-    const t = text as string
-    if (!t.trim()) throw new Error("text empty")
-    const cwd = ctx.cwd ?? process.cwd()
-    // [Fase 6A / ACE-03] Pelajaran kandidat TIDAK ditulis ke MEMORY.md (file
-    // itu dibaca mentah saat query kosong) dan hanya hidup di store vektor
-    // dengan status `provisional` sampai verifikasi mempromosikannya.
-    if (validation === "provisional") {
-      if (typeof sessionId !== "string" || !sessionId) {
-        throw new Error("validation=provisional requires sessionId for later promotion")
+    async execute({ text, category, tags, validation, supersedes_id }, ctx) {
+      ctx.signal.throwIfAborted()
+      const t = text as string
+      if (!t.trim()) throw new Error("text empty")
+      const cwd = requireToolCwd(ctx)
+      // Identitas datang dari komposisi sesi; turn berasal dari state runtime.
+      // Pemanggilan manual/library tanpa binding sengaja menyimpan NULL provenance.
+      const sessionId = runtimeSessionId || undefined
+      const turnId = sessionId ? String(ctx.state.turnCount) : undefined
+      const sourceKind = sessionId ? "agent" : undefined
+      const sourceRef = sessionId ? "write_memory" : undefined
+      // [Fase 6A / ACE-03] Pelajaran kandidat TIDAK ditulis ke MEMORY.md (file
+      // itu dibaca mentah saat query kosong) dan hanya hidup di store vektor
+      // dengan status `provisional` sampai verifikasi mempromosikannya.
+      if (validation === "provisional") {
+        if (typeof sessionId !== "string" || !sessionId) {
+          throw new Error("validation=provisional requires sessionId for later promotion")
+        }
+        const baseUrl = process.env.AGENT_BASE_URL ?? "https://api.openai.com/v1"
+        const apiKey =
+          process.env.DEEPSEEK_API_KEY ??
+          process.env.OPENAI_API_KEY ??
+          process.env.AGENT_API_KEY ??
+          ""
+        const tagArr = Array.isArray(tags) ? (tags as string[]) : undefined
+        const id = await recordCandidateLesson(sessionId, t, {
+          cwd,
+          ...(apiKey ? { baseUrl, apiKey } : {}),
+          ...(category ? { category: category as string } : {}),
+          ...(tagArr ? { tags: tagArr } : {}),
+          turnId: (turnId as string | undefined) ?? null,
+          sourceRef: (sourceRef as string | undefined) ?? null,
+        })
+        return `candidate lesson recorded (provisional) id=${id}: ${t.slice(0, 100)}`
       }
+      // [Live Hardening §7.5] Validasi supersedes_id SEBELUM file/vector tersentuh.
+      // Id yang tak ada → error actionable, bukan tombstone no-op yang menyisakan
+      // row lama hidup. Kegagalan di sini tak menulis apa pun (tanpa split-brain).
+      if (typeof supersedes_id === "string" && supersedes_id) {
+        // P1.3: validasi target AKTIF (bukan sekadar "ada"). Target yang sudah
+        // superseded/stale harus ditolak SEBELUM file disentuh; kalau tidak,
+        // MEMORY.md berubah sementara store menolak → split-brain.
+        const target = await checkMemorySupersessionTarget(supersedes_id, cwd)
+        if (!target.ok) {
+          const msg =
+            target.code === "NOT_FOUND"
+              ? `supersedes_id not found: "${supersedes_id}". Use read_memory to get a real [id:...] from a previous result, or omit supersedes_id to store this as a new fact.`
+              : `supersedes_id rejected (${target.code}): ${target.reason}. Re-read memory and supersede the current live entry instead.`
+          throw new Error(msg)
+        }
+      }
+      // [Area E / D2] Tag provenance DIHITUNG SEBELUM appendMemory — versi lama
+      // menulisnya hanya ke hasil tool, sehingga baris di MEMORY.md tak punya
+      // bukti provenance (tag yang dibangun di bawah terbuang percuma).
+      const cat = (category as string) ?? "fact"
+      const tagArr = Array.isArray(tags) ? (tags as string[]) : undefined
+      // [Fase 12 / LF-4] id memori lama yang digantikan (supersession) dari argumen tool.
+      const supersedesId = typeof supersedes_id === "string" && supersedes_id ? supersedes_id : null
+
+      // MEM-01: add provenance tags to MEMORY.md (as metadata comment at end of line)
+      const memTags = tagArr ? [...tagArr] : []
+      if (sessionId) memTags.push(`session:${sessionId}`)
+      if (turnId) memTags.push(`turn:${turnId}`)
+      if (sourceKind) memTags.push(`source:${sourceKind}`)
+      if (sourceRef) memTags.push(`ref:${sourceRef}`)
+
+      const path = await appendMemory(t, cwd, memTags)
+      // [Fase 9 / 9.2] Fault-injection boundary: file (MEMORY.md) sudah ketulis,
+      // vector.db belum. Injector yang melempar di stage ini menyimulasikan crash
+      // persis di titik ini → menghasilkan entri file-only (split-brain arah 1).
+      invokeMemoryWriteFaultForTest("after_file_before_vector")
+
       const baseUrl = process.env.AGENT_BASE_URL ?? "https://api.openai.com/v1"
       const apiKey =
         process.env.DEEPSEEK_API_KEY ??
         process.env.OPENAI_API_KEY ??
         process.env.AGENT_API_KEY ??
         ""
-      const tagArr = Array.isArray(tags) ? (tags as string[]) : undefined
-      const id = await recordCandidateLesson(sessionId, t, {
-        cwd,
-        ...(apiKey ? { baseUrl, apiKey } : {}),
-        ...(category ? { category: category as string } : {}),
-        ...(tagArr ? { tags: tagArr } : {}),
-        turnId: (turnId as string | undefined) ?? null,
-        sourceRef: (sourceRef as string | undefined) ?? null,
-      })
-      return `candidate lesson recorded (provisional) id=${id}: ${t.slice(0, 100)}`
-    }
-    // [Live Hardening §7.5] Validasi supersedes_id SEBELUM file/vector tersentuh.
-    // Id yang tak ada → error actionable, bukan tombstone no-op yang menyisakan
-    // row lama hidup. Kegagalan di sini tak menulis apa pun (tanpa split-brain).
-    if (typeof supersedes_id === "string" && supersedes_id) {
-      // P1.3: validasi target AKTIF (bukan sekadar "ada"). Target yang sudah
-      // superseded/stale harus ditolak SEBELUM file disentuh; kalau tidak,
-      // MEMORY.md berubah sementara store menolak → split-brain.
-      const target = await checkMemorySupersessionTarget(supersedes_id, cwd)
-      if (!target.ok) {
-        const msg =
-          target.code === "NOT_FOUND"
-            ? `supersedes_id not found: "${supersedes_id}". Use read_memory to get a real [id:...] from a previous result, or omit supersedes_id to store this as a new fact.`
-            : `supersedes_id rejected (${target.code}): ${target.reason}. Re-read memory and supersede the current live entry instead.`
-        throw new Error(msg)
+      let added = false
+      if (apiKey) {
+        try {
+          await addMemory(t, {
+            baseUrl,
+            apiKey,
+            cwd,
+            category: cat,
+            tags: tagArr,
+            sessionId,
+            turnId,
+            sourceKind,
+            sourceRef,
+            supersedesId,
+          })
+          added = true
+        } catch (e) {
+          process.stderr.write(`[warn] memory vector embedding failed: ${(e as Error).message}\n`)
+        }
       }
-    }
-    // [Area E / D2] Tag provenance DIHITUNG SEBELUM appendMemory — versi lama
-    // menulisnya hanya ke hasil tool, sehingga baris di MEMORY.md tak punya
-    // bukti provenance (tag yang dibangun di bawah terbuang percuma).
-    const cat = (category as string) ?? "fact"
-    const tagArr = Array.isArray(tags) ? (tags as string[]) : undefined
-    // [Fase 12 / LF-4] id memori lama yang digantikan (supersession) dari argumen tool.
-    const supersedesId = typeof supersedes_id === "string" && supersedes_id ? supersedes_id : null
-
-    // MEM-01: add provenance tags to MEMORY.md (as metadata comment at end of line)
-    const memTags = tagArr ? [...tagArr] : []
-    if (sessionId) memTags.push(`session:${sessionId}`)
-    if (turnId) memTags.push(`turn:${turnId}`)
-    if (sourceKind) memTags.push(`source:${sourceKind}`)
-    if (sourceRef) memTags.push(`ref:${sourceRef}`)
-
-    const path = await appendMemory(t, cwd, memTags)
-    // [Fase 9 / 9.2] Fault-injection boundary: file (MEMORY.md) sudah ketulis,
-    // vector.db belum. Injector yang melempar di stage ini menyimulasikan crash
-    // persis di titik ini → menghasilkan entri file-only (split-brain arah 1).
-    invokeMemoryWriteFaultForTest("after_file_before_vector")
-
-    const baseUrl = process.env.AGENT_BASE_URL ?? "https://api.openai.com/v1"
-    const apiKey =
-      process.env.DEEPSEEK_API_KEY ?? process.env.OPENAI_API_KEY ?? process.env.AGENT_API_KEY ?? ""
-    let added = false
-    if (apiKey) {
-      try {
-        await addMemory(t, {
-          baseUrl,
-          apiKey,
-          cwd,
-          category: cat,
-          tags: tagArr,
-          sessionId,
-          turnId,
-          sourceKind,
-          sourceRef,
-          supersedesId,
-        })
-        added = true
-      } catch (e) {
-        process.stderr.write(`[warn] memory vector embedding failed: ${(e as Error).message}\n`)
+      if (!added) {
+        try {
+          await addMemory(t, {
+            cwd,
+            category: cat,
+            tags: tagArr,
+            sessionId,
+            turnId,
+            sourceKind,
+            sourceRef,
+            supersedesId,
+          })
+          added = true
+        } catch (e2) {
+          process.stderr.write(
+            `[warn] memory keyword-only fallback failed: ${(e2 as Error).message}\n`,
+          )
+        }
       }
-    }
-    if (!added) {
-      try {
-        await addMemory(t, {
-          cwd,
-          category: cat,
-          tags: tagArr,
-          sessionId,
-          turnId,
-          sourceKind,
-          sourceRef,
-          supersedesId,
-        })
-        added = true
-      } catch (e2) {
-        process.stderr.write(
-          `[warn] memory keyword-only fallback failed: ${(e2 as Error).message}\n`,
-        )
+      // [Area E / D6] Fakta lama yang digantikan harus hilang dari MEMORY.md —
+      // jalur retrieval file membaca berkas mentah, jadi menambah fakta baru
+      // saja membuat fakta lama tetap "benar". Hanya dilakukan bila store vektor
+      // benar-benar menerapkan supersession (added=true); bila tidak, baris lama
+      // tetap valid dan tidak boleh dihapus.
+      if (added && supersedesId) {
+        try {
+          const oldText = await memoryEntryText(supersedesId, cwd)
+          if (oldText) await deleteMemoryEntry(oldText, cwd)
+        } catch {}
       }
-    }
-    // [Area E / D6] Fakta lama yang digantikan harus hilang dari MEMORY.md —
-    // jalur retrieval file membaca berkas mentah, jadi menambah fakta baru
-    // saja membuat fakta lama tetap "benar". Hanya dilakukan bila store vektor
-    // benar-benar menerapkan supersession (added=true); bila tidak, baris lama
-    // tetap valid dan tidak boleh dihapus.
-    if (added && supersedesId) {
-      try {
-        const oldText = await memoryEntryText(supersedesId, cwd)
-        if (oldText) await deleteMemoryEntry(oldText, cwd)
-      } catch {}
-    }
-    // P1.3: bila store menolak (mis. race: target baru saja superseded), tarik
-    // kembali baris file yang sudah ditulis agar tidak ada fakta "file-only"
-    // yang tetap terbaca sementara relasi supersession gagal.
-    if (!added && supersedesId) {
-      try {
-        await deleteMemoryEntry(t, cwd)
-      } catch {}
-    }
-    // [Area E / D1] Jangan klaim sukses penuh bila indeks vektor gagal total:
-    // fakta memang tersimpan di berkas, tetapi pencarian hybrid tak akan
-    // menemukannya sampai reconcile. Pesan ini membuat degradasi TERLIHAT
-    // (bukan hanya warning stderr yang tak dibaca model).
-    const vectorNote = added
-      ? ""
-      : " (vector index unavailable — saved to file only; run `minicode memory reconcile` to index)"
-    return `saved to ${path}: ${t.slice(0, 100)}${memTags.length ? ` [tags: ${JSON.stringify(memTags)}]` : ""}${vectorNote}`
-  },
+      // P1.3: bila store menolak (mis. race: target baru saja superseded), tarik
+      // kembali baris file yang sudah ditulis agar tidak ada fakta "file-only"
+      // yang tetap terbaca sementara relasi supersession gagal.
+      if (!added && supersedesId) {
+        try {
+          await deleteMemoryEntry(t, cwd)
+        } catch {}
+      }
+      // [Area E / D1] Jangan klaim sukses penuh bila indeks vektor gagal total:
+      // fakta memang tersimpan di berkas, tetapi pencarian hybrid tak akan
+      // menemukannya sampai reconcile. Pesan ini membuat degradasi TERLIHAT
+      // (bukan hanya warning stderr yang tak dibaca model).
+      const vectorNote = added
+        ? ""
+        : " (vector index unavailable — saved to file only; run `minicode memory reconcile` to index)"
+      return `saved to ${path}: ${t.slice(0, 100)}${memTags.length ? ` [tags: ${JSON.stringify(memTags)}]` : ""}${vectorNote}`
+    },
+  }
 }
+
+// Jalur library/manual tanpa komposisi sesi menyimpan provenance NULL; jalur
+// CLI menggunakan createWriteMemoryTool(sessionId) dari tool-layer.
+export const writeMemoryTool: Tool = createWriteMemoryTool()
 
 export const forgetMemoryTool: Tool = {
   name: "forget_memory",
@@ -316,7 +311,7 @@ export const forgetMemoryTool: Tool = {
       throw new Error("query or provenance criteria required")
     }
 
-    const cwd = ctx.cwd ?? process.cwd()
+    const cwd = requireToolCwd(ctx)
 
     let resultText = ""
 

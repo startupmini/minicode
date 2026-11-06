@@ -54,6 +54,32 @@ describe("Transcript", () => {
     expect(t.size()).toBe(1)
     expect(t.view(40, 3, 0)[2]).toBe("halo dunia")
   })
+  test("attempt provider gagal dihapus dari jawaban live dan diberi penanda", () => {
+    const { bus, t } = setup()
+    bus.emit("provider:extension", {
+      kind: "minicode:attempt",
+      data: { phase: "started", attemptId: 1 },
+    })
+    bus.emit("provider:text", { text: "PARTIAL" })
+    bus.emit("provider:extension", {
+      kind: "minicode:attempt",
+      data: { phase: "invalidated", attemptId: 1, hadVisibleOutput: true, reason: "stream-error" },
+    })
+    bus.emit("provider:extension", {
+      kind: "minicode:attempt",
+      data: { phase: "started", attemptId: 2 },
+    })
+    bus.emit("provider:text", { text: "FINAL" })
+    bus.emit("provider:extension", {
+      kind: "minicode:attempt",
+      data: { phase: "completed", attemptId: 2, hadVisibleOutput: true },
+    })
+    bus.emit("turn:completed", {})
+    const out = t.view(100, 8, 0).join("\n")
+    expect(out).toContain("FINAL")
+    expect(out).toContain("attempt 1")
+    expect(out).not.toContain("PARTIAL")
+  })
   test("buffer live punya cap dan menandai truncasi", () => {
     const bus = createFakeBus()
     const t = new Transcript(bus as never, { maxPendingChars: 10 })

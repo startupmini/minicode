@@ -13,6 +13,7 @@ import type { CanonicalScope } from "../session/verification.ts"
 import { createBashJobTools } from "../tools/bash.ts"
 import { withEvidence } from "../tools/evidence.ts"
 import { allTools, withMcpTools } from "../tools/index.ts"
+import { createWriteMemoryTool } from "../tools/memory.ts"
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -78,6 +79,11 @@ export async function setupToolLayer(
   setPermissionMode?: (pm: string) => void
 }> {
   let sessionTools: Tool[] = allTools
+  if (jobOwnerSid) {
+    sessionTools = sessionTools.map((tool) =>
+      tool.name === "write_memory" ? createWriteMemoryTool(jobOwnerSid) : tool,
+    )
+  }
   // Harness-P2: scope explore = subset read-only sub-agen (tetap 12 EXPLORE_TOOL_NAMES).
   if (scope === "explore")
     sessionTools = allTools.filter((t) => EXPLORE_TOOL_NAMES.includes(t.name))

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { loadPlan, renderPlan, todoSession, todoWriteTool } from "../src/tools/todo.ts"
 
-const mkctx = () => ({ signal: new AbortController().signal }) as never
+const mkctx = (cwd: string) => ({ signal: new AbortController().signal, cwd }) as never
 
 test("renderPlan: checkbox + progress + status", () => {
   const md = renderPlan("s1", [
@@ -36,7 +36,7 @@ test("todo_write: menulis plans/<id>.md yang bisa dibaca balik", async () => {
           { content: "langkah dua", status: "pending" },
         ],
       },
-      mkctx(),
+      mkctx(dir),
     )) as string
     expect(out).toContain("1/2")
     const md = await loadPlan("plan-test", dir)

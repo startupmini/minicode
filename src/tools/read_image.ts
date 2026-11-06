@@ -3,6 +3,7 @@ import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { safeOpenRead } from "../lib/safe-open.ts"
 import { estimateImageTokens } from "../policy/context.ts"
+import { requireToolCwd } from "./context.ts"
 
 // Batas b64 = batas truncate kernel yang sebenarnya: toolResultMaxTokens
 // (default 4096) × DEFAULT_CHARS_PER_TOKEN (4) = 16.384 chars, dengan margin
@@ -25,7 +26,7 @@ export const readImageTool: Tool = {
   async execute({ path }, ctx) {
     ctx.signal.throwIfAborted()
     const p = path as string
-    const root = ctx.cwd ?? process.cwd()
+    const root = requireToolCwd(ctx)
     const abs = isAbsolute(p) ? resolve(p) : resolve(root, p)
     // TOCTOU-safe: safeOpenRead = realpath(abs) → cek jail+sensitif di dalam
     // root → open(preReal, O_NOFOLLOW). Bukan open(abs) yang bisa di-swap jadi

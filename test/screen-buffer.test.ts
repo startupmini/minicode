@@ -46,6 +46,12 @@ describe("parseScreenBuffer", () => {
     const rows = parseScreenBuffer("ab中c", 20, 2)
     expect(rows[0]).toBe("ab中c")
   })
+  test("emoji grapheme memakai geometri dua kolom seperti frame renderer", () => {
+    const family = "👨‍👩‍👧‍👦"
+    const sequential = parseScreenBuffer(`A${family}B`, 20, 1)
+    const cursorPositioned = parseScreenBuffer(`A${family}\x1b[1;4HB`, 20, 1)
+    expect(sequential).toEqual(cursorPositioned)
+  })
   test("OSC (judul) dilewati sampai BEL", () => {
     const rows = parseScreenBuffer("\x1b]0;judul\x07ok", 20, 2)
     expect(rows[0]).toBe("ok")

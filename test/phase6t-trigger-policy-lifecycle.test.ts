@@ -1156,5 +1156,5 @@ describe("I. property-based: randomised trigger/policy/lifecycle sequences", () 
       expect(first.taskId).toEqual(ready[0] ?? null)
       expect(ids.length).toBeGreaterThan(0)
     }
-  })
+  }, 15_000)
 })

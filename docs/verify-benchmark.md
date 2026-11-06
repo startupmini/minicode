@@ -29,6 +29,22 @@ bun run gate:eval --results bench/live.json --min-rate 0.8 --max-median-tokens 8
 bun bench/eval-gate.ts --results bench/results.json --min-rate 1 --max-median-tokens 5000 --observe-tokens  # observasi: token tak menggagalkan (2–3 run pertama sebelum ambang dikunci)
 ```
 
+CI menjalankan `test/eval-gate.test.ts` untuk menguji evaluator secara
+deterministik tanpa provider, lalu menjalankan CLI `gate:eval` terhadap output
+`bench:smoke` dan memastikan hasil palsu ditolak. `bench:smoke` hanya menguji
+wiring harness; hanya hasil yang secara eksplisit berlabel `fake: false` dapat
+dinilai, sehingga hasil fake atau artefak lama tanpa asal provider dinyatakan
+bukan bukti kualitas. Evaluasi
+kualitas live tetap harus memakai hasil provider nyata yang tersimpan, serta
+anggaran/provider yang dipilih operator. CI PR dan publish tidak menjalankan
+provider berbayar atau memakai rahasia model; evaluasi live tetap manual karena
+hasil, model, dan anggaran harus dipilih operator secara eksplisit.
+
+Skor deterministik menggunakan total langkah aktual seluruh run dibanding
+total batas langkah yang disediakan. Nilai ini berasal dari `usage.steps` saat
+run selesai, atau event `step:started` jika run berakhir dengan error; batas
+konfigurasi tidak lagi dipakai sebagai pengganti langkah aktual.
+
 Metrik: resolve rate, steps, token, cost, durasi, memoryHits + delta vs run sebelumnya. Hasil `bench/results.json` (`--out` untuk path lain). Tiap run gagal membawa kelas (`VERIFY_FAIL`/`MAX_STEPS`/`NO_PROGRESS`/`ABORT`) + distribusi global di akhir run; kartu metodologi + log observasi di `bench/HARNESS-CARD.md`.
 
 Setiap run memakai `MINICODE_HOME` hermetic sendiri (DB/memory/sesi global tak bocor antar run dan tak menyentuh `~/.minicode` operator). Task boleh membawa `seedMemory`: fakta yang di-seed ke memory run itu — task `follow-convention` hanya lolos bila agen membaca fakta tersebut, sehingga `bun bench/runner.ts --memory on` vs `--memory off` mengukur nilai memory secara diferensial (bukan klaim).

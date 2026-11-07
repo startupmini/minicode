@@ -157,19 +157,10 @@ describe("konvensi import kernel", () => {
     })
     const out = `${r.stdout}${r.stderr}`
     expect(out).not.toContain("vendor/minicore kosong")
-    // Seam aditif lokal (cwd/permissionMode/describeDenial/tokens) sengaja
-    // membuat vendor TIDAK sinkron dengan source — VENDOR.md mendokumentasikannya.
-    // Tanpa sibling ../minicore script tetap lulus dengan pesan — keduanya sah.
-    const vendorMd = readFileSync(join(repoRoot, "vendor", "minicore", "VENDOR.md"), "utf8")
-    if (vendorMd.includes("seam aditif")) {
-      // Empat hasil sah (lihat pesan script): sinkron, TIDAK sinkron (seam
-      // aditif lokal), "tidak ada" (sibling tak ter-clone), atau "kosong"
-      // (checkout sibling gagal → dir kosong; kasus nyata di CI publik karena
-      // repo privat). Bug lama: hanya dua pertama yang diterima sehingga CI
-      // tanpa sibling selalu merah.
-      expect(out).toMatch(/sinkron|TIDAK sinkron|tidak ada|kosong/)
-      return
-    }
+    // Overlay host resmi ikut diverifikasi, jadi sibling upstream maupun
+    // checkout publik tanpa sibling harus tetap menghasilkan verdict hijau.
+    expect(out).not.toContain("TIDAK sinkron")
+    expect(out).toMatch(/sinkron/)
     expect(r.status).toBe(0)
   })
 

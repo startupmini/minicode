@@ -15,6 +15,10 @@ L3 vendor/minicore  → kernel STATE/MODEL/ACTION/LOOP (freeze, zero-dep, via #m
 Pin source kernel ada di [catatan vendor MiniCore](https://github.com/startupmini/minicode/blob/main/vendor/minicore/VENDOR.md):
 `0d33571`. Impor kernel aplikasi hanya melalui `#minicore`.
 
+Patch host yang diperlukan runtime tersimpan di `scripts/vendor-overlays/` dan
+diterapkan saat sinkronisasi vendor; `VENDOR.md` mem-pin source, overlay, dan
+fingerprint hasil akhirnya.
+
 - `cli/` boleh impor `src/ui/` + `src/`; `src/` non-ui dilarang impor `src/ui/`; `src/ui/` dilarang impor `cli/`, `src/` non-ui, `#minicore`. Dijaga `test/ui-boundary.test.ts`.
 - Satu-satunya jendela UI↔luar: `src/ui/contract.ts` (`UiEvent/UiBus/UiStep/UiExecution`).
 - DI dari composition root (`cli/index.ts`, `cli/setup.ts`): `createProviderLayer → loadLastModel → createRagLayer → resume presentation-events + planRecovery + reconcileUndoRedo → setupToolLayer + setAskTextFn → createMinicodeSession → journal + checkpoint + semantic event sink + step-trace + runPromptWithVerify (baseline-first + self-heal 3 siklus + hooks) → logger + turn-status + usage/pricing → persist/finalize → close (kill jobs, mcp/lsp close)`. `setSubAgentSessionFactory` sebelum dispatch agar TUI/one-shot/`mcp serve` tercakup.

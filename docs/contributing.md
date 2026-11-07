@@ -56,7 +56,7 @@ Gerbang lain:
 bun run gate:bash      # 62 pola serangan + 24 perintah sah → 0 bypass / 0 over-block
 bun run extreme        # fuzz + shadow-git + MCP jahat
 bun run bench:smoke    # fake, CI-safe
-bun run vendor:check   # vendor/minicore sinkron dengan ../minicore
+bun run vendor:check   # source MiniCore + overlay host cocok dengan vendor
 ```
 
 ## Batas lapisan (dijaga `test/ui-boundary.test.ts`)
@@ -70,7 +70,7 @@ bun run vendor:check   # vendor/minicore sinkron dengan ../minicore
 
 ## Aturan kode
 
-- Kernel `vendor/minicore/src/core/*` beku. Hanya seam aditif backward-compatible (`compactAsync`, `initialMessages`, `cwd`). Butuh primitif baru? Buktikan dulu tidak bisa sebagai Tool/Provider/Policy.
+- Kernel upstream `vendor/minicore/src/core/*` beku. Overlay host yang disetujui tersimpan di `scripts/vendor-overlays/` dan diterapkan oleh `bun run vendor:minicore`; jangan edit tree vendor atau `VENDOR.md` manual. Butuh seam baru? Buktikan dulu tidak bisa sebagai Tool/Provider/Policy, tambahkan test, lalu pin melalui generator.
 - Limit terpusat di `src/constants.ts` (`LIMITS`) — tanpa magic number tersebar.
 - Semua spawn via `sanitizeSpawnEnv`; semua tulis file via `atomicWriteText`.
 - Satu sumber pola ANSI: `ANSI_PATTERN`/`stripAnsi` di `src/ui/render/theme.ts`.

@@ -9,10 +9,9 @@
 // [FASE 6AE] CARA KERJA, dan kenapa begini.
 //
 // Script punya satu env seam: `MINICODE_MINICORE_SOURCE` mengganti SUMBER
-// (`../minicore`), tapi target `vendor/minicore` relatif terhadap script dan
-// tidak bisa diarahkan. Jadi fixture tidak boleh membuat tree vendor sendiri -
-// tidak ada cara Reach itu tanpa menambah seam produksi baru, yang di luar
-// scope.
+// (`../minicore`); overlay host adalah patch repo yang tetap dipakai dan
+// diverifikasi terpisah. Target `vendor/minicore` relatif terhadap script dan
+// tidak bisa diarahkan. Fixture menguji EOL dengan menyalin tree vendor nyata.
 //
 // Karena itu arahnya dibalik: yang dikontrol adalah SISI SOURCE, sedangkan sisi
 // vendor adalah tree asli checkout ini. Itu justru lebih baik - tidak ada
@@ -273,11 +272,10 @@ describe("6AE vendor:check - EOL independence at the script boundary", () => {
     }
   })
 
-  // ── THE REAL TREE, NO SEAM AT ALL ──────────────────────────────────────────
+  // ── SOURCE + OVERLAY YANG DIPAKAI COMMAND PRODUKSI ─────────────────────────
   //
-  // [DESIGN DECISION] No MINICODE_MINICORE_SOURCE here at all - this is the
-  // vendor:check that `package.json` actually invokes. It is the only test that
-  // proves the shipped command works on the shipped tree.
+  // [DESIGN DECISION] Jalankan command production package pada source sibling
+  // sungguhan bila tersedia; jalur tanpa sibling dijaga test di bawah.
   test("the package command `vendor:check` passes against the real tree", () => {
     const r = spawnSync("bun", [SCRIPT, "--check"], {
       cwd: REPO,

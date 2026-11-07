@@ -48,6 +48,7 @@
     "vendor/minicore/src",
     "vendor/minicore/package.json",
     "vendor/minicore/VENDOR.md",
+    "scripts/vendor-overlays/minicode-context.patch",
     "README.md",
     "LICENSE",
     "docs/OUTPUT_EVENT_MODEL.md",

@@ -1,0 +1,109 @@
+diff --git a/vendor/minicore/src/core/loop.ts b/vendor/minicore/src/core/loop.ts
+index 11ea5eb..56e4f54 100644
+--- a/vendor/minicore/src/core/loop.ts
++++ b/vendor/minicore/src/core/loop.ts
+@@ -48,3 +48,6 @@ export async function executeTurn(
+-  // maxProviderRetries); the policy flag is set when a policy compaction
+-  // is attempted (once per turn, guarding against per-step O(n) repeats).
+-  let compactedForBudget = false;
++  // maxProviderRetries); policy compaction has a small per-turn hard cap,
++  // guarding against repeated no-progress work after tool output grows.
++  // Permit one follow-up policy compaction after tool results grow the current
++  // turn. The hard cap prevents a no-progress compactor from looping forever.
++  let budgetCompactions = 0;
++  const maxBudgetCompactions = 2;
+@@ -52,0 +56,13 @@ export async function executeTurn(
++  // Resolve once for the turn: model switching is a between-turn operation,
++  // so budget admission and output accounting must use the same model window.
++  let contextWindowTokens = s.contextWindowTokens;
++  try {
++    const resolved = s.contextWindowTokensForModel?.(s.state.model);
++    if (typeof resolved === "number" && Number.isSafeInteger(resolved) && resolved > 0) {
++      contextWindowTokens = resolved;
++    }
++  } catch {
++    // Keep the validated numeric fallback; a metadata lookup must not bypass
++    // the kernel's context guard.
++  }
++
+@@ -62 +78 @@ export async function executeTurn(
+-      limitTokens: s.contextWindowTokens,
++      limitTokens: contextWindowTokens,
+@@ -64 +80,2 @@ export async function executeTurn(
+-    if (s.budget.shouldCompact(pressure) && !compactedForBudget) {
++    let reduced = false;
++    if (s.budget.shouldCompact(pressure) && budgetCompactions < maxBudgetCompactions) {
+@@ -67 +84 @@ export async function executeTurn(
+-      compactedForBudget = true;
++      budgetCompactions++;
+@@ -72 +89 @@ export async function executeTurn(
+-      const reduced = s.store.messages.length < before;
++      reduced = s.store.messages.length < before;
+@@ -79 +96 @@ export async function executeTurn(
+-        limitTokens: s.contextWindowTokens,
++        limitTokens: contextWindowTokens,
+@@ -82,2 +99,9 @@ export async function executeTurn(
+-    if (pressure === "critical" && compactedForBudget) {
+-      throw new AgentError("budget_exceeded", "context window exceeded after compaction");
++    if (s.budget.shouldCompact(pressure) && reduced && budgetCompactions < maxBudgetCompactions) {
++      continue;
++    }
++    if (pressure === "critical") {
++      const used = contextTokens(s);
++      throw new AgentError(
++        "budget_exceeded",
++        `context window exceeded after compaction (${used} > ${contextWindowTokens}); reduce the prompt, tool output, or fixed instructions, or select a model with a larger context window`,
++      );
+@@ -179 +203,5 @@ export async function executeTurn(
+-            throw new AgentError("budget_exceeded", errorMessage ?? "context too large", { cause: providerError ?? action });
++            throw new AgentError(
++              "budget_exceeded",
++              `context window exceeded after recovery compaction: ${errorMessage ?? "context too large"}`,
++              { cause: providerError ?? action },
++            );
+@@ -303,0 +332,3 @@ function toProviderError(error: unknown, signal: AbortSignal): ProviderError {
++  // Host-side admission guards (context budget, shutdown, etc.) preserve their
++  // deterministic AgentError identity instead of entering provider retry.
++  if (error instanceof AgentError) throw error;
+@@ -336 +367,5 @@ function contextTokens(s: SessionInternal): number {
+-  return estimateSessionContext(s.store, s.system, s.registry.list(), s.estimator);
++  let system = s.system;
++  try {
++    system = s.systemForContext?.() ?? system;
++  } catch {}
++  return estimateSessionContext(s.store, system, s.registry.list(), s.estimator);
+diff --git a/vendor/minicore/src/core/provider.ts b/vendor/minicore/src/core/provider.ts
+index 489e244..63afbbc 100644
+--- a/vendor/minicore/src/core/provider.ts
++++ b/vendor/minicore/src/core/provider.ts
+@@ -37,0 +38,4 @@ export interface ModelProvider {
++  /** Optional host metadata for per-model admission budgets. */
++  contextWindowTokensForModel?(model?: string): number;
++  /** Canonical provider/model key for per-model estimator state. */
++  contextModelIdentity?(model?: string): string | undefined;
+diff --git a/vendor/minicore/src/core/session.ts b/vendor/minicore/src/core/session.ts
+index 6e183d7..df80273 100644
+--- a/vendor/minicore/src/core/session.ts
++++ b/vendor/minicore/src/core/session.ts
+@@ -37,0 +38,2 @@ export interface SessionConfig {
++  /** Dynamic system prompt for host-controlled per-turn mode hints. */
++  systemForContext?: () => string;
+@@ -61,0 +64,3 @@ export interface SessionConfig {
++  /** Resolve a model-specific context limit for each run. Additive app seam;
++   * the numeric option remains the fallback for existing library callers. */
++  contextWindowTokensForModel?: (model?: string) => number;
+@@ -140,0 +146 @@ export interface SessionInternal {
++  readonly systemForContext?: () => string;
+@@ -149,0 +156 @@ export interface SessionInternal {
++  readonly contextWindowTokensForModel?: (model?: string) => number;
+@@ -180,0 +188 @@ export function createSession(config: SessionConfig): Session {
++    systemForContext: config.systemForContext,
+@@ -189,0 +198 @@ export function createSession(config: SessionConfig): Session {
++    contextWindowTokensForModel: config.contextWindowTokensForModel,
+@@ -213 +222,5 @@ export function createSession(config: SessionConfig): Session {
+-      return estimateSessionContext(store, config.system, impl.registry.list(), impl.estimator);
++      let system = config.system
++      try {
++        system = config.systemForContext?.() ?? system
++      } catch {}
++      return estimateSessionContext(store, system, impl.registry.list(), impl.estimator);

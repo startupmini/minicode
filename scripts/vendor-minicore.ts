@@ -1,43 +1,44 @@
 #!/usr/bin/env bun
-// Sinkronkan kernel minicore ke vendor/minicore/ supaya `bun install` jalan
+// Sinkronkan kernel MiniCore ke vendor/minicore/ supaya `bun install` jalan
 // tanpa clone sibling ../minicore.
 //
-// Kenapa vendor dan bukan npm? Publish ke registry butuh kredensial dan tidak
-// bisa dibatalkan; vendor bersifat lokal, reversible, dan membuat repo ini
-// self-contained hari ini. Kalau minicore nanti terbit di npm, cukup ganti
-// dependency dan hapus direktori ini.
-//
-// Sumber kebenaran tetap ../minicore. Script ini menolak menimpa bila sumber
-// tidak ada, dan `--check` memverifikasi vendor tidak tertinggal (dipakai CI).
+// MiniCode membawa satu overlay aditif untuk admission context per model dan
+// system prompt dinamis. Overlay disimpan sebagai patch terukur, supaya
+// sinkronisasi dari sumber resmi tidak menghapus seam yang dipakai runtime.
 //
 // Usage:
-//   bun scripts/vendor-minicore.ts          # sync dari ../minicore
-//   bun scripts/vendor-minicore.ts --check  # exit 1 bila beda / tidak sinkron
+//   bun scripts/vendor-minicore.ts          # sync dari ../minicore + overlay
+//   bun scripts/vendor-minicore.ts --check  # verifikasi source, overlay, dan pin
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { spawnSync } from "node:child_process"
+import { createHash } from "node:crypto"
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs"
+import { tmpdir } from "node:os"
 import { dirname, join, relative, resolve } from "node:path"
-// [FASE 6AE] Kontrak hash tinggal di SATU tempat. Script ini adalah tempat
-// itu, dan test/pack-integrity.test.ts mengimpor helper yang sama. Sebelumnya
-// keduanya menduplikasi algoritma raw-byte; saat checkout CRLF keduanya
-// melapor drift yang tidak ada, dan tidak satu pun bisa menangkap yang lain
-// karena tidak ada yang memanggil siapa pun.
-// Impor relatif, bukan subpath `#...`: aturan repo menandai itu hanya untuk
-// package.json `imports`.
 import { SHIPPED_EXCLUDE, vendorFileHash, vendorShippedHash } from "../test/helpers/vendor-hash.ts"
 
 const repoRoot = resolve(import.meta.dir, "..")
-// Nama direktori, BUKAN spesifier import. Jangan pakai prefix "#" di sini —
-// itu hanya untuk subpath imports di package.json.
-// MINICODE_MINICORE_SOURCE = seam uji: alihkan source tanpa menyentuh parent
-// asli (dipakai test untuk mensimulasikan checkout CI yang gagal → dir kosong).
 const source = process.env.MINICODE_MINICORE_SOURCE
   ? resolve(process.env.MINICODE_MINICORE_SOURCE)
   : resolve(repoRoot, "..", "minicore")
 const target = resolve(repoRoot, "vendor", "minicore")
+const overlay = resolve(repoRoot, "scripts", "vendor-overlays", "minicode-context.patch")
+const overlayRepoPath = "scripts/vendor-overlays/minicode-context.patch"
 const checkOnly = process.argv.includes("--check")
 
 // Hanya yang dibutuhkan runtime + fixture test yang dipakai test minicode.
-// Test/docs/experiments minicore lainnya tetap di repo asal.
+// Test/docs/experiments MiniCore lainnya tetap di repo asal.
 const INCLUDE_DIRS = ["src"]
 const INCLUDE_FILES = ["package.json", "LICENSE", "test/fakes.ts"]
 
@@ -58,137 +59,262 @@ function collect(root: string): string[] {
   return files.sort()
 }
 
-// [FASE 6AE] Kontrak hash tinggal di test/helpers/vendor-hash.ts, dan diimpor
-// di atas. Rasional dan batasnya ada di sana -+EOL dinormalkan untuk hash, file
-// biner tetap byte mentah, tidak ada trim/indentasi/Unicode yang disentuh.
-//
-// Normalisasi ini berlaku untuk PERBANDINGAN saja. Jalur sync di bawah menyalin
-// byte mentah apa adanya, jadi tidak ada file vendor yang ditulis ulang.
-//
-// Yang TIDAK berubah dari sebelumnya, dan itu disengaja: cakupan file
-// (INCLUDE_DIRS/INCLUDE_FILES), aturan SHIPPED_EXCLUDE, perilaku saat sibling
-// ../minicore tidak ada (tetap exit 0 dengan pesan), penolakan menimpa vendor
-// kosong, dan jalur sync. Yang berubah hanya cara byte dibaca untuk hash.
-//
-// Fungsi ini tetap menjadi nama yang dipakai script ini, jadi diff-nya kecil dan
-// disable-nyaris-tidak-ada yang perlu diubah di bawah.
-const hashOf = vendorFileHash
-const hashShipped = vendorShippedHash
+function sourceHead(root: string): string | null {
+  const r = spawnSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" })
+  return r.status === 0 ? r.stdout.trim() : null
+}
 
-const vendorFiles = collect(target)
-
-// Verdict terhadap hash yang tercatat di VENDOR.md untuk jalur tanpa-sibling:
-// sebelumnya cabang ini hanya melaporkan keberadaan vendor tanpa verifikasi
-// apa pun (pesan tanpa kata "sinkron" membuat vendor:check tak teruji di
-// mesin tanpa sibling). Bandingkan hash kerja vs tercatat.
-function vendorMdRecordedHash(): string | null {
+function readPin(): {
+  sourceCommit: string | null
+  sourceHash: string | null
+  files: number | null
+  hash: string | null
+  shippedHash: string | null
+  overlayHash: string | null
+} {
   try {
     const md = readFileSync(join(target, "VENDOR.md"), "utf8")
-    return /^- hash: `([0-9a-f]+)`/m.exec(md)?.[1] ?? null
+    const number = (pattern: RegExp): number | null => {
+      const value = pattern.exec(md)?.[1]
+      return value ? Number(value) : null
+    }
+    return {
+      sourceCommit: /^- source commit: `([0-9a-f]+)`/m.exec(md)?.[1] ?? null,
+      sourceHash: /^- source hash: `([0-9a-f]+)`/m.exec(md)?.[1] ?? null,
+      files: number(/^- files: (\d+)/m),
+      hash: /^- hash: `([0-9a-f]+)`/m.exec(md)?.[1] ?? null,
+      shippedHash: /^- shipped hash: `([0-9a-f]+)`/m.exec(md)?.[1] ?? null,
+      overlayHash: /^- overlay sha256: `([0-9a-f]+)`/m.exec(md)?.[1] ?? null,
+    }
   } catch {
-    return null
+    return {
+      sourceCommit: null,
+      sourceHash: null,
+      files: null,
+      hash: null,
+      shippedHash: null,
+      overlayHash: null,
+    }
   }
 }
 
-function noSourceVerdict(): string {
-  const current = hashOf(target, vendorFiles)
-  const recorded = vendorMdRecordedHash()
-  const verdict =
-    recorded != null && recorded === current
-      ? "sinkron dengan VENDOR.md"
-      : `TIDAK sinkron dengan VENDOR.md (kerja ${current} vs tercatat ${recorded ?? "-"})`
-  return `(${vendorFiles.length} file, ${current}) — ${verdict}`
+function fileSha256(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex")
 }
 
-if (!existsSync(source)) {
-  // Tanpa sibling kita tidak bisa sync — tapi vendor yang sudah ada tetap sah.
-  if (vendorFiles.length > 0) {
-    console.log(
-      `[vendor] ../minicore tidak ada — memakai vendor/minicore yang sudah ada ${noSourceVerdict()}`,
-    )
-    process.exit(0)
+function stageFiles(fromRoot: string, files: string[]): string {
+  const staged = mkdtempSync(join(tmpdir(), "minicode-minicore-stage-"))
+  for (const f of files) {
+    const to = join(staged, f)
+    mkdirSync(dirname(to), { recursive: true })
+    copyFileSync(join(fromRoot, f), to)
   }
-  console.error("[vendor] ../minicore tidak ada DAN vendor/minicore kosong — tidak bisa lanjut")
-  process.exit(1)
+  return staged
 }
 
-const sourceFiles = collect(source)
-if (sourceFiles.length === 0) {
-  // Checkout sibling gagal (mis. repo minicore privat di CI) meninggalkan
-  // direktori KOSONG — existsSync lolos tapi tak ada yang bisa dibandingkan.
-  // Perlakukan sama seperti sumber tidak ada: vendor yang sudah ada tetap sah
-  // (pesan + exit 0), dan mode sync MENOLAK menimpa VENDOR.md dengan klaim
-  // 0 file (destruktif diam-diam). Regresi nyata: CI merah di tiap push
-  // padahal vendor sinkron — "[vendor] tidak ada file untuk disalin".
-  if (vendorFiles.length > 0) {
-    console.log(
-      `[vendor] source ${source} kosong — memakai vendor/minicore yang sudah ada ${noSourceVerdict()}`,
-    )
-    process.exit(0)
-  }
-  console.error(`[vendor] tidak ada file untuk disalin dari ${source}`)
-  process.exit(1)
+function applyOverlay(root: string): { ok: true } | { ok: false; reason: string } {
+  if (!existsSync(overlay)) return { ok: false, reason: `overlay hilang: ${overlayRepoPath}` }
+  // Patch tanpa konteks meminimalkan whitespace bising. Hash source di bawah
+  // wajib cocok dengan pin sebelum patch boleh diterapkan.
+  const r = spawnSync("git", ["apply", "--unidiff-zero", "-p3", overlay], {
+    cwd: root,
+    encoding: "utf8",
+  })
+  if (r.status === 0) return { ok: true }
+  return { ok: false, reason: (r.stderr || r.stdout || "git apply gagal").trim() }
 }
 
-const sourceHash = hashOf(source, sourceFiles)
-const vendorHash = hashOf(target, vendorFiles)
+function noSourceVerdict(): { message: string; synced: boolean } {
+  const files = collect(target)
+  const currentHash = vendorFileHash(target, files)
+  const pin = readPin()
+  const currentOverlayHash = existsSync(overlay) ? fileSha256(overlay) : null
+  const synced =
+    pin.files === files.length && pin.hash === currentHash && pin.overlayHash === currentOverlayHash
+  const verdict = synced
+    ? `sinkron dengan pin (${currentHash})`
+    : `TIDAK sinkron dengan pin (kerja ${currentHash}, tercatat ${pin.hash ?? "-"})`
+  return { message: `(${files.length} file, ${currentHash}) — ${verdict}`, synced }
+}
 
-if (checkOnly) {
-  const sameSet =
-    sourceFiles.length === vendorFiles.length && sourceFiles.every((f, i) => f === vendorFiles[i])
-  if (sameSet && sourceHash === vendorHash) {
-    console.log(`[vendor] sinkron (${sourceFiles.length} file, ${sourceHash})`)
-    process.exit(0)
-  }
-  console.error(
-    `[vendor] TIDAK sinkron — source ${sourceFiles.length}/${sourceHash} vs vendor ${vendorFiles.length}/${vendorHash}`,
-  )
+function failCheck(message: string): never {
+  console.error(`[vendor] TIDAK sinkron — ${message}`)
   console.error("[vendor] jalankan: bun run vendor:minicore")
   process.exit(1)
 }
 
-let written = 0
-for (const f of sourceFiles) {
-  const from = join(source, f)
-  const to = join(target, f)
-  const next = readFileSync(from)
-  if (existsSync(to) && statSync(to).size === next.length && readFileSync(to).equals(next)) continue
-  mkdirSync(dirname(to), { recursive: true })
-  writeFileSync(to, next)
-  written++
+const vendorFiles = collect(target)
+const pin = readPin()
+const overlayHash = existsSync(overlay) ? fileSha256(overlay) : null
+
+if (!existsSync(source)) {
+  const verdict = noSourceVerdict()
+  console.log(
+    `[vendor] ../minicore tidak ada — memakai vendor/minicore yang sudah ada ${verdict.message}`,
+  )
+  if (checkOnly && !verdict.synced) process.exit(1)
+  if (vendorFiles.length === 0) {
+    console.error("[vendor] vendor/minicore kosong — tidak bisa lanjut")
+    process.exit(1)
+  }
+  process.exit(0)
 }
 
-// Jejak asal supaya jelas vendor ini turunan commit mana.
-const head = (() => {
-  try {
-    const { spawnSync } = require("node:child_process") as typeof import("node:child_process")
-    const r = spawnSync("git", ["-C", source, "rev-parse", "HEAD"], { encoding: "utf8" })
-    return r.status === 0 ? r.stdout.trim() : "unknown"
-  } catch {
-    return "unknown"
+const sourceFiles = collect(source)
+if (sourceFiles.length === 0) {
+  const verdict = noSourceVerdict()
+  console.log(
+    `[vendor] source ${source} kosong — memakai vendor/minicore yang sudah ada ${verdict.message}`,
+  )
+  if (checkOnly && !verdict.synced) process.exit(1)
+  if (vendorFiles.length === 0) {
+    console.error(`[vendor] tidak ada file untuk disalin dari ${source}`)
+    process.exit(1)
   }
-})()
-writeFileSync(
-  join(target, "VENDOR.md"),
-  [
-    "# vendor/minicore — JANGAN EDIT MANUAL",
-    "",
-    "Salinan kernel MiniCore agar `bun install` tidak membutuhkan clone sibling",
-    "`../minicore`. Sumber kebenaran tetap repo minicore.",
-    "",
-    `- source commit: \`${head}\``,
-    `- files: ${sourceFiles.length}`,
-    `- hash: \`${hashOf(source, sourceFiles)}\``,
-    `- shipped hash: \`${hashShipped(source, sourceFiles)}\` (${sourceFiles.length - SHIPPED_EXCLUDE.size} file) — fingerprint file vendor yang ikut paket npm`,
-    "  (hash di atas mencakup test/fakes.ts yang sengaja tidak ikut paket;",
-    "   verifikasi dari paket terbit: hitung hash vendor/minicore di dalam tarball)",
-    "",
-    "Perbarui dengan `bun run vendor:minicore` (butuh `../minicore`).",
-    "CI memverifikasi kesinkronan lewat `bun run vendor:check`.",
-    "",
-  ].join("\n"),
-)
+  process.exit(0)
+}
 
-console.log(
-  `[vendor] ${written} file diperbarui dari ${source} (${sourceFiles.length} total, ${sourceHash})`,
-)
+const sourceCommit = sourceHead(source)
+const sourceHash = vendorFileHash(source, sourceFiles)
+const vendorHash = vendorFileHash(target, vendorFiles)
+const sameSet =
+  sourceFiles.length === vendorFiles.length && sourceFiles.every((f, i) => f === vendorFiles[i])
+
+if (checkOnly) {
+  if (sourceCommit && pin.sourceCommit && sourceCommit !== pin.sourceCommit) {
+    failCheck(`source commit ${sourceCommit} berbeda dari pin ${pin.sourceCommit}`)
+  }
+  if (pin.overlayHash !== overlayHash) {
+    failCheck(
+      `fingerprint overlay ${overlayHash ?? "-"} berbeda dari pin ${pin.overlayHash ?? "-"}`,
+    )
+  }
+  if (
+    sameSet &&
+    sourceHash === vendorHash &&
+    pin.files === vendorFiles.length &&
+    pin.hash === vendorHash
+  ) {
+    console.log(
+      `[vendor] sinkron (${vendorFiles.length} file, ${vendorHash}; source ${sourceCommit ?? "fixture"})`,
+    )
+    process.exit(0)
+  }
+
+  // Sumber upstream dipin tanpa overlay; periksa salinan sementara agar
+  // `--check` tetap read-only. Fixture test yang sudah identik dengan vendor
+  // lolos jalur hash langsung di atas.
+  const sourceMatchesPin =
+    pin.sourceHash === sourceHash && (!sourceCommit || sourceCommit === pin.sourceCommit)
+  if (sourceMatchesPin && sameSet) {
+    const staged = stageFiles(source, sourceFiles)
+    let overlayMatches = false
+    let overlayFailure: string | null = null
+    try {
+      const applied = applyOverlay(staged)
+      if (!applied.ok) {
+        overlayFailure = applied.reason
+      } else {
+        const expectedFiles = collect(staged)
+        const expectedHash = vendorFileHash(staged, expectedFiles)
+        overlayMatches =
+          expectedFiles.length === vendorFiles.length &&
+          expectedFiles.every((f, i) => f === vendorFiles[i]) &&
+          expectedHash === vendorHash &&
+          pin.files === vendorFiles.length &&
+          pin.hash === vendorHash
+      }
+    } finally {
+      rmSync(staged, { recursive: true, force: true })
+    }
+    if (overlayMatches) {
+      console.log(
+        `[vendor] sinkron dengan overlay (${vendorFiles.length} file, ${vendorHash}; source ${sourceCommit})`,
+      )
+      process.exit(0)
+    }
+    if (overlayFailure)
+      failCheck(`overlay tidak bisa diterapkan pada ${sourceCommit}: ${overlayFailure}`)
+  }
+  failCheck(
+    `source ${sourceFiles.length}/${sourceHash} vs vendor ${vendorFiles.length}/${vendorHash}`,
+  )
+}
+
+// Siapkan source + overlay di temp dulu. Kalau patch tidak cocok, vendor yang
+// sedang dipakai aplikasi tidak berubah setengah jalan.
+const staged = stageFiles(source, sourceFiles)
+try {
+  if (sourceHash !== vendorHash) {
+    const sourceMatchesPin =
+      pin.sourceHash === sourceHash && (!sourceCommit || sourceCommit === pin.sourceCommit)
+    if (!sourceMatchesPin) {
+      rmSync(staged, { recursive: true, force: true })
+      console.error(
+        `[vendor] source ${sourceHash} bukan base yang dipin (${pin.sourceHash ?? "-"}); rebase overlay sebelum sync`,
+      )
+      process.exit(1)
+    }
+    const applied = applyOverlay(staged)
+    if (!applied.ok) {
+      rmSync(staged, { recursive: true, force: true })
+      console.error(
+        `[vendor] overlay tidak bisa diterapkan pada ${sourceCommit ?? "source tanpa commit"}: ${applied.reason}`,
+      )
+      process.exit(1)
+    }
+  }
+
+  const stagedFiles = collect(staged)
+  const stagedHash = vendorFileHash(staged, stagedFiles)
+  const stagedShippedHash = vendorShippedHash(staged, stagedFiles)
+  const head = sourceCommit ?? "unknown"
+  let written = 0
+
+  for (const f of vendorFiles) {
+    if (stagedFiles.includes(f)) continue
+    unlinkSync(join(target, f))
+    written++
+  }
+  for (const f of stagedFiles) {
+    const from = join(staged, f)
+    const to = join(target, f)
+    const next = readFileSync(from)
+    if (existsSync(to) && statSync(to).size === next.length && readFileSync(to).equals(next))
+      continue
+    mkdirSync(dirname(to), { recursive: true })
+    writeFileSync(to, next)
+    written++
+  }
+
+  writeFileSync(
+    join(target, "VENDOR.md"),
+    [
+      "# vendor/minicore — JANGAN EDIT MANUAL",
+      "",
+      "Salinan MiniCore dari source commit yang dipin, ditambah overlay host yang",
+      "diperiksa dari patch di `scripts/vendor-overlays/minicode-context.patch`.",
+      "Overlay memberi admission context per model dan system prompt dinamis;",
+      "simpan seam ini saat menyinkronkan source upstream.",
+      "",
+      `- source commit: \`${head}\``,
+      `- source hash: \`${sourceHash}\``,
+      `- overlay sha256: \`${overlayHash ?? "-"}\``,
+      `- files: ${stagedFiles.length}`,
+      `- hash: \`${stagedHash}\``,
+      `- shipped hash: \`${stagedShippedHash}\` (${stagedFiles.length - SHIPPED_EXCLUDE.size} file) — fingerprint file vendor yang ikut paket npm`,
+      "  (hash di atas mencakup test/fakes.ts yang sengaja tidak ikut paket;",
+      "   verifikasi dari paket terbit: hitung hash vendor/minicore di dalam tarball)",
+      "",
+      "Perbarui dengan `bun run vendor:minicore` (butuh `../minicore`).",
+      "`bun run vendor:check` memverifikasi source, overlay, dan fingerprint final.",
+      "",
+    ].join("\n"),
+  )
+
+  console.log(
+    `[vendor] ${written} file diperbarui dari ${source} + overlay (${stagedFiles.length} total, ${sourceHash} -> ${stagedHash})`,
+  )
+} finally {
+  rmSync(staged, { recursive: true, force: true })
+}

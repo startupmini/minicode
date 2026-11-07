@@ -32,6 +32,29 @@ test("F-23: CWD tak pernah dikonsultasikan", () => {
   }
 })
 
+test("F-23: PATHEXT Windows diuji juga di host non-Windows", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mc-trusted-win-"))
+  const name = `minicode-win-probe-${process.pid}-${Date.now()}`
+  const executable = join(dir, `${name}.EXE`)
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")
+  const originalPath = process.env.PATH
+  const originalPathExt = process.env.PATHEXT
+  writeFileSync(executable, "probe")
+  try {
+    Object.defineProperty(process, "platform", { ...originalPlatform, value: "win32" })
+    process.env.PATH = dir
+    process.env.PATHEXT = ".EXE;.CMD"
+    expect(resolveTrustedExecutable(name)).toBe(executable)
+  } finally {
+    if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform)
+    if (originalPath === undefined) delete process.env.PATH
+    else process.env.PATH = originalPath
+    if (originalPathExt === undefined) delete process.env.PATHEXT
+    else process.env.PATHEXT = originalPathExt
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("F-23: nama absolut / ber-separator diteruskan apa adanya", () => {
   expect(resolveTrustedExecutable("/usr/bin/git")).toBe("/usr/bin/git")
   expect(resolveTrustedExecutable("./scripts/x")).toBe("./scripts/x")

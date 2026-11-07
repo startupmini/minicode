@@ -15,7 +15,9 @@ import { delimiter, isAbsolute, join } from "node:path"
 // nama telanjang (perilaku lama) supaya kegagalan tetap fail-open seperti
 // semula, tetapi kasus umum (git terpasang di PATH) jadi aman dari hijack.
 
-const isWin = process.platform === "win32"
+function isWindows(): boolean {
+  return process.platform === "win32"
+}
 
 function validPathEntries(): string[] {
   const raw = process.env.PATH ?? process.env.Path ?? ""
@@ -32,7 +34,7 @@ function isExecutableFile(p: string): boolean {
   try {
     const st = statSync(p)
     if (!st.isFile()) return false
-    if (isWin) return true
+    if (isWindows()) return true
     accessSync(p, constants.X_OK)
     return true
   } catch {
@@ -60,14 +62,15 @@ function resolveUncached(name: string): string {
   // "tools\\run.exe") adalah pilihan eksplisit pemanggil — jangan diubah.
   if (isAbsolute(name)) return name
   if (name.includes("/") || name.includes("\\")) return name
-  const exts = isWin
+  const windows = isWindows()
+  const exts = windows
     ? (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
         .split(";")
         .map((e) => e.trim())
         .filter(Boolean)
     : [""]
   for (const dir of validPathEntries()) {
-    if (isWin) {
+    if (windows) {
       for (const ext of exts) {
         const candidate = join(dir, name.endsWith(ext.toLowerCase()) ? name : name + ext)
         if (isExecutableFile(candidate)) return candidate

@@ -13,15 +13,15 @@ jobs:
           bun-version: 1.4.3
       - name: Install
         run: bun install
-      - name: Run full coverage (capture to file, don't fail)
+      - name: Run full coverage (capture, don't fail)
         shell: bash
         run: |
           bun test --coverage --reporter dot > /tmp/full.txt 2>&1 || true
-          echo "=== captured, lines: $(wc -l < /tmp/full.txt) ==="
-      - name: Show failure details
+          echo "captured $(wc -l < /tmp/full.txt) lines"
+      - name: Show failure context
         shell: bash
         run: |
-          echo "=== (fail) lines ==="
+          echo "==== (fail) markers ===="
           grep -n "(fail)" /tmp/full.txt || echo "(none)"
-          echo "=== context around chain 4 / delegation / toBe / toMatch ==="
-          grep -n -i -A 25 -B 3 "chain 4\|delegasi nyata\|childSessionId\|write_file.*committed\|jurnal menautkan" /tmp/full.txt | head -120 || echo "(no match)"
+          echo "==== 60 lines before each (fail) — full assertion ===="
+          awk '/\(fail\)/{print "\n------ FAIL @" NR " ------\n"; for(i=NR-60;i<NR;i++) if(i>0) print i ":" lines[i]; print $0; next} {lines[NR]=$0}' /tmp/full.txt

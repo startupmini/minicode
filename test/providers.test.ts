@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { ProviderError } from "#minicore/core/errors.ts"
 import { validateArgs } from "#minicore/core/tool.ts"
 import { createOpenAICompatProvider } from "#minicore/providers/openai-compat.ts"
+import { RateLimiter } from "../src/policy/ratelimit.ts"
 import { createAnthropicProvider } from "../src/providers/anthropic.ts"
 import { createRouterProvider } from "../src/providers/router.ts"
 
@@ -287,6 +288,101 @@ test("router caps retryAfter + coba ulang di tempat sekali", async () => {
   } catch (e) {
     expect((e as ProviderError).retryAfterMs).toBe(100)
   }
+})
+
+test("router membuang Retry-After NaN/negatif sebelum memutuskan retry", async () => {
+  for (const malformed of [Number.NaN, -1]) {
+    let calls = 0
+    const provider: any = {
+      id: "single",
+      models: ["m"],
+      // biome-ignore lint/correctness/useYield: provider always fails before its first event
+      async *stream() {
+        calls++
+        throw new ProviderError("rate_limit", "bad retry-after", malformed)
+      },
+    }
+    const router = createRouterProvider({ providers: [provider] })
+    try {
+      for await (const _event of router.stream(
+        { messages: [{ role: "user", content: "hi" }] },
+        new AbortController().signal,
+      )) {
+      }
+      expect(false).toBe(true)
+    } catch (error) {
+      expect((error as ProviderError).retryAfterMs).toBeUndefined()
+      expect(calls).toBe(1)
+    }
+  }
+})
+
+test("router membatalkan antrean limiter saat deadline request habis", async () => {
+  const limiter = new RateLimiter(1, 1 / 1000)
+  await limiter.acquire()
+  let providerCalls = 0
+  const provider: any = {
+    id: "limited",
+    models: ["m"],
+    async *stream() {
+      providerCalls++
+      yield { type: "finish", reason: "stop" }
+    },
+  }
+  const router = createRouterProvider({ providers: [provider], limiter })
+  const controller = new AbortController()
+  const started = Date.now()
+  const run = (async () => {
+    for await (const _event of router.stream(
+      { messages: [{ role: "user", content: "hi" }], model: "m" },
+      controller.signal,
+    )) {
+    }
+  })()
+  setTimeout(() => controller.abort(new Error("request deadline")), 20)
+  let caught: unknown
+  try {
+    await run
+  } catch (error) {
+    caught = error
+  }
+  expect(caught).toBeInstanceOf(Error)
+  expect((caught as Error).message).toBe("request deadline")
+  expect(providerCalls).toBe(0)
+  expect(Date.now() - started).toBeLessThan(500)
+})
+
+test("router membatalkan dan membersihkan tidur Retry-After", async () => {
+  let providerCalls = 0
+  const provider: any = {
+    id: "pinned",
+    models: ["m"],
+    // biome-ignore lint/correctness/useYield: provider always fails before its first event
+    async *stream() {
+      providerCalls++
+      throw new ProviderError("rate_limit", "slow down", 30_000)
+    },
+  }
+  const router = createRouterProvider({ providers: [provider] })
+  const controller = new AbortController()
+  const started = Date.now()
+  const run = (async () => {
+    for await (const _event of router.stream(
+      { messages: [{ role: "user", content: "hi" }], model: "pinned::m" },
+      controller.signal,
+    )) {
+    }
+  })()
+  setTimeout(() => controller.abort(new Error("run deadline")), 20)
+  let caught: unknown
+  try {
+    await run
+  } catch (error) {
+    caught = error
+  }
+  expect((caught as Error | undefined)?.message).toBe("run deadline")
+  expect(providerCalls).toBe(1)
+  expect(Date.now() - started).toBeLessThan(500)
 })
 
 test("anthropic thinking: adds thinking block + beta header, emits reasoning", async () => {

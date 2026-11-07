@@ -272,6 +272,8 @@ export async function createMinicodeSession(
     const t = (rest as Record<string, unknown>).timeoutMs
     if (typeof t === "number" && (!Number.isFinite(t) || t < 0))
       delete (rest as Record<string, unknown>).timeoutMs
+    else if (typeof t === "number" && t > LIMITS.MAX_TIMER_DELAY_MS)
+      (rest as Record<string, unknown>).timeoutMs = LIMITS.MAX_TIMER_DELAY_MS
     const m = (rest as Record<string, unknown>).maxSteps
     if (typeof m !== "number" || !Number.isFinite(m) || m < 1)
       delete (rest as Record<string, unknown>).maxSteps

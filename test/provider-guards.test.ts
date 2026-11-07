@@ -1,6 +1,7 @@
 // Hardening F-11/F-16: stream provider punya timeoutrequest dan text-cap;
 // abort parent diteruskan apa adanya; properti (kind) dipertahankan.
 import { expect, test } from "bun:test"
+import * as minicore from "#minicore"
 import { ProviderError } from "#minicore/core/errors.ts"
 import type { ModelProvider, ProviderEvent, StreamRequest } from "#minicore/core/provider.ts"
 import { withStreamGuards } from "../src/providers/guards.ts"
@@ -73,6 +74,76 @@ test("F-11: abort parent diteruskan, bukan dikonversi", async () => {
     err = e
   }
   expect(err).not.toBeInstanceOf(ProviderError)
+})
+
+test("timeout menutup iterator yang tak kooperatif lalu kernel retry otomatis", async () => {
+  let calls = 0
+  let closed = 0
+  const provider: ModelProvider = {
+    id: "non-cooperative",
+    models: ["m"],
+    stream() {
+      calls++
+      if (calls === 1) {
+        const hanging: AsyncIterable<ProviderEvent> = {
+          [Symbol.asyncIterator]() {
+            return {
+              next: () => new Promise<IteratorResult<ProviderEvent>>(() => {}),
+              return: async () => {
+                closed++
+                return { done: true, value: undefined }
+              },
+            }
+          },
+        }
+        return hanging
+      }
+      return (async function* () {
+        yield { type: "text", text: "recovered" } as const
+        yield { type: "finish", reason: "stop" } as const
+      })()
+    },
+  }
+  const session = minicore.createSession({
+    provider: withStreamGuards(provider, { timeoutMs: 30 }),
+    permissions: { check: async () => "allow" as const },
+  })
+  const started = Date.now()
+  const result = await session.run("retry after timeout")
+  expect(result.finalText).toBe("recovered")
+  expect(calls).toBe(2)
+  expect(closed).toBe(1)
+  expect(Date.now() - started).toBeLessThan(3_000)
+})
+
+test("abort saat backoff membatalkan retry berikutnya", async () => {
+  let calls = 0
+  const provider: ModelProvider = {
+    id: "transient",
+    models: ["m"],
+    // biome-ignore lint/correctness/useYield: provider always fails before its first event
+    async *stream(): AsyncIterable<ProviderEvent> {
+      calls++
+      throw new ProviderError("network", "temporary disconnect")
+    },
+  }
+  const session = minicore.createSession({
+    provider: withStreamGuards(provider, { timeoutMs: 5_000 }),
+    permissions: { check: async () => "allow" as const },
+  })
+  const controller = new AbortController()
+  const started = Date.now()
+  const run = session.run("stop during backoff", { signal: controller.signal })
+  setTimeout(() => controller.abort(new Error("caller cancelled")), 30)
+  let caught: unknown
+  try {
+    await run
+  } catch (error) {
+    caught = error
+  }
+  expect((caught as { kind?: string } | undefined)?.kind).toBe("aborted")
+  expect(calls).toBe(1)
+  expect(Date.now() - started).toBeLessThan(500)
 })
 
 test("F-16: teks raksasa dipotong dengan marker, event lain utuh", async () => {

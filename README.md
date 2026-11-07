@@ -6,7 +6,7 @@ Interactive sessions use a fullscreen TUI. One-shot and automation runs use the 
 
 ## Install
 
-Requires Bun `>=1.1.13` for development and local execution. For the published CLI:
+Requires Bun >=1.1.13 for development, local execution, and the published CLI:
 
 ```bash
 npm install -g minicode-ai
@@ -53,7 +53,7 @@ bun run gate:coverage
 bun run gate:pack
 ```
 
-The repository [agent instructions](AGENTS.md) define the required gate order and architecture constraints. Do not treat historical audit reports as current gate results; use a report only for its recorded checkpoint and scope.
+The repository's agent instructions define the required gate order and architecture constraints. Do not treat historical audit reports as current gate results; use a report only for its recorded checkpoint and scope.
 
 ## License
 

@@ -120,7 +120,9 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // notice (`[deprecated] --plan is now WorkMode PLAN`). Explicit compatibility
   // handling: the operator sees that the legacy permission flag now maps to
   // WorkMode PLAN instead of being silently reinterpreted. Declared.
-  "cli/setup.ts": { max: 43, owner: "diagnostic" },
+  // [timeout/retry hardening] 44 -> 45 for exactly ONE writer: a clamp notice
+  // explains when the JS maximum timer shortens the requested timeout.
+  "cli/setup.ts": { max: 45, owner: "diagnostic" },
   "cli/tui.ts": { max: 9, owner: "screen" },
   // [P2.2] 3 -> 4 for exactly ONE writer: the stale-writer durability
   // diagnostic after a headless run persisted. The ACP success envelope is

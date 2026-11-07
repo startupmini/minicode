@@ -219,6 +219,7 @@ export class TuiApp {
   private onSignalTerm: (() => void) | null = null
   private onSignalHup: (() => void) | null = null
   private onSignalInt: (() => void) | null = null
+  private signalExitHandled = false
 
   private wasRaw = false
   /**
@@ -328,6 +329,8 @@ export class TuiApp {
       // loop, jadi tak ada jendela nyata; sisipkan await di antara keduanya =
       // membuka race SIGTERM sebelum handler terpasang.
       const restoreAndExit = (code: number) => {
+        if (this.signalExitHandled) return
+        this.signalExitHandled = true
         // Selesaikan loop lebih dulu: cleanup melepas referensi resolver.
         // Ini juga penting saat process.exit di-stub oleh test atau host.
         this.quitRequested = true

@@ -25,7 +25,13 @@ export function withStreamGuards(
     maxTotalToolArgBytes?: number
   } = {},
 ): ModelProvider {
-  const timeoutMs = opts.timeoutMs ?? LIMITS.PROVIDER_REQUEST_TIMEOUT_MS
+  const configuredTimeout = opts.timeoutMs
+  const timeoutMs =
+    typeof configuredTimeout === "number" &&
+    Number.isFinite(configuredTimeout) &&
+    configuredTimeout > 0
+      ? Math.min(LIMITS.MAX_TIMER_DELAY_MS, Math.max(1, Math.floor(configuredTimeout)))
+      : LIMITS.PROVIDER_REQUEST_TIMEOUT_MS
   const maxTextChars = opts.maxTextChars ?? LIMITS.PROVIDER_TEXT_MAX_CHARS
   // Reasoning = bukan bagian jawaban; cap agresif (2MB logis ≈ 500k token —
   // jauh di atas reasoning sah mana pun, jauh di bawah OOM).
@@ -61,8 +67,6 @@ export function withStreamGuards(
         timedOut = true
         ctl.abort(new Error(`provider request timed out after ${timeoutMs}ms`))
       }, timeoutMs)
-      // Jangan menahan exit proses bila turn sudah selesai dari sisi lain.
-      ;(timer as unknown as { unref?: () => void }).unref?.()
       let textChars = 0
       let reasonChars = 0
       let toolArgumentBytes = 0
@@ -71,8 +75,13 @@ export function withStreamGuards(
       let finishReason: "stop" | "tool_calls" | "length" | "abort" | "error" | undefined
       let hadVisibleOutput = false
       let invalidated = false
+      let iterator: AsyncIterator<ProviderEvent> | undefined
       try {
-        for await (const ev of provider.stream(request, ctl.signal)) {
+        iterator = provider.stream(request, ctl.signal)[Symbol.asyncIterator]()
+        while (true) {
+          const next = await nextOrAbort(iterator, ctl.signal)
+          if (next.done) break
+          const ev = next.value
           if (
             finishReason !== undefined &&
             (ev.type === "text" || ev.type === "tool_call" || ev.type === "finish")
@@ -186,7 +195,55 @@ export function withStreamGuards(
       } finally {
         clearTimeout(timer)
         signal.removeEventListener("abort", onParentAbort)
+        if (!ctl.signal.aborted && finishReason !== "stop" && finishReason !== "tool_calls") {
+          ctl.abort(new DOMException("Provider stream closed", "AbortError"))
+        }
+        if (ctl.signal.aborted && iterator?.return) {
+          try {
+            void Promise.resolve(iterator.return()).catch(() => {})
+          } catch {}
+        }
       }
     },
   }
+}
+
+function nextOrAbort<T>(
+  iterator: AsyncIterator<T>,
+  signal: AbortSignal,
+): Promise<IteratorResult<T>> {
+  if (signal.aborted)
+    return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError"))
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      cleanup()
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"))
+    }
+    signal.addEventListener("abort", onAbort, { once: true })
+    if (signal.aborted) {
+      onAbort()
+      return
+    }
+    let next: Promise<IteratorResult<T>>
+    try {
+      next = Promise.resolve(iterator.next())
+    } catch (error) {
+      cleanup()
+      reject(error)
+      return
+    }
+    next.then(
+      (value) => {
+        cleanup()
+        resolve(value)
+      },
+      (error) => {
+        cleanup()
+        reject(error)
+      },
+    )
+    function cleanup() {
+      signal.removeEventListener("abort", onAbort)
+    }
+  })
 }

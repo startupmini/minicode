@@ -38,7 +38,7 @@ import {
   setSubAgentWorkMode,
 } from "../src/tools/task.ts"
 import { todoSession } from "../src/tools/todo.ts"
-import { paintFooterMode, renderFooter } from "../src/ui/footer.ts"
+import { paintPermissionMode, paintWorkMode, renderFooter } from "../src/ui/footer.ts"
 import { installFakeTty, KEY } from "./helpers/tui-harness.ts"
 
 const dirs: string[] = []
@@ -307,21 +307,24 @@ describe("5. hooks mengikuti WorkMode AKTIF, bukan snapshot", () => {
 })
 
 describe("6. footer mencerminkan kombinasi WorkMode + permission mode", () => {
-  test("EXECUTE → BUILD: selalu tampil dua lapis", () => {
-    expect(paintFooterMode("auto", "EXECUTE")).toContain("BUILD · AUTO")
-    expect(paintFooterMode("auto", "EXECUTE")).not.toContain("EXECUTE")
-    expect(paintFooterMode("auto")).toContain("BUILD · AUTO")
+  test("EXECUTE → Build: label Work Mode memakai title case", () => {
+    expect(paintWorkMode("EXECUTE")).toContain("Work Mode: ")
+    expect(paintWorkMode("EXECUTE")).toContain("Build")
+    expect(paintWorkMode("EXECUTE")).not.toContain("EXECUTE")
+    expect(paintPermissionMode("auto")).toContain("Permission Mode: Auto")
   })
-  test("DISCUSS/PLAN: label dibedakan", () => {
-    expect(paintFooterMode("auto", "DISCUSS")).toContain("DISCUSS · AUTO")
-    expect(paintFooterMode("auto", "PLAN")).toContain("PLAN · AUTO")
-    expect(paintFooterMode("ask", "PLAN")).toContain("PLAN · ASK")
+  test("Discuss/Plan dan Ask memakai title case", () => {
+    expect(paintWorkMode("DISCUSS")).toContain("Discuss")
+    expect(paintWorkMode("PLAN")).toContain("Plan")
+    expect(paintPermissionMode("ask")).toContain("Permission Mode: Ask")
   })
-  test("renderFooter selalu menyertakan label WorkMode produk (BUILD)", () => {
+  test("renderFooter menempatkan kedua label mode pada footer", () => {
     const line = renderFooter({ mode: "auto", workMode: "PLAN", model: "m1", cwd: "cwd" }, 90)[0]!
-    expect(line).toContain("PLAN · AUTO")
+    expect(line).toContain("Work Mode: Plan")
+    expect(line).toContain("Permission Mode: Auto")
     const plain = renderFooter({ mode: "auto", model: "m1", cwd: "cwd" }, 90)[0]!
-    expect(plain).toContain("BUILD · AUTO")
+    expect(plain).toContain("Work Mode: Build")
+    expect(plain).toContain("Permission Mode: Auto")
   })
 })
 

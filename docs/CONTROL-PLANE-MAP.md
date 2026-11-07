@@ -29,7 +29,7 @@ Relationship eksplisit:
 |---|---|---|
 | Context size | Kernel loop (`contextTokens`) + `Session.contextTokens` getter (ekspos ke driver/UI) | Kernel: kompaksi + gagal-bila-critical |
 | Compaction | Kernel (pressure + flag) | Kernel: KAPAN + fallback; LLM: ISI ringkasan |
-| Termination | maxSteps/timeout (kernel), budget (driver), abort (user) | Kernel: maxSteps, timeout, post-kompaksi critical; Driver: budget abort; User: Esc (TUI), Ctrl+C/Esc (raw prompt) |
+| Termination | maxSteps + turn timeout (kernel), per-prompt deadline (CLI), budget (driver), abort (user) | Kernel: maxSteps/turn timeout/post-kompaksi critical; CLI: fresh wall-clock deadline per prompt including retry/verify; Driver: budget abort; User: Esc (TUI), Ctrl+C/Esc (raw prompt) |
 | Budget | Collector (usage live) + `budgetStatus` | `budgetStatus` (terpusat, seragam TUI/one-shot/exec) + watcher abort |
 | Backpressure | Producer caps + kernel truncate | Cap di producer (sudah benar); kernel truncate terakhir |
 
@@ -91,11 +91,17 @@ valid (tool result raksasa, model gratis); pressure LOW + cost HIGH valid
 |---|---|---|
 | `completed` | kernel loop | tidak ada tool call → `finalText` |
 | `max_steps_exceeded` | kernel loop | `stepIndex >= maxSteps` |
-| `timeout` | kernel `createTimeout` | `AgentError("timeout")` — dipertahankan |
+| `timeout` | CLI per-prompt deadline + kernel `createTimeout` | Keduanya membawa `AgentError("timeout")`; retry wait dan provider stream menerima sinyal yang sama |
 | `budget_exceeded` | kernel (post-kompaksi) / driver (watcher abort) | `AgentError("budget_exceeded")` — dipertahankan |
 | `aborted` | user (Esc pada TUI; Ctrl+C/Esc pada prompt non-TUI) / `session.abort()` | sinyal tanpa kind AgentError |
 | `provider` | kernel loop | provider error setelah retry habis |
 | busy | kernel | `run()` saat `running` |
+
+Deadline provider per request default 300 detik. Kegagalan provider yang dapat
+dicoba ulang memakai paling banyak tiga retry setelah percobaan awal; backoff
+tanpa `Retry-After` adalah 1, 2, lalu 4 detik. `Retry-After` dibatasi 30 detik.
+Router dapat mencoba provider alternatif sebelum menunggu, kecuali model di-pin.
+Semua penantian retry dan rate-limit dibatalkan oleh timeout/abort pemanggilan.
 
 Satu terminal reason per sinyal (`abortError` mempertahankan kind
 `AgentError`); pemutus lain dapat REQUEST, tidak ada competing owners —

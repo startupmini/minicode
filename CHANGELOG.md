@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.14.3] - 2026-11-07
+
+### Improved — TUI mode clarity and runtime resilience
+
+- Footer TUI menampilkan `Work Mode: Build|Plan|Discuss` di kiri dan `Permission Mode: Auto|Ask` di kanan dekat penggunaan konteks; warna kedua sumbu dibedakan dan label dipadatkan pada terminal sempit.
+- Deadline timeout CLI dimulai per prompt, bukan saat sesi dibuat, sehingga sesi interaktif yang idle tetap dapat menerima prompt berikutnya.
+- Timeout provider dapat menghentikan penantian atas stream yang tidak kooperatif dan memicu retry terbatas; pembatalan menghentikan backoff, antrean rate limit, dan `Retry-After`.
+- Timer di atas batas runtime JavaScript diklem; nilai rate limit dan `Retry-After` tidak valid tidak membuat loop tunggu cepat.
+- Manifest npm dipulihkan dari baseline v0.14.2 agar versi CLI, gate distribusi, dan workflow publish kembali memiliki satu sumber versi.
+
 ## [0.14.2] - 2026-11-07
 
 ### Fixed — reliability dan security saat dogfooding

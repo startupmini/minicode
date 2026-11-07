@@ -51,7 +51,7 @@ Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `s
 | `--model <name>` | Override model (`providerId::model` paksa provider) |
 | `--provider <id>` | Paksa provider id agnostik |
 | `--resume <id>` | Lanjutkan history yang tersimpan; setelah kompaksi, bagian lama dapat berupa ringkasan + tail |
-| `--timeout <ms>` | Hard deadline per run (default 900000; 0 = Infinity) |
+| `--timeout <ms>` | Hard deadline per prompt (default 900000; 0 = Infinity). Sesi yang idle tidak menghabiskan deadline prompt berikutnya. |
 | `--cwd <path>` | Workspace root untuk tool file & jail |
 | `--allow-local-config` | Percayai `.minicode/config.json` + allowlist lokal (default: diabaikan) |
 | `--max-steps <n>` | Batas langkah tool (default 50) |
@@ -69,7 +69,7 @@ sedangkan batas yang terlalu besar berisiko ditolak provider. Batas berubah
 otomatis saat `/model` mengganti model. MiniCode juga membatasi keluaran stream
 berdasarkan ruang tersisa setelah system prompt, tools, dan riwayat dihitung.
 
-Di TUI, **Tab** memutar WorkMode (`DISCUSS` → `PLAN` → `BUILD`) dan **Shift+Tab** meng-toggle PermissionMode (`AUTO` ↔ `ASK`). `/mode <AUTO|ASK>` mengubah persetujuan; `/work-mode <DISCUSS|PLAN|BUILD>` mengubah operating mode. Footer selalu menampilkan kedua lapis (`BUILD · AUTO`).
+Di TUI, **Tab** memutar Work Mode (`Discuss` → `Plan` → `Build`) dan **Shift+Tab** meng-toggle Permission Mode (`Auto` ↔ `Ask`). `/mode <AUTO|ASK>` mengubah persetujuan; `/work-mode <DISCUSS|PLAN|BUILD>` mengubah operating mode. Footer menampilkan Work Mode di kiri dan Permission Mode berwarna cyan di kanan, dekat penggunaan konteks; pada terminal sempit label dipadatkan.
 
 ## Kapan memakai apa
 

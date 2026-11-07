@@ -53,7 +53,8 @@ describe("popup komposit", () => {
     expect(suspendOutput).toContain("\x1b[?1000h")
     const dimmedFrame = tty!.screen()
     expect(dimmedFrame[dimmedFrame.length - 2]).toBe("")
-    expect(dimmedFrame[dimmedFrame.length - 1]).toContain("AUTO")
+    expect(dimmedFrame[dimmedFrame.length - 1]).toContain("Auto")
+    expect(dimmedFrame[dimmedFrame.length - 1]).toContain("Permission Mode:")
     let picked = ""
     let cancelled = false
     const p = runPicker({

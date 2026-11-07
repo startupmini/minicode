@@ -1,4 +1,9 @@
-# Kontrak Terminal MiniCode (TUI fullscreen — v7.6, 2026-11-07)
+# Kontrak Terminal MiniCode (TUI fullscreen — v7.7, 2026-11-07)
+
+Perubahan v7.7: footer memakai label title case `Work Mode: Build` di sisi kiri
+dan `Permission Mode: Auto` di sisi kanan dekat pemakaian konteks. Nilai kedua
+mode memakai warna berbeda; pada terminal sempit label dipadatkan sebelum nilai
+mode atau konteks dihilangkan.
 
 Perubahan v7.6: sinkronisasi kontrak WorkMode ke mode produk 0.14.1 — label
 `BUILD` untuk identitas runtime `EXECUTE`, footer dua sumbu yang selalu tampil,
@@ -97,7 +102,8 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
 - **Sinyal fatal** (I31): saat sesi TUI hidup, `App.run()` memasang
   `process.on("SIGTERM")`/`process.on("SIGHUP")` (handler terpisah karena Bun
   tak menyampaikan nama sinyal — satu handler bersama tak bisa membedakan)
-  → restore terminal (alt-screen exit + raw mode pulih) lalu
+  → restore terminal (alt-screen exit + raw mode pulih) tepat satu kali walau
+  handler sinyal terpanggil ulang, lalu
   `process.exit(128+n)`. Pasangan ketat: keduanya dilepas di cleanup `run()` —
   tanpa sesi TUI, sinyal TIDAK di-intercept (perilaku default proses tetap).
   Tanpa ini SIGTERM meninggalkan terminal di alt-screen + raw mode (user harus
@@ -197,8 +203,12 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     live dibatasi 1.000.000 karakter dan menampilkan marker truncasi; satu
     layout paint tidak boleh memproyeksikan transcript dua kali.
 
-13. Status bar: 1 baris dasar (`✦ 00.00.00 mode  model  cwd`) dari sumber
-     yang sama dengan angka sesi. `✦` tetap menjadi indikator proses hidup;
+13. Status bar: 1 baris dasar (`✦ 00.00.00 Work Mode: Build  model  cwd …
+     context  Permission Mode: Auto`) dari sumber yang sama dengan angka sesi.
+     Work Mode berada di kiri; Permission Mode cyan berada di kanan dekat
+     konteks. Pada terminal sempit, label berubah menjadi `Work:`/`Permission:`
+     atau nilai saja sebelum salah satu nilai mode dihilangkan. `✦` tetap
+     menjadi indikator proses hidup;
      timer `HH.MM.SS` berada tepat di sebelahnya. Idle=redup; saat aktif hanya
      detik putih, menit ikut terang setelah 60 dtk, dan jam setelah 1 jam.
      Reasoning memakai dots `...` → `..` → `.` → `..` →
@@ -399,18 +409,22 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     ditahan pada WorkMode `DISCUSS`/`PLAN` dan PermissionMode warisan
     `plan`/`readonly`; `Tab` mengubah WorkMode, sedangkan `Shift+Tab` mengubah
     PermissionMode AUTO/ASK.
-    **Footer:** mode WorkMode aktif tampil sebagai
-    `<WorkMode> · <PermissionMode>` dengan label produk `BUILD`, `PLAN`, atau
-    `DISCUSS` dan `AUTO`/`ASK` (mis. `BUILD · AUTO`, `PLAN · ASK`); alias internal
-    `EXECUTE` tidak ditampilkan di footer.
+    **Footer:** Work Mode tampil di kiri dengan label produk `Work Mode: Build`,
+    `Work Mode: Plan`, atau `Work Mode: Discuss`; alias internal `EXECUTE` tidak
+    ditampilkan. Permission Mode tampil di kanan dekat token konteks sebagai
+    `Permission Mode: Auto` atau `Permission Mode: Ask`. Nilai Work Mode memakai
+    warna semantik; nilai Permission Mode memakai cyan agar kedua sumbu mudah
+    dibedakan. Pada terminal sempit label dipadatkan, tetapi kedua nilai mode
+    dipertahankan selama lebar memungkinkan.
 
 ## Grammar (ringkas)
 
 prompt `minicode ›` tampil saat boot/idle dan hilang saat busy (dropdown `/`
 berbingkai di atasnya) ·
-status bar `✦ 00.00.00 mode  model  cwd` (timer redup idle; detik putih aktif,
-menit mulai terang di 60 dtk, jam di 1 jam; tanpa bullet separator; mode selalu
-`<WorkMode> · <PermissionMode>` seperti `BUILD · AUTO`)
+status bar `✦ 00.00.00 Work Mode: Build  model  cwd … context  Permission Mode: Auto`
+(timer redup idle; detik putih aktif, menit mulai terang di 60 dtk, jam di 1
+jam; tanpa bullet separator; permission rata kanan dekat token konteks; label
+dipadatkan pada terminal sempit)
 + satu spacer sebelum footer · ledger tool
 `  › name target` (hijau) / merah saat error · error `✗ pesan` sekali per
 kegagalan · pesan error TUI = formatter kanonik (`formatError`,
@@ -525,14 +539,14 @@ panjang).
   Esc-1 kembalikan prefill, Esc-2 batal).
 - `test/approval-tui.test.ts` — I23 (blok + keputusan tercatat, deny;
   stdout-pipe tanpa sink = deny).
-- `test/footer-render.test.ts` — I13 (footer minimal dengan label WorkMode + PermissionMode; lebar kolom stabil).
+- `test/footer-render.test.ts` — I13 (label title case, Work Mode kiri dan Permission Mode cyan rata kanan dekat konteks, posisi kolom stabil, fallback terminal sempit).
 - `test/work-mode-runtime.test.ts` — I35 (WorkMode runtime: ceiling permission
   dievaluasi per pemanggilan tool; transisi BUILD/EXECUTE↔DISCUSS↔PLAN pada sesi
   yang sama; daftar tool yang dilihat kernel ikut berubah; hooks mengikuti
   WorkMode aktif; delegasi mewarisi WorkMode parent terbaru; argumen
   delegasi tak bisa menaikkan WorkMode; `/work-mode` end-to-end lewat TUI
-  termasuk nilai invalid; `/mode` + Shift+Tab tak menyentuh WorkMode; label
-  footer `BUILD · AUTO`/`PLAN · ASK`; Tab mengubah WorkMode dan Shift+Tab tidak).
+  termasuk nilai invalid; `/mode` + Shift+Tab tak menyentuh WorkMode; footer
+  memakai label title case; Tab mengubah WorkMode dan Shift+Tab tidak).
 - `test/work-mode-contract.test.ts` — I35 (ceiling handler WorkMode di atas
   handler PM: 18 sel matriks, gerbang approval `PLAN × PM` termasuk `web_fetch`/
   `web_search`, `DISCUSS` memblokir network read, `describeDenial` per pemilik

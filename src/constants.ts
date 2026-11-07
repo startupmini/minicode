@@ -1,5 +1,7 @@
 /** Centralized magic numbers — full English naming. Single source for limits. */
 export const LIMITS = {
+  /** Maksimum timer JS; nilai lebih besar diklem agar tidak berubah jadi 1ms. */
+  MAX_TIMER_DELAY_MS: 2_147_483_647,
   /** File size limits */
   READ_FILE_MAX_BYTES: 2_000_000,
   WRITE_FILE_MAX_CHARS: 5_000_000,

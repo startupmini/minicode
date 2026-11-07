@@ -74,7 +74,7 @@ function stubExit(): { exits: number[]; restore: () => void } {
   return { exits, restore: () => (process.exit = orig) }
 }
 
-describe("TUI-001: sinyal fatal me-restore terminal", () => {
+describe.serial("TUI-001: sinyal fatal me-restore terminal", () => {
   test("SIGTERM saat TUI hidup: raw off + alt-screen exit + exit 143", async () => {
     const runP = bootApp()
     await tty!.ready()

@@ -4,7 +4,7 @@ import type { ModelProvider, ProviderEvent, StreamRequest } from "#minicore/core
 import type { Message } from "#minicore/core/types.ts"
 import { LIMITS } from "../constants.ts"
 import { DEFAULT_FALLBACK_CONTEXT_WINDOW_TOKENS } from "../policy/context-window.ts"
-import type { RateLimiter } from "../policy/ratelimit.ts"
+import { type RateLimiter, waitAbortable } from "../policy/ratelimit.ts"
 
 export interface RouterConfig {
   providers: ModelProvider[]
@@ -84,7 +84,13 @@ function requestFor(
 }
 
 export function createRouterProvider(config: RouterConfig): RouterProvider {
-  const maxRetry = config.maxRetryAfterMs ?? LIMITS.RETRY_AFTER_MAX_MS
+  const configuredMaxRetry = config.maxRetryAfterMs
+  const maxRetry =
+    typeof configuredMaxRetry === "number" &&
+    Number.isSafeInteger(configuredMaxRetry) &&
+    configuredMaxRetry >= 0
+      ? configuredMaxRetry
+      : LIMITS.RETRY_AFTER_MAX_MS
   // byId dan defaultId dihitung per-stream agar provider yang baru ditambah via /provider
   // langsung dikenali tanpa restart. Provider list bisa berubah mid-session.
   const getById = () => new Map(config.providers.map((p) => [p.id, p]))
@@ -167,7 +173,7 @@ export function createRouterProvider(config: RouterConfig): RouterProvider {
         let hasYieldedContent = false
         try {
           // rate limit: tunggu token bucket sebelum tiap request
-          if (config.limiter) await config.limiter.acquire()
+          if (config.limiter) await config.limiter.acquire(signal)
           const fixed = needsBinaryFix(current) ? fixRequest(request) : request
           const withSys = needsSystemMessage(current) ? withSystemMessage(fixed) : fixed
           const { req, effectiveModel, substituted } = requestFor(current, { ...withSys, model })
@@ -224,8 +230,13 @@ export function createRouterProvider(config: RouterConfig): RouterProvider {
             if (hasYieldedContent) throw e
             // cap retryAfter without mutating original
             let err: ProviderError = e
-            if (e.retryAfterMs != null && e.retryAfterMs > maxRetry) {
-              err = new ProviderError(e.category, e.message, maxRetry)
+            if (
+              e.retryAfterMs != null &&
+              (!Number.isFinite(e.retryAfterMs) || e.retryAfterMs < 0)
+            ) {
+              err = new ProviderError(e.category, e.message, undefined, e.cause)
+            } else if (e.retryAfterMs != null && e.retryAfterMs > maxRetry) {
+              err = new ProviderError(e.category, e.message, maxRetry, e.cause)
             }
             // P11 P1.3 — honori retry-after. Audit #14: fallback DULU bila ada
             // alternatif — jangan bakar sleep (maks 30 dtk) saat provider
@@ -247,20 +258,7 @@ export function createRouterProvider(config: RouterConfig): RouterProvider {
                 }
               }
               const waitMs = Math.min(err.retryAfterMs, maxRetry)
-              if (signal.aborted) throw new DOMException("Aborted", "AbortError")
-              let onAbort: (() => void) | undefined
-              try {
-                await Promise.race([
-                  Bun.sleep(waitMs),
-                  new Promise<void>((_, rej) => {
-                    onAbort = () => rej(new DOMException("Aborted", "AbortError"))
-                    if (signal.aborted) onAbort()
-                    else signal.addEventListener("abort", onAbort, { once: true })
-                  }),
-                ])
-              } finally {
-                if (onAbort) signal.removeEventListener("abort", onAbort)
-              }
+              await waitAbortable(waitMs, signal)
               // Pin: tetap di provider yang dipilih (tunggu lalu ulangi di
               // tempat) — jangan pindah ke provider lain.
               if (pinned) continue

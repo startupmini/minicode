@@ -347,18 +347,18 @@ describe("TuiApp", () => {
     await tty!.send(KEY.ctrlD)
     await runP
   })
-  test("status bar: mode + model + konteks di baris dasar (I13)", async () => {
+  test("status bar: kedua mode + konteks di baris dasar (I13)", async () => {
     const { app } = setup()
     const runP = app.run()
     await tty!.ready()
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     const frame = tty!.screen()
     const last = frame[frame.length - 1]!
-    // [mode-architecture] footer selangkup: "BUILD · AUTO".
-    expect(last).toContain("AUTO")
-    expect(last).toContain("BUILD")
-    expect(last).toContain("test-model")
+    // [mode-architecture] footer menampilkan kedua mode dengan label proper.
+    expect(last).toContain("Build")
+    expect(last).toContain("Auto")
     expect(last).toContain("1k")
+    expect(last.indexOf("1k")).toBeLessThan(last.lastIndexOf("Auto"))
     expect(frame[frame.length - 2]).toBe("")
     expect(last).toContain("00.00.00")
     expect(last).not.toContain("•")
@@ -688,7 +688,8 @@ describe("TuiApp", () => {
     expect(app.isSuspended()).toBe(true)
     const dimmedFrame = tty!.screen()
     expect(dimmedFrame[dimmedFrame.length - 2]).toBe("")
-    expect(dimmedFrame[dimmedFrame.length - 1]).toContain("AUTO")
+    expect(dimmedFrame[dimmedFrame.length - 1]).toContain("Build")
+    expect(dimmedFrame[dimmedFrame.length - 1]).toContain("Auto")
     // Backdrop redup tertulis sebagai frame (bukan hitam polos).
     expect(tty!.all()).toContain("\x1b[2m")
     // Ketikan selama suspend TIDAK masuk baris input (anti double-handling

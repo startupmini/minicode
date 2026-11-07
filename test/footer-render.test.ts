@@ -1,15 +1,20 @@
-// Footer status TUI (src/ui/footer.ts): 2 baris, mode satu-satunya yang
-// berwarna, garis hampir tak terlihat, konteks rata kanan, spark pulse/redup.
+// Footer status TUI (src/ui/footer.ts): Work Mode di kiri, Permission Mode
+// cyan di kanan dekat konteks, garis hampir tak terlihat, spark pulse/redup.
 // Test sengaja agnostik warna (assert via stripAnsi) agar hijau di env apa
 // pun; harness fake-TTY dipakai agar columns terkontrol.
 //
-// [mode-architecture] Footer kini SELALU menampilkan kedua lapis sebagai
-// `<WorkMode> · <PermissionMode>`: WorkMode produk (BUILD/DISCUSS/PLAN, identitas
-// internal EXECUTE = BUILD) dan PermissionMode (AUTO/ASK). Lihat paintFooterMode.
+// [mode-architecture] Kedua lapis selalu tampil dengan label title case;
+// EXECUTE internal menjadi Build, sedangkan Permission Mode ditempatkan di kanan.
 
 import { afterEach, describe, expect, test } from "bun:test"
-import { paintFooterMode, renderFooter, shortenPath, shortModel } from "../src/ui/footer.ts"
-import { stripAnsi } from "../src/ui/render/theme.ts"
+import {
+  paintPermissionMode,
+  paintWorkMode,
+  renderFooter,
+  shortenPath,
+  shortModel,
+} from "../src/ui/footer.ts"
+import { c, stripAnsi } from "../src/ui/render/theme.ts"
 import { displayWidth } from "../src/ui/render/width.ts"
 import { installFakeTty } from "./helpers/tui-harness.ts"
 
@@ -26,7 +31,7 @@ describe("footer render", () => {
     expect(shortModel("")).toBe("")
   })
 
-  test("1 baris: status 4 field + spark (tanpa garis)", () => {
+  test("1 baris: status mode, model, cwd, konteks + spark (tanpa garis)", () => {
     tty = installFakeTty({ columns: 90 })
     const [status] = renderFooter(
       {
@@ -40,7 +45,9 @@ describe("footer render", () => {
     )
     const plain = stripAnsi(status!)
     expect(plain).toContain("✦")
-    expect(plain).toContain("BUILD · AUTO")
+    expect(plain).toContain("Work Mode: Build")
+    expect(plain).toContain("Permission Mode: Auto")
+    expect(plain.indexOf("14.2k")).toBeLessThan(plain.indexOf("Permission Mode: Auto"))
     expect(plain).toContain("deepseek-v4-flash")
     expect(plain).toContain("C:\\Users\\dokument")
     expect(plain).toContain("14.2k")
@@ -60,8 +67,8 @@ describe("footer render", () => {
       90,
     )
     const plain = stripAnsi(status!)
-    expect(plain).toContain("AUTO")
-    expect(plain).toContain("BUILD")
+    expect(plain).toContain("Work Mode: Build")
+    expect(plain).toContain("Permission Mode: Auto")
     expect(plain).toContain("m1")
     expect(plain).toContain("cwd")
     expect(plain).toContain("1k")
@@ -76,11 +83,11 @@ describe("footer render", () => {
       stripAnsi(renderFooter({ mode: "auto", model: "m1", cwd: "cwd", activity }, 90)[0]!),
     )
     const modelColumn = lines[0]!.indexOf("m1")
-    const modeColumn = lines[0]!.indexOf("AUTO")
+    const modeColumn = lines[0]!.indexOf("Work Mode: Build")
     for (const line of lines) {
       expect(line).toContain("m1")
       expect(line.indexOf("m1")).toBe(modelColumn)
-      expect(line.indexOf("AUTO")).toBe(modeColumn)
+      expect(line.indexOf("Work Mode: Build")).toBe(modeColumn)
       expect(line).not.toMatch(/Thinking|Working|Running|\d+s/)
       expect(displayWidth(line)).toBeLessThanOrEqual(89)
     }
@@ -91,11 +98,12 @@ describe("footer render", () => {
     const lines = ["Thinking 0s", "Working 10s"].map((activity) =>
       stripAnsi(renderFooter({ mode: "auto", model: "m1", cwd: "cwd", activity }, 40)[0]!),
     )
-    const modeColumn = lines[0]!.indexOf("AUTO")
+    const modeColumn = lines[0]!.indexOf("Work: Build")
     const modelColumn = lines[0]!.indexOf("m1")
     for (const line of lines) {
-      expect(line).toContain("AUTO")
-      expect(line.indexOf("AUTO")).toBe(modeColumn)
+      expect(line).toContain("Build")
+      expect(line.indexOf("Work: Build")).toBe(modeColumn)
+      expect(line).toContain("Permission: Auto")
       expect(line.indexOf("m1")).toBe(modelColumn)
       expect(line).not.toMatch(/Thinking|Working|Running|\d+s/)
       expect(displayWidth(line)).toBeLessThanOrEqual(39)
@@ -117,10 +125,10 @@ describe("footer render", () => {
     const seconds = render("00.00.42", true, "seconds")
     const minutes = render("00.01.02", true, "minutes")
     const hours = render("01.00.00", true, "hours")
-    expect(stripAnsi(idle)).toMatch(/✦ {2}00\.00\.00 {2}BUILD · AUTO +m1 +cwd/)
-    expect(stripAnsi(seconds)).toMatch(/✦ {2}00\.00\.42 {2}BUILD · AUTO +m1 +cwd/)
-    expect(stripAnsi(minutes)).toMatch(/✦ {2}00\.01\.02 {2}BUILD · AUTO +m1 +cwd/)
-    expect(stripAnsi(hours)).toMatch(/✦ {2}01\.00\.00 {2}BUILD · AUTO +m1 +cwd/)
+    expect(stripAnsi(idle)).toMatch(/✦ {2}00\.00\.00 {2}Work Mode: Build +m1 +cwd/)
+    expect(stripAnsi(seconds)).toMatch(/✦ {2}00\.00\.42 {2}Work Mode: Build +m1 +cwd/)
+    expect(stripAnsi(minutes)).toMatch(/✦ {2}00\.01\.02 {2}Work Mode: Build +m1 +cwd/)
+    expect(stripAnsi(hours)).toMatch(/✦ {2}01\.00\.00 {2}Work Mode: Build +m1 +cwd/)
     for (const line of [idle, seconds, minutes, hours]) expect(stripAnsi(line)).not.toContain("•")
     expect(idle).toContain("\x1b[38;2;72;72;72m00.00.00")
     expect(seconds).toContain("\x1b[37m42\x1b[39m")
@@ -128,15 +136,16 @@ describe("footer render", () => {
     expect(hours).toContain("\x1b[37m01\x1b[39m")
   })
 
-  test("mode di-pad lebar tetap: label berbeda panjang tak menggeser kolom model", () => {
+  test("Work Mode stabil di kiri; Permission Mode tidak menggeser model", () => {
     tty = installFakeTty({ columns: 90 })
     const withMode = (mode: string) =>
-      stripAnsi(renderFooter({ mode, model: "m1", cwd: "cwd" }, 90)[0]!)
+      stripAnsi(renderFooter({ mode, workMode: "EXECUTE", model: "m1", cwd: "cwd" }, 90)[0]!)
     const auto = withMode("auto")
     const ask = withMode("ask")
-    // Posisi model (`m1`) identik walau AUTO vs ASK beda panjang — kolom mode
-    // di-pad ke lebar tetap ("DISCUSS · AUTO" = 14).
     expect(auto.indexOf("m1")).toBe(ask.indexOf("m1"))
+    expect(auto.indexOf("Work Mode: Build")).toBe(ask.indexOf("Work Mode: Build"))
+    expect(auto.indexOf("Permission Mode: Auto")).toBeGreaterThan(auto.indexOf("cwd"))
+    expect(ask.indexOf("Permission Mode: Ask")).toBeGreaterThan(ask.indexOf("cwd"))
     expect(auto).not.toContain("•")
   })
 
@@ -144,32 +153,31 @@ describe("footer render", () => {
     tty = installFakeTty({ columns: 90 })
     const [status] = renderFooter({ mode: "auto", model: "m1", cwd: "cwd", context: "14.2k" }, 90)
     const plain = stripAnsi(status!)
-    expect(plain.endsWith("14.2k")).toBe(true)
+    expect(plain.endsWith("Permission Mode: Auto")).toBe(true)
+    expect(plain.indexOf("14.2k")).toBeLessThan(plain.indexOf("Permission Mode: Auto"))
     expect(displayWidth(plain)).toBeLessThanOrEqual(89)
-    expect(plain).toContain("AUTO")
+    expect(plain).toContain("Permission Mode: Auto")
     expect(plain).toContain("m1")
     expect(plain).toContain("cwd")
   })
 
-  test("paintFooterMode: BUILD dipakai utk EXECUTE; warna mengikuti lapis ketat", () => {
+  test("mode memakai title case dan warna Work/Permission berbeda", () => {
     tty = installFakeTty({ columns: 60 })
-    const sgrOf = (s: string) => s.slice(0, s.indexOf("m") + 1)
-    const auto = paintFooterMode("auto") // BUILD · AUTO → success
-    const ask = paintFooterMode("ask") // BUILD · ASK → info
-    const discuss = paintFooterMode("auto", "DISCUSS") // warning (read-only)
-    const plan = paintFooterMode("auto", "PLAN") // warning
-    const build = paintFooterMode("ask", "EXECUTE") // BUILD · ASK (identitas BUILD)
-    // Konten polos memuat label produk dua-lapis.
-    expect(stripAnsi(auto).trimEnd()).toBe("BUILD · AUTO")
-    expect(stripAnsi(ask).trimEnd()).toBe("BUILD · ASK")
-    expect(stripAnsi(discuss).trimEnd()).toBe("DISCUSS · AUTO")
-    expect(stripAnsi(plan).trimEnd()).toBe("PLAN · AUTO")
-    expect(stripAnsi(build).trimEnd()).toBe("BUILD · ASK")
-    // Warna: AUTO/BUILD success; ASK info; DISCUSS/PLAN warning.
-    expect(sgrOf(auto)).toBe(sgrOf(paintFooterMode("auto", "EXECUTE")))
-    expect(sgrOf(auto)).not.toBe(sgrOf(ask))
-    expect(sgrOf(discuss)).toBe(sgrOf(plan))
-    expect(sgrOf(discuss)).not.toBe(sgrOf(auto))
+    const build = paintWorkMode("EXECUTE")
+    const discuss = paintWorkMode("DISCUSS")
+    const plan = paintWorkMode("PLAN")
+    const auto = paintPermissionMode("auto")
+    const ask = paintPermissionMode("ask")
+    expect(stripAnsi(build).trimEnd()).toBe("Work Mode: Build")
+    expect(stripAnsi(discuss).trimEnd()).toBe("Work Mode: Discuss")
+    expect(stripAnsi(plan).trimEnd()).toBe("Work Mode: Plan")
+    expect(stripAnsi(auto)).toBe("Permission Mode: Auto")
+    expect(stripAnsi(ask)).toBe("Permission Mode: Ask")
+    expect(build).toContain(c.success("Build"))
+    expect(discuss).toContain(c.warning("Discuss"))
+    expect(auto).toContain(c.info("Auto"))
+    expect(ask).toContain(c.info("Ask"))
+    expect(c.success("Build")).not.toBe(c.info("Auto"))
   })
 
   test("terminal sempit: 1 baris visual, spark+mode kekal (cwd/model dibuang)", () => {
@@ -181,7 +189,9 @@ describe("footer render", () => {
     expect(status).not.toContain("\n")
     expect(displayWidth(stripAnsi(status!))).toBeLessThanOrEqual(23)
     expect(stripAnsi(status!)).toContain("✦")
-    expect(stripAnsi(status!)).toContain("BUILD · ASK")
+    const plain = stripAnsi(status!)
+    expect(plain).toContain("Build")
+    expect(plain).toContain("Ask")
   })
 
   test("spark: redup saat idle (frame 0), putih/abu saat busy (frame naik)", () => {
@@ -220,7 +230,8 @@ describe("footer render", () => {
     )
     expect(status!).not.toContain("\n")
     const plain = stripAnsi(status!)
-    expect(plain).toContain("AU TO")
+    expect(plain).toContain("Work Mode: Build")
+    expect(plain).toContain("Permission Mode: Au To")
     expect(plain).toContain("m 1")
     expect(plain).toContain("a b")
     expect(plain).toContain("9 k")

@@ -20,4 +20,4 @@ MiniCode adalah coding agent terminal yang dibangun di atas kernel MiniCore. Jal
 
 ## Pengembangan
 
-Panduan contributor, gate, dan batas lapisan: [contributing.md](contributing.md). Aturan agent ada di [`AGENTS.md`](../AGENTS.md). Master roadmap tetap milik pemilik repo dan tidak tersedia di checkout ini.
+Panduan contributor, gate, dan batas lapisan: [contributing.md](contributing.md). Aturan agent ada di `AGENTS.md` pada root repository. Master roadmap tetap milik pemilik repo dan tidak tersedia di checkout ini.

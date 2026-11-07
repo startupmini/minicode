@@ -5,6 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ProviderError } from "#minicore/core/errors.ts"
+import type { ModelProvider, ProviderEvent } from "#minicore/core/provider.ts"
 import { DEFAULT_MAX_STEPS } from "#minicore/core/session.ts"
 import { FakeProvider, finish, text, toolCall } from "#minicore/test/fakes.ts"
 import { cappedRecovery, createMinicodeSession } from "../src/app/session.ts"
@@ -75,6 +76,39 @@ test("F-09b: DEFAULT_MAX_STEPS = 50 di kernel dan mirror host", () => {
 test("F-09: timeoutMs NaN/negatif → default aman, turn jalan", async () => {
   expect(await runWithBounds({ timeoutMs: NaN })).toContain("selesai")
   expect(await runWithBounds({ timeoutMs: -100 })).toContain("selesai")
+})
+
+test("F-09: timeout di atas batas timer JS tidak berubah menjadi abort 1ms", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "bounds-timeout-"))
+  const provider: ModelProvider = {
+    id: "wait-for-abort",
+    models: ["wait-for-abort"],
+    async *stream(_request, signal): AsyncIterable<ProviderEvent> {
+      await new Promise<void>((_resolve, reject) => {
+        if (signal.aborted) reject(signal.reason)
+        else signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+      })
+    },
+  }
+  try {
+    const session = await createMinicodeSession({
+      provider,
+      cwd: dir,
+      timeoutMs: LIMITS.MAX_TIMER_DELAY_MS + 10_000,
+    })
+    const controller = new AbortController()
+    const run = session.run("wait", { signal: controller.signal })
+    setTimeout(() => controller.abort(new Error("caller stopped")), 30)
+    let caught: unknown
+    try {
+      await run
+    } catch (error) {
+      caught = error
+    }
+    expect((caught as { kind?: string } | undefined)?.kind).toBe("aborted")
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
 })
 
 test("F-09: concurrency 0/negatif → default aman, hasil tool terdefinisi", async () => {

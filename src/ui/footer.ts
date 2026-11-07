@@ -5,26 +5,18 @@
 // jadi render tetap deterministik dan bisa diuji tanpa menunggu waktu.
 //
 // Gaya (keputusan produk): footer hampir tak terlihat; field dipisahkan
-// dengan spasi dan warna, tanpa bullet separator. Mode memakai mapping warna
-// yang sama dengan prompt lama: plan kuning, ask biru, sisanya hijau.
-//
-// Tata letak: `✦ 00.00.00 mode  model  cwd ……… 14.2k` — konteks rata kanan.
-// Mode di-pad ke lebar tetap agar teks di kanannya TIDAK bergeser saat mode
-// berganti (Shift+Tab): tanpa padding, `auto`→`allowlist` menggeser seluruh baris.
+// dengan spasi dan warna, tanpa bullet separator. Work Mode ada di kiri;
+// Permission Mode berwarna cyan di sisi kanan, dekat penggunaan konteks.
 import { sanitizeAnsiLine } from "./render/sanitize.ts"
 import { c, glyphs } from "./render/theme.ts"
-import { displayWidth, padToWidth, truncateToWidth } from "./render/width.ts"
+import { displayWidth, truncateToWidth } from "./render/width.ts"
 
 export type TimerHighlight = "seconds" | "minutes" | "hours"
 
 export interface FooterStatus {
+  /** Permission mode efektif sesi ini (umumnya AUTO atau ASK). */
   mode: string
-  /**
-   * P12 S2.2 Slice 5 — WorkMode aktif sesi (DISCUSS|PLAN|EXECUTE). Hanya
-   * ditampilkan bila bukan EXECUTE: label jadi `<WorkMode>·<permission mode>`
-   * (mis. `PLAN·auto`, `DISCUSS·auto`) agar dua lapis intent/permission bisa
-   * dibedakan. EXECUTE (default) = perilaku lama, label permission mode saja.
-   */
+  /** WorkMode aktif sesi; identitas internal EXECUTE ditampilkan sebagai Build. */
   workMode?: string
   model: string
   cwd: string
@@ -48,8 +40,10 @@ export interface FooterStatus {
   timerHighlight?: TimerHighlight
 }
 
-/** Lebar tetap kolom mode — muat label terpanjang "DISCUSS · AUTO". */
-const MODE_WIDTH = 14
+/** Lebar tetap kolom agar perubahan WorkMode tidak menggeser model/CWD. */
+const WORK_MODE_WIDTH = 18
+const WORK_MODE_COMPACT_WIDTH = 13
+const WORK_MODE_VALUE_WIDTH = 7
 
 /** Buang prefix provider (`acme::deepseek-v4` → `deepseek-v4`). */
 export function shortModel(id: string): string {
@@ -57,30 +51,50 @@ export function shortModel(id: string): string {
   return i >= 0 ? id.slice(i + 2) : id
 }
 
-/** Label permission (AUTO/ASK) — legacy profile warisan di-uppercase saja. */
-function permissionLabel(mode: string): string {
-  return (mode || "").toUpperCase()
+function titleCaseMode(value: string, fallback: string): string {
+  const clean = sanitizeAnsiLine(value).trim()
+  if (!clean) return fallback
+  return clean
+    .toLowerCase()
+    .replace(/(^|[\s_-])([a-z])/g, (_match, sep: string, letter: string) => {
+      return `${sep}${letter.toUpperCase()}`
+    })
 }
 
-/**
- * Warna + PAD token mode. Padding dilakukan sebelum pewarnaan supaya lebar
- * kolom mode tetap sama untuk semua mode (anti-geser), sementara warna tetap
- * dipilih dari nama mode asli.
- *
- * [mode-architecture] Selalu tampilkan KEDUA lapis sebagai `<WorkMode> ·
- * <PermissionMode>` (mis. `BUILD · AUTO`, `PLAN · ASK`). Identitas internal
- * `EXECUTE` ditampilkan sebagai produk `BUILD`. EXECUTE/default tak lagi
- * disembunyikan. Warna mengikuti lapis yang lebih ketat: DISCUSS/PLAN warning,
- * ASK info, AUTO success.
- */
-export function paintFooterMode(mode: string, workMode?: string): string {
-  const wm = !workMode || workMode === "EXECUTE" ? "BUILD" : workMode.toUpperCase()
-  const pm = permissionLabel(mode)
-  const restrictive = wm === "DISCUSS" || wm === "PLAN"
-  const label = `${wm} · ${pm}`
-  const padded = padToWidth(sanitizeAnsiLine(label), MODE_WIDTH)
-  if (restrictive) return c.warning(padded)
-  return pm === "ASK" ? c.info(padded) : c.success(padded)
+function workModeValue(workMode?: string): string {
+  const normalized = (workMode || "EXECUTE").toUpperCase()
+  if (normalized === "EXECUTE" || normalized === "BUILD") return "Build"
+  if (normalized === "DISCUSS") return "Discuss"
+  if (normalized === "PLAN") return "Plan"
+  return titleCaseMode(workMode ?? "", "Build")
+}
+
+type ModeLabelStyle = "full" | "compact" | "value"
+
+/** Work Mode memakai warna semantik; label/nilai memakai title case. */
+export function paintWorkMode(workMode?: string, style: ModeLabelStyle = "full"): string {
+  const value = workModeValue(workMode)
+  const normalized = sanitizeAnsiLine(workMode || "EXECUTE").toUpperCase()
+  const prefix = style === "full" ? "Work Mode: " : style === "compact" ? "Work: " : ""
+  const width =
+    style === "full"
+      ? WORK_MODE_WIDTH
+      : style === "compact"
+        ? WORK_MODE_COMPACT_WIDTH
+        : WORK_MODE_VALUE_WIDTH
+  const labelWidth = displayWidth(sanitizeAnsiLine(`${prefix}${value}`))
+  const colorValue = normalized === "DISCUSS" || normalized === "PLAN" ? c.warning : c.success
+  return `${prefix ? c.gray(prefix) : ""}${colorValue(value)}${" ".repeat(
+    Math.max(0, width - labelWidth),
+  )}`
+}
+
+/** Permission Mode selalu cyan agar terpisah secara visual dari Work Mode. */
+export function paintPermissionMode(mode: string, style: ModeLabelStyle = "full"): string {
+  const value = titleCaseMode(mode, "Auto")
+  if (style === "value") return c.info(value)
+  const prefix = style === "full" ? "Permission Mode: " : "Permission: "
+  return `${c.gray(prefix)}${c.info(value)}`
 }
 
 /** Spark glyph: redup saat idle, pulse putih↔abu saat busy (frame genap/ganjil). */
@@ -131,7 +145,6 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
     ? `${paintTimer(timerText, s.timerActive === true, s.timerHighlight)}  `
     : ""
   const lead = `${spark}  ${timer}`
-  const mode = paintFooterMode(s.mode, s.workMode)
   const fieldGap = "  "
   // Satu-baris: cwd/model bisa berisi newline (nama dir) — sanitizeAnsiLine
   // agar \n tak memecah frame lengket ke scrollback (displayWidth menghitung
@@ -139,38 +152,90 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
   const model = c.gray(sanitizeAnsiLine(shortModel(s.model)))
   const cwdTxt = c.muted(sanitizeAnsiLine(s.cwd))
   const shortCwdTxt = c.muted(sanitizeAnsiLine(shortenPath(s.cwd)))
-
-  const full = `${lead}${mode}${fieldGap}${model}${fieldGap}${cwdTxt}`
-  const shortened = `${lead}${mode}${fieldGap}${model}${fieldGap}${shortCwdTxt}`
-  const mid = `${lead}${mode}${fieldGap}${model}`
-  const lean = `${lead}${mode}`
-
   const target = Math.max(4, cols - 1)
   const ctx = s.context ? sanitizeAnsiLine(s.context) : ""
   const metrics = s.metrics ? sanitizeAnsiLine(s.metrics) : ""
-  // F-CTX-1: metrik usage menempel di kiri blok konteks (satu blok rata kanan).
-  const rightTxt = [ctx, metrics].filter(Boolean).join("  ")
-  const rightW = displayWidth(rightTxt)
-
-  // Rata kanan: konteks didorong ke kolom `target` dengan gap ideal ≥6
-  // agar rapi dan tidak mepet (keluhan: terlalu rapat → 1→2→4→6).
-  // Bila tak muat, konteks diprioritaskan — kiri dipotong duluan lewat
-  // tangga di bawah, bukan konteks yang dilepas.
-  const align = (left: string): string => {
-    const lw = displayWidth(left)
-    if (!rightTxt) return left
-    if (lw + rightW + 2 > target) return left
-    const gap = Math.max(6, target - lw - rightW)
-    return `${left}${" ".repeat(gap)}${c.gray(rightTxt)}`
+  const contextParts = [ctx, metrics].filter(Boolean).map((part) => c.gray(part))
+  const leftWithCwdFor = (style: ModeLabelStyle): string[] => {
+    const work = paintWorkMode(s.workMode, style)
+    return [
+      `${lead}${work}${fieldGap}${model}${fieldGap}${cwdTxt}`,
+      ...(shortCwdTxt !== cwdTxt
+        ? [`${lead}${work}${fieldGap}${model}${fieldGap}${shortCwdTxt}`]
+        : []),
+    ]
+  }
+  const leftWithoutCwdFor = (style: ModeLabelStyle): string[] => {
+    const work = paintWorkMode(s.workMode, style)
+    return [`${lead}${work}${fieldGap}${model}`]
+  }
+  const leftModeOnlyFor = (style: ModeLabelStyle): string => {
+    return `${lead}${paintWorkMode(s.workMode, style)}`
+  }
+  const rightFor = (style: ModeLabelStyle): string =>
+    [...contextParts, paintPermissionMode(s.mode, style)].join(fieldGap)
+  const align = (left: string, right: string): string | undefined => {
+    const leftWidth = displayWidth(left)
+    const rightWidth = displayWidth(right)
+    const gapWidth = target - leftWidth - rightWidth
+    if (gapWidth < 1) return undefined
+    return `${left}${" ".repeat(gapWidth)}${right}`
   }
 
-  // Tangga prioritas buang saat sempit: cwd penuh → cwd diperpendek → model
-  // (spark + timer + mode + context tetap punya ruang).
-  const candidates = shortCwdTxt !== cwdTxt ? [full, shortened, mid, lean] : [full, mid, lean]
-  for (const left of candidates) {
-    const line = align(left)
-    if (displayWidth(line) <= target) return [line]
+  // Pertahankan label penuh selama muat; jika tidak, padatkan kedua label
+  // bersama-sama sebelum menghilangkan konteks atau memotong salah satu mode.
+  const labelPairGroups: ReadonlyArray<ReadonlyArray<readonly [ModeLabelStyle, ModeLabelStyle]>> = [
+    [
+      ["full", "full"],
+      ["compact", "compact"],
+    ],
+    [["value", "value"]],
+    [
+      ["full", "compact"],
+      ["compact", "full"],
+    ],
+    [
+      ["compact", "value"],
+      ["value", "compact"],
+    ],
+    [
+      ["full", "value"],
+      ["value", "full"],
+    ],
+  ]
+  for (const pairGroup of labelPairGroups) {
+    for (const leftCandidates of [leftWithCwdFor, leftWithoutCwdFor]) {
+      for (const [workStyle, permissionStyle] of pairGroup) {
+        for (const left of leftCandidates(workStyle)) {
+          const line = align(left, rightFor(permissionStyle))
+          if (line && displayWidth(line) <= target) return [line]
+        }
+      }
+    }
   }
-  // Bahkan `lean` tak muat (terminal sangat sempit): potong keras.
-  return [truncateToWidth(align(lean), target, "…")]
+  for (const pairGroup of labelPairGroups) {
+    for (const [workStyle, permissionStyle] of pairGroup) {
+      const line = align(leftModeOnlyFor(workStyle), rightFor(permissionStyle))
+      if (line && displayWidth(line) <= target) return [line]
+    }
+  }
+
+  // Terminal sangat sempit: pertahankan spark dan dua nilai mode, hilangkan
+  // timer/model/CWD/label sebelum konteks; potong konteks lebih dahulu.
+  const workValue = paintWorkMode(s.workMode, "value")
+  const permissionValue = paintPermissionMode(s.mode, "value")
+  const shortWorkValue = workValue.trimEnd()
+  const modeOnly = `${spark} ${shortWorkValue} ${permissionValue}`
+  if (ctx || metrics) {
+    const context = [ctx, metrics].filter(Boolean).join("  ")
+    const baseWidth = displayWidth(modeOnly)
+    const contextBudget = target - baseWidth - 2
+    if (contextBudget > 0) {
+      const shortenedContext = truncateToWidth(context, contextBudget, "…")
+      const withContext = `${spark} ${shortWorkValue} ${c.gray(shortenedContext)} ${permissionValue}`
+      if (displayWidth(withContext) <= target) return [withContext]
+    }
+  }
+  if (displayWidth(modeOnly) <= target) return [modeOnly]
+  return [truncateToWidth(modeOnly, target, "…")]
 }

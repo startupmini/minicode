@@ -42,6 +42,7 @@ import {
   setSubAgentSessionFactory,
 } from "../src/tools/task.ts"
 import { todoSession } from "../src/tools/todo.ts"
+import { startFakeProvider } from "./helpers/fake-provider.ts"
 
 const dirs: string[] = []
 function tmpRoot(): string {
@@ -410,54 +411,59 @@ describe("7.4 Embedding circuit-breaker — gagal pertama trip, panggilan beriku
   })
 })
 
-describe("7.4 Root wall-clock timeout — `--timeout` mengikat seluruh fase (Live #3b)", () => {
-  test("timeoutMs 50 → rootTimeoutSignal fire, runPromptWithVerify melempar AgentError('timeout')", async () => {
+describe("7.4 Per-prompt wall-clock timeout", () => {
+  test("sesi idle lebih lama dari timeout tetap memberi prompt baru deadline penuh", async () => {
     const cwd = tmpRoot()
     const { mkdirSync, writeFileSync } = await import("node:fs")
     mkdirSync(join(cwd, ".minicode"), { recursive: true })
     mkdirSync(join(cwd, "home", ".minicode"), { recursive: true })
+    const provider = startFakeProvider([{ kind: "text", text: "jawaban segar" }])
     writeFileSync(
       join(cwd, ".minicode", "config.json"),
       JSON.stringify({
         providers: [
           {
             id: "fake",
-            baseUrl: "http://localhost:9",
+            baseUrl: provider.baseUrl,
             apiKey: "sk-test",
             models: ["gpt-4o-mini"],
+            providerHint: "openai",
           },
         ],
       }),
       "utf8",
     )
-    const s = await createCliSession({
-      cwd,
-      allowLocalConfig: true,
-      sessionId: "p19-wallclock",
-      prompt: "hi",
-      enterRepl: false,
-      verbose: false,
-      allowAll: false,
-      ask: false,
-      plan: false,
-      allowlist: false,
-      verify: false,
-      timeoutMs: 50,
-    })
-    // Tunggu sampai rootTimeoutSignal fire (50ms) — beri margin karena
-    // setup async (system prompt, DB init) bisa makan waktu dulu.
-    await new Promise((r) => setTimeout(r, 120))
-    // Panggil runPromptWithVerify: rootTimeoutSignal.aborted = true →
-    // langsung throw AgentError('timeout') tanpa menyentuh provider.
-    let caught: unknown = null
+    let s: Awaited<ReturnType<typeof createCliSession>> | undefined
     try {
-      await s.runPromptWithVerify("halo dunia")
-    } catch (e) {
-      caught = e
+      s = await createCliSession({
+        cwd,
+        allowLocalConfig: true,
+        sessionId: "p19-wallclock",
+        prompt: "hi",
+        enterRepl: false,
+        verbose: false,
+        modelOverride: "gpt-4o-mini",
+        allowAll: false,
+        ask: false,
+        plan: false,
+        allowlist: false,
+        verify: false,
+        timeoutMs: 1_000,
+      })
+      // Timeout adalah per prompt, bukan umur sesi sejak sesi disiapkan.
+      await new Promise((r) => setTimeout(r, 1_100))
+      let caught: unknown = null
+      try {
+        await s.runPromptWithVerify("halo dunia")
+      } catch (e) {
+        caught = e
+      }
+      expect(caught).toBeNull()
+      expect(provider.requestCount()).toBe(1)
+      expect(JSON.stringify(s.session.state.history)).toContain("jawaban segar")
+    } finally {
+      await s?.close()
+      provider.close()
     }
-    expect(caught).not.toBeNull()
-    const err = caught as { kind?: string }
-    expect(err.kind).toBe("timeout")
-    await s.close()
   }, 15_000)
 })

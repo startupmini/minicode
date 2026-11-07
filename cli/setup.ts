@@ -14,6 +14,7 @@ import {
 import { setupToolLayer } from "../src/app/tool-layer.ts"
 import type { MinicodeConfig } from "../src/config.ts"
 import { loadLastModel, localConfigNotice } from "../src/config.ts"
+import { LIMITS } from "../src/constants.ts"
 import { runRunHooks, shouldRunHooks } from "../src/hooks/run.ts"
 import { homeDir } from "../src/lib/db-path.ts"
 import { closeAllLsp as lspCloseAll, setLspProcessSupervisor } from "../src/lsp/client.ts"
@@ -1126,40 +1127,28 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   if (!Number.isFinite(effectiveTimeoutMs) || effectiveTimeoutMs < 0) {
     process.stderr.write(`[warn] invalid timeout ${effectiveTimeoutMs}, fallback to 900000\n`)
     effectiveTimeoutMs = 900_000
+  } else if (effectiveTimeoutMs > LIMITS.MAX_TIMER_DELAY_MS) {
+    process.stderr.write(
+      `[warn] timeout exceeds runtime limit; capped at ${LIMITS.MAX_TIMER_DELAY_MS}ms\n`,
+    )
+    effectiveTimeoutMs = LIMITS.MAX_TIMER_DELAY_MS
   }
-  // [Fase 7 / Live #3] ROOT wall-clock timeout. Sebelumnya `--timeout` hanya
-  // dioper ke kernel turn (session.timeoutMs), sehingga setup/retry di luar
-  // turn (DB init, system prompt, provider connect) tidak diikat satu
-  // deadline — uji live: `--timeout 30000` selesai di TOTAL_MS=71967 karena
-  // ~42 dtk setup berada di luar pagar. Signal root ini dibuat di sini
-  // (sebelum setup) dan di-compose ke sinyal turn + diperiksa selama setup,
-  // jadi TOTAL_MS benar-benar menghormati batas pengguna.
-  // [Fase 10 / QF] `AbortSignal.timeout()` menembak dengan reason DOMException
-  // (bukan AgentError). `abortError()` kernel lalu mengklasifikasikannya sebagai
-  // "aborted" generik — bukan "timeout" — sehingga `--timeout` yang fire di
-  // tengah provider menggantung melaporkan "Run was aborted" alih-alih
-  // "Run exceeded timeout". Kita buat controller sendiri supaya reason-nya
-  // AgentError("timeout") → kernel mempertahankan identitas timeout.
-  const rootTimeoutSignal =
-    effectiveTimeoutMs === Infinity || effectiveTimeoutMs === 0
-      ? undefined
-      : (() => {
-          const rc = new AbortController()
-          const timer = setTimeout(
-            () =>
-              rc.abort(
-                new AgentError(
-                  "timeout",
-                  `run exceeded root wall-clock timeout (${effectiveTimeoutMs}ms)`,
-                ),
-              ),
-            effectiveTimeoutMs,
-          )
-          try {
-            ;(timer as unknown as { unref?: () => void })?.unref?.()
-          } catch {}
-          return rc.signal
-        })()
+  // `--timeout` adalah deadline satu pemanggilan prompt. Jangan menyalakan
+  // timer saat sesi dibuat: sesi TUI/REPL bisa idle lama lalu menerima prompt
+  // baru, yang harus mendapat jatah waktu baru.
+  const createRunDeadline = () => {
+    if (effectiveTimeoutMs === 0 || effectiveTimeoutMs === Infinity)
+      return { signal: undefined, cancel: () => {} }
+    const controller = new AbortController()
+    const timer = setTimeout(
+      () =>
+        controller.abort(
+          new AgentError("timeout", `run exceeded wall-clock timeout (${effectiveTimeoutMs}ms)`),
+        ),
+      effectiveTimeoutMs,
+    )
+    return { signal: controller.signal, cancel: () => clearTimeout(timer) }
+  }
 
   // [mode-architecture] `--plan` legacy bukan lagi permission mode — pemetaannya
   // ke WorkMode PLAN terjadi di effectiveWorkMode (di atas). Sisa profil warisan
@@ -2649,29 +2638,33 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     }
     const previous = activeAgentSessionId
     activeAgentSessionId = sessionId
+    const deadline = createRunDeadline()
+    const runSignal = deadline.signal
+      ? signal
+        ? AbortSignal.any([signal, deadline.signal])
+        : deadline.signal
+      : signal
     try {
-      return await runPromptWithVerifyImpl(p, signal)
+      return await runPromptWithVerifyImpl(p, runSignal)
     } finally {
+      deadline.cancel()
       if (activeAgentSessionId === sessionId) activeAgentSessionId = previous ?? null
     }
   }
 
   async function runPromptWithVerifyImpl(p: string, signal?: AbortSignal): Promise<void> {
-    // [Fase 7 / Live #3] Root wall-clock: kalau timeout CLI sudah lewat saat
-    // turn mau mulai (setup/retry memakan seluruh budget), tolak langsung
-    // dengan alasan jelas — jangan biarkan turn baru melebihi deadline total.
-    if (rootTimeoutSignal?.aborted) {
-      const msg = `run exceeded root wall-clock timeout (${effectiveTimeoutMs}ms) before turn start`
-      process.stderr.write(`[timeout] ${msg}\n`)
-      throw new AgentError("timeout", msg)
+    if (signal?.aborted) {
+      const reason = signal.reason
+      if ((reason as { kind?: unknown } | undefined)?.kind === "timeout") {
+        const message = reason instanceof Error ? reason.message : "run exceeded wall-clock timeout"
+        process.stderr.write(`[timeout] ${message}\n`)
+        throw reason
+      }
+      throw new AgentError("aborted", "turn aborted", { cause: reason })
     }
-    // Composit root signal ke sinyal turn: deadline pengguna berlaku untuk
-    // SELURUH fase (setup + turn + retry), bukan hanya kernel turn.
-    const composedSignal = rootTimeoutSignal
-      ? signal
-        ? AbortSignal.any([signal, rootTimeoutSignal])
-        : rootTimeoutSignal
-      : signal
+    // Sinyal per-prompt berlaku pada persiapan turn, provider retry, tool, dan
+    // verify. Kernel memiliki timeout lapis kedua khusus eksekusi model.
+    const composedSignal = signal
     // P2.2: pagar pra-turn (lihat ensureWriterFresh). Basi → turn dilewati
     // sebelum provider dibelanjakan; histori tak tersentuh.
     if (!ensureWriterFresh()) return

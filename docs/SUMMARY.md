@@ -25,10 +25,8 @@
 
 * [Tools](tools.md)
 * [Sub-Agents & Tasks](agents.md)
-* [Autonomous Scheduler (experimental)](autonomous-scheduler.md)
 * [MCP & LSP](mcp-lsp.md)
 * [Memory & Sessions](memory-sessions.md)
-* [Pekerjaan lintas sesi (Open Work)](P14_OPEN_WORK.md)
 * [Verify & Benchmark](verify-benchmark.md)
 
 ## Keamanan
@@ -43,11 +41,10 @@
 * [Arsitektur](architecture.md)
 * [Kontrak Terminal](terminal.md)
 * [Contributing](contributing.md)
-* [Changelog](changelog.md)
 
 ## Internal & Arsitektur (untuk kontributor)
 
-* [Terminal Contract (FROZEN) — 35 invariant, v7.6](TERMINAL_CONTRACT.md)
+* [Terminal Contract (FROZEN) — 35 invariant, v7.7](TERMINAL_CONTRACT.md)
 * [Output Event Model — taksonomi dan lifecycle](OUTPUT_EVENT_MODEL.md)
 * [Output Protocol Spec — stream dan machine contract](OUTPUT_PROTOCOL_SPEC.md)
 * [Output Rendering Spec — boundary renderer](OUTPUT_RENDERING_SPEC.md)

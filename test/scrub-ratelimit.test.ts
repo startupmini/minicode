@@ -63,3 +63,32 @@ test("ratelimit: createRateLimiter info reflects rpm", async () => {
   expect(info.rpm).toBe(60)
   expect(info.available).toBeLessThanOrEqual(10) // burst cap 10
 })
+
+test("ratelimit: simultaneous waiters each wait for their own token", async () => {
+  const rl = new RateLimiter(1, 20 / 1000) // cap 1, refill 20 token/s
+  await rl.acquire()
+  const acquiredAt: number[] = []
+  await Promise.all(
+    Array.from({ length: 2 }, async () => {
+      await rl.acquire()
+      acquiredAt.push(Date.now())
+    }),
+  )
+  acquiredAt.sort((a, b) => a - b)
+  expect(acquiredAt[1]! - acquiredAt[0]!).toBeGreaterThanOrEqual(20)
+})
+
+test("ratelimit: an aborted waiter stops sleeping immediately", async () => {
+  const rl = new RateLimiter(1, 1 / 1000)
+  await rl.acquire()
+  const controller = new AbortController()
+  const started = Date.now()
+  const pending = rl.acquire(controller.signal)
+  setTimeout(() => controller.abort(new Error("caller timed out")), 15)
+  await expect(pending).rejects.toThrow("caller timed out")
+  expect(Date.now() - started).toBeLessThan(500)
+})
+
+test("ratelimit: invalid RPM falls back instead of creating a hot wait loop", () => {
+  expect(createRateLimiter(Number.NaN).info()).toMatchObject({ rpm: 60, capacity: 10 })
+})

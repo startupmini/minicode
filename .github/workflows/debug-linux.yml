@@ -1,0 +1,23 @@
+name: Debug Linux Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - name: Install
+        run: bun install
+      - name: Run final-adversarial (detailed)
+        shell: bash
+        run: |
+          bun test test/final-adversarial.test.ts 2>&1 | tail -300
+      - name: Run with coverage (dots, matching coverage-gate)
+        shell: bash
+        run: |
+          bun test --coverage --reporter dots --timeout 30000 test/final-adversarial.test.ts 2>&1 | tail -300

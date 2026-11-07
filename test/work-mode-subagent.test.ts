@@ -74,6 +74,9 @@ const dirs: string[] = []
 afterEach(async () => {
   for (const d of dirs.splice(0)) await cleanup(d)
   clearSubAgentSessionFactory()
+  // `setSubAgentWorkMode` global lintas-test — reset agar PLAN/DISCUSS tidak
+  // bocor ke test lain (mis. final-adversarial "chain 4" yang butuh EXECUTE).
+  setSubAgentWorkMode(() => undefined)
 })
 
 async function runDelegate(workMode: "PLAN" | "DISCUSS", pm: PermissionMode, modeArg: string) {

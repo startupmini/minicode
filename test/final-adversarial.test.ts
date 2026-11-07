@@ -22,6 +22,7 @@ import {
   clearSubAgentSessionFactory,
   delegateTaskTool,
   setSubAgentSessionFactory,
+  setSubAgentWorkMode,
 } from "../src/tools/task.ts"
 import { todoSession } from "../src/tools/todo.ts"
 import { writeFileTool } from "../src/tools/write_file.ts"
@@ -36,6 +37,9 @@ async function cleanup(dir: string): Promise<void> {
   todoSession.id = "default"
   todoSession.cwd = undefined
   clearSubAgentSessionFactory()
+  // WorkMode sub-agent adalah state global lintas-test (pola delegate-audit);
+  // kembalikan ke default agar sesi yang dibuat test lain tak terkontaminasi.
+  setSubAgentWorkMode(() => undefined)
   await rm(dir, { recursive: true, force: true }).catch(() => {})
 }
 
@@ -52,6 +56,9 @@ describe("audit #13 chain 4: delegasi nyata + parent gagal", () => {
     try {
       todoSession.id = "parent1"
       todoSession.cwd = dir
+      // Pin EXECUTE agar anak tetap dapat tool tulis: `setSubAgentWorkMode`
+      // adalah global lintas-test yang bisa bocor PLAN/DISCUSS dari suite lain.
+      setSubAgentWorkMode(() => "EXECUTE")
       let factoryCalls = 0
       // Factory ANAK NYATA: sesi minicode sungguhan + provider script + tool tulis asli.
       setSubAgentSessionFactory(async (spec) => {

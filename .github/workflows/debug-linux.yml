@@ -13,7 +13,12 @@ jobs:
           bun-version: 1.4.3
       - name: Install
         run: bun install
-      - name: Run final-adversarial (detailed)
+      - name: Run full coverage (default reporter, capture failure detail)
         shell: bash
         run: |
-          bun test test/final-adversarial.test.ts 2>&1 | tail -300
+          bun test --coverage 2>&1 | tee /tmp/full.txt | tail -40
+      - name: Show chain 4 failure detail
+        shell: bash
+        run: |
+          echo "=== looking for chain 4 ==="
+          grep -n -A 40 "chain 4" /tmp/full.txt || echo "(chain 4 not found in log)"

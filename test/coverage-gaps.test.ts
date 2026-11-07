@@ -21,20 +21,23 @@ import { webSearchTool } from "../src/tools/web_search.ts"
 const workspace = mkdtempSync(join(tmpdir(), "minicode-coverage-gaps-"))
 const ctx = { signal: new AbortController().signal, cwd: workspace } as never
 
-afterAll(async () => {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await rm(workspace, { recursive: true, force: true })
-      return
-    } catch (error) {
-      const code = (error as { code?: string }).code
-      // Windows may briefly retain SQLite/WAL handles after close; a finite
-      // retry smooths that release delay while a persistent leak still fails.
-      if ((code !== "EBUSY" && code !== "EPERM") || attempt === 9) throw error
-      await Bun.sleep(Math.min(50 * 2 ** attempt, 1_000))
+afterAll(
+  async () => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await rm(workspace, { recursive: true, force: true })
+        return
+      } catch (error) {
+        const code = (error as { code?: string }).code
+        // Windows may briefly retain SQLite/WAL handles after close; a finite
+        // retry smooths that release delay while a persistent leak still fails.
+        if ((code !== "EBUSY" && code !== "EPERM") || attempt === 9) throw error
+        await Bun.sleep(Math.min(50 * 2 ** attempt, 1_000))
+      }
     }
-  }
-})
+  },
+  { timeout: 10_000 },
+)
 
 describe("withMcpTools: dedup nama tool", () => {
   const base = [{ name: "a" }, { name: "b" }] as never

@@ -235,30 +235,34 @@ describe("compactWithLlm", () => {
   // digabung dengan summary baru. Tanpa pagu, tiap siklus menambah
   // ~2.400 char ke pesan pertama yang SELALU ikut dikirim ke model — setelah
   // 12 siklus summary itu sendiri jadi sumber context overflow.
-  test("berulang kali dikompaksi: summary tak tumbuh tanpa batas", async () => {
-    // Panjang summary realistis (LLM diminta "max 600 tokens" ≈ 2.400 char).
-    const realistic = (cycle: number) =>
-      `FAKTA siklus ${cycle}: berkas diubah, tes lulus. ${"detail penting. ".repeat(160)}`
-    let history: Message[] = convo(6)
-    for (let cycle = 0; cycle < 12; cycle++) {
-      history = [
-        ...(await compactWithLlm(storeOf(history), {
-          keepRecentTurns: 1,
-          provider: fakeProvider(realistic(cycle)),
-        })),
-        { role: "user", content: `lanjutan ${cycle}` },
-        { role: "assistant", content: `jawaban lanjutan ${cycle}` },
-      ]
-    }
-    const head = String(history[0]!.content)
-    expect(head).toContain("Previous context")
-    expect(head.length).toBeLessThanOrEqual(LIMITS.COMPACTION_SUMMARY_MAX_CHARS)
-    // Fakta siklus TERAKHIR harus selamat walau yang lama dipangkas.
-    expect(head).toContain("siklus 11")
-    // Pemangkasan bersifat eksplisit, bukan diam-diam: model tak boleh
-    // menyimpulkan ringkasan ini lengkap.
-    expect(head).toContain("elided")
-  })
+  test(
+    "berulang kali dikompaksi: summary tak tumbuh tanpa batas",
+    async () => {
+      // Panjang summary realistis (LLM diminta "max 600 tokens" ≈ 2.400 char).
+      const realistic = (cycle: number) =>
+        `FAKTA siklus ${cycle}: berkas diubah, tes lulus. ${"detail penting. ".repeat(160)}`
+      let history: Message[] = convo(6)
+      for (let cycle = 0; cycle < 12; cycle++) {
+        history = [
+          ...(await compactWithLlm(storeOf(history), {
+            keepRecentTurns: 1,
+            provider: fakeProvider(realistic(cycle)),
+          })),
+          { role: "user", content: `lanjutan ${cycle}` },
+          { role: "assistant", content: `jawaban lanjutan ${cycle}` },
+        ]
+      }
+      const head = String(history[0]!.content)
+      expect(head).toContain("Previous context")
+      expect(head.length).toBeLessThanOrEqual(LIMITS.COMPACTION_SUMMARY_MAX_CHARS)
+      // Fakta siklus TERAKHIR harus selamat walau yang lama dipangkas.
+      expect(head).toContain("siklus 11")
+      // Pemangkasan bersifat eksplisit, bukan diam-diam: model tak boleh
+      // menyimpulkan ringkasan ini lengkap.
+      expect(head).toContain("elided")
+    },
+    { timeout: 15_000 },
+  )
 
   test("summary pendek tetap digabung dengan prior di bawah pagu", async () => {
     let history: Message[] = convo(6)

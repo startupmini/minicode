@@ -302,12 +302,21 @@ describe("LOOP-INV-12 — siklus VERIFYING & fail-closed completion gate", () =>
 
     // Cek juga deteksi file hilang yang sebelumnya tercatat ditulis
     rmSync(join(dir, "src.ts"))
-    const missingReport = await checkWorkspaceIntegrity(
-      collectModifiedFilesFromJournal([intent, { ...intent, state: "committed" }]),
-      dir,
-    )
+    const modifiedFiles = collectModifiedFilesFromJournal([
+      intent,
+      { ...intent, state: "committed" },
+    ])
+    expect(modifiedFiles).toContain("src.ts")
+    const missingReport = await checkWorkspaceIntegrity(modifiedFiles, dir)
     expect(missingReport.ok).toBe(false)
     expect(missingReport.issues[0]?.reason).toBe("missing-written-file")
+
+    // Target yang ada tetapi bukan berkas biasa juga tak boleh dinyatakan
+    // bersih: pemeriksaan marker tak bisa dibuktikan pada direktori.
+    mkdirSync(join(dir, "not-a-file"))
+    const unavailable = await checkWorkspaceIntegrity(["not-a-file"], dir)
+    expect(unavailable.ok).toBe(false)
+    expect(unavailable.issues[0]?.reason).toBe("integrity-check-unavailable")
   })
 })
 

@@ -82,29 +82,37 @@ describe("konvensi import kernel", () => {
     expect(tsFiles.length).toBeGreaterThan(50)
   })
 
-  test('tidak ada spesifier lama `from "minicore"` yang tertinggal', () => {
-    const offenders: string[] = []
-    for (const f of tsFiles) {
-      // Berkas ini MEMUAT pola itu sebagai literal regex — memeriksanya berarti
-      // ia selalu menuduh dirinya sendiri (false positive).
-      if (f === "test/import-convention.test.ts") continue
-      const src = readFileSync(join(repoRoot, f), "utf8")
-      // Cari `from "minicore...` TANPA prefix #
-      if (/from\s+["']minicore(?:\/|["'])/.test(src)) offenders.push(f)
-      if (/import\(\s*["']minicore(?:\/|["'])/.test(src)) offenders.push(f)
-    }
-    expect(offenders).toEqual([])
-  })
+  test(
+    'tidak ada spesifier lama `from "minicore"` yang tertinggal',
+    () => {
+      const offenders: string[] = []
+      for (const f of tsFiles) {
+        // Berkas ini MEMUAT pola itu sebagai literal regex — memeriksanya berarti
+        // ia selalu menuduh dirinya sendiri (false positive).
+        if (f === "test/import-convention.test.ts") continue
+        const src = readFileSync(join(repoRoot, f), "utf8")
+        // Cari `from "minicore...` TANPA prefix #
+        if (/from\s+["']minicore(?:\/|["'])/.test(src)) offenders.push(f)
+        if (/import\(\s*["']minicore(?:\/|["'])/.test(src)) offenders.push(f)
+      }
+      expect(offenders).toEqual([])
+    },
+    { timeout: 15_000 },
+  )
 
-  test("semua import kernel memakai prefix #minicore", () => {
-    let count = 0
-    for (const f of tsFiles) {
-      const src = readFileSync(join(repoRoot, f), "utf8")
-      count += (src.match(/["']#minicore/g) ?? []).length
-    }
-    // 70+ import site di seluruh repo; angka pastinya berubah, yang penting ada
-    expect(count).toBeGreaterThan(50)
-  })
+  test(
+    "semua import kernel memakai prefix #minicore",
+    () => {
+      let count = 0
+      for (const f of tsFiles) {
+        const src = readFileSync(join(repoRoot, f), "utf8")
+        count += (src.match(/["']#minicore/g) ?? []).length
+      }
+      // 70+ import site di seluruh repo; angka pastinya berubah, yang penting ada
+      expect(count).toBeGreaterThan(50)
+    },
+    { timeout: 15_000 },
+  )
 
   test("package.json mendeklarasikan subpath imports yang cocok", () => {
     const pkg = JSON.parse(

@@ -18,6 +18,7 @@
 
 import { spawnSync } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
+import { lstat } from "node:fs/promises"
 import { isAbsolute, relative, resolve } from "node:path"
 import type { Tool, ToolContext } from "#minicore"
 import { GIT_SAFE_BASE } from "../lib/git-hardening.ts"
@@ -1330,7 +1331,10 @@ export async function correlateChildEffect(
 
 export interface WorkspaceIntegrityIssue {
   readonly path: string
-  readonly reason: "missing-written-file" | "unresolved-conflict-marker"
+  readonly reason:
+    | "missing-written-file"
+    | "unresolved-conflict-marker"
+    | "integrity-check-unavailable"
   readonly line?: number
   readonly detail: string
 }
@@ -1345,6 +1349,44 @@ export interface WorkspaceIntegrityReport {
 const INTEGRITY_MAX_BYTES = 8 * 1024 * 1024
 const CONFLICT_START_RE = /^<{7}(?: |$)/
 const CONFLICT_END_RE = /^>{7}(?: |$)/
+
+function isMissingPathError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  return code === "ENOENT" || code === "ENOTDIR"
+}
+
+async function addIntegrityReadIssue(
+  issues: WorkspaceIntegrityIssue[],
+  abs: string,
+  rel: string,
+  error: unknown,
+  operation: "stat" | "read",
+): Promise<void> {
+  // Sebagian filesystem/adapter Windows membungkus error open dan tidak
+  // meneruskan code ENOENT. Probe lstat membedakan file yang memang hilang
+  // dari target yang ada tetapi tak dapat diperiksa secara aman.
+  let missing = isMissingPathError(error)
+  if (!missing) {
+    try {
+      await lstat(abs)
+    } catch (probeError) {
+      missing = isMissingPathError(probeError)
+    }
+  }
+  issues.push(
+    missing
+      ? {
+          path: rel,
+          reason: "missing-written-file",
+          detail: `expected written file '${rel}' is missing on disk`,
+        }
+      : {
+          path: rel,
+          reason: "integrity-check-unavailable",
+          detail: `could not securely ${operation} expected written file '${rel}'`,
+        },
+  )
+}
 
 function findConflictMarkerLine(text: string): number | null {
   const lines = text.split("\n")
@@ -1383,28 +1425,25 @@ export async function checkWorkspaceIntegrity(
     try {
       st = await safeStat(abs, root)
     } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
-        issues.push({
-          path: rel,
-          reason: "missing-written-file",
-          detail: `expected written file '${rel}' is missing on disk`,
-        })
-      }
+      await addIntegrityReadIssue(issues, abs, rel, err, "stat")
       continue
     }
-    if (!st.isFile() || st.size > INTEGRITY_MAX_BYTES) continue
+    if (!st.isFile() || st.size > INTEGRITY_MAX_BYTES) {
+      issues.push({
+        path: rel,
+        reason: "integrity-check-unavailable",
+        detail: !st.isFile()
+          ? `expected written path '${rel}' is not a regular file`
+          : `expected written file '${rel}' exceeds the integrity scan limit`,
+      })
+      continue
+    }
 
     let contentText: string
     try {
       contentText = await safeReadFile(abs, root)
     } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
-        issues.push({
-          path: rel,
-          reason: "missing-written-file",
-          detail: `expected written file '${rel}' disappeared during check`,
-        })
-      }
+      await addIntegrityReadIssue(issues, abs, rel, err, "read")
       continue
     }
     // Lewati file biner (ada karakter NUL pada 8 KiB pertama).

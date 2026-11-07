@@ -1,14 +1,12 @@
-# P14 — Alur Operator Open-Work Lintas Sesi
+# Open Work — Pekerjaan Lintas Sesi
 
 Panduan operasi untuk pekerjaan belum selesai lintas sesi (P14). Semua yang
 dijelaskan di sini memakai mekanisme otoritas yang SUDAH ADA — TaskStore tetap
 satu-satunya otoritas status; tidak ada TaskStore/queue/scheduler kedua.
 
-> **Status: `P14 CLOSED / VERIFIED — DOCUMENTED SCOPE LIMITATIONS` (pemilik,
-> 2026-10-26).** Panduan ini mendokumentasikan scope bukti-terstruktur yang
-> disetujui. **Eksklusi yang tetap berlaku:** ekstraksi intent dari prosa
-> bebas, readout TUI `/openwork`, merge dengan lease/admission, dan merge
-> lintas sesi tanpa adopsi eksplisit. Closure P14 bukan klaim release-ready.
+Panduan ini menjelaskan surface Open Work yang tersedia. Batasannya meliputi
+ekstraksi intent dari prosa bebas, readout TUI `/openwork`, merge dengan
+lease/admission, dan merge lintas sesi tanpa adopsi eksplisit.
 
 ## Gambaran alur
 

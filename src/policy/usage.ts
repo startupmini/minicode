@@ -236,13 +236,15 @@ export function watchBudgetLimit(opts: {
 export function watchContextWindowLimit(opts: {
   bus: EventBus
   /** Batas window konteks (W). Bila 0/undefined → no-op. */
-  windowTokens: number
+  windowTokens: number | (() => number)
   /** Snapshot token request provider aktif; window berlaku per request. */
   getRequestTokens: () => { inputTokens: number; outputTokens: number } | null
-  onOver: (allowed: number, actual: number) => void
+  onOver: (allowed: number, actual: number, inputTokens?: number) => void
 }): () => void {
-  const W = opts.windowTokens
-  if (!Number.isFinite(W) || W <= 0) return () => {}
+  const readWindow = () =>
+    typeof opts.windowTokens === "function" ? opts.windowTokens() : opts.windowTokens
+  const initialWindow = readWindow()
+  if (!Number.isFinite(initialWindow) || initialWindow <= 0) return () => {}
   let fired = false
   const check = () => {
     if (fired) return
@@ -250,15 +252,20 @@ export function watchContextWindowLimit(opts: {
     // Belum ada usage untuk request aktif: jangan memakai snapshot request
     // sebelumnya atau total token kumulatif turn sebagai pengganti.
     if (!request) return
-    const allowedOutput = Math.max(256, Math.floor(W - request.inputTokens))
+    const W = readWindow()
+    if (!Number.isFinite(W) || W <= 0) return
+    const allowedOutput = Math.max(0, Math.floor(W - request.inputTokens))
     const output = request.outputTokens
-    if (output > allowedOutput) {
+    if (request.inputTokens > W || output > allowedOutput) {
       fired = true
-      opts.onOver(allowedOutput, output)
+      opts.onOver(allowedOutput, output, request.inputTokens)
     }
   }
   const offExt = opts.bus.on("provider:extension", (e) => {
-    if (e.kind === "usage") check()
+    if (e.kind === "usage") {
+      const data = e.data as { source?: unknown } | undefined
+      if (data?.source !== "compaction") check()
+    }
   })
   check()
   return () => {

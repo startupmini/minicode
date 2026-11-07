@@ -315,7 +315,7 @@ function selectionFreshness(
  *
  * Urutan strategi (audit §7):
  *   1. summary-plus-tail — ringkasan durable [0,B) + ekor [B, head] (bila aman)
- *   2. fallback-unknown  — view kanonik penuh + label jujur (DIVERGED/UNKNOWN)
+ *   2. fallback-unknown  — histori kanonik berlabel jujur bila muat
  *   3. full-history      — histori kanonik penuh bila muat budget
  *   4. budget-tail       — ekor kanonik terbaru yang muat budget
  */
@@ -359,36 +359,75 @@ export function selectContext(input: SelectContextInput): ContextSelection {
     const summaryText = input.projection.summaryText
     if (b > 0 && typeof summaryText === "string" && summaryText.length > 0) {
       const { frontier, messages: tail } = coverageOf(input, rows, b)
-      const synthetic = syntheticSummaryMessage(summaryText, b)
-      const msgs: Message[] = [synthetic, ...tail]
-      const artifact: ContextOnlyArtifact = { role: "user", content: synthetic.content as string }
-      return Object.freeze({
-        sessionId: input.sessionId,
-        threadId: input.threadId,
-        frontier,
-        messages: msgs,
-        source: "projection" as ContextSource,
-        coveredSeq: b,
-        selectionBasis: "summary-plus-tail" as SelectionBasis,
-        freshness: selectionFreshness(frontier, input.canonicalFrontier),
-        budget: report(msgs),
-        detail: `durable summary covers [0,${b}) + canonical tail [${b},${headSeq}]`,
-        contextOnly: artifact,
-      })
+      const makeProjectionSelection = (text: string, truncated: boolean): ContextSelection => {
+        const synthetic = syntheticSummaryMessage(text, b)
+        const msgs: Message[] = [synthetic, ...tail]
+        const artifact: ContextOnlyArtifact = { role: "user", content: synthetic.content as string }
+        return Object.freeze({
+          sessionId: input.sessionId,
+          threadId: input.threadId,
+          frontier,
+          messages: msgs,
+          source: "projection" as ContextSource,
+          coveredSeq: b,
+          selectionBasis: "summary-plus-tail" as SelectionBasis,
+          freshness: selectionFreshness(frontier, input.canonicalFrontier),
+          budget: report(msgs),
+          detail: truncated
+            ? `durable summary covers [0,${b}) + canonical tail [${b},${headSeq}]; summary tail truncated to fit budget`
+            : `durable summary covers [0,${b}) + canonical tail [${b},${headSeq}]`,
+          contextOnly: artifact,
+        })
+      }
+      const complete = makeProjectionSelection(summaryText, false)
+      if (complete.budget.fits) return complete
+
+      // Projection texts can grow independently of the model window. Keep the
+      // most recent portion of the old summary and preserve the canonical tail
+      // only when the resulting pair fits; otherwise continue to budget-tail.
+      const marker = "[older projection prefix omitted for context budget]\n"
+      const tailTokens = sumTokens(tail, est)
+      if (tailTokens < limit) {
+        let low = 0
+        let high = summaryText.length
+        let best: ContextSelection | undefined
+        while (low <= high) {
+          const keep = Math.floor((low + high) / 2)
+          let suffix = summaryText.slice(summaryText.length - keep)
+          if (suffix.length > 0) {
+            const code = suffix.charCodeAt(0)
+            if (code >= 0xdc00 && code <= 0xdfff) suffix = suffix.slice(1)
+          }
+          const text = `${marker}${suffix}`
+          const candidate = makeProjectionSelection(text, true)
+          if (candidate.budget.fits) {
+            best = candidate
+            low = keep + 1
+          } else {
+            high = keep - 1
+          }
+        }
+        if (best) return best
+      }
     }
     // batas tak aman / ringkasan kosong → lanjut sebagai histori kanonik penuh.
   }
 
   const full = coverageOf(input, rows, 0)
   const fullFreshness = selectionFreshness(full.frontier, input.canonicalFrontier)
+  const fullTokens = sumTokens(full.messages, est)
 
   // ── Strategi 2: fallback-unknown (STALE/DIVERGED/UNKNOWN) ──────────────────
   // N3: baris BASI (view di belakang kanonis) TIDAK boleh dilabeli
   // "full-history" — label itu menyiratkan representasi kanonik yang trusted,
   // padahal view ini tak memutakhirkan diri ke head kanonis. Pakai
-  // `fallback-unknown` (state yang sudah ada; bukan basis kelima yang baru).
+  // `fallback-unknown` bila histori penuh muat; bila tidak, teruskan ke
+  // budget-tail dengan status freshness tetap dihitung dari frontier terpilih.
   // Coverage completeness (semua baris tersedia diikutkan) ≠ freshness/trust.
-  if (fullFreshness === "unknown" || fullFreshness === "diverged" || fullFreshness === "stale") {
+  if (
+    (fullFreshness === "unknown" || fullFreshness === "diverged" || fullFreshness === "stale") &&
+    fullTokens <= limit
+  ) {
     return Object.freeze({
       sessionId: input.sessionId,
       threadId: input.threadId,
@@ -404,7 +443,6 @@ export function selectContext(input: SelectContextInput): ContextSelection {
   }
 
   // ── Strategi 3: full-history (muat budget) ─────────────────────────────────
-  const fullTokens = sumTokens(full.messages, est)
   if (fullTokens <= limit) {
     return Object.freeze({
       sessionId: input.sessionId,

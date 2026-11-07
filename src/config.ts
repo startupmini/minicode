@@ -37,6 +37,10 @@ export interface ProviderEntry {
   /** API key. Kosong bila provider memakai OAuth (`auth: "oauth"`). */
   apiKey: string
   models: string[]
+  /** Context window tokens by exact model id; `*` is a provider-wide fallback.
+   * Values are operator-supplied because gateways often expose aliases whose
+   * actual model capacity cannot be discovered reliably at runtime. */
+  contextWindows?: Record<string, number>
   providerHint?: string
   /** Knob generik reasoning effort — dipetakan per-wire (openai reasoning_effort, anthropic thinking, gemini). */
   reasoningEffort?: "low" | "medium" | "high"
@@ -104,9 +108,32 @@ export function localConfigNotice(cwd: string, allowLocal: boolean): string | un
 export function normalizeConfig(raw: unknown): MinicodeConfig {
   const cfg = raw as Record<string, unknown>
   const providers = Array.isArray(cfg?.providers)
-    ? (cfg.providers as ProviderEntry[]).filter(
-        (p) => p && typeof p.id === "string" && typeof p.baseUrl === "string",
-      )
+    ? (cfg.providers as ProviderEntry[])
+        .filter((p) => p && typeof p.id === "string" && typeof p.baseUrl === "string")
+        .map((p) => {
+          const source = (p as { contextWindows?: unknown }).contextWindows
+          const validContextWindows: Record<string, number> = {}
+          if (source && typeof source === "object" && !Array.isArray(source)) {
+            for (const [model, tokens] of Object.entries(source as Record<string, unknown>)) {
+              if (
+                (model === "*" || model.length > 0) &&
+                typeof tokens === "number" &&
+                Number.isSafeInteger(tokens) &&
+                tokens > 0 &&
+                tokens <= 20_000_000
+              ) {
+                validContextWindows[model] = tokens
+              }
+            }
+          }
+          const contextWindows =
+            Object.keys(validContextWindows).length > 0 ? validContextWindows : undefined
+          return {
+            ...p,
+            contextWindows:
+              contextWindows && Object.keys(contextWindows).length > 0 ? contextWindows : undefined,
+          }
+        })
     : []
   // Server MCP sah bila punya `command` (stdio) ATAU `url` (HTTP). Entri tanpa
   // keduanya dibuang di sini supaya kegagalan tampak saat config dibaca, bukan

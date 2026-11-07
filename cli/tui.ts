@@ -77,7 +77,7 @@ function fmtCtx(n: number): string | undefined {
  */
 function fmtUsageMetrics(ctx: CliSession): string | undefined {
   const cost: number | undefined = ctx.usage.getSession().cost
-  const windowTokens: number | undefined = ctx.contextWindowTokens
+  const windowTokens: number | undefined = ctx.getContextWindowTokens?.() ?? ctx.contextWindowTokens
   // P1.4: persentase footer = OCCUPANCY konteks saat ini, bukan total token
   // yang sudah dibelanjakan sepanjang sesi. Memakai spend membuat footer
   // mentok 100% setelah beberapa step meski konteks masih jauh di bawah window.

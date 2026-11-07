@@ -2,7 +2,7 @@
 
 **Status:** contract grammar untuk normal/verbose/debug/machine output  
 **Tanggal:** 2026-09-25  
-**Audit sumber:** `docs/OUTPUT_ARCHITECTURE_AUDIT.md`
+**Kontrak aktif:** proyeksi output di `src/presentation/projection.ts` dan formatter di `src/ui/render/`.
 
 ## 1. North star
 

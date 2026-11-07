@@ -29,6 +29,7 @@
 
 import { ContextStore, mechanicalCompaction } from "#minicore"
 import type { Message } from "#minicore/core/types.ts"
+import { LIMITS } from "../constants.ts"
 import { renderFullHistoryFold } from "./full-history-fold.ts"
 import {
   buildProjection,
@@ -98,6 +99,18 @@ export function deriveSummaryFromCanonical(
   const summaryText = summaryMsg && typeof summaryMsg.content === "string" ? summaryMsg.content : ""
   if (baseSeq <= 0 || summaryText.length === 0) return null
   return { summaryText, baseSeq }
+}
+
+function boundProjectionSummary(text: string): string {
+  const cap = LIMITS.COMPACTION_SUMMARY_MAX_CHARS
+  if (text.length <= cap) return text
+  const marker = "\n[projection summary truncated; older details may be missing]"
+  let head = text.slice(0, Math.max(0, cap - marker.length))
+  if (head.length > 0) {
+    const code = head.charCodeAt(head.length - 1)
+    if (code >= 0xd800 && code <= 0xdbff) head = head.slice(0, -1)
+  }
+  return `${head}${marker}`
 }
 
 /**
@@ -182,6 +195,7 @@ export function produceSummaryProjection(
   if (baseSeq === undefined || baseSeq <= 0) {
     return { produced: false, detail: "no explicit/derivable baseSeq — refusing empty projection" }
   }
+  summaryText = boundProjectionSummary(summaryText)
   // Tulis lewat primitif P2.7 (epoch-fenced, satu txn, delete+insert, sumber
   // kanonik UTUH). Satu-satunya efek tulis produsen = history_projections.
   const row = buildProjection(sessionId, threadId, summaryText, cwd, {

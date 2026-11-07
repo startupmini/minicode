@@ -59,7 +59,7 @@ const S2 = "session-beta"
 test("model: canonical id shape and 1-based allocation", () => {
   expect(isTaskId("t1")).toBe(true)
   expect(isTaskId("t42")).toBe(true)
-  // `t0` is not canonical: ids start at 1, per TASK_IDENTITY_SPEC.md
+  // `t0` is not canonical: allocation in taskIdFromIndex starts at 1.
   expect(isTaskId("t0")).toBe(false)
   expect(isTaskId("t01")).toBe(false)
   expect(isTaskId("nope")).toBe(false)

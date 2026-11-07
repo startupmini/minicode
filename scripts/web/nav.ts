@@ -24,7 +24,7 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
   },
   concepts: {
     desc: "Konsep MiniCode: kernel MiniCore, loop agent, TUI interaktif, dan jalur one-shot.",
-    src: "docs/ARCHITECTURE.html",
+    src: "docs/architecture.md",
   },
   glossary: {
     desc: "Glosarium istilah Minicode: kernel, jail, checkpoint, ledger, RAG.",
@@ -116,17 +116,11 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
   },
   architecture: {
     desc: "Arsitektur Minicode: tiga lapisan, alur satu prompt, dan kontrak terminal.",
-    src: "docs/ARCHITECTURE.html",
+    src: "docs/architecture.md",
   },
   changelog: {
     desc: "Changelog Minicode: perubahan per versi, dari rencana eksekusi.",
     src: "CHANGELOG.md",
-  },
-  // Dokumen internal kontributor (SUMMARY grup "Internal & Arsitektur",
-  // audit docs 2026-09-18: sebelumnya orphan dari nav web/llms).
-  output_architecture_audit: {
-    desc: "Audit output/presentation MiniCode: pipeline, event, mode, dan temuan semantik.",
-    src: "docs/OUTPUT_ARCHITECTURE_AUDIT.md",
   },
   output_event_model: {
     desc: "Model event output MiniCode: envelope, lifecycle, durability, dan invariant.",
@@ -144,10 +138,6 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
     desc: "Grammar UX output MiniCode: status, error, progress, terminal, dan copyability.",
     src: "docs/OUTPUT_UX_RULES.md",
   },
-  output_implementation_plan: {
-    desc: "Rencana migrasi output architecture MiniCode secara bertahap dan dapat dibalik.",
-    src: "docs/OUTPUT_IMPLEMENTATION_PLAN.md",
-  },
   terminal_contract: {
     desc: "Kontrak terminal FROZEN untuk kontributor dan peta test proteksinya.",
     src: "docs/TERMINAL_CONTRACT.md",
@@ -159,14 +149,6 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
   ui_render_pipeline: {
     desc: "Peta implementasi jalur provider stream ke terminal, per tahap.",
     src: "docs/UI_RENDER_PIPELINE.md",
-  },
-  harness: {
-    desc: "Riset fondasi harness: studi 11 codebase, keputusan desain Minicode.",
-    src: "docs/HARNESS.md",
-  },
-  plan_uiux_v6: {
-    desc: "Arsip plan UI/UX V6 (0.7 ke 0.8): target vs hasil terukur.",
-    src: "docs/PLAN_UIUX_V6.md",
   },
 }
 

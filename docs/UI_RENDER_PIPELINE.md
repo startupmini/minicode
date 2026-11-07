@@ -37,9 +37,7 @@ summary dari evidence, dan memuat ulang `presentation_events` saat resume. Bridg
 memprojection seluruh `DomainEventType` melalui `toPresentationEvent()`;
 `src/presentation/projection.ts` menyediakan keputusan policy murni (deskripsi
 activity/turn, running pin, envelope machine) yang di-inject ke renderer sebagai
-`PresentationPolicy`. Raw ledger TUI dan rollback flag sudah dihapus (Phase 8
-landed). Lihat `docs/OUTPUT_ARCHITECTURE_AUDIT.md` dan
-`docs/OUTPUT_EVENT_MODEL.md`.
+`PresentationPolicy`. Lihat kontrak aktif di `docs/OUTPUT_EVENT_MODEL.md`.
 
 Tahap D — logger utama `src/ui/assistant/simple.ts:104`: append-only
 scrollback, tanpa alternate screen. `provider:text` → `sanitizeAnsi` PER CHUNK
@@ -129,9 +127,9 @@ layout paint memakai satu proyeksi transcript dan cache render jawaban.
 exhaustive; TUI memakai `describeActivity`/`matchTurn`/`elapsedVisible` via
 injeksi, linear memakai deskripsi + `activityFor` untuk label turn-status, dan
 machine memakai `toMachineEnvelope`. `bus-debug.ts` hanya debug subscription.
-Lihat `docs/OUTPUT_ARCHITECTURE_AUDIT.md` OAP-001/OAP-006 dan
-`docs/OUTPUT_IMPLEMENTATION_PLAN.md` Phase 3–7. State turunan yang disengaja
-tetap footer memakai `contextTokens` (estimasi jendela), sedangkan `/status`
+Lihat kontrak aktif di `docs/OUTPUT_EVENT_MODEL.md`,
+`docs/OUTPUT_PROTOCOL_SPEC.md`, dan `docs/OUTPUT_RENDERING_SPEC.md`. State
+turunan yang disengaja tetap footer memakai `contextTokens` (estimasi jendela), sedangkan `/status`
 memisahkan Context/Input/Output/Total/Cost/Budget di
 `docs/CONTROL-PLANE-MAP.md`.
 

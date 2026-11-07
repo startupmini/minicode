@@ -28,6 +28,7 @@
 * [Autonomous Scheduler (experimental)](autonomous-scheduler.md)
 * [MCP & LSP](mcp-lsp.md)
 * [Memory & Sessions](memory-sessions.md)
+* [Pekerjaan lintas sesi (Open Work)](P14_OPEN_WORK.md)
 * [Verify & Benchmark](verify-benchmark.md)
 
 ## Keamanan
@@ -46,15 +47,10 @@
 
 ## Internal & Arsitektur (untuk kontributor)
 
-* [Terminal Contract (FROZEN) — 35 invariant, v7.4](TERMINAL_CONTRACT.md)
-* [Output Architecture Audit](OUTPUT_ARCHITECTURE_AUDIT.md)
+* [Terminal Contract (FROZEN) — 35 invariant, v7.6](TERMINAL_CONTRACT.md)
 * [Output Event Model — taksonomi dan lifecycle](OUTPUT_EVENT_MODEL.md)
 * [Output Protocol Spec — stream dan machine contract](OUTPUT_PROTOCOL_SPEC.md)
 * [Output Rendering Spec — boundary renderer](OUTPUT_RENDERING_SPEC.md)
 * [Output UX Rules — grammar human-facing](OUTPUT_UX_RULES.md)
-* [Output Implementation Plan — migrasi bertahap](OUTPUT_IMPLEMENTATION_PLAN.md)
 * [Control Plane — kontrak context/budget/compaction](CONTROL-PLANE-MAP.md)
 * [UI Render Pipeline — jalur stream ke terminal](UI_RENDER_PIPELINE.md)
-* [Harness Agent — riset fondasi](HARNESS.md)
-* [Plan UI/UX V6 — arsip hasil](PLAN_UIUX_V6.md)
-* [Audit Dokumentasi Repo — snapshot, bukan roadmap](REPOSITORY_DOCUMENTATION_AUDIT_2026-10-21.md)

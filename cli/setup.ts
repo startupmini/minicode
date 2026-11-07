@@ -26,6 +26,8 @@ import {
   evaluateConsequence,
   isAceEnabled,
 } from "../src/policy/consequence-engine.ts"
+import { minicodeEstimator } from "../src/policy/context.ts"
+import { resolveContextWindow } from "../src/policy/context-window.ts"
 import type { NoProgressDetector } from "../src/policy/no-progress.ts"
 import type { PermissionAsk } from "../src/policy/permission.ts"
 import type { RateLimiter } from "../src/policy/ratelimit.ts"
@@ -36,7 +38,6 @@ import {
   primePricing,
   type UsageInitialSnapshot,
   watchBudgetLimit,
-  watchContextWindowLimit,
 } from "../src/policy/usage.ts"
 import {
   buildBaselineNote,
@@ -224,6 +225,7 @@ import type {
   UiToolStatus,
   UiTurnSummary,
 } from "../src/ui/contract.ts"
+import { sanitizeAnsi } from "../src/ui/render/sanitize.ts"
 import { c } from "../src/ui/render/theme.ts"
 // [Area A · PROMPT 06] State UI per-sesi. Satu instance per `createCliSession`.
 import { UiSessionState } from "../src/ui/session-state.ts"
@@ -411,6 +413,8 @@ export interface CliSession {
   budgetStrict?: boolean
   /** F-CTX-1: jendela konteks yang dipakai footer TUI (window %) — flag --context-window. */
   contextWindowTokens?: number
+  /** Jendela dinamis mengikuti model yang dipilih saat sesi berjalan. */
+  getContextWindowTokens?: () => number
   /** Flag opt-in local config sesi ini — dipakai perintah REPL (/sync,
    * /provider, /model) agar konsisten dengan provider/tool yang aktif. */
   allowLocalConfig: boolean
@@ -1218,6 +1222,35 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       modelRef.current = saved
     }
   }
+  const effectiveDefaultModel = () => modelRef.current ?? cfg.providers[0]?.models[0]
+  const warnedContextModels = new Set<string>()
+  const routedContextModel = (model?: string) =>
+    router.contextModelIdentity(model ?? effectiveDefaultModel()) ?? model ?? "default"
+  const contextModelId = (requested?: string): string => {
+    return routedContextModel(requested)
+  }
+  const getContextWindowTokens = (model?: string) => {
+    const resolved = resolveContextWindow(cfg, routedContextModel(model), contextWindowTokens)
+    if (resolved.source === "safe-default") {
+      const key = resolved.providerId
+        ? `${resolved.providerId}::${resolved.model ?? "default"}`
+        : (resolved.model ?? "default")
+      if (!warnedContextModels.has(key)) {
+        warnedContextModels.add(key)
+        process.stderr.write(
+          `${c.yellow(`[context] no configured window for ${sanitizeAnsi(key)}; using fallback ${resolved.tokens} tokens. Set provider.contextWindows or --context-window for the exact limit.\n`)}`,
+        )
+      }
+    }
+    return resolved.tokens
+  }
+  const getReportedContextWindowTokens = (model?: string) => {
+    const resolved = resolveContextWindow(cfg, routedContextModel(model), contextWindowTokens)
+    return resolved.source === "safe-default" ? undefined : resolved.tokens
+  }
+  router.updateContextWindowResolver(getContextWindowTokens)
+  // Emit the fallback warning immediately for the startup-selected model.
+  getContextWindowTokens()
   const {
     systemExtra,
     skills: allLoadedSkills,
@@ -1333,8 +1366,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         // ContextSelection provenance-bound. P2.8 dipakai sebagai sumber
         // keputusan proyeksi + fallback identik; selector MEMPERLUAS dengan
         // budget-tail + laporan selectionBasis/freshness. Tak ada tulis kanonik.
-        // Budget pesan = contextWindowTokens dikurangi overhead system+tools;
-        // tanpa konfigurasi → tanpa batas (reproduksi P2.8 persis).
+        // Batasi histori resume ke batas model, tanpa mengarang overhead.
+        // Kernel menghitung system+tools aktual dan memadatkan sebelum request;
+        // selector hanya membuang ke budget-tail bila pesan sendiri tak muat.
         const durableEvents = loadPresentationEvents(sessionId, cwd)
         const revision = countDurableCompactions(durableEvents as readonly { type: string }[])
         const rowsForSelector = loadThreadHistoryWithSeq(sessionId, defaultThread.thread_id, cwd)
@@ -1352,10 +1386,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           (view.source === "projection" && view.summary
             ? { baseSeq: view.coveredSeq, summaryText: view.summary }
             : undefined)
-        const messageBudget =
-          contextWindowTokens && contextWindowTokens > 0
-            ? contextWindowTokens
-            : Number.MAX_SAFE_INTEGER
+        const selectedWindow = getContextWindowTokens()
+        const messageBudget = selectedWindow
         // N1: turunkan frontier kanonis dari baris yang BARU DIBACA (sumber
         // kebenaran saat ini) dan teruskan ke selector — freshness dihitung
         // via assessContextFreshness (BUKAN hard-code "fresh"). Selector tetap
@@ -1373,7 +1405,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           rows: selectorRows,
           revision,
           ...(projectionSummary ? { projection: projectionSummary } : {}),
-          policy: { budgetTokens: messageBudget },
+          policy: { budgetTokens: messageBudget, estimator: minicodeEstimator },
           canonicalFrontier,
         })
         initialMessages = selection.messages as readonly Message[]
@@ -1766,31 +1798,31 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       } catch {}
     }
   }
-  const compaction = process.env.DEEPSEEK_API_KEY
-    ? createLlmCompaction({
-        apiKey: process.env.DEEPSEEK_API_KEY,
-        baseUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1",
-        model: "deepseek-chat",
-        cwd: cwd ?? process.cwd(),
-        onUsage: (u) => {
-          try {
-            // Angka sudah dinormalisasi di compactWithLlm (negatif/NaN → skip).
-            sessionEvents?.emit({
-              type: "provider:extension",
-              kind: "usage",
-              data: {
-                inputTokens: u.inputTokens,
-                outputTokens: u.outputTokens,
-                totalTokens: u.totalTokens,
-                // P1.4: atribusi biaya compaction memakai model yang benar-benar
-                // dipakai (deepseek-chat), bukan model utama sesi.
-                model: "deepseek-chat",
-              },
-            })
-          } catch {}
-        },
-      })
-    : undefined
+  const compaction = createLlmCompaction({
+    ...(process.env.DEEPSEEK_API_KEY ? { apiKey: process.env.DEEPSEEK_API_KEY } : {}),
+    baseUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1",
+    model: "deepseek-chat",
+    cwd: cwd ?? process.cwd(),
+    getContextWindowTokens,
+    onUsage: (u) => {
+      try {
+        // Angka sudah dinormalisasi di compactWithLlm (negatif/NaN → skip).
+        sessionEvents?.emit({
+          type: "provider:extension",
+          kind: "usage",
+          data: {
+            inputTokens: u.inputTokens,
+            outputTokens: u.outputTokens,
+            totalTokens: u.totalTokens,
+            source: "compaction",
+            // P1.4: atribusi biaya compaction memakai model yang benar-benar
+            // dipakai (deepseek-chat), bukan model utama sesi.
+            model: "deepseek-chat",
+          },
+        })
+      } catch {}
+    },
+  })
   const {
     sessionTools,
     evidenceMode,
@@ -1833,6 +1865,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   setSubAgentParentRouting({
     ...(rateLimiter ? { rateLimiter } : {}),
     ...(providerOverride ? { defaultProviderId: providerOverride } : {}),
+    contextWindowTokensForModel: getContextWindowTokens,
   })
   // P2.9 — lineage parent Run untuk anak Sub-Agent. Composition root satu-
   //-satunya pemilik Run hidup; tooltak pernah mengarang id ini (vendor
@@ -1880,6 +1913,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       // dikompaksi; tidak pernah masuk histori kanonik. Absen = perilaku lama.
       systemExtra: `${runtimeStateHeader ? `${runtimeStateHeader}\n\n` : ""}${systemExtra ?? ""}${recoveryAppendix}`,
       model: modelRef.current,
+      getContextModel: () => contextModelId(modelRef.current),
+      contextWindowTokens: getContextWindowTokens(),
+      contextWindowTokensForModel: getContextWindowTokens,
       // P13.6 — ask permission: composition root boleh menyuntik jalur headless
       // (daemon → ApprovalBroker). Tanpa injeksi tetap prompt TTY; non-TTY ⇒
       // deny (fail-closed), bukan izin diam-diam.
@@ -1928,7 +1964,6 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         noProgressDetector = detector
       },
       ...(maxSteps ? { maxSteps } : {}),
-      ...(contextWindowTokens ? { contextWindowTokens } : {}),
       ...(keepRecentTurns ? { keepRecentTurns } : {}),
       ...(safeConcurrency ? { concurrency: safeConcurrency } : {}),
       ...(safeWriteConcurrency ? { writeConcurrency: safeWriteConcurrency } : {}),
@@ -2728,7 +2763,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
             // Occupancy konteks (bukan spend sesi) — budget cutoff adalah
             // peristiwa berbeda; field tetap konsisten dengan meter context.
             usedTokens: session.contextTokens,
-            windowTokens: contextWindowTokens ?? 0,
+            windowTokens: getContextWindowTokens(),
             turnId: session.state.turnCount,
           })
           process.stderr.write(
@@ -2748,48 +2783,27 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           )
         },
       })
-      // [Fase 7 / Live #2] Pemutus aliran MID-STREAM untuk `--context-window`.
-      // Kernel hanya mengecek estimasi token pesan SEBELUM request (kompaksi);
-      // model yang menghasilkan respons sangat panjang bisa membakar jutaan
-      // token tanpa henti (uji live: --context-window 2000 → tokens=6.830.639).
-      // Watcher ini membaca token OUTPUT turn berjalan dari usage collector
-      // dan menggugurkan turn begitu melewati allowance output
-      // (max(256, W − estimasiInput)) — murah karena dijalankan per-event usage.
-      const stopCtxWindow = watchContextWindowLimit({
-        bus: session.events,
-        windowTokens: contextWindowTokens ?? 0,
-        getRequestTokens: () => usage.currentRequestTokens(),
-        onOver: (allowed, actual) => {
-          const windowTokens = contextWindowTokens ?? 0
-          // F-CTX-1 + P1.4: meter occupancy konteks (bukan output cutoff).
-          // `actual` adalah token output yang memicu cutoff; occupancy adalah
-          // ukuran konteks saat ini dari kernel. Dua angka ini tidak boleh
-          // saling menggantikan.
-          const occupancy = session.contextTokens
-          presentation?.noteContextWindow({
-            usedTokens: occupancy,
-            windowTokens,
-            percent: windowTokens > 0 ? Math.min(100, (occupancy / windowTokens) * 100) : undefined,
-            costUsd: usage.getSession().cost,
-            turnId: session.state.turnCount,
-          })
-          // F-CTX-2: pemotongan mi-stream yang durable → masuk transkrip.
-          presentation?.noteContextCutoff({
-            reason: `context window exceeded: output ${actual} > allowance ${allowed} (window ${windowTokens})`,
-            usedTokens: actual,
-            windowTokens,
-            turnId: session.state.turnCount,
-          })
-          process.stderr.write(
-            `[context] stream truncated: context-window limit reached (output ${actual} > allowance ${allowed} of window ${contextWindowTokens})\n`,
-          )
-          ctl.abort(
-            new AgentError(
-              "budget_exceeded",
-              `context window exceeded: output ${actual} > allowance ${allowed} (window ${contextWindowTokens})`,
-            ),
-          )
-        },
+      const stopContextGuard = session.events.on("provider:extension", (event) => {
+        if (event.kind !== "context-window-limit") return
+        const data = event.data as
+          | { inputTokens?: unknown; outputTokens?: unknown; windowTokens?: unknown }
+          | undefined
+        const input = typeof data?.inputTokens === "number" ? data.inputTokens : 0
+        const output = typeof data?.outputTokens === "number" ? data.outputTokens : 0
+        const windowTokens =
+          typeof data?.windowTokens === "number" && data.windowTokens > 0
+            ? data.windowTokens
+            : getContextWindowTokens()
+        const usedTokens = input + output
+        presentation?.noteContextCutoff({
+          reason: `context guard stopped request: input ${input} + output ${output} (window ${windowTokens})`,
+          usedTokens,
+          windowTokens,
+          turnId: session.state.turnCount,
+        })
+        process.stderr.write(
+          `[context] request stopped at context budget: input ${input} + output ${output} (window ${windowTokens}).\n`,
+        )
       })
       try {
         try {
@@ -2826,7 +2840,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         }
       } finally {
         stopWatch()
-        stopCtxWindow()
+        stopContextGuard()
         if (s) s.removeEventListener("abort", onParentAbort)
         turnStatus?.endTurn()
       }
@@ -3237,11 +3251,25 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           // uses — so autonomous work does not run a different model or a weaker
           // tool stack than the interactive session.
           sessionFactory: async (spec: AutonomousSessionSpec) => {
+            const childProvider = spec.provider as {
+              contextWindowTokensForModel?: (model?: string) => number
+              contextModelIdentity?: (model?: string) => string | undefined
+            }
+            const contextWindowTokensForModel = childProvider.contextWindowTokensForModel
             const child = await createMinicodeSession({
               provider: spec.provider as never,
               tools: spec.tools as never,
               cwd: spec.cwd,
               systemExtra: spec.systemExtra,
+              model: spec.model,
+              ...(contextWindowTokensForModel
+                ? {
+                    contextWindowTokens: contextWindowTokensForModel(spec.model),
+                    contextWindowTokensForModel,
+                    getContextModel: () =>
+                      childProvider.contextModelIdentity?.(spec.model) ?? spec.model,
+                  }
+                : {}),
               // [PHASE 6U] The child conversation id is NOT a kernel config field.
               timeoutMs: spec.timeoutMs,
               // [PHASE 6U][SECURITY] The 6S handler, not a `readonly` MODE. This
@@ -3558,7 +3586,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     usage,
     budget,
     budgetStrict,
-    contextWindowTokens,
+    get contextWindowTokens() {
+      return getReportedContextWindowTokens()
+    },
+    getContextWindowTokens: () => getContextWindowTokens(),
     memoryHits,
     detachSimple: () => detachUI(),
     // [Area A · PROMPT 06] State UI sesi ini (lihat interface CliSession).

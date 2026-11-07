@@ -7,6 +7,7 @@ import { loadConfig } from "../config.ts"
 import { LIMITS } from "../constants.ts"
 import { resolveLocalDbPath } from "../lib/db-path.ts"
 import { evaluateConsequence, isAceEnabled } from "../policy/consequence-engine.ts"
+import { resolveContextWindow } from "../policy/context-window.ts"
 import type { NoProgressOptions } from "../policy/no-progress.ts"
 import type { RateLimiter } from "../policy/ratelimit.ts"
 import type { WorkMode } from "../policy/work-mode.ts"
@@ -151,6 +152,7 @@ export function clearSubAgentSessionFactory(): void {
 export interface SubAgentParentRouting {
   rateLimiter?: RateLimiter
   defaultProviderId?: string
+  contextWindowTokensForModel?: (model?: string) => number
 }
 
 let parentRouting: SubAgentParentRouting = {}
@@ -201,6 +203,9 @@ export function setSubAgentParentRouting(c: SubAgentParentRouting): void {
   parentRouting = {
     ...(c.rateLimiter ? { rateLimiter: c.rateLimiter } : {}),
     ...(c.defaultProviderId ? { defaultProviderId: c.defaultProviderId } : {}),
+    ...(c.contextWindowTokensForModel
+      ? { contextWindowTokensForModel: c.contextWindowTokensForModel }
+      : {}),
   }
 }
 
@@ -224,6 +229,8 @@ async function getProvider(overrides: SubAgentParentRouting = parentRouting) {
   if (providers.length === 0) throw new Error("no provider for sub-agent")
   return createRouterProvider({
     providers,
+    contextWindowTokensForModel:
+      overrides.contextWindowTokensForModel ?? ((model) => resolveContextWindow(cfg, model).tokens),
     ...(overrides.rateLimiter ? { limiter: overrides.rateLimiter } : {}),
     ...(overrides.defaultProviderId ? { defaultProviderId: overrides.defaultProviderId } : {}),
   })

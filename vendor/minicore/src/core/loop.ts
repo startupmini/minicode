@@ -45,10 +45,26 @@ export async function executeTurn(
   // compaction burned the one recovery retry (though recovery was never
   // tried), and vice versa. The recovery flag is ALWAYS set (a guard
   // against an infinite loop: force_compact_and_retry is exempt from
-  // maxProviderRetries); the policy flag is set when a policy compaction
-  // is attempted (once per turn, guarding against per-step O(n) repeats).
-  let compactedForBudget = false;
+  // maxProviderRetries); policy compaction has a small per-turn hard cap,
+  // guarding against repeated no-progress work after tool output grows.
+  // Permit one follow-up policy compaction after tool results grow the current
+  // turn. The hard cap prevents a no-progress compactor from looping forever.
+  let budgetCompactions = 0;
+  const maxBudgetCompactions = 2;
   let compactedForRecovery = false;
+
+  // Resolve once for the turn: model switching is a between-turn operation,
+  // so budget admission and output accounting must use the same model window.
+  let contextWindowTokens = s.contextWindowTokens;
+  try {
+    const resolved = s.contextWindowTokensForModel?.(s.state.model);
+    if (typeof resolved === "number" && Number.isSafeInteger(resolved) && resolved > 0) {
+      contextWindowTokens = resolved;
+    }
+  } catch {
+    // Keep the validated numeric fallback; a metadata lookup must not bypass
+    // the kernel's context guard.
+  }
 
   while (true) {
     if (signal.aborted) throw abortError(signal);
@@ -59,28 +75,36 @@ export async function executeTurn(
     // prompt and tool schemas, which are sent on every request.
     let pressure = s.budget.evaluate({
       usedTokens: contextTokens(s),
-      limitTokens: s.contextWindowTokens,
+      limitTokens: contextWindowTokens,
     });
-    if (s.budget.shouldCompact(pressure) && !compactedForBudget) {
+    let reduced = false;
+    if (s.budget.shouldCompact(pressure) && budgetCompactions < maxBudgetCompactions) {
       const before = s.store.messages.length;
       await compactStore(s, signal);
-      compactedForBudget = true;
+      budgetCompactions++;
       // The reason distinguishes the trigger and whether compaction
       // actually shrank the store (no-op = nothing evictable in messages;
       // reporters must tell that apart from fixed system+schema overhead,
       // which compaction never touches).
-      const reduced = s.store.messages.length < before;
+      reduced = s.store.messages.length < before;
       s.events.emit({
         type: "context:compacted",
         reason: reduced ? `pressure:${pressure}` : `pressure:${pressure}:no-op`,
       });
       pressure = s.budget.evaluate({
         usedTokens: contextTokens(s),
-        limitTokens: s.contextWindowTokens,
+        limitTokens: contextWindowTokens,
       });
     }
-    if (pressure === "critical" && compactedForBudget) {
-      throw new AgentError("budget_exceeded", "context window exceeded after compaction");
+    if (s.budget.shouldCompact(pressure) && reduced && budgetCompactions < maxBudgetCompactions) {
+      continue;
+    }
+    if (pressure === "critical") {
+      const used = contextTokens(s);
+      throw new AgentError(
+        "budget_exceeded",
+        `context window exceeded after compaction (${used} > ${contextWindowTokens}); reduce the prompt, tool output, or fixed instructions, or select a model with a larger context window`,
+      );
     }
 
     // Sample from the provider with deterministic recovery.
@@ -176,7 +200,11 @@ export async function executeTurn(
           throw new AgentError("provider", errorMessage ?? "provider error", { cause: providerError ?? action });
         case "force_compact_and_retry": {
           if (compactedForRecovery)
-            throw new AgentError("budget_exceeded", errorMessage ?? "context too large", { cause: providerError ?? action });
+            throw new AgentError(
+              "budget_exceeded",
+              `context window exceeded after recovery compaction: ${errorMessage ?? "context too large"}`,
+              { cause: providerError ?? action },
+            );
           await compactStore(s, signal);
           // The recovery flag is ALWAYS set (even on no-op):
           // force_compact_and_retry is exempt from maxProviderRetries, so a
@@ -301,6 +329,9 @@ function toolErrorResult(call: ToolCall, message: string): ToolResult {
 
 function toProviderError(error: unknown, signal: AbortSignal): ProviderError {
   if (signal.aborted) throw abortError(signal);
+  // Host-side admission guards (context budget, shutdown, etc.) preserve their
+  // deterministic AgentError identity instead of entering provider retry.
+  if (error instanceof AgentError) throw error;
   if (error instanceof ProviderError) return error;
   if (error instanceof Error && error.name === "AbortError") {
     throw abortError(signal);
@@ -333,7 +364,11 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
 function contextTokens(s: SessionInternal): number {
   // Single source in tokens.ts `estimateSessionContext` — shared by the
   // loop and the Session getter so no duplicate estimator can drift.
-  return estimateSessionContext(s.store, s.system, s.registry.list(), s.estimator);
+  let system = s.system;
+  try {
+    system = s.systemForContext?.() ?? system;
+  } catch {}
+  return estimateSessionContext(s.store, system, s.registry.list(), s.estimator);
 }
 
 // The single compaction seam. Prefers the strategy's optional async method

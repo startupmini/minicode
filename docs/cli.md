@@ -27,8 +27,9 @@ Semua cara menjalankan Minicode: interaktif, sekali jalan, pipe, dan otomasi CI 
 | `minicode memory reconcile [--json] [--cwd PATH]` | Samakan `vector.db` ↔ `.minicode/MEMORY.md` (adopsi entri vector-only, tambah baris file-only; tidak menghapus) |
 | `minicode doctor [--json]` | Diagnosis lokal |
 | `minicode mcp serve` | Ekspos minicode sebagai MCP server |
+| `minicode openwork [inventory\|context\|export\|merge]` | Baca, susun konteks, ekspor, atau deduplikasi pekerjaan lintas sesi; aksi tidak menjalankan task |
 
-Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `skills`, `providers`/`models`/`sync`, `auth`, `pricing`, `exec`, `daemon`, `memory`, `doctor`, `acp`).
+Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `skills`, `providers`/`models`/`sync`, `auth`, `pricing`, `exec`, `daemon`, `memory`, `doctor`, `acp`, `openwork`).
 
 ## Flags
 
@@ -49,7 +50,7 @@ Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `s
 | `--allow-all` | Profil akses privileged (path jail + bash-guard tetap aktif) |
 | `--model <name>` | Override model (`providerId::model` paksa provider) |
 | `--provider <id>` | Paksa provider id agnostik |
-| `--resume <id>` | Lanjutkan sesi (full history, bukan dump teks) |
+| `--resume <id>` | Lanjutkan history yang tersimpan; setelah kompaksi, bagian lama dapat berupa ringkasan + tail |
 | `--timeout <ms>` | Hard deadline per run (default 900000; 0 = Infinity) |
 | `--cwd <path>` | Workspace root untuk tool file & jail |
 | `--allow-local-config` | Percayai `.minicode/config.json` + allowlist lokal (default: diabaikan) |
@@ -59,6 +60,14 @@ Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `s
 | `--work-mode <m>` | `DISCUSS` \| `PLAN` \| `BUILD` (default). **Operating mode**: `DISCUSS` = investigasi read-only, `PLAN` = analisis/planning, `BUILD` = implementasi (identitas internal `EXECUTE`). Persetujuan (`AUTO`/`ASK`) dipisah; tool availability mengikuti ceiling WorkMode. Lihat [TUI](repl.md) untuk `/work-mode` |
 | `--enable-scheduler` | Opt-in scheduler otonom (default **off**). Tanpa flag ini, scheduler tidak dibangun sama sekali dan `/scheduler` menjawab "not enabled". Eksekusi manual saja lewat `/scheduler run` — tidak ada timer; turn otonom bersifat read-only. Lihat `/scheduler status` dan `/scheduler stop` |
 | `--runtime <mode>` | `off` (default) \| `constructed` \| `owned`. Arsitektur eksekusi: `off` = perilaku sekarang, tak berubah; `constructed` = runtime + jurnal durable dibangun, turn masih jalan jalur lama; `owned` = setiap turn di-admit lewat runtime (kernel + jurnal durable) dan admission yang ditolak menjalankan tak apa pun. Nilai tak dikenal = `off` |
+
+Tanpa flag, MiniCode memakai `providers[].contextWindows` dari konfigurasi.
+Jika model/gateway tidak punya metadata itu, MiniCode memakai fallback
+32.000 token dan memberi peringatan saat sesi mulai. Gunakan batas model yang
+tepat pada config atau flag; batas yang terlalu kecil memicu kompaksi dini,
+sedangkan batas yang terlalu besar berisiko ditolak provider. Batas berubah
+otomatis saat `/model` mengganti model. MiniCode juga membatasi keluaran stream
+berdasarkan ruang tersisa setelah system prompt, tools, dan riwayat dihitung.
 
 Di TUI, **Tab** memutar WorkMode (`DISCUSS` → `PLAN` → `BUILD`) dan **Shift+Tab** meng-toggle PermissionMode (`AUTO` ↔ `ASK`). `/mode <AUTO|ASK>` mengubah persetujuan; `/work-mode <DISCUSS|PLAN|BUILD>` mengubah operating mode. Footer selalu menampilkan kedua lapis (`BUILD · AUTO`).
 

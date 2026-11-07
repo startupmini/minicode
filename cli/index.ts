@@ -149,7 +149,18 @@ if (
 setSubAgentSessionFactory(async (spec) => {
   // `journal` hanya untuk wiring app-layer — jangan bocor ke config kernel.
   const { journal, ...coreSpec } = spec
-  const session = await createMinicodeSession(coreSpec)
+  const contextWindowTokensForModel = coreSpec.provider.contextWindowTokensForModel
+  const contextModelIdentity = coreSpec.provider.contextModelIdentity
+  const session = await createMinicodeSession({
+    ...coreSpec,
+    ...(contextWindowTokensForModel
+      ? {
+          contextWindowTokens: contextWindowTokensForModel(coreSpec.model),
+          contextWindowTokensForModel,
+          getContextModel: () => contextModelIdentity?.(coreSpec.model) ?? coreSpec.model,
+        }
+      : {}),
+  })
   if (journal) {
     const childPresentation = (
       await import("../src/presentation/adapter.ts")

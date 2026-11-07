@@ -350,6 +350,33 @@ describe("createLlmCompaction", () => {
   })
 })
 
+test("kompaksi mekanis merangkum tool output di dalam satu turn aktif", () => {
+  const messages: Message[] = [
+    { role: "user", content: "Audit source files read-only and report findings." },
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [{ id: "read-1", name: "read_file", args: { path: "src/core.ts" } }],
+    } as Message,
+    {
+      role: "tool",
+      toolCallId: "read-1",
+      name: "read_file",
+      content: `source evidence ${"x".repeat(8_000)}`,
+    },
+  ]
+  const compacted = createLlmCompaction({ getContextWindowTokens: () => 16_000 }).compact(
+    storeOf(messages),
+    { keepRecentTurns: 1 },
+  )
+  expect(compacted).toHaveLength(1)
+  expect(String(compacted[0]!.content)).toContain("Current task/request")
+  expect(String(compacted[0]!.content)).toContain("read_file")
+  expect(String(compacted[0]!.content).length).toBeLessThanOrEqual(
+    LIMITS.COMPACTION_SUMMARY_MAX_CHARS,
+  )
+})
+
 describe("F3.1 anti-thrash kompaksi LLM", () => {
   // convo(10) + keep 9 = prefix 2 pesan → ringkasan mengganti 2 jadi 1:
   // progres 1/20 = 5% < 10% = tak berprogres, dua kali = thrash.

@@ -66,7 +66,7 @@ bun run vendor:check   # vendor/minicore sinkron dengan ../minicore
 - `providers → config` satu arah (provisioning di `src/providers/provision.ts`, `src/config.ts` murni IO).
 - Layar `src/ui/screens/` = view murni (props + callback), controller di `cli/`.
 - Jalur non-interaktif shell-first (append-only scrollback); sesi interaktif SELALU TUI alternate-screen (kontrak I16, tanpa opsi linear).
-- Ubah struktur/dependensi antarlapisan → wajib update `docs/ARCHITECTURE.html`.
+- Ubah struktur/dependensi antarlapisan → wajib update `docs/architecture.md`.
 
 ## Aturan kode
 

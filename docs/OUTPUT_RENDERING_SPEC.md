@@ -2,7 +2,7 @@
 
 **Status:** implemented renderer boundary; canonical policy active, with streaming content transport and one ACP compatibility window.
 **Tanggal:** 2026-09-25  
-**Audit sumber:** `docs/OUTPUT_ARCHITECTURE_AUDIT.md`
+**Kontrak aktif:** renderer TUI/linear di `src/presentation/` dan `src/ui/`.
 
 ## 1. Prinsip boundary
 

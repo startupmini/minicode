@@ -512,7 +512,7 @@ Integrasi tahap **P0–P2** dan penutupan **P2.3**, lalu **Final Integration & R
 - **Redesign `docs/ARCHITECTURE.html`** — palet developer-docs terang yang bersih (tokoh token, tipografi system-ui + mono untuk kode), doc-bar tautan dokumen pendamping, sidebar + link §9, dan **§09 "UI/UX untuk Developer — Rendering Terminal"**: lima primitif tampilan, stream contract, ownership transient, tabel 12 invariant + peta test pelindung, residual risk. Kartu modul `src/ui/` (statusline/spinner/simple/turn-status/theme) diselaraskan dengan arbitrase & color-gate terkini.
 - **Kontrak terminal FROZEN**: `docs/TERMINAL_CONTRACT.md` baru — klasifikasi writer (permanent/transient/diagnostic/machine/debug), ownership transient single-mechanism, 12 invariant, residual risk disengaja (partial write non-newline, overlap signal, flake harness), peta proteksi test→invariant. `AGENTS.md` mewajibkan baca dokumen sebelum menyentuh output/rendering.
 - **Invariant terproteksi test**: `test/terminal-contract.test.ts` baru — ownership token per klaim (release klaim kedua tak mencabut pemilik pertama), warning overlap sekali per pasangan, foreign-write dikomit + repaint, wrapper inert tanpa owner, zero-write setelah detach/endTurn (event telat), ledger duplikat terpisah, semua branch ledger satu-marker-per-baris + newline, long-session 3×12 tool tetap satu-baris per tool tanpa bocor isi.
-- `docs/HARNESS.md` baru (riset + posisi + uji live 7 model); `README`/`USAGE`/`PLAN`/`AGENTS.md`/`ARCHITECTURE.html` sinkron (angka gate, path, flag baru; referensi arsip mati dihapus).
+- Riset fondasi harness dan panduan pengguna diperbarui (uji live 7 model); navigasi dan rujukan operasional diselaraskan pada saat rilis tersebut.
 - `docs/USAGE.md`: `/thinking` → picker `Enter` di `/model`, dropdown `builtin + /compact` saja, `provider add` minimalis, `read_image` cap 2M + b64 est; papan tombol akurat (`Esc` batal prompt kosong, `Ctrl+C/D` batal, `Ctrl+R/U/D` di search).
 - `docs/ARCHITECTURE.html` + `PLAN.md` (2026-09-09): peta `lib/safe-open.ts` penulis/pembaca, controller `/model` scope-aware, angka gate terkini (min coverage 80/84 — funcs tak dikunci 81 karena berayun antar run).
 
@@ -809,7 +809,7 @@ Hasilnya: `z-ai/glm-5.2:free is temporarily rate-limited upstream.` + saran dari
 
 ## Audit UI/UX (V6)
 
-Basis: audit UI/UX menyeluruh ([docs/PLAN_UIUX_V6.md](docs/PLAN_UIUX_V6.md)) — 24 temuan, diverifikasi dengan menjalankan tiap subcommand, mengemudikan TUI lewat harness keystroke sintetis, dan memanggil `handleBuiltinCommand` langsung.
+Basis historis: audit UI/UX menyeluruh — 24 temuan, diverifikasi dengan menjalankan tiap subcommand, mengemudikan TUI lewat harness keystroke sintetis, dan memanggil `handleBuiltinCommand` langsung.
 
 | Metrik | Sebelum | Sesudah |
 |---|---|---|

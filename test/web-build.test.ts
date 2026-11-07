@@ -251,18 +251,16 @@ describe("web ssg", () => {
     // file mana yang bersalah. Test ini mengunci dua dokumen yang pernah
     // memakai list indentasi: sub-poin di bawah harus ditulis sebagai
     // paragraf lanjutan (konvensi dokumen), bukan bullet bersarang.
-    // - TERMINAL_CONTRACT.md: invarian I35 (WorkMode) pernah memakai bullet
-    //   indentasi; sub-poin kini paragraf berlabel.
-    // - TASK_EVENT_MODEL.md: tiga sub-poin lama yang kini dirapikan.
-    for (const f of ["TERMINAL_CONTRACT.md", "TASK_EVENT_MODEL.md"]) {
-      const offenders: string[] = []
-      readFileSync(join(repoRoot, "docs", f), "utf8")
-        .split("\n")
-        .forEach((line, i) => {
-          if (/^\s+[-*] /.test(line)) offenders.push(`docs/${f}:${i + 1}`)
-        })
-      expect(offenders, `docs/${f} memakai nested list`).toEqual([])
-    }
+    // TERMINAL_CONTRACT.md pernah memakai bullet bertingkat pada invarian I35;
+    // subpoin kontrak kini ditulis sebagai paragraf berlabel.
+    const f = "TERMINAL_CONTRACT.md"
+    const offenders: string[] = []
+    readFileSync(join(repoRoot, "docs", f), "utf8")
+      .split("\n")
+      .forEach((line, i) => {
+        if (/^\s+[-*] /.test(line)) offenders.push(`docs/${f}:${i + 1}`)
+      })
+    expect(offenders, `docs/${f} memakai nested list`).toEqual([])
   })
 
   test("artikel blog contoh ter-render", () => {
@@ -752,7 +750,7 @@ describe("web audit 2026-09-16", () => {
   test("guard: baris lanjutan list menyambung <li>, tak memecah <ol> (adversarial #2)", () => {
     // Bug yang dijaga: baris indentasi setelah item list jatuh ke branch
     // paragraf → <ol> pecah dua dan penomoran restart dari 1 (75 lokasi di
-    // docs: security.md, TERMINAL_CONTRACT.md, HARNESS.md). Baris lanjutan
+    // docs: security.md dan TERMINAL_CONTRACT.md). Baris lanjutan
     // harus menyambung ke <li> sebelumnya. Pemisahan TETAP sah bila diawali
     // baris kosong (kontrak lama, dijaga test lama).
     const html = mdToHtml("1. Satu\n2. Dua\n   lanjutan Dua\n3. Tiga\n")

@@ -14,8 +14,60 @@ import { isRealPathOutsideRoot } from "./jail.ts"
 
 const execFileAsync = promisify(execFile)
 
-export const minicodeEstimator: TokenEstimator = (text: string) =>
-  Math.ceil(text.length / DEFAULT_CHARS_PER_TOKEN)
+const denseTokenCharacters =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Extended_Pictographic}]/gu
+const hasDenseTokenCharacter =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Extended_Pictographic}]/u
+
+export function countDenseTokenCharacters(text: string): number {
+  let dense = 0
+  for (const match of text.matchAll(denseTokenCharacters)) {
+    if (match[0]) dense++
+  }
+  return dense
+}
+
+/** Track a streamed text field without retaining/re-tokenizing its full prefix. */
+export function createIncrementalTokenCounter(): {
+  add(chunk: string, factor?: number): number
+} {
+  let codeUnits = 0
+  let denseCharacters = 0
+  let pendingHighSurrogate = ""
+  let previousEstimate = 0
+  return {
+    add(chunk, factor = 1) {
+      let complete = pendingHighSurrogate + chunk
+      pendingHighSurrogate = ""
+      if (complete.length > 0) {
+        const last = complete.charCodeAt(complete.length - 1)
+        if (last >= 0xd800 && last <= 0xdbff) {
+          pendingHighSurrogate = complete.slice(-1)
+          complete = complete.slice(0, -1)
+        }
+      }
+      codeUnits += complete.length
+      denseCharacters += countDenseTokenCharacters(complete)
+      const baseEstimate = Math.ceil(codeUnits / DEFAULT_CHARS_PER_TOKEN + denseCharacters * 0.75)
+      const safeFactor = Number.isFinite(factor) && factor >= 1 ? factor : 1
+      const estimate = Math.ceil(baseEstimate * safeFactor)
+      const added = Math.max(0, estimate - previousEstimate)
+      previousEstimate = Math.max(previousEstimate, estimate)
+      return added
+    },
+  }
+}
+
+export const minicodeEstimator: TokenEstimator = (text: string) => {
+  // Keep the cheap chars/4 baseline for ordinary text, but price CJK and emoji
+  // closer to one token per code point. Plain UTF-16 chars/4 can undercount a
+  // multilingual prompt by several times before the first provider usage sample.
+  if (!hasDenseTokenCharacter.test(text)) {
+    return Math.ceil(text.length / DEFAULT_CHARS_PER_TOKEN)
+  }
+  const dense = countDenseTokenCharacters(text)
+  return Math.ceil(text.length / DEFAULT_CHARS_PER_TOKEN + dense * 0.75)
+}
 
 // helper for image content: base64 overhead 4/3 — use when estimating tool image results
 export function estimateImageTokens(bytes: number): number {
@@ -90,7 +142,7 @@ export function createCalibratedEstimator(opts: { maxFactor?: number } = {}): Ca
   // mengirim `usage` progresif-kumulatif per-chunk SSE. Sampel "actual naik,
   // local beku" adalah artefak penghitungan intra-request — bukan drift
   // tokenizer — dan sampel jauh di atas baseline lokal yang beku (actual >
-  // local × 3) bisa membangkaskan factor secara global (uji live tiprouter:
+  // local × 3) bisa membangkaskan factor model ini (uji live tiprouter:
   // local=5026 beku sementara input merambat 6413 → 28024 = 5.58× → seluruh
   // estimasi konteks terinflasi → kompaksi palsu → turn dibunuh
   // `context window exceeded after compaction`). Sampel demikian DIKIP yang

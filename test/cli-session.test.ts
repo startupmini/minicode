@@ -1000,8 +1000,8 @@ describe("cli: --verify (self-heal)", () => {
   // ── STEP 2 / PF-07: jalur produksi verify → setCompletionEvidence →
   // todo_write → gerbang. Test unit menyuntik bukti secara manual, jadi test
   // ini yang membuktikan wiring composition-root benar-benar bekerja.
-  // Diuji dengan mutasi: injeksi bukti diganti `unverified` → WAJAH test ini
-  // merah (lihat docs/TASK_FOUNDATION_REPAIR_REPORT.md).
+  // Bukti verify harus tersambung dari composition root sampai gerbang tool;
+  // perubahan jalur ini membuat assertion integrasi di bawah gagal.
   test("PF-07: jalur produksi verify merah → todo_write ditolak gerbang", async () => {
     const ws = makeWorkspace()
     writeFileSync(join(ws.dir, "merah.ts"), "process.exit(1)\n", "utf8")

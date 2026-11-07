@@ -3,15 +3,23 @@ import { ProviderError } from "#minicore/core/errors.ts"
 import type { ModelProvider, ProviderEvent, StreamRequest } from "#minicore/core/provider.ts"
 import type { Message } from "#minicore/core/types.ts"
 import { LIMITS } from "../constants.ts"
+import { DEFAULT_FALLBACK_CONTEXT_WINDOW_TOKENS } from "../policy/context-window.ts"
 import type { RateLimiter } from "../policy/ratelimit.ts"
 
 export interface RouterConfig {
   providers: ModelProvider[]
   defaultProviderId?: string
+  contextWindowTokensForModel?: (model?: string) => number
   // P2 cap
   maxRetryAfterMs?: number // default LIMITS.RETRY_AFTER_MAX_MS
   // Token bucket rate limiter (opsional) — cegah request beruntun kena 429
   limiter?: RateLimiter
+}
+
+export type RouterProvider = ModelProvider & {
+  updateProviders: (list: ModelProvider[]) => void
+  updateContextWindowResolver: (resolver: (model?: string) => number) => void
+  contextModelIdentity: (model?: string) => string | undefined
 }
 
 // C4 fix: convert Uint8Array tool content to base64 before an openai-compat
@@ -75,7 +83,7 @@ function requestFor(
   return { req: fixed, substituted: false }
 }
 
-export function createRouterProvider(config: RouterConfig): ModelProvider {
+export function createRouterProvider(config: RouterConfig): RouterProvider {
   const maxRetry = config.maxRetryAfterMs ?? LIMITS.RETRY_AFTER_MAX_MS
   // byId dan defaultId dihitung per-stream agar provider yang baru ditambah via /provider
   // langsung dikenali tanpa restart. Provider list bisa berubah mid-session.
@@ -83,13 +91,28 @@ export function createRouterProvider(config: RouterConfig): ModelProvider {
   const getDefaultId = () => config.defaultProviderId ?? config.providers[0]?.id ?? "router"
   const getModels = () => config.providers.flatMap((p) => [...p.models])
 
-  const router: ModelProvider & { updateProviders: (list: ModelProvider[]) => void } = {
+  const router: RouterProvider = {
     id: "router",
     get models() {
       return getModels()
     },
     updateProviders(list: ModelProvider[]) {
       config.providers.splice(0, config.providers.length, ...list)
+    },
+    updateContextWindowResolver(resolver) {
+      config.contextWindowTokensForModel = resolver
+    },
+    contextWindowTokensForModel(model?: string) {
+      return config.contextWindowTokensForModel?.(model) ?? DEFAULT_FALLBACK_CONTEXT_WINDOW_TOKENS
+    },
+    contextModelIdentity(model?: string) {
+      if (model?.includes("::")) return model
+      let provider = model
+        ? config.providers.find((entry) => entry.models.includes(model))
+        : (getById().get(getDefaultId()) ?? config.providers[0])
+      provider ??= getById().get(getDefaultId()) ?? config.providers[0]
+      const effectiveModel = model && provider?.models.includes(model) ? model : provider?.models[0]
+      return provider && effectiveModel ? `${provider.id}::${effectiveModel}` : effectiveModel
     },
     async *stream(request: StreamRequest, signal: AbortSignal): AsyncIterable<ProviderEvent> {
       // route by model name — first match wins (default/daftar urutan provider)
@@ -180,7 +203,19 @@ export function createRouterProvider(config: RouterConfig): ModelProvider {
             ) {
               hasYieldedContent = true
             }
-            yield ev
+            if (ev.type === "extension" && ev.kind === "usage") {
+              const data = ev.data && typeof ev.data === "object" ? ev.data : {}
+              yield {
+                ...ev,
+                data: {
+                  ...(data as Record<string, unknown>),
+                  model: req.model ?? model,
+                  provider: current.id,
+                },
+              }
+            } else {
+              yield ev
+            }
           }
           return
         } catch (e) {
@@ -256,5 +291,5 @@ export function createRouterProvider(config: RouterConfig): ModelProvider {
       }
     },
   }
-  return router as ModelProvider
+  return router
 }

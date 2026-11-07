@@ -40,7 +40,7 @@ WorkMode controls how the agent works (`DISCUSS`, `PLAN`, or `BUILD`); permissio
 - [Installation](docs/getting-started.md) · [Quickstart](docs/quickstart.md) · [CLI](docs/cli.md) · [TUI](docs/repl.md)
 - [Configuration and providers](docs/config.md) · [Environment variables](docs/environment.md) · [Tools](docs/tools.md)
 - [Security model](docs/security-model.md) · [Policy and sandbox](docs/policy-sandbox.md)
-- [Architecture](docs/architecture.md) · [Repository map](docs/ARCHITECTURE.html)
+- [Architecture and repository map](docs/architecture.md)
 - [Contributing](docs/contributing.md) · [Release history](https://github.com/startupmini/minicode/releases)
 
 ## Development checks

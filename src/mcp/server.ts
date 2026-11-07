@@ -240,9 +240,8 @@ async function invokeTool(
  * the whole process. As a durable task namespace that is unsafe: it is a
  * constant, so every MCP context that has ever run against the same `root`
  * shares one identity space, and it can also collide with anything else that
- * ever uses that string. `TASK_ARCHITECTURE_AUDIT.md` already flagged the
- * underlying problem - `mcp serve` is single-tenant, and concurrent requests
- * overwrite each other's files last-writer-wins.
+ * ever uses that string. Because `mcp serve` is single-tenant, concurrent
+ * requests must not share this durable namespace and overwrite files last-writer-wins.
  *
  * WHAT THIS IDENTIFIES. One server instance = one logical MCP context. That
  * matches this implementation's actual lifecycle, which was verified rather

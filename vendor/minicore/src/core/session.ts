@@ -35,6 +35,8 @@ export interface SessionConfig {
   permissions: PermissionHandler;
   tools?: readonly Tool[];
   system?: string;
+  /** Dynamic system prompt for host-controlled per-turn mode hints. */
+  systemForContext?: () => string;
   model?: string;
   cwd?: string;
   /**
@@ -59,6 +61,9 @@ export interface SessionConfig {
   recovery?: RecoveryPolicy;
   maxSteps?: number;
   contextWindowTokens?: number;
+  /** Resolve a model-specific context limit for each run. Additive app seam;
+   * the numeric option remains the fallback for existing library callers. */
+  contextWindowTokensForModel?: (model?: string) => number;
   toolResultMaxTokens?: number;
   keepRecentTurns?: number;
   /**
@@ -138,6 +143,7 @@ export interface SessionInternal {
   readonly registry: ToolRegistry;
   readonly executor: ToolExecutor;
   readonly system?: string;
+  readonly systemForContext?: () => string;
   readonly model?: string;
   readonly cwd?: string;
   readonly permissionMode?: string | (() => string);
@@ -147,6 +153,7 @@ export interface SessionInternal {
   readonly recovery: RecoveryPolicy;
   readonly maxSteps: number;
   readonly contextWindowTokens: number;
+  readonly contextWindowTokensForModel?: (model?: string) => number;
   readonly toolResultMaxTokens: number;
   readonly keepRecentTurns: number;
   readonly timeoutMs: number;
@@ -178,6 +185,7 @@ export function createSession(config: SessionConfig): Session {
     registry: createToolRegistry(config.tools ?? []),
     executor: config.executor ?? sequentialExecutor(),
     system: config.system,
+    systemForContext: config.systemForContext,
     model: config.model,
     cwd: config.cwd,
     permissionMode: config.permissionMode,
@@ -187,6 +195,7 @@ export function createSession(config: SessionConfig): Session {
     recovery: config.recovery ?? defaultRecoveryPolicy,
     maxSteps: config.maxSteps ?? DEFAULT_MAX_STEPS,
     contextWindowTokens: config.contextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS,
+    contextWindowTokensForModel: config.contextWindowTokensForModel,
     toolResultMaxTokens: config.toolResultMaxTokens ?? DEFAULT_TOOL_RESULT_MAX_TOKENS,
     keepRecentTurns: config.keepRecentTurns ?? DEFAULT_KEEP_RECENT_TURNS,
     timeoutMs: config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -210,7 +219,11 @@ export function createSession(config: SessionConfig): Session {
     // Same source of truth as the loop — estimateSessionContext in
     // tokens.ts — never a duplicate estimator.
     get contextTokens() {
-      return estimateSessionContext(store, config.system, impl.registry.list(), impl.estimator);
+      let system = config.system
+      try {
+        system = config.systemForContext?.() ?? system
+      } catch {}
+      return estimateSessionContext(store, system, impl.registry.list(), impl.estimator);
     },
     async run(input, opts) {
       if (impl.running) throw new AgentError("busy", "session is already running");

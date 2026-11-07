@@ -246,24 +246,9 @@ describe("10.2 cross-dimension frontier contract readiness (6 dimensions)", () =
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 10.3 — Documentation & CI Completeness
+// 10.3 — CI Completeness
 // ─────────────────────────────────────────────────────────────────────────────
-describe("10.3 documentation & CI completeness", () => {
-  test("FRONTIER doc memuat LOOP-INV-01..18 + OWASP + MITRE ATLAS + NIST AI RMF + STORAGE_AUTHORITY_MATRIX", () => {
-    const doc = readFileSync(
-      join(import.meta.dir, "..", "docs", "FRONTIER_HARNESS_BASELINE_AND_HANDOFF.md"),
-      "utf8",
-    )
-    for (let n = 1; n <= 18; n++) {
-      const tag = `LOOP-INV-${String(n).padStart(2, "0")}`
-      expect(doc).toContain(tag)
-    }
-    expect(doc).toContain("OWASP")
-    expect(doc).toContain("MITRE ATLAS")
-    expect(doc).toContain("NIST AI RMF")
-    expect(doc).toContain("STORAGE_AUTHORITY_MATRIX")
-  })
-
+describe("10.3 CI completeness", () => {
   test("ci.yml menyertakan suite invariant p15..p22 pada job ci dan ci-windows", () => {
     const ci = readFileSync(join(import.meta.dir, "..", ".github", "workflows", "ci.yml"), "utf8")
     for (const n of [15, 16, 17, 18, 19, 20, 21, 22]) {

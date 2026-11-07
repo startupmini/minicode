@@ -1,5 +1,6 @@
 import { createOpenAICompatProvider } from "#minicore/providers/openai-compat.ts"
 import { loadConfig, type MinicodeConfig } from "../config.ts"
+import { resolveContextWindow } from "../policy/context-window.ts"
 import type { RateLimiter } from "../policy/ratelimit.ts"
 import { createAnthropicProvider } from "../providers/anthropic.ts"
 import { buildProviderListAsync } from "../providers/build.ts"
@@ -7,6 +8,7 @@ import { withStreamGuards } from "../providers/guards.ts"
 import { createRouterProvider } from "../providers/router.ts"
 
 let currentRouter: ReturnType<typeof createRouterProvider> | null = null
+let currentConfig: MinicodeConfig | null = null
 
 /** Setup tanpa provider apa pun. Dilempar (bukan exit di sini) agar
  * composition root bisa memilih presentasi: REPL/one-shot mencetak pesan
@@ -24,9 +26,17 @@ export async function reloadProviders(
 ): Promise<void> {
   if (!currentRouter) return
   const cfg = await loadConfig(cwd, { allowLocal: opts.allowLocal })
+  if (currentConfig)
+    currentConfig.providers.splice(0, currentConfig.providers.length, ...cfg.providers)
+  else currentConfig = cfg
   const providers = await buildProviderListAsync(cfg)
-  const r = currentRouter as unknown as { updateProviders: (list: unknown[]) => void }
+  const r = currentRouter as unknown as {
+    updateProviders: (list: unknown[]) => void
+  }
   if (typeof r.updateProviders === "function") r.updateProviders(providers)
+  // Keep the router's live context resolver. The composition root may have
+  // wrapped it with a session override and warning policy; replacing it here
+  // would make /sync silently reset child sessions to config-only limits.
 }
 
 export async function createProviderLayer(opts: {
@@ -43,6 +53,7 @@ export async function createProviderLayer(opts: {
   setupWhenEmpty?: () => Promise<boolean>
 }): Promise<{ cfg: MinicodeConfig; router: ReturnType<typeof createRouterProvider> }> {
   const cfg = await loadConfig(opts.cwd, { allowLocal: opts.allowLocalConfig })
+  currentConfig = cfg
   type Provider = ReturnType<typeof createOpenAICompatProvider>
   let providers = await buildProviderListAsync(cfg)
 
@@ -119,6 +130,7 @@ export async function createProviderLayer(opts: {
   }
   const router = createRouterProvider({
     providers,
+    contextWindowTokensForModel: (model) => resolveContextWindow(cfg, model).tokens,
     ...(opts.rateLimiter ? { limiter: opts.rateLimiter } : {}),
   })
   currentRouter = router

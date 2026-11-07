@@ -2,7 +2,7 @@
 
 **Status:** landed — `exec --json` memakai envelope `minicode.output.v1`, ACP memakai framing JSON-RPC + mapping semantik yang sama; legacy `type:"tool"` hanya bila lifecycle absen  
 **Tanggal:** 2026-09-25  
-**Audit sumber:** `docs/OUTPUT_ARCHITECTURE_AUDIT.md`
+**Kontrak aktif:** envelope machine di `src/presentation/projection.ts` dan consumer di `cli/commands/exec.ts` serta `cli/commands/acp.ts`.
 
 ## 1. Prinsip
 

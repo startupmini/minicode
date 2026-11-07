@@ -6,7 +6,10 @@ Di mana pengaturan dan data Minicode tinggal, dan bagaimana file lokal yang tak 
 
 ```json
 {
-  "providers": [{ "id": "my-provider", "baseUrl": "...", "apiKey": "...", "models": ["gpt-4o"] }],
+  "providers": [{
+    "id": "my-provider", "baseUrl": "...", "apiKey": "...",
+    "models": ["gpt-4o"], "contextWindows": { "gpt-4o": 128000, "*": 32000 }
+  }],
   "mcpServers": [
     { "id": "fs", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem"] },
     { "id": "remote", "url": "https://mcp.example.com/mcp", "headers": { "authorization": "Bearer xxx" } }
@@ -18,6 +21,7 @@ Di mana pengaturan dan data Minicode tinggal, dan bagaimana file lokal yang tak 
 ```
 
 - `providers` — bisa juga diisi lewat wizard/`minicode config add`/`/provider`; lihat daftar preset di [Config & Provider](config-providers.md).
+- `providers[].contextWindows` — batas konteks dalam token per model; exact model ID menang, lalu key `"*"` menjadi fallback provider. Nilai harus integer positif. Karena gateway dapat memakai alias model, MiniCode tidak menebak kapasitas provider secara online. `--context-window` mengalahkan nilai config selama sesi itu.
 - `mcpServers` — dua bentuk: stdio (`command`+`args`) dan HTTP (`url`+opsional `headers`). Detail transport di [MCP & LSP](mcp-lsp.md).
 - `verifyCommand` — dipakai `--verify` bila auto-detect tidak menemukan (urutan deteksi: `typecheck` → `test` → `tsconfig`).
 - `bashAllowlist` — pola koma/pola glob perintah bash yang dianggap aman (mode `allowlist`).

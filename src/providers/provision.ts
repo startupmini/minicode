@@ -62,8 +62,15 @@ export async function saveProvider(
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e
     }
     const idx = cfg.providers.findIndex((p) => p.id === entry.id)
-    if (idx >= 0) cfg.providers[idx] = entry
-    else cfg.providers.push(entry)
+    if (idx >= 0) {
+      const previous = cfg.providers[idx]!
+      cfg.providers[idx] = {
+        ...entry,
+        ...(entry.contextWindows === undefined && previous.contextWindows
+          ? { contextWindows: previous.contextWindows }
+          : {}),
+      }
+    } else cfg.providers.push(entry)
     await writeConfigAtomic(path, cfg)
   })
 }
@@ -149,13 +156,15 @@ export async function detectAndSave(
   const uniqId = deriveProviderId(baseUrl, existing, id)
   // Pertahankan knob user (thinking effort) bila provider sudah ada — tanpa
   // ini tiap add/edit me-reset effort ke default diam-diam ("hilang").
-  const prevEffort = prevCfg.providers.find((p) => p.id === uniqId)?.reasoningEffort
+  const previous = prevCfg.providers.find((p) => p.id === uniqId)
+  const prevEffort = previous?.reasoningEffort
   const entry: ProviderEntry = {
     id: uniqId,
     baseUrl,
     apiKey,
     models: detected.models,
     providerHint: detected.providerHint,
+    ...(previous?.contextWindows ? { contextWindows: previous.contextWindows } : {}),
     ...(prevEffort ? { reasoningEffort: prevEffort } : {}),
   }
   await saveProvider(entry, opts)

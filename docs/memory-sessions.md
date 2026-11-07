@@ -26,7 +26,7 @@ Embedding: default `text-embedding-3-small` (`MINICODE_EMBED_MODEL`). Dim-mismat
 
 ## Sessions
 
-Sesi di `.minicode/sessions.db` (WAL, capped + busy-retry async). `--resume <id>` melanjutkan full history (termasuk `toolCallId`/`name`); workspace dibandingkan ke checkpoint terakhir dan divergensi dilaporkan (bukan replay buta). TTL 30 hari (`MINICODE_SESSION_TTL_DAYS=0` = selamanya). `minicode sessions purge` hapus manual. Branch via `branchSession` (fork history+turns).
+Sesi di `.minicode/sessions.db` (WAL, capped + busy-retry async). `--resume <id>` melanjutkan history yang saat itu tersimpan, termasuk `toolCallId`/`name`; setelah kompaksi, history lama dapat sudah diganti ringkasan + tail sehingga bukan salinan penuh percakapan awal. Workspace dibandingkan ke checkpoint terakhir dan divergensi dilaporkan (bukan replay buta). TTL 30 hari (`MINICODE_SESSION_TTL_DAYS=0` = selamanya). `minicode sessions purge` hapus manual. Branch via `branchSession` (fork dari history tersimpan + turns).
 
 Satu penulis per sesi (P2.2): komposisi mengakuisisi lease otoritas (`tasks.db: session_authority`) saat start dan melepasnya saat close; proses kedua pada sesi yang sama ditolak (`REFUSED_LEASE_HELD`). Setiap mutasi sesi membawa `writer_epoch` yang di-CAS di dalam transaksi SQLite yang sama — penulis basi setelah takeover ditolak (`REFUSED_STALE_EPOCH`), tanpa tulis parsial. Tiga konsep tetap berbeda: **lease** = admission (boleh menulis), **writer_epoch** = pagar mutasi (tulisan ini masih sah), **incarnation** = generasi identitas lintas delete/recreate.
 
@@ -56,8 +56,10 @@ Jurnal bukan transaksi atomik; `pending` = ambigu (efek mungkin sudah terjadi). 
 
 Model hanya melihat jendela riwayat terbatas (**konteks**). Saat percakapan menekan jendela itu, Minicode **memadatkan** (compaction): turn lama diganti satu ringkasan, turn terbaru dipertahankan utuh. Anda melihatnya sebagai baris `── compacted: …` di output.
 
-- **Kapan terjadi:** otomatis saat tekanan konteks, sebelum batas jendela tercapai. Bila sesudah padat masih kurang, run gagal eksplisit (`context window exceeded`) — bukan sunyi.
-- **Yang dipertahankan:** ringkasan fakta — path file, signature, snippet penting, hasil tool, error, next steps. Ringkasan sebelumnya dibawa verbatim (tidak diringkas ulang) agar makna tak melenceng tiap siklus.
+Batas konteks dibaca per model dari `providers[].contextWindows` (exact model ID, lalu `"*"`); `--context-window` mengalahkan config untuk sesi itu. Bila metadata tidak ada, fallback 32.000 token diberi peringatan. Saat model berganti, admission dan pemutus stream mengikuti batas model baru. Estimator juga dikalibrasi per provider/model setelah usage aktual; CJK dan emoji tidak lagi dihitung sebagai teks biasa `chars/4`.
+
+- **Kapan terjadi:** otomatis saat tekanan konteks, sebelum request dikirim. Resume membatasi proyeksi dan histori; kernel menghitung prompt sistem serta skema tool sebelum admission. Output model dihentikan saat anggaran tersisa habis. Bila current prompt/instruksi sendiri tak muat, run gagal dengan alasan dan langkah lanjut.
+- **Yang dipertahankan:** ringkasan fakta — path file, signature, snippet penting, hasil tool, error, next steps. Ringkasan lama dan baru dibatasi ukuran; jika summary projection terlalu besar, bagian lama dipotong eksplisit atau selector memilih ekor histori yang muat.
 - **Yang mungkin hilang:** teks lengkap turn lama (dipotong ~250 char/baris saat diringkas), detail output tool, urutan persis percakapan.
 - **Riwayat asli tidak disimpan ganda:** sesi berjalan dan sesi tersimpan mengikuti state terbaru (ringkasan + turn baru). Yang perlu durable lintas sesi, tulis eksplisit via `write_memory`.
 - **Ringkasan lebih cerdas bila ada kunci DeepSeek** (`DEEPSEEK_API_KEY`): ringkasan dibuat LLM (timeout 10 dtk); tanpanya dipakai ringkasan mekanikal. Keduanya memagar konten tak-terpercaya sebagai data + secret-scrub sebelum diringkas.

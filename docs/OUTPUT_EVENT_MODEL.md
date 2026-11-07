@@ -2,7 +2,7 @@
 
 **Status:** Phase 2 core state/replay contract landed; renderer/wire protocol masih target
 **Tanggal:** 2026-09-25
-**Audit sumber:** `docs/OUTPUT_ARCHITECTURE_AUDIT.md`
+**Kontrak aktif:** implementasi dan producer event di `src/presentation/events.ts`.
 
 ## Status implementasi
 

@@ -35,5 +35,9 @@ export interface StreamRequest {
 export interface ModelProvider {
   readonly id: string;
   readonly models: readonly string[];
+  /** Optional host metadata for per-model admission budgets. */
+  contextWindowTokensForModel?(model?: string): number;
+  /** Canonical provider/model key for per-model estimator state. */
+  contextModelIdentity?(model?: string): string | undefined;
   stream(request: StreamRequest, signal: AbortSignal): AsyncIterable<ProviderEvent>;
 }

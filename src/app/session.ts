@@ -1,23 +1,31 @@
 import { resolve } from "node:path"
 import type { RecoveryAction } from "#minicore/core/errors.ts"
-import { ProviderError } from "#minicore/core/errors.ts"
+import { AgentError, ProviderError } from "#minicore/core/errors.ts"
 import type {
   ModelProvider,
   PermissionHandler,
+  ProviderEvent,
   Session,
   SessionConfig,
 } from "#minicore/core/index.ts"
 import { createSession as createCoreSession } from "#minicore/core/index.ts"
 import { defaultRecoveryPolicy } from "#minicore/core/recovery.ts"
-import { estimateMessages, estimateSystem, estimateTools } from "#minicore/core/tokens.ts"
+import {
+  estimateMessages,
+  estimateSystem,
+  estimateTools,
+  safeStringify,
+} from "#minicore/core/tokens.ts"
 import { LIMITS } from "../constants.ts"
 // [Area B · PROMPT 06] Binding persetujuan ↔ operasi yang dieksekusi.
 import { ApprovalBindingStore, verifyApprovalBinding } from "../policy/approval-binding.ts"
 import {
   buildSystemPrompt,
   createCalibratedEstimator,
+  createIncrementalTokenCounter,
   minicodeEstimator,
 } from "../policy/context.ts"
+import { DEFAULT_FALLBACK_CONTEXT_WINDOW_TOKENS } from "../policy/context-window.ts"
 import { parallelExecutor } from "../policy/executor.ts"
 import {
   canonicalArgsHash,
@@ -118,6 +126,8 @@ export async function createMinicodeSession(
   > & {
     systemExtra?: string
     cwd?: string
+    /** Live model identity used for per-model token calibration. */
+    getContextModel?: () => string | undefined
     permissionMode?: "auto" | "readonly" | "plan" | "allow-all" | "ask" | "allowlist"
     /** S2.1: WorkMode adalah lapis intent TERPISAH dari PermissionMode.
      * Default EXECUTE = perilaku lama (base handler apa adanya). Nilai selain
@@ -230,6 +240,7 @@ export async function createMinicodeSession(
     workMode: _workMode,
     allowLocalConfig,
     systemExtra: _extra,
+    getContextModel: _getContextModel,
     provider,
     onPermissions,
     onWorkMode,
@@ -444,17 +455,172 @@ export async function createMinicodeSession(
     const planHint = pm === "plan" ? PLAN_PM_HINT : ""
     return baseSystem + planHint + workModeHint(wm)
   }
+  // [CTX] Kalibrasi dipisahkan per identitas model agar berpindah ke model
+  // lain tidak membawa rasio tokenizer/provider dari sesi sebelumnya.
+  const calibrations = new Map<string, ReturnType<typeof createCalibratedEstimator>>()
+  const contextModelKey = (model?: string): string => model?.trim() || "__default__"
+  const calibrationFor = (model?: string) => {
+    const key = contextModelKey(model)
+    let calibration = calibrations.get(key)
+    if (!calibration) {
+      calibration = createCalibratedEstimator()
+      calibrations.set(key, calibration)
+    }
+    return calibration
+  }
+  let activeContextModel = opts.model
+  const currentContextModel = () => {
+    const selected = _getContextModel?.() ?? activeContextModel
+    try {
+      return provider.contextModelIdentity?.(selected) ?? selected
+    } catch {
+      return selected
+    }
+  }
+  const calibratedEstimator = (text: string) =>
+    calibrationFor(currentContextModel()).estimator(text)
+  let lastRequestLocalEstimate: { model: string; tokens: number } | undefined
+  const contextWindowForModel = (model?: string): number => {
+    const explicit = rest.contextWindowTokens
+    if (
+      !rest.contextWindowTokensForModel &&
+      typeof explicit === "number" &&
+      Number.isSafeInteger(explicit) &&
+      explicit > 0
+    ) {
+      return explicit
+    }
+    try {
+      const resolved =
+        rest.contextWindowTokensForModel?.(model) ?? provider.contextWindowTokensForModel?.(model)
+      if (typeof resolved === "number" && Number.isSafeInteger(resolved) && resolved > 0)
+        return resolved
+    } catch {}
+    return typeof explicit === "number" && Number.isSafeInteger(explicit) && explicit > 0
+      ? explicit
+      : DEFAULT_FALLBACK_CONTEXT_WINDOW_TOKENS
+  }
   const dynamicProvider: ModelProvider = {
     id: provider.id,
     get models() {
       return provider.models
     },
-    stream(req, signal) {
-      return provider.stream({ ...req, system: computeLiveSystem() }, signal)
+    async *stream(req, signal) {
+      const system = computeLiveSystem()
+      const model = req.model ?? currentContextModel()
+      let limit = contextWindowForModel(model)
+      const estimatorModel = model?.includes("::") ? model : (currentContextModel() ?? model)
+      let calibration = calibrationFor(estimatorModel)
+      let estimator = calibration.estimator
+      let admittedFactor = calibration.snapshot().factor
+      const tools = req.tools ?? []
+      const localInputTokens =
+        estimateMessages(req.messages, minicodeEstimator) +
+        estimateSystem(system, minicodeEstimator) +
+        estimateTools(tools, minicodeEstimator)
+      let inputTokens =
+        estimateMessages(req.messages, estimator) +
+        estimateSystem(system, estimator) +
+        estimateTools(tools, estimator)
+      lastRequestLocalEstimate = {
+        model: contextModelKey(estimatorModel),
+        tokens: localInputTokens,
+      }
+      // Sisakan ruang framing dan respons minimum. Tanpa reserve, request yang
+      // tepat menyentuh batas provider tetap ditolak setelah biaya dibakar.
+      let reserve = Math.min(256, Math.floor(limit / 10))
+      let outputAllowance = Math.max(0, limit - inputTokens - reserve)
+      let outputTokens = 0
+      const streamedText = createIncrementalTokenCounter()
+      const streamedReasoning = createIncrementalTokenCounter()
+      const contextLimitEvent = (input: number, output: number): ProviderEvent => ({
+        type: "extension",
+        kind: "context-window-limit",
+        data: { inputTokens: input, outputTokens: output, windowTokens: limit },
+      })
+      const overflow = (actualInput = inputTokens, actualOutput = outputTokens) =>
+        new AgentError(
+          "budget_exceeded",
+          `context window budget reached for the selected model: input ${actualInput} + output ${actualOutput} exceeds ${limit} tokens; reduce the prompt/tools or select a larger context window`,
+        )
+      const requestController = new AbortController()
+      const forwardAbort = () => requestController.abort(signal.reason)
+      if (signal.aborted) forwardAbort()
+      else signal.addEventListener("abort", forwardAbort, { once: true })
+      try {
+        if (inputTokens + reserve >= limit) {
+          const error = overflow(inputTokens, 0)
+          requestController.abort(error)
+          yield contextLimitEvent(inputTokens, 0)
+          throw error
+        }
+
+        for await (const event of provider.stream({ ...req, system }, requestController.signal)) {
+          if (event.type === "extension" && event.kind === "effective-model") {
+            const effective = event.data as { effective?: unknown; provider?: unknown } | undefined
+            if (
+              typeof effective?.effective === "string" &&
+              typeof effective.provider === "string"
+            ) {
+              // Router fallback/substitution is a different model boundary.
+              // Keep the smaller of the requested and effective capacities so
+              // a failed primary provider cannot silently widen the budget.
+              const effectiveModel = `${effective.provider}::${effective.effective}`
+              const effectiveLimit = contextWindowForModel(effectiveModel)
+              limit = Math.min(limit, effectiveLimit)
+              calibration = calibrationFor(effectiveModel)
+              estimator = calibration.estimator
+              admittedFactor = calibration.snapshot().factor
+              inputTokens = Math.max(
+                inputTokens,
+                estimateMessages(req.messages, estimator) +
+                  estimateSystem(system, estimator) +
+                  estimateTools(tools, estimator),
+              )
+              reserve = Math.min(256, Math.floor(limit / 10))
+              outputAllowance = Math.max(0, limit - inputTokens - reserve)
+            }
+          }
+          const currentFactor = calibration.snapshot().factor
+          if (currentFactor > admittedFactor) {
+            inputTokens = Math.max(
+              inputTokens,
+              estimateMessages(req.messages, estimator) +
+                estimateSystem(system, estimator) +
+                estimateTools(tools, estimator),
+            )
+            reserve = Math.min(256, Math.floor(limit / 10))
+            outputAllowance = Math.max(0, limit - inputTokens - reserve)
+          }
+          admittedFactor = currentFactor
+          let added = 0
+          if (event.type === "text") {
+            added = streamedText.add(event.text, calibration.snapshot().factor)
+          } else if (event.type === "tool_call") {
+            added = estimator(event.name) + estimator(safeStringify(event.args))
+          } else if (event.type === "extension" && event.kind === "reasoning") {
+            const reasoning = (event.data as { text?: unknown } | undefined)?.text
+            if (typeof reasoning === "string") {
+              added = streamedReasoning.add(reasoning, calibration.snapshot().factor)
+            }
+          }
+          if (added > 0 && outputTokens + added > outputAllowance) {
+            const error = overflow(inputTokens, outputTokens + added)
+            requestController.abort(error)
+            yield contextLimitEvent(inputTokens, outputTokens + added)
+            throw error
+          }
+          outputTokens += added
+          yield event as ProviderEvent
+        }
+      } finally {
+        signal.removeEventListener("abort", forwardAbort)
+        if (!requestController.signal.aborted) {
+          requestController.abort(new AgentError("aborted", "provider stream closed"))
+        }
+      }
     },
   }
-  // [Fase 3 / CTX-03] Estimator terkalibrasi terhadap usage aktual provider.
-  const calibration = createCalibratedEstimator()
   const liveToolSchemas = () =>
     registeredTools.map((t) => ({
       name: t.name,
@@ -463,11 +629,14 @@ export async function createMinicodeSession(
     }))
   const core = createCoreSession({
     ...rest,
+    contextWindowTokens: contextWindowForModel(currentContextModel()),
+    contextWindowTokensForModel: contextWindowForModel,
     provider: dynamicProvider,
     system: computeLiveSystem(),
+    systemForContext: computeLiveSystem,
     permissions: withEffectBarrier,
     permissionMode: livePermissionMode,
-    estimator: calibration.estimator,
+    estimator: calibratedEstimator,
     recovery: cappedRecovery,
     executor: parallelExecutor({
       concurrency: safeConcurrency ?? LIMITS.EXECUTOR_CONCURRENCY,
@@ -479,14 +648,29 @@ export async function createMinicodeSession(
   })
   core.events.on("provider:extension", (e) => {
     if (e.kind !== "usage") return
-    const d = e.data as { inputTokens?: number; totalTokens?: number } | undefined
-    if (!d) return
-    const baseLocal =
+    const d = e.data as
+      | {
+          inputTokens?: number
+          totalTokens?: number
+          model?: string
+          provider?: string
+          source?: string
+        }
+      | undefined
+    if (!d || d.source === "compaction") return
+    const reportedModel =
+      typeof d.model === "string" && d.model.length > 0
+        ? typeof d.provider === "string" && d.provider.length > 0
+          ? `${d.provider}::${d.model}`
+          : d.model
+        : currentContextModel()
+    const fallbackLocal =
       estimateSystem(computeLiveSystem(), minicodeEstimator) +
       estimateTools(liveToolSchemas(), minicodeEstimator) +
       estimateMessages(core.state.history, minicodeEstimator)
-    calibration.observeProviderUsage({
-      localEstimatedTokens: baseLocal,
+    const localEstimatedTokens = lastRequestLocalEstimate?.tokens ?? fallbackLocal
+    calibrationFor(reportedModel).observeProviderUsage({
+      localEstimatedTokens,
       providerInputTokens: d.inputTokens,
       providerTotalTokens: d.totalTokens,
     })
@@ -530,5 +714,22 @@ export async function createMinicodeSession(
       return origRun(input, runOpts)
     }
   }
-  return core
+  return {
+    get state() {
+      return core.state
+    },
+    get events() {
+      return core.events
+    },
+    get contextTokens() {
+      return core.contextTokens
+    },
+    run(input: string, runOpts?: { signal?: AbortSignal; model?: string }) {
+      activeContextModel = runOpts?.model ?? opts.model
+      return core.run(input, runOpts)
+    },
+    abort() {
+      core.abort()
+    },
+  }
 }

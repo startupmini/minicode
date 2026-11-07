@@ -18,7 +18,7 @@ Istilah Minicode yang punya makna spesifik. Dokumentasi berbahasa Indonesia deng
 | **Sandbox Docker** | Container ephemeral `--network none`, 512m, 1 CPU, `node:22-alpine` |
 | **Checkpoint** | Snapshot per turn via shadow-git: SHA tree di `refs/minicode/…` (O(delta), HEAD/index tak tersentuh) |
 | **Recovery journal** | `journal-<sesi>.jsonl`: `pending` → `committed`/`failed`/`unknown`; finalisasi menandai cakupan turn yang sudah durable |
-| **Session** | Riwayat percakapan di `.minicode/sessions.db` (SQLite WAL); `--resume` lanjut full history |
+| **Session** | Riwayat tersimpan di `.minicode/sessions.db` (SQLite WAL); kompaksi dapat mengganti bagian lama dengan ringkasan + tail |
 | **Memory dua lapis** | `MEMORY.md` hierarki (selalu ke system prompt) + vector RAG hybrid (injeksi bila skor ≥ ambang) |
 | **RAG hybrid** | Pencarian memory cosine 0.7 + keyword 0.3, ranking MMR (λ 0.7), dedup >0.92 |
 | **Repo-map** | Simbol per file (regex 9 bahasa, fallback LSP) disuntik ke system prompt |

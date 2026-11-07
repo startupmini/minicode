@@ -1,8 +1,8 @@
 # Arsitektur
 
-Peta struktur hidup yang interaktif ada di `ARCHITECTURE.html` (file pendamping di folder ini — search/filter, Sekilas + section `01` → `09`). Halaman ini ringkasannya agar bisa dibaca GitBook + AI Ask.
+Dokumen ini adalah peta struktur dan alur runtime yang aktif untuk kontributor.
 
-Rencana aktif: **roadmap arsitektur = `ROADMAP.md` di root repo** (salinan roadmap arsitektur milik pemilik yang ada di root repo) — di situulah posisi Big Phase P1–P14, next action arsitektur, dan status track Quality Remediation. `PLAN.md` di root tetap ada sebagai **ledger produk/milestone legacy** (`LEGACY-0.9/*`), bukan sumber status fase (lihat tabel disambiguasi di `AGENTS.md`). Kontrak terminal FROZEN: `TERMINAL_CONTRACT.md` (folder ini) — baca sebelum menyentuh output/rendering; perubahan perilaku wajib update dokumen + test peta proteksinya. Audit dan target output architecture: [OUTPUT_ARCHITECTURE_AUDIT.md](OUTPUT_ARCHITECTURE_AUDIT.md) beserta [event model](OUTPUT_EVENT_MODEL.md), [protocol](OUTPUT_PROTOCOL_SPEC.md), [rendering](OUTPUT_RENDERING_SPEC.md), [UX](OUTPUT_UX_RULES.md), dan [implementation plan](OUTPUT_IMPLEMENTATION_PLAN.md). Riset harness: `HARNESS.md` (folder ini). Arsip: `PLAN_UIUX_V6.md` (selesai, jangan dikerjakan ulang).
+Roadmap fase pemilik tidak tersedia di checkout ini; jangan simpulkan status fase atau next action dari changelog maupun kode. `TERMINAL_CONTRACT.md` adalah kontrak terminal FROZEN — baca sebelum mengubah output; perubahan perilaku memerlukan pembaruan kontrak dan peta test. Kontrak output aktif ada di [event model](OUTPUT_EVENT_MODEL.md), [protocol](OUTPUT_PROTOCOL_SPEC.md), [rendering](OUTPUT_RENDERING_SPEC.md), dan [UX rules](OUTPUT_UX_RULES.md). Peta alur rendering ada di [UI Render Pipeline](UI_RENDER_PIPELINE.md).
 
 ## Tiga lapisan
 
@@ -29,13 +29,16 @@ dutinya:
 | Lapis | Isi | Authoritatif untuk |
 |---|---|---|
 | Kernel `ContextStore` | history yang dikirim ke model, bisa lossy saat kompaksi | window berjalan |
-| Tabel `messages` (durable) | `role, content, toolCalls, toolCallId, name, reasoning, is_error` | continuity/resume |
-| Vektor memory + `presentation_events` | ringkasan compaction, evento semantik | RAG & audit UI |
+| Tabel `messages` (durable) | `role, content, toolCalls, toolCallId, name, reasoning, is_error`; dapat diganti saat shrink kompaksi | continuity/resume dari bentuk tersimpan saat ini |
+| Vektor memory + `presentation_events` | ringkasan memory best-effort dan event semantik terpilih | RAG & audit UI; bukan salinan lengkap percakapan |
 
-`context_eviction ≠ state_loss`: memangkas yang working boleh, hilang dari
-durable tidak. Karena itu pagu summary kompaksi
-(`LIMITS.COMPACTION_SUMMARY_MAX_CHARS`) aman dipakai — fakta penuh tetap ada di
-`messages` dan vektor memory.
+Kompaksi bersifat lossy, termasuk setelah restart. `persistCurrent` mengirim
+history yang sudah dipadatkan ke `shrinkThreadHistory`, yang menghapus lalu
+menulis ulang baris `messages`; model mekanis juga meringkas pesan lama dan
+menghilangkan hasil tool yang sukses. Ringkasan ke vector memory hanya dibuat
+di jalur LLM, dibatasi, opt-out, dan best-effort. Karena itu jangan menganggap
+semua fakta lama tetap dapat dipulihkan dari sesi atau vector store; state
+penting harus dicatat di task, file, atau artefak verifikasi yang otoritatif.
 
 Fidelity resume: `reasoning` (thinking) dan `is_error` (tool gagal) adalah
 field kernel `Message` yang ikut dibawa ke history. Semula keduanya tidak punya
@@ -82,8 +85,7 @@ Tiga aturan yang menjaga domain ini:
    bisa berbeda arah — dan plan event terbit di `execution:completed`, bukan
    dari argumen sebelum tool jalan.
 
-Batas subsystem **todo** (lihat `docs/TASK_ARCHITECTURE_AUDIT.md` untuk
-audit historisnya): file todo tetap datar — tanpa field dependency di
+Batas subsystem **todo**: file todo tetap datar — tanpa field dependency di
 `TodoItem`, tanpa surface user (`/tasks`), `/undo` hanya revert file (todo
 tetap `completed`), dan tanpa TTL/GC untuk file todo di luar SQLite.
 Dependency/graph dan scheduler **sudah ada**, tetapi pada subsystem terpisah:

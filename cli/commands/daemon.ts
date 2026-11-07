@@ -18,14 +18,14 @@ import { createStoreFeed } from "../../src/daemon/feed.ts"
 import type { DaemonHost } from "../../src/daemon/host.ts"
 import { DAEMON_SCOPES, type DaemonScope } from "../../src/daemon/protocol.ts"
 import { sanitizeLabel } from "../../src/daemon/sanitize.ts"
-import { VerifyWorkModeConflictError, type WorkMode } from "../../src/policy/work-mode.ts"
+import { VerifyWorkModeConflictError } from "../../src/policy/work-mode.ts"
 import { DURABILITY } from "../../src/presentation/events.ts"
 import {
   type RuntimeProductionMode,
   resolveRuntimeMode,
 } from "../../src/runtime/production-execution.ts"
 import { listSessionRuns } from "../../src/session/persistence.ts"
-import { flagNameOf, resolveWorkModeFlag, valueFlags } from "../args.ts"
+import { displayWorkMode, flagNameOf, resolveWorkModeFlag, valueFlags } from "../args.ts"
 import type { CliSession, CliSessionOptions } from "../setup.ts"
 
 export async function handleDaemon(
@@ -220,8 +220,7 @@ export async function startDaemonHostedRuntime(opts: {
   // [P13.3 Stage C] Scheduler mengikuti mode runtime, bukan flag terpisah:
   // daemon `owned` memang ingin kerja durable berlanjut; mode lain tetap inert.
   const schedulerEnabled = schedulerEnabledForDaemon(runtimeMode)
-  // P0.2 (Q5): parity WorkMode di daemon (`--work-mode` > `MINICODE_WORK_MODE`
-  // > default EXECUTE; invalid = EXECUTE + warning di startDaemon).
+  // Daemon mengikuti default DISCUSS serta fallback DISCUSS untuk nilai invalid.
   const workModeResolved = resolveWorkModeFlag(getArg)
 
   const { DaemonHost } = await import("../../src/daemon/host.ts")
@@ -395,7 +394,7 @@ export async function startDaemonHostedRuntime(opts: {
       },
       presentationHead: durable.head(),
       get workMode() {
-        return session.workMode
+        return displayWorkMode(session.workMode)
       },
       // P2.3: recovery run terakhir yang durable — setelah restart run mati
       // tampil INTERRUPTED + recovery UNKNOWN, tidak pernah disamarkan LIVE.
@@ -439,7 +438,7 @@ export async function startDaemonHostedRuntime(opts: {
     host,
     session: ctx,
     closeHostedSession,
-    workMode: ctx?.workMode ?? workModeResolved.workMode,
+    workMode: displayWorkMode(ctx?.workMode ?? workModeResolved.workMode),
     ...(workModeResolved.warning ? { workModeWarning: workModeResolved.warning } : {}),
   }
 }
@@ -458,7 +457,7 @@ export interface DaemonHostedRuntime {
   /** Tutup sesi yang di-host (idempoten). Dipakai daemon saat shutdown. */
   readonly closeHostedSession: () => Promise<void>
   /** P0.2 (Q5): WorkMode efektif daemon / sesi yang di-host. */
-  readonly workMode: WorkMode
+  readonly workMode: "DISCUSS" | "PLAN" | "BUILD"
   /** P0.2 (Q5): Peringatan bila nilai `--work-mode` / env tidak valid. */
   readonly workModeWarning?: string
 }

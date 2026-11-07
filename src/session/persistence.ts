@@ -217,7 +217,7 @@ function open(cwd?: string, local = false): Database {
           db.exec("ALTER TABLE sessions ADD COLUMN parent_run_id TEXT NULL")
         }
         // P0.2 (Q5): persistensi WorkMode di metadata sesi lintas `--resume`.
-        // NULL = sesi legacy pra-P0.2 (resume fallback ke default EXECUTE).
+        // NULL = sesi legacy tanpa WorkMode tersimpan (resume fallback DISCUSS).
         if (!cols.some((c) => c.name === "work_mode")) {
           db.exec("ALTER TABLE sessions ADD COLUMN work_mode TEXT NULL")
         }

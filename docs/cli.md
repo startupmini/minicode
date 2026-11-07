@@ -57,7 +57,7 @@ Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `s
 | `--max-steps <n>` | Batas langkah tool (default 50) |
 | `--context-window <n>` | Ukuran jendela konteks (token) |
 | `--session <id>` | ID sesi (default random, disanitasi) |
-| `--work-mode <m>` | `DISCUSS` \| `PLAN` \| `BUILD` (default). **Operating mode**: `DISCUSS` = investigasi read-only, `PLAN` = analisis/planning, `BUILD` = implementasi (identitas internal `EXECUTE`). Persetujuan (`AUTO`/`ASK`) dipisah; tool availability mengikuti ceiling WorkMode. Lihat [TUI](repl.md) untuk `/work-mode` |
+| `--work-mode <m>` | `DISCUSS` \| `PLAN` \| `BUILD` (default: `DISCUSS`). **Work Mode**: `DISCUSS` = investigasi read-only, `PLAN` = perencanaan, `BUILD` = implementasi. Persetujuan hanya `AUTO`/`ASK` (default `AUTO`). Lihat [TUI](repl.md) untuk `/work-mode` |
 | `--enable-scheduler` | Opt-in scheduler otonom (default **off**). Tanpa flag ini, scheduler tidak dibangun sama sekali dan `/scheduler` menjawab "not enabled". Eksekusi manual saja lewat `/scheduler run` — tidak ada timer; turn otonom bersifat read-only. Lihat `/scheduler status` dan `/scheduler stop` |
 | `--runtime <mode>` | `off` (default) \| `constructed` \| `owned`. Arsitektur eksekusi: `off` = perilaku sekarang, tak berubah; `constructed` = runtime + jurnal durable dibangun, turn masih jalan jalur lama; `owned` = setiap turn di-admit lewat runtime (kernel + jurnal durable) dan admission yang ditolak menjalankan tak apa pun. Nilai tak dikenal = `off` |
 
@@ -75,11 +75,12 @@ Di TUI, **Tab** memutar Work Mode (`Discuss` → `Plan` → `Build`) dan **Shift
 
 | Tujuan | Pakai |
 |---|---|
-| Kerja harian biasa | Default (`BUILD` + `AUTO`) — tulis/eksekusi/commit/delegasi jalan otonom bila authorized |
+| Memahami repo tanpa perubahan | Default (`DISCUSS` + `AUTO`) — investigasi read-only lokal |
+| Meminta perubahan | `--work-mode BUILD` (`AUTO` default untuk persetujuan) — tool tulis/eksekusi tetap tunduk pada policy |
 | Repo asing / perintah belum dipahami | `--ask` (`BUILD` + `ASK`), jawab `always` hanya untuk pasangan tool+args yang sudah dinilai |
 | Review/analisis tanpa eksekusi | `--work-mode PLAN` (atau `--work-mode DISCUSS` untuk investigasi read-only murni) |
 | CI tanpa manusia | `exec --json` + `--budget`/`--max-steps`; `AUTO` menolak `ask_user` deterministik |
-| Otonom penuh di mesin sendiri | Default `BUILD`+`AUTO`; isolasi tambahan `--sandbox docker` (atau OS) + `--budget` |
+| Otonom penuh di mesin sendiri | `--work-mode BUILD` + `AUTO`; isolasi tambahan `--sandbox docker` (atau OS) + `--budget` |
 | Model mahal tak terkendali | `--budget 0.50` + `--budget-strict` + `pricing sync` |
 
 Detail alasan tiap mode di [Memilih Mode](choosing-mode.md).

@@ -23,6 +23,7 @@ import { formatUsd } from "../src/ui/render/money.ts"
 import { c, glyphs } from "../src/ui/render/theme.ts"
 import {
   allowLocalConfig,
+  displayWorkMode,
   flagsAfterPromptBoundary,
   hasFlag,
   promptFromArgs,
@@ -80,7 +81,7 @@ Options:
   --budget <usd>      session cost limit
   --budget-strict     unknown cost + spend counts as over budget (fail-closed default)
   --tool-scope <s>    full (default) | explore (read-only subset)
-  --work-mode <m>     DISCUSS | PLAN | BUILD (default). Operating mode: DISCUSS =
+  --work-mode <m>     DISCUSS | PLAN | BUILD (default: DISCUSS). Operating mode: DISCUSS =
                       read-only investigation, PLAN = planning, BUILD = implementation.
   --tui               deprecated no-op (interactive mode is always the fullscreen TUI)
   --enable-scheduler  EXPERIMENTAL: opt in to the autonomous scheduler (default: off).
@@ -268,7 +269,7 @@ if (args.includes("-h") || args.includes("--help")) {
           { flag: "--tool-scope <full|explore>", desc: "tool subset (explore = read-only)" },
           {
             flag: "--work-mode <DISCUSS|PLAN|BUILD>",
-            desc: "operating mode: DISCUSS (read-only), PLAN (planning), BUILD (default)",
+            desc: "operating mode: DISCUSS (default, read-only), PLAN (planning), BUILD",
           },
           { flag: "--json", desc: "JSON output (help/exec)" },
           { flag: "--tui", desc: "deprecated no-op (interactive is always the fullscreen TUI)" },
@@ -305,15 +306,13 @@ const cwd = cwdRaw ? resolvePath(cwdRaw) : undefined
 // eksplisit per-invokasi (flag atau env). Tanpa ini repo clone-an bisa
 // men-spawn MCP server dan menyedot prompt ke endpoint penyerang.
 const allowLocal = allowLocalConfig(args)
-// P12 S2.2 — WorkMode (lapis intent di ATAS permission mode). Flag mengalahkan
-// env; keduanya tak ada = EXECUTE. Nilai tak dikenal = EXECUTE + warning
-// (fail-closed, jangan pernah melebar). `--plan` (permission mode) TIDAK
-// disamakan dengan WorkMode PLAN — keduanya lapisan terpisah.
+// WorkMode (lapis intent di atas profil izin). Flag mengalahkan env;
+// keduanya tak ada atau nilainya tak dikenal = DISCUSS (fail-closed).
+// `--plan` adalah alias legacy untuk WorkMode PLAN.
 const workModeResolved = resolveWorkModeFlag(getArg)
 const workMode = workModeResolved.workMode
-// P12 S2.2 (D-2) — Sinyal WorkMode eksplisit (flag/env) ikut diteruskan supaya
-// jalur resume bisa memberi tahu transparan bahwa WorkMode TIDAK dipersist dan
-// default EXECUTE saat tak diberi ulang.
+// Sinyal WorkMode eksplisit (flag/env) ikut diteruskan agar resume dapat
+// membedakan pilihan sesi tersimpan dari default DISCUSS.
 const workModeExplicit = workModeResolved.explicit
 if (workModeResolved.warning) process.stderr.write(`[warn] ${workModeResolved.warning}\n`)
 // [PHASE 6U] Autonomous Scheduler opt-in. DEFAULT OFF.
@@ -555,7 +554,7 @@ try {
     budget,
     budgetStrict,
     toolScope,
-    // P12 S2.2 — WorkMode efektif (sudah di-resolve, default EXECUTE).
+    // WorkMode efektif (sudah di-resolve, default DISCUSS).
     workMode,
     // P12 S2.2 (D-2) — transparansi resume: tahu apakah WorkMode diberi eksplisit.
     workModeExplicit,
@@ -602,10 +601,15 @@ if (enterRepl) {
 } else {
   // P12 S2.2 (F-DISCUSS-4) + P0.2: one-shot linear memakai `ctx.workMode`
   // efektif (termasuk hasil pulihan `--resume`).
-  if (ctx.workMode !== "EXECUTE") {
-    process.stderr.write(
-      `[work-mode] ${ctx.workMode}${ctx.workMode === "PLAN" ? " (read-only planning)" : " (read-only)"}\n`,
-    )
+  if (ctx.workMode !== "EXECUTE" || workModeExplicit) {
+    const workModeLabel = displayWorkMode(ctx.workMode)
+    const modeNote =
+      ctx.workMode === "PLAN"
+        ? " (read-only planning)"
+        : ctx.workMode === "DISCUSS"
+          ? " (read-only)"
+          : ""
+    process.stderr.write(`[work-mode] ${workModeLabel}${modeNote}\n`)
   }
   const {
     session,

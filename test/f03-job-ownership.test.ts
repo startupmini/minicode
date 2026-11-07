@@ -191,8 +191,13 @@ describe("F-03 dua CliSession dalam satu proses (jalur produksi)", () => {
 
   test("D: job milik sesi A tak bisa di-inspect/cancel sesi B", async () => {
     const cwd = ws()
-    const sA = await createCliSession(baseOpts(cwd, { sessionId: "f03sesi-a" }))
-    const sB = await createCliSession(baseOpts(cwd, { sessionId: "f03sesi-b" }))
+    // Tes job membutuhkan tool background yang memang hanya terlihat di Build.
+    const sA = await createCliSession(
+      baseOpts(cwd, { sessionId: "f03sesi-a", workMode: "EXECUTE" }),
+    )
+    const sB = await createCliSession(
+      baseOpts(cwd, { sessionId: "f03sesi-b", workMode: "EXECUTE" }),
+    )
     try {
       const toolOf = (s: { sessionTools: Tool[] }, name: string): Tool => {
         const t = s.sessionTools.find((x) => x.name === name)

@@ -446,7 +446,7 @@ describe("cli/setup: WorkMode resume transparency (D-2)", () => {
     const first = await createCliSession({
       ...baseOpts(cwd),
       sessionId: "wm-resume-src",
-      workMode: opts.savedWorkMode ?? "EXECUTE",
+      workMode: opts.savedWorkMode ?? "DISCUSS",
     })
     await first.persistCurrent({})
     await first.close()
@@ -492,11 +492,11 @@ describe("cli/setup: WorkMode resume transparency (D-2)", () => {
     expect(r.stderr).toContain("[resume] WorkMode DISCUSS restored from session")
   })
 
-  test("resume sesi legacy (work_mode NULL) tanpa sinyal eksplisit → fallback EXECUTE transparan", async () => {
+  test("resume sesi legacy (work_mode NULL) tanpa sinyal eksplisit → fallback DISCUSS transparan", async () => {
     const r = await resumeProbe({ savedWorkMode: null })
-    expect(r.effective).toBe("EXECUTE")
+    expect(r.effective).toBe("DISCUSS")
     expect(r.stderr).toContain(
-      "[resume] WorkMode default EXECUTE (legacy session without saved workMode)",
+      "[resume] WorkMode default DISCUSS (legacy session without saved workMode)",
     )
   })
 

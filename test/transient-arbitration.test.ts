@@ -101,7 +101,8 @@ describe("transient arbitration", () => {
     await sleep(400)
     expect(tty.allErr()).not.toContain("Menyiapkan sesi")
     // Isi layar tetap utuh di stdout pada periode yang sama.
-    expect(stripAnsi(tty.all())).toContain("Select gateway")
+    expect(stripAnsi(tty.all())).toContain("DeepSeek")
+    expect(stripAnsi(tty.all())).not.toContain("Select gateway")
     await tty.send(KEY.enter, 40)
     await p
     expect(picked.value).toBe("https://api.deepseek.com")

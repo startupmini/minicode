@@ -497,10 +497,7 @@ export async function compactWithLlm(
       : []
   const messages = prior.length > 0 ? all.slice(1) : all
   const kept = getKeptCount(messages, keep)
-  const activeTurn =
-    kept >= messages.length &&
-    (messages.some((message) => message.role === "tool") ||
-      (prior.length > 0 && messages.length > 1))
+  const activeTurn = kept >= messages.length && messages.some((message) => message.role === "tool")
   if (kept >= messages.length && !activeTurn) return all
   const prefix = activeTurn ? messages : messages.slice(0, messages.length - kept)
   const keptTail = activeTurn ? [] : messages.slice(-kept)

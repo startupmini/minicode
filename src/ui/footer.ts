@@ -62,7 +62,7 @@ function titleCaseMode(value: string, fallback: string): string {
 }
 
 function workModeValue(workMode?: string): string {
-  const normalized = (workMode || "EXECUTE").toUpperCase()
+  const normalized = (workMode || "DISCUSS").toUpperCase()
   if (normalized === "EXECUTE" || normalized === "BUILD") return "Build"
   if (normalized === "DISCUSS") return "Discuss"
   if (normalized === "PLAN") return "Plan"
@@ -74,7 +74,7 @@ type ModeLabelStyle = "full" | "compact" | "value"
 /** Work Mode memakai warna semantik; label/nilai memakai title case. */
 export function paintWorkMode(workMode?: string, style: ModeLabelStyle = "full"): string {
   const value = workModeValue(workMode)
-  const normalized = sanitizeAnsiLine(workMode || "EXECUTE").toUpperCase()
+  const normalized = sanitizeAnsiLine(workMode || "DISCUSS").toUpperCase()
   const prefix = style === "full" ? "Work Mode: " : style === "compact" ? "Work: " : ""
   const width =
     style === "full"

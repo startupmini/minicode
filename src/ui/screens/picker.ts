@@ -26,12 +26,10 @@ export interface PickerOptions {
   items: PickerItem[]
   onPick: (value: string) => void
   onCancel: () => void
-  placeholder?: string
   filterable?: boolean
 }
 
-const dim = (s: string): string => c.dim(s),
-  ACC_DIM = (s: string) => c.accent(s)
+const dim = (s: string): string => c.dim(s)
 
 /** Lebar kotak popup picker TETAP (keputusan rasa: geometri stabil). */
 const PICKER_BOX_W = 64
@@ -53,10 +51,11 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
   if (!process.stdin.isTTY) {
     // Pipe/redirect: item dari config (tak-terpercaya) disanitasi agar ANSI
     // mentah tak mencemari output program (kontrak stdout non-TTY).
-    console.log(`\n${opts.title}`)
-    for (const [i, it] of opts.items.entries())
-      console.log(`  [${i}] ${sanitizeAnsiLine(it.provider)}::${sanitizeAnsiLine(it.name)}`)
-    console.log("")
+    for (const it of opts.items) {
+      const provider = sanitizeAnsiLine(it.provider)
+      const name = sanitizeAnsiLine(it.name)
+      console.log(provider ? `${provider}::${name}` : name)
+    }
     // Fail-closed: pemanggil nested (mis. pickEffort di /model) menunggu
     // onPick/onCancel — tanpa ini await-nya gantung selamanya (busy=true)
     // saat isTTY flip di tengah. Non-TTY = tak ada pilihan = batal.
@@ -88,11 +87,9 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
     // dicetak — keduanya membungkus dan merusak tampilan.
     const visibleRows = () => {
       const rows = process.stdout.rows || 24
-      // Sisakan ruang untuk judul, baris filter, baris footer, dan baris sisa.
-      const chrome = isFilterable ? 4 : 3
-      // Modal: dialog menambah border/judul/footer di luar jatah view + sisakan
-      // 1 baris untuk baris counter ("… N more") agar End selalu sampai dasar.
-      if (useModal) return Math.max(1, Math.min(rows - 5, 12))
+      // Modal tanpa judul/footer; sisakan border dan baris pencarian bila ada.
+      if (useModal) return Math.max(1, Math.min(rows - (isFilterable ? 3 : 2), 12))
+      const chrome = isFilterable ? 3 : 2
       return Math.max(1, Math.min(rows - chrome, 12))
     }
     // Lebar konten = lebar kotak TETAP (min=max, keputusan rasa: geometri
@@ -115,11 +112,9 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       const cut = (s: string) => truncateToWidth(s, w)
       const lines: string[] = []
       if (isFilterable) {
-        const placeholderText = opts.placeholder ?? t("pick.placeholder")
         // Filter = input user tak terpercaya — sanitasi sebelum tampil.
-        const display = filter ? c.brightCyan(sanitizeAnsiLine(filter)) : dim(placeholderText)
-        const label = filter ? ACC_DIM(t("pick.filter")) : dim(t("pick.filter"))
-        lines.push(cut(`${label} ${display}`))
+        const display = filter ? c.brightCyan(sanitizeAnsiLine(filter)) : ""
+        lines.push(cut(`${dim(">")} ${display}${c.accent("█")}`))
       }
       if (items.length === 0) {
         lines.push(cut(dim(`  ${t("pick.noMatch", { q: sanitizeAnsiLine(filter) })}`)))
@@ -128,28 +123,18 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       for (let i = 0; i < rows.length; i++) {
         const it = rows[i]!
         const picked = i === sel - scroll
-        // Potong label ke KOLOM (CJK 2 kolom), sisakan ruang untuk penanda "› ".
-        // Highlight query DITERAPKAN sebelum truncate agar posisi kolom tepat.
-        // Nama di DEPAN (truncasi memakan ekor — id/nama adalah info
-        // terpenting dan harus selamat); provider/tanggal sebagai konteks
-        // ekor yang boleh terpotong. Sanitasi DULU karena truncateToWidth
-        // menyalin semua escape (juga 2J).
-        const rawLabel = `${sanitizeAnsiLine(it.name)}${it.provider ? ` — ${sanitizeAnsiLine(it.provider)}` : ""}`
+        // Label provider::model ringkas; teks tetap disanitasi sebelum truncate.
+        // Highlight query diterapkan sebelum truncate agar posisi kolom tepat.
+        const safeProvider = sanitizeAnsiLine(it.provider)
+        const rawLabel = safeProvider
+          ? `${safeProvider}::${sanitizeAnsiLine(it.name)}`
+          : sanitizeAnsiLine(it.name)
         const label = highlightMatch(truncateToWidth(rawLabel, w - 4), filter)
         if (picked) lines.push(`  ${c.accent("›")} ${c.accent(c.bold(label))}`)
         else lines.push(`   ${dim(label)}`)
       }
-      if (items.length > scroll + v) {
-        lines.push(cut(dim(t("dlg.more", { n: items.length - scroll - v }))))
-      } else if (isFilterable && filter) {
-        lines.push(
-          cut(dim(`  ${t("pick.matches", { n: items.length, total: opts.items.length })}`)),
-        )
-      }
-      return lines
+      return lines.slice(0, v + (isFilterable ? 1 : 0))
     }
-
-    const hintText = (): string => t("pick.hint")
 
     const render = () => {
       // Popup komposit: HANYA region kotak yang dilukis (tanpa clear) di atas
@@ -157,9 +142,8 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       // me-repaint penuh saat popup tutup. Lebar TETAP 64 (min=max).
       const box = dialogBox(
         {
-          title: opts.title,
+          title: "",
           body: bodyLines(),
-          footer: hintText(),
           minWidth: PICKER_BOX_W,
           maxWidth: PICKER_BOX_W,
         },
@@ -167,16 +151,15 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
         screen.rows,
       )
       screen.paintRegion(box.lines, box.topRow)
-      // Parkir kursor: saat filter terisi, user sedang mengetik → kursor di
-      // ujung teks filter (dulu selalu di baris item = ketik buta). Saat
-      // filter kosong, parkir di baris item aktif (navigasi ↑↓).
+      // Parkir kursor pada input filter meski kosong agar teks pertama langsung
+      // masuk ke pencarian; navigasi item tetap memakai tombol panah.
       // Kolom = padding kiri + border + spasi + lebar label+filter + 1.
       try {
-        if (isFilterable && filter !== "") {
+        if (isFilterable) {
           const li = Math.min(box.lines.length - 1, box.bodyTop)
           const row = box.topRow + li
           const leftPad = boxLeftPad(stripAnsi(box.lines[li] ?? ""))
-          const col = leftPad + 2 + displayWidth(stripAnsi(`${t("pick.filter")} ${filter}`)) + 1
+          const col = leftPad + 2 + 2 + displayWidth(stripAnsi(filter)) + 1
           process.stdout.write(`\x1b[${row};${Math.max(1, col)}H\x1b[?25h`)
         } else {
           const itemRow = Math.min(Math.max(0, sel - scroll), Math.max(0, visibleRows() - 1))

@@ -221,7 +221,7 @@ export async function runTui(ctx: CliSession): Promise<void> {
     // P1.2: dua dimensi selalu terbaca live di /status — bukan snapshot boot.
     // [mode-architecture] /status memakai nilai PRODUK (BUILD/AUTO/ASK).
     get workMode() {
-      return displayWorkMode(workModeControl?.getWorkMode() ?? "EXECUTE")
+      return displayWorkMode(workModeControl?.getWorkMode() ?? "DISCUSS")
     },
     get permissionMode() {
       return (permissions?.getMode() ?? mode).toUpperCase()
@@ -272,7 +272,7 @@ export async function runTui(ctx: CliSession): Promise<void> {
   // (beserta /work-mode) yang menggeser operating mode — TIDAK permission mode.
   const cycleWorkMode = (dir: 1 | -1): void => {
     if (!workModeControl) return // policy terinjeksi = tanpa kontrol (fail-closed)
-    const current = workModeControl.getWorkMode() ?? "EXECUTE"
+    const current = workModeControl.getWorkMode() ?? "DISCUSS"
     const idx = (WORK_MODE_CYCLE as readonly string[]).indexOf(current)
     if (idx === -1) return
     const next = WORK_MODE_CYCLE[(idx + dir + WORK_MODE_CYCLE.length) % WORK_MODE_CYCLE.length]!
@@ -290,6 +290,7 @@ export async function runTui(ctx: CliSession): Promise<void> {
 
   async function runBuiltin(
     q: string,
+    recordOutput = true,
   ): Promise<{ lines: string[]; shouldExit: boolean; handled: boolean }> {
     let shouldExit = false
     let handled = false
@@ -304,15 +305,15 @@ export async function runTui(ctx: CliSession): Promise<void> {
       // Baris parsial yang sempat tercetak sebelum throw tetap tampil —
       // tanpa ini hanya pesan error generik yang keluar (data-loss diam).
       lines = (e as { capturedLines?: string[] }).capturedLines ?? []
-      if (lines.length) transcript.pushInfo(lines)
+      if (recordOutput && lines.length) transcript.pushInfo(lines)
       throw e
     }
     return { lines, shouldExit, handled }
   }
 
-  async function delegateBuiltin(q: string): Promise<{ quit?: boolean }> {
-    const { lines, shouldExit } = await runBuiltin(q)
-    if (lines.length) transcript.pushInfo(lines)
+  async function delegateBuiltin(q: string, recordOutput = true): Promise<{ quit?: boolean }> {
+    const { lines, shouldExit } = await runBuiltin(q, recordOutput)
+    if (recordOutput && lines.length) transcript.pushInfo(lines)
     return shouldExit ? { quit: true } : {}
   }
 
@@ -320,14 +321,13 @@ export async function runTui(ctx: CliSession): Promise<void> {
    * Builtin yang membuka popup: bekukan App (input dilepas + layar redup),
    * view melukis regionnya sendiri, App repaint saat kembali. Tanpa ini
    * byte masuk ke dua tempat (App + popup) dan frame App menimpa popup.
-   * Struk mutasi: model/provider yang berubah saat popup terbuka dicatat
-   * ke transkrip (jejak audit — scroll ke atas selalu menunjukkan ganti).
+   * Hasil pemilihan provider/model terlihat di footer dan daftar saat dibuka
+   * kembali; transkrip tidak mengarsipkan pilihan UI yang sudah selesai.
    */
   async function popupBuiltin(q: string): Promise<{ quit?: boolean }> {
-    const before = commandCtx.currentModel
     app.suspend()
     try {
-      return await delegateBuiltin(q)
+      return await delegateBuiltin(q, false)
     } catch (e) {
       // Spawn anak gagal (terminal sudah dilepas onBeforeSpawn): hidupkan
       // kembali atau keluar bersih — jangan biarkan TUI mati tanpa layar.
@@ -335,8 +335,6 @@ export async function runTui(ctx: CliSession): Promise<void> {
       throw e
     } finally {
       app.resume()
-      const after = commandCtx.currentModel
-      if (after && after !== before) transcript.pushInfo([c.muted(t("tui.modelSet", { v: after }))])
     }
   }
 
@@ -472,13 +470,12 @@ export async function runTui(ctx: CliSession): Promise<void> {
       } else {
         togglePermissionMode()
       }
-      transcript.pushInfo([c.muted(t("tui.modeLine", { m: mode.toUpperCase() }))])
       return
     }
     // [mode-architecture] /work-mode = WorkMode (operating mode) SAJA.
     // Aksi operator EKSPLISIT untuk operating mode; Tab/Shift+Tab = pintasan.
     if (name === "work-mode") {
-      const current = workModeControl?.getWorkMode() ?? "EXECUTE"
+      const current = workModeControl?.getWorkMode() ?? "DISCUSS"
       const currentDisplay = displayWorkMode(current)
       if (!args) {
         transcript.pushInfo([c.muted(t("tui.workModeUsage", { m: currentDisplay }))])
@@ -498,7 +495,6 @@ export async function runTui(ctx: CliSession): Promise<void> {
         return
       }
       workModeControl.setWorkMode(next)
-      transcript.pushInfo([c.muted(t("tui.workModeLine", { m: displayWorkMode(next) }))])
       return
     }
     if (name === "lang") {
@@ -518,19 +514,16 @@ export async function runTui(ctx: CliSession): Promise<void> {
         const { saveLang } = await import("../src/config.ts")
         await saveLang(next)
       } catch {}
-      transcript.pushInfo([c.muted(t("tui.langLine", { v: next }))])
       return
     }
     if (name === "compact") {
       const next = args === "" ? undefined : args === "on" || args === "1"
-      const compact = ui.setCompactMode(next)
-      transcript.pushInfo([c.muted(t("tui.toolCall", { v: compact ? "compact" : "expanded" }))])
+      ui.setCompactMode(next)
       return
     }
     if (name === "thinking") {
       const next = args === "" ? undefined : args === "on" || args === "1"
-      const vis = ui.setReasoningVisible(next)
-      transcript.pushInfo([c.muted(t("tui.thinkingSet", { v: vis ? "expanded" : "minimized" }))])
+      ui.setReasoningVisible(next)
       return
     }
     if (name === "expand") {
@@ -571,7 +564,6 @@ export async function runTui(ctx: CliSession): Promise<void> {
       }
       ui.setSectionMinimized("tool", next)
       ui.setSectionMinimized("answer", next)
-      transcript.pushInfo([c.muted(t(next ? "tui.sectionsMin" : "tui.sectionsExp"))])
       return
     }
     if (name === "undo") {
@@ -649,7 +641,7 @@ export async function runTui(ctx: CliSession): Promise<void> {
           mode,
           // P12 S2.2 Slice 5 - WorkMode LIVE (bukan snapshot boot): footer
           // mencerminkan mode aktif saat frame digambar.
-          workMode: workModeControl?.getWorkMode() ?? "EXECUTE",
+          workMode: workModeControl?.getWorkMode() ?? "DISCUSS",
           model: modelRef.current ?? cfg.providers[0]?.models[0] ?? t("tui.noModel"),
           cwd: cwd ?? process.cwd(),
           context: fmtCtx(session.contextTokens),

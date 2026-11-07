@@ -3,7 +3,7 @@
 // sekadar "fungsi baru ada".
 
 import { expect, test } from "bun:test"
-import { readdirSync, readFileSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { buildResumeSpawnArgs } from "../cli/commands.ts"
 import {
@@ -288,25 +288,16 @@ test("F2: M12 tidak membuat plan dari bukti NaN (suppressed, bukan unsafe-plan)"
   expect(result.nextAction).not.toBe("PLAN_REDISPATCH")
 })
 
-// ── F6: peta cocok dengan tree aktual (generik, anti-drift masa depan) ──────
-test("F6: jumlah modul src/runtime di peta = jumlah berkas aktual", () => {
-  // Peta mendokumentasikan working tree (termasuk berkas yang belum di-commit),
-  // jadi hitung dari filesystem — bukan dari index git.
-  const actual = readdirSync(join(repoRoot, "src", "runtime")).filter((f) =>
-    f.endsWith(".ts"),
-  ).length
-  const html = readFileSync(join(repoRoot, "docs/ARCHITECTURE.html"), "utf8")
-  const m = html.match(/id="g-runtime"[\s\S]*?<span class="cnt">(\d+) modul<\/span>/)
-  expect(m).not.toBeNull()
-  expect(Number(m![1])).toBe(actual)
+// ── F6: peta arsitektur Markdown adalah sumber aktif ────────────────────────
+test("F6: peta arsitektur aktif mencatat lapisan dan jalur runtime", () => {
+  const architecture = readFileSync(join(repoRoot, "docs/architecture.md"), "utf8")
+  expect(architecture).toContain("L1 cli/ + src/ui/")
+  expect(architecture).toContain("L2 src/ non-ui")
+  expect(architecture).toContain("L3 vendor/minicore")
+  expect(architecture).toContain("execution-kernel.ts")
 })
 
-test("F6: kartu status produksi menyatakan default off + Stage D belum disetujui", () => {
-  const html = readFileSync(join(repoRoot, "docs/ARCHITECTURE.html"), "utf8")
-  expect(html).toContain("--runtime off")
-  // "default-on" hanya boleh muncul bersama penanda "belum disetujui".
-  const mentions = [...html.matchAll(/default-on/g)].length
-  expect(mentions).toBeGreaterThan(0)
-  expect(html).toContain("belum disetujui")
-  expect(html).toContain("P2")
+test("F6: dokumentasi CLI menyatakan runtime off sebagai default", () => {
+  const cliDocs = readFileSync(join(repoRoot, "docs/cli.md"), "utf8")
+  expect(cliDocs).toContain("`off` (default)")
 })

@@ -39,6 +39,7 @@ import {
 } from "../src/tools/task.ts"
 import { todoSession } from "../src/tools/todo.ts"
 import { paintPermissionMode, paintWorkMode, renderFooter } from "../src/ui/footer.ts"
+import { stripAnsi } from "../src/ui/render/theme.ts"
 import { installFakeTty, KEY } from "./helpers/tui-harness.ts"
 
 const dirs: string[] = []
@@ -323,7 +324,7 @@ describe("6. footer mencerminkan kombinasi WorkMode + permission mode", () => {
     expect(line).toContain("Work Mode: Plan")
     expect(line).toContain("Permission Mode: Auto")
     const plain = renderFooter({ mode: "auto", model: "m1", cwd: "cwd" }, 90)[0]!
-    expect(plain).toContain("Work Mode: Build")
+    expect(plain).toContain("Work Mode: Discuss")
     expect(plain).toContain("Permission Mode: Auto")
   })
 })
@@ -573,8 +574,9 @@ describe("7. command /work-mode (TUI end-to-end)", () => {
     await tty.waitForOutput((o) => o.includes("00.00.00"))
     await tty.send("/work-mode PLAN")
     await tty.send(KEY.enter)
-    await tty.waitForOutput((o) => o.includes("work mode: PLAN"))
+    await tty.waitForOutput(() => /Work(?: Mode)?: Plan/.test(stripAnsi(tty!.screen().join("\n"))))
     expect(control.getWorkMode()).toBe("PLAN")
+    expect(stripAnsi(tty.screen().join("\n"))).toMatch(/Work(?: Mode)?: Plan/)
     await tty.send("/exit")
     await tty.send(KEY.enter)
     await runP
@@ -588,12 +590,15 @@ describe("7. command /work-mode (TUI end-to-end)", () => {
     await tty.waitForOutput((o) => o.includes("00.00.00"))
     await tty.send("/work-mode DISCUSS")
     await tty.send(KEY.enter)
-    await tty.waitForOutput((o) => o.includes("work mode: DISCUSS"))
+    await tty.waitForOutput(() =>
+      /Work(?: Mode)?: Discuss/.test(stripAnsi(tty!.screen().join("\n"))),
+    )
     expect(control.getWorkMode()).toBe("DISCUSS")
+    expect(stripAnsi(tty.screen().join("\n"))).toMatch(/Work(?: Mode)?: Discuss/)
     // BUILD alias diterima → identitas internal EXECUTE, ditampil BUILD.
     await tty.send("/work-mode BUILD")
     await tty.send(KEY.enter)
-    await tty.waitForOutput((o) => o.includes("work mode: BUILD"))
+    await tty.waitForOutput(() => control.getWorkMode() === "EXECUTE")
     expect(control.getWorkMode()).toBe("EXECUTE")
     await tty.send("/exit")
     await tty.send(KEY.enter)
@@ -639,7 +644,9 @@ describe("7. command /work-mode (TUI end-to-end)", () => {
     // /mode = permission mode (AUTO/ASK saja; nilai lain "unknown mode").
     await tty.send("/mode ask")
     await tty.send(KEY.enter)
-    await tty.waitForOutput((o) => o.includes("mode: ASK"))
+    await tty.waitForOutput(() =>
+      /Permission(?: Mode)?: Ask/.test(stripAnsi(tty!.screen().join("\n"))),
+    )
     expect(control.getWorkMode()).toBe("PLAN")
     // Nilai legacy (readonly) tak lagi diterima sebagai permission mode.
     await tty.send("/mode readonly")

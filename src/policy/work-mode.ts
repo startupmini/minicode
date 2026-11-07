@@ -30,7 +30,7 @@ export class VerifyWorkModeConflictError extends Error {
   readonly workMode: Exclude<WorkMode, "EXECUTE">
   constructor(workMode: Exclude<WorkMode, "EXECUTE">) {
     super(
-      `[work-mode] --verify cannot be combined with WorkMode ${workMode} (verification runs shell commands and self-heal turns; use --work-mode EXECUTE or omit --verify)`,
+      `[work-mode] --verify cannot be combined with WorkMode ${workMode} (verification runs shell commands and self-heal turns; use --work-mode BUILD or omit --verify)`,
     )
     this.name = "VerifyWorkModeConflictError"
     this.workMode = workMode

@@ -61,17 +61,17 @@ describe("acp: parseRunParams", () => {
     expect(good.ok).toBe(true)
     if (good.ok) expect(good.value.mode).toBe("auto")
   })
-  test("angka harus positif; mode hanya auto/plan", () => {
+  test("angka harus positif; mode persetujuan hanya auto/ask", () => {
     expect(parseRunParams({ prompt: "x", maxSteps: 0 }).ok).toBe(false)
     expect(parseRunParams({ prompt: "x", maxSteps: -1 }).ok).toBe(false)
     expect(parseRunParams({ prompt: "x", timeoutMs: NaN }).ok).toBe(false)
     expect(parseRunParams({ prompt: "x", mode: "yolo" }).ok).toBe(false)
-    const plan = parseRunParams({ prompt: "x", mode: "plan", maxSteps: 10.9, budget: 0 })
-    expect(plan.ok).toBe(true)
-    if (plan.ok) {
-      expect(plan.value.mode).toBe("plan")
-      expect(plan.value.maxSteps).toBe(10) // floor, bukan tolak
-      expect(plan.value.budget).toBe(0)
+    const ask = parseRunParams({ prompt: "x", mode: "ask", maxSteps: 10.9, budget: 0 })
+    expect(ask.ok).toBe(true)
+    if (ask.ok) {
+      expect(ask.value.mode).toBe("ask")
+      expect(ask.value.maxSteps).toBe(10) // floor, bukan tolak
+      expect(ask.value.budget).toBe(0)
     }
   })
 })

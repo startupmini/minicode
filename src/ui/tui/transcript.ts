@@ -132,6 +132,39 @@ function renderAssistantLine(line: string, fenceState: FenceState): string | nul
   return renderInline(line)
 }
 
+/**
+ * Rapikan hanya whitespace presentasi jawaban model: hapus baris kosong di
+ * tepi dan batasi jeda berulang di luar fenced code. Isi code fence tetap
+ * literal karena spasi dan baris kosong di dalamnya adalah bagian contoh.
+ */
+function normalizeAssistantOutput(text: string): string {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n")
+  const out: string[] = []
+  let openFence: { char: string; len: number } | null = null
+  for (const line of lines) {
+    const fence = parseFence(line)
+    if (openFence) {
+      out.push(line)
+      if (fence && fence.char === openFence.char && fence.len >= openFence.len) openFence = null
+      continue
+    }
+    if (fence) {
+      openFence = fence
+      out.push(line)
+      continue
+    }
+    if (!line.trim()) {
+      if (out.length && out[out.length - 1] !== "") out.push("")
+      continue
+    }
+    out.push(line)
+  }
+  // Jika fence belum ditutup, baris kosong di ekor masih bagian dari contoh
+  // kode dan harus tetap literal. Hanya whitespace di luar fence yang dirapatkan.
+  if (!openFence) while (out.length && out[out.length - 1] === "") out.pop()
+  return out.join("\n")
+}
+
 let selectionSegmenter: Intl.Segmenter | undefined
 
 function offsetAtColumn(text: string, start: number, end: number, column: number): number {
@@ -556,13 +589,18 @@ export class Transcript {
     }
     if (this.pending) {
       const pendingFence = this.fenceTracker()
-      for (const block of parseMarkdownBlocks(sanitizeAnsi(this.pending))) {
-        if (block.type === "table") rows.push(...this.projectTable(block.table, -1, w))
-        else
-          for (const line of block.text.split("\n")) {
-            const clean = stripSgr(sanitizeAnsi(line))
-            rows.push(...this.projectText(line, clean, -1, w, false, "", true, pendingFence(line)))
-          }
+      const pending = normalizeAssistantOutput(sanitizeAnsi(this.pending))
+      if (pending) {
+        for (const block of parseMarkdownBlocks(pending)) {
+          if (block.type === "table") rows.push(...this.projectTable(block.table, -1, w))
+          else
+            for (const line of block.text.split("\n")) {
+              const clean = stripSgr(sanitizeAnsi(line))
+              rows.push(
+                ...this.projectText(line, clean, -1, w, false, "", true, pendingFence(line)),
+              )
+            }
+        }
       }
     }
     if (this.pendingTruncated) {
@@ -707,11 +745,13 @@ export class Transcript {
 
   private commit(): void {
     if (!this.pending) return
-    const text = this.pendingTruncated
+    const rawText = this.pendingTruncated
       ? `${this.pending}\n${TRANSCRIPT_TRUNCATION_MARKER}`
       : this.pending
     this.pending = ""
     this.pendingTruncated = false
+    const text = normalizeAssistantOutput(rawText)
+    if (!text) return
     for (const block of parseMarkdownBlocks(sanitizeAnsi(text))) {
       if (block.type === "table") this.appendTable(block.table, { kind: "assistant" })
       else {

@@ -142,12 +142,11 @@ describe("popup komposit", () => {
       onCancel: () => {},
     })
     await tty!.waitForOutput((o) => o.includes("model-7"))
-    // Saring hingga 1 hasil: kotak menyusut drastis. ("1/8 matches" tak bisa
-    // dipakai sebagai marker byte — SGR memisahkan angka dan garis miring.)
+    // Saring hingga 1 hasil: kotak menyusut drastis tanpa baris hitungan.
     await tty!.send("model-1")
-    await tty!.waitForOutput((o) => o.includes("matches"))
     const frame = tty!.screen().join("\n")
     expect(frame).toContain("model-1")
+    expect(frame).not.toContain("matches")
     // Sisa kotak lama (item yang tersaring keluar) TIDAK tertinggal.
     expect(frame).not.toContain("model-7")
     expect(frame).not.toContain("model-0")

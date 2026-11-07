@@ -127,14 +127,19 @@ popup tidak boleh membuat listener stdin kedua.
 
 ### TUI semantic projection
 
-- User message: satu entry user dengan source range.
+- Prompt percakapan: satu entry user dengan source range. Input command slash tetap
+  tersedia di composer history, tetapi tidak ditambahkan sebagai pesan transkrip.
 - Assistant stream: live buffer yang di-cap; final node dipisah dari stream.
+- Whitespace jawaban dirapikan hanya pada layer tampilan: baris kosong tepi dibuang,
+  jeda berulang di luar code fence dirapatkan, isi fenced code tetap literal.
 - Activity: started → running → terminal, dengan glyph + status word.
 - Tool child: default dikelompokkan ke parent `delegate_task`; child detail tersedia
   pada verbose/debug.
 - Context compaction: system entry, tidak menghapus history.
 - Summary: system node dari canonical turn summary, bukan hasil hitung ulang widget.
 - Error: node dengan category/cause/hint; tidak hanya string merah.
+- Pilihan provider/model dan status selesai dari popup pengelolaan tidak diarsipkan
+  ke transkrip; state aktif dibaca dari footer/manager saat ini. Error tetap terlihat.
 
 ### Selection dan clipboard
 

@@ -18,11 +18,12 @@ sub-milestone (`P2.x`), Quality Remediation (`Stage 1`–`10`), dan hotfix
 
 ## Status checkout
 
-`CHANGELOG.md` mencatat v0.14.2. `package.json`, `PLAN.md`, `ROADMAP.md`,
-`docs/ARCHITECTURE.html`, dan `docs/audit/` tidak ada; beberapa skrip web dan
-test masih merujuk path yang hilang. Karena itu status roadmap dan hasil gate
-tidak dapat disimpulkan. Jangan menyebut checkout hijau atau release-ready
-tanpa input yang hilang dan verifikasi pada kandidat yang sama.
+`CHANGELOG.md` dan `package.json` saat ini mencatat v0.14.4. `PLAN.md` adalah
+ledger milestone legacy, bukan roadmap aktif. `ROADMAP.md`,
+`docs/ARCHITECTURE.html`, dan `docs/audit/` tidak ada; status roadmap belum
+tersedia. Gate repository dapat dijalankan, tetapi checkout tidak boleh
+disebut hijau atau release-ready sebelum seluruh gate lulus pada kandidat yang
+sama.
 
 Peta dokumentasi aktif: [docs/README.md](docs/README.md), navigasi:
 [`docs/SUMMARY.md`](docs/SUMMARY.md), arsitektur: [docs/architecture.md](docs/architecture.md),
@@ -34,8 +35,7 @@ kontrak terminal: [docs/TERMINAL_CONTRACT.md](docs/TERMINAL_CONTRACT.md).
 bun x tsc --noEmit && bun run lint && bun test && bun run gate:coverage && bun run gate:pack
 ```
 
-Gate ini tidak dapat dijalankan dari checkout sekarang karena `package.json`
-tidak ada; jangan membuat pengganti tanpa keputusan pemilik.
+Gate memakai manifest `package.json` yang ada pada checkout ini.
 
 **Ruang lingkup klaim hasil — baca sebelum menulis laporan status.**
 

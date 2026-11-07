@@ -79,7 +79,7 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
     src: "src/ui/tui/app.ts",
   },
   "config-providers": {
-    desc: "Gateway AI, OAuth device-code, model, dan effort.",
+    desc: "Gateway AI, OAuth device-code, katalog model, dan effort.",
     src: "src/providers/build.ts",
   },
   "pricing-budget": {

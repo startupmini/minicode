@@ -740,7 +740,10 @@ export class TuiApp {
       return
     }
     this.rememberHistory(line)
-    this.transcript.pushUser(rawLine)
+    // Built-in commands and shortcuts belong to the composer history, not the
+    // conversation transcript. The command result remains independently
+    // visible when it carries useful user-facing information.
+    if (!line.startsWith("/")) this.transcript.pushUser(rawLine)
     this.busy = true
     this.thinkingActive = false
     this.turnStartedAt = Date.now()
@@ -1146,14 +1149,12 @@ export class TuiApp {
     const room = Math.max(0, rows - 2 - this.composerHeight(cols, busy) - 3)
     const shown = hints.slice(0, Math.min(MAX_DROPDOWN_ROWS, room))
     const w = Math.max(10, cols)
-    const out: string[] = [c.muted(t("app.menuHeader"))]
+    const out: string[] = []
     shown.forEach((h, i) => {
       const picked = i === this.state.sel
-      const text = sanitizeAnsiLine(h)
-      out.push(picked ? c.accent(`› ${text}`) : `  ${text}`)
+      const text = sanitizeAnsiLine(h).replace(/^\/+/, "")
+      out.push(picked ? c.accent(c.bold(text)) : text)
     })
-    if (hints.length > shown.length)
-      out.push(c.muted(t("app.moreLines", { n: hints.length - shown.length })))
     return out.map((l) => chunkByWidth(l, w)[0] ?? "")
   }
 

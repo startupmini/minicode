@@ -3,8 +3,8 @@
 // Test sengaja agnostik warna (assert via stripAnsi) agar hijau di env apa
 // pun; harness fake-TTY dipakai agar columns terkontrol.
 //
-// [mode-architecture] Kedua lapis selalu tampil dengan label title case;
-// EXECUTE internal menjadi Build, sedangkan Permission Mode ditempatkan di kanan.
+// Kedua lapis selalu tampil dengan label title case; default Work Mode Discuss
+// dan default Permission Mode Auto terlihat tanpa konfigurasi tambahan.
 
 import { afterEach, describe, expect, test } from "bun:test"
 import {
@@ -67,7 +67,7 @@ describe("footer render", () => {
       90,
     )
     const plain = stripAnsi(status!)
-    expect(plain).toContain("Work Mode: Build")
+    expect(plain).toContain("Work Mode: Discuss")
     expect(plain).toContain("Permission Mode: Auto")
     expect(plain).toContain("m1")
     expect(plain).toContain("cwd")
@@ -83,11 +83,11 @@ describe("footer render", () => {
       stripAnsi(renderFooter({ mode: "auto", model: "m1", cwd: "cwd", activity }, 90)[0]!),
     )
     const modelColumn = lines[0]!.indexOf("m1")
-    const modeColumn = lines[0]!.indexOf("Work Mode: Build")
+    const modeColumn = lines[0]!.indexOf("Work Mode: Discuss")
     for (const line of lines) {
       expect(line).toContain("m1")
       expect(line.indexOf("m1")).toBe(modelColumn)
-      expect(line.indexOf("Work Mode: Build")).toBe(modeColumn)
+      expect(line.indexOf("Work Mode: Discuss")).toBe(modeColumn)
       expect(line).not.toMatch(/Thinking|Working|Running|\d+s/)
       expect(displayWidth(line)).toBeLessThanOrEqual(89)
     }
@@ -98,11 +98,11 @@ describe("footer render", () => {
     const lines = ["Thinking 0s", "Working 10s"].map((activity) =>
       stripAnsi(renderFooter({ mode: "auto", model: "m1", cwd: "cwd", activity }, 40)[0]!),
     )
-    const modeColumn = lines[0]!.indexOf("Work: Build")
+    const modeColumn = lines[0]!.indexOf("Work: Discuss")
     const modelColumn = lines[0]!.indexOf("m1")
     for (const line of lines) {
-      expect(line).toContain("Build")
-      expect(line.indexOf("Work: Build")).toBe(modeColumn)
+      expect(line).toContain("Discuss")
+      expect(line.indexOf("Work: Discuss")).toBe(modeColumn)
       expect(line).toContain("Permission: Auto")
       expect(line.indexOf("m1")).toBe(modelColumn)
       expect(line).not.toMatch(/Thinking|Working|Running|\d+s/)
@@ -125,10 +125,10 @@ describe("footer render", () => {
     const seconds = render("00.00.42", true, "seconds")
     const minutes = render("00.01.02", true, "minutes")
     const hours = render("01.00.00", true, "hours")
-    expect(stripAnsi(idle)).toMatch(/✦ {2}00\.00\.00 {2}Work Mode: Build +m1 +cwd/)
-    expect(stripAnsi(seconds)).toMatch(/✦ {2}00\.00\.42 {2}Work Mode: Build +m1 +cwd/)
-    expect(stripAnsi(minutes)).toMatch(/✦ {2}00\.01\.02 {2}Work Mode: Build +m1 +cwd/)
-    expect(stripAnsi(hours)).toMatch(/✦ {2}01\.00\.00 {2}Work Mode: Build +m1 +cwd/)
+    expect(stripAnsi(idle)).toMatch(/✦ {2}00\.00\.00 {2}Work Mode: Discuss +m1 +cwd/)
+    expect(stripAnsi(seconds)).toMatch(/✦ {2}00\.00\.42 {2}Work Mode: Discuss +m1 +cwd/)
+    expect(stripAnsi(minutes)).toMatch(/✦ {2}00\.01\.02 {2}Work Mode: Discuss +m1 +cwd/)
+    expect(stripAnsi(hours)).toMatch(/✦ {2}01\.00\.00 {2}Work Mode: Discuss +m1 +cwd/)
     for (const line of [idle, seconds, minutes, hours]) expect(stripAnsi(line)).not.toContain("•")
     expect(idle).toContain("\x1b[38;2;72;72;72m00.00.00")
     expect(seconds).toContain("\x1b[37m42\x1b[39m")
@@ -190,7 +190,7 @@ describe("footer render", () => {
     expect(displayWidth(stripAnsi(status!))).toBeLessThanOrEqual(23)
     expect(stripAnsi(status!)).toContain("✦")
     const plain = stripAnsi(status!)
-    expect(plain).toContain("Build")
+    expect(plain).toContain("Discuss")
     expect(plain).toContain("Ask")
   })
 
@@ -230,7 +230,7 @@ describe("footer render", () => {
     )
     expect(status!).not.toContain("\n")
     const plain = stripAnsi(status!)
-    expect(plain).toContain("Work Mode: Build")
+    expect(plain).toContain("Work Mode: Discuss")
     expect(plain).toContain("Permission Mode: Au To")
     expect(plain).toContain("m 1")
     expect(plain).toContain("a b")

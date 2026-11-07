@@ -85,9 +85,8 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
   return new Promise<void>((resolve) => {
     const visibleRows = () => {
       const rows = process.stdout.rows || 24
-      // Popup: jatah dialog rows−4 sudah termasuk baris counter/notice, jadi
-      // item dibatasi rows−5 (lihat picker.ts). Dialog mungil /model: maks 8.
-      return Math.max(1, Math.min(rows - 5, 8))
+      // Dialog tanpa judul/footer; satu baris dipakai untuk pencarian.
+      return Math.max(1, Math.min(rows - 3, 8))
     }
     // Lantai lebar tak boleh melebihi terminal. Lebar konten = lebar kotak
     // tetap dikurangi chrome dialog (border+padding = 4) agar sepakat dengan
@@ -134,9 +133,8 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
       // App. Lebar TETAP 64 (min=max) — tak pernah melompat mengikuti konten.
       const box = dialogBox(
         {
-          title: t("model.title"),
+          title: "",
           body: bodyLinesModal(),
-          footer: modelHint(),
           minWidth: MODAL_BOX_W,
           maxWidth: MODAL_BOX_W,
           maxHeight: 14,
@@ -163,11 +161,6 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
         process.stdout.write(`\x1b[${row};${col}H\x1b[?25h`)
       } catch {}
     }
-
-    /** Hint footer /model: Del/type-to-filter jadi discoverable (dulu tanpa
-     * footer — user baru tak tahu cara hapus/saring). */
-    const modelHint = (): string =>
-      `${c.accent(t("model.typeFilter"))} · Del:${c.accent(t("verb.delete"))} · Enter:${c.accent(t("verb.select"))} · Esc:${c.accent(t("verb.close"))}`
 
     // Popup butuh layar mampu; selain itu tolak BERSUARA + batal.
     const screen: AltScreen = openAltScreen()

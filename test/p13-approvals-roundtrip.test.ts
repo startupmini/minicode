@@ -137,7 +137,18 @@ async function startOwned(replies: FakeReply[]): Promise<Fixture> {
   isolateHome(home)
 
   const sessionId = `p136-approvals-${++sessionSeq}`
-  const argv = ["--runtime", "owned", "--prompt", "halo", "--session", sessionId]
+  // Approval flows exercise a mutating tool, so opt into Build explicitly;
+  // fresh sessions now default to the read-only Discuss posture.
+  const argv = [
+    "--runtime",
+    "owned",
+    "--work-mode",
+    "BUILD",
+    "--prompt",
+    "halo",
+    "--session",
+    sessionId,
+  ]
   const started = await startDaemonHostedRuntime({ sub: argv, getArg: getArgFrom(argv), cwd: dir })
   const session = started.session
   if (!session) throw new Error("sesi yang di-host tidak terbentuk")

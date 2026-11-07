@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.4] - 2026-11-07
+
+### Improved — clean TUI transcript and model output
+
+- Slash command input stays out of the conversation transcript; provider/model/session popup choices and routine UI toggle confirmations no longer leave historical rows behind. Informative command output and errors remain visible.
+- Model answers trim empty edge lines and collapse repeated blank lines outside fenced code, preserving code samples literally.
+- Terminal and rendering documentation now describe the updated transcript behavior; repository guidance and docs navigation reflect the available package manifest and current release version.
+
 ## [0.14.3] - 2026-11-07
 
 ### Improved — TUI mode clarity and runtime resilience

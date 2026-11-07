@@ -49,14 +49,15 @@ describe("wizard: non-TTY", () => {
 })
 
 describe("wizard: pemilihan gateway", () => {
-  test("memakai picker (panah), bukan prompt nomor", async () => {
+  test("memakai picker ringkas (panah), bukan prompt nomor", async () => {
     tty = installFakeTty({ columns: 80, rows: 24 })
     isolateHome()
     const p = runSetupWizard()
     await tty.ready(3000)
     const out = visible(tty)
-    // Judul picker muncul; tidak ada prompt "Choice [1-N]".
-    expect(out).toContain("Select gateway")
+    // Picker gateway hanya menampilkan opsi; judul dan prompt nomor tidak ada.
+    expect(out).toContain("OpenAI")
+    expect(out).not.toContain("Select gateway")
     expect(out).not.toMatch(/Choice \[1-\d+\]/)
     // Penanda seleksi picker ada.
     expect(out).toMatch(/\u203a/)
@@ -74,13 +75,15 @@ describe("wizard: pemilihan gateway", () => {
     expect(visible(tty)).toContain("Setup canceled")
   })
 
-  test("menyebut cara membatalkan sejak awal", async () => {
+  test("daftar gateway tidak menambah judul atau petunjuk", async () => {
     tty = installFakeTty()
     isolateHome()
     const p = runSetupWizard()
     await tty.ready(3000)
-    // Footer picker menyebut Esc sejak awal (dulu sapaan Ctrl+C).
-    expect(visible(tty)).toContain("Esc")
+    const out = visible(tty)
+    expect(out).toContain("OpenAI")
+    expect(out).not.toContain("Select gateway")
+    expect(out).not.toContain("Esc")
     await tty.send(KEY.esc, 60)
     await p
   })
@@ -128,15 +131,16 @@ describe("wizard: pemilihan gateway", () => {
   })
 })
 
-describe("wizard: bahasa", () => {
-  test("output is consistently English", async () => {
+describe("wizard: tampilan", () => {
+  test("daftar awal ringkas tanpa heading", async () => {
     tty = installFakeTty()
     isolateHome()
     const p = runSetupWizard()
     await tty.ready(3000)
     const out = visible(tty)
-    expect(out).toContain("Minicode setup")
-    expect(out).toContain("Select gateway")
+    expect(out).toContain("OpenAI")
+    expect(out).not.toContain("Minicode setup")
+    expect(out).not.toContain("Select gateway")
     await tty.send(KEY.esc, 60)
     await p
   })

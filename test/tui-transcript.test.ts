@@ -143,6 +143,25 @@ describe("Transcript", () => {
     expect(out).not.toContain("##")
     expect(out).not.toContain("`kode`")
   })
+  test("jawaban model merapatkan blank line luar tanpa mengubah blank line code", () => {
+    const { bus, t } = setup()
+    bus.emit("provider:text", {
+      text: "\n\n## Ringkasan\n\n\nParagraf.\n\n```ts\nconst a = 1\n\nconst b = 2\n```\n\n",
+    })
+    bus.emit("turn:completed", {})
+    const out = t.view(80, 20, 0).join("\n").trim()
+    expect(out).toContain("Ringkasan\n\nParagraf.")
+    expect(out).not.toContain("Paragraf.\n\n\n")
+    expect(out).toContain("const a = 1\n\nconst b = 2")
+  })
+  test("jawaban streaming mempertahankan blank line di fence yang belum lengkap", () => {
+    const { bus, t } = setup()
+    bus.emit("provider:text", { text: "```ts\nconst a = 1\n\n" })
+    bus.emit("turn:completed", {})
+    const rows = t.view(80, 10, 0)
+    expect(t.size()).toBeGreaterThanOrEqual(2)
+    expect(rows.join("\n")).toContain("const a = 1")
+  })
   test("code fence model menyembunyikan delimiter dan menjaga isi literal", () => {
     const { bus, t } = setup()
     bus.emit("provider:text", { text: "```\n**bukan bold**\n```" })

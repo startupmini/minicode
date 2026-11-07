@@ -149,7 +149,7 @@ export const BUILTIN_COMMANDS: BuiltinCommand[] = [
  * Opsi A audit UX: undo/redo/clear/copy/history tidak punya duplikat lain. */
 export const DRIVER_HELP_COMMANDS: BuiltinCommand[] = [
   { name: "mode", args: "[name]", descKey: "help.desc.mode" },
-  { name: "work-mode", args: "[DISCUSS|PLAN|EXECUTE]", descKey: "help.desc.work-mode" },
+  { name: "work-mode", args: "[DISCUSS|PLAN|BUILD]", descKey: "help.desc.work-mode" },
   { name: "lang", args: "[en|id]", descKey: "help.desc.lang" },
   { name: "undo", descKey: "help.desc.undo" },
   { name: "redo", descKey: "help.desc.redo" },
@@ -215,7 +215,7 @@ function statusLines(ctx: CommandContext): string[] {
     t("st.model", { v: ctx.currentModel ?? "default" }),
     t("st.provider", { v: provider }),
     t("st.tools", { v: ctx.toolsCount }),
-    t("st.workMode", { v: ctx.workMode ?? "EXECUTE" }),
+    t("st.workMode", { v: ctx.workMode ?? "DISCUSS" }),
     t("st.permissionMode", { v: ctx.permissionMode ?? "auto" }),
     t("st.context", { v: ctx.getContextTokens().toLocaleString() }),
     t("st.turn", { v: last.totalTokens.toLocaleString() }),
@@ -479,7 +479,7 @@ export async function handleBuiltinCommand(
       for (const b of [...BUILTIN_COMMANDS, ...DRIVER_HELP_COMMANDS]) {
         if (b.hidden) continue
         const withArgs = b.args ? `${b.name} ${b.args}` : b.name
-        console.log(`  /${pad(withArgs, 22)}${t(b.descKey)}`)
+        console.log(`  ${pad(`/${withArgs}`, 25)}  ${t(b.descKey)}`)
       }
       // Ringkas: perintah utama + skill + pintasan yang paling sering dipakai.
       // Panjang baris di bawah ≤80 kolom (dijaga test) dan tak boleh menyebut
@@ -579,9 +579,7 @@ export async function handleBuiltinCommand(
         else console.log(t("cmd.noChanges"))
       } else {
         for (const r of updated) {
-          console.log(
-            `  ${glyphs.check} ${r.id}: ${r.from} → ${r.to}${t("prov.models", { n: "" })}`,
-          )
+          console.log(`  ${glyphs.check} ${r.id}: ${r.from} → ${r.to}`)
         }
         for (const f of failed) {
           console.log(`  ${glyphs.cross} ${f.id}: ${f.reason}`)
@@ -611,12 +609,11 @@ export async function handleBuiltinCommand(
           await runPicker({
             title: t("sess.title"),
             items: rows.map((r) => ({
-              name: r.id,
-              provider: `${new Date(r.created_at).toLocaleString()} · ${r.cwd ? shortDir(r.cwd) : "(cwd)"}`,
+              name: `${r.id} · ${new Date(r.created_at).toLocaleString()} · ${r.cwd ? shortDir(r.cwd) : "(cwd)"}`,
+              provider: "",
               value: r.id,
             })),
             filterable: true,
-            placeholder: t("pick.placeholder"),
             onPick: (id) => {
               void resumeById(id, ctx)
             },

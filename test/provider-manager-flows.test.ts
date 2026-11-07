@@ -132,7 +132,7 @@ describe.serial("provider-manager: add (a)", () => {
     const t = tty
     if (!t) throw new Error("installFakeTty must be called first")
     await t.send("a")
-    await t.waitForOutput((o) => o.includes("Filter"))
+    await t.waitForOutput((o) => o.includes("OpenAI"))
     if (opts.presetFilter) await t.send(opts.presetFilter)
     await t.send(KEY.enter)
     await t.waitForOutput((o) => o.includes("Base URL"))
@@ -183,7 +183,7 @@ describe.serial("provider-manager: add (a)", () => {
     tty = installFakeTty({ rows: 24 })
     const mgr = await openManager()
     await tty.send("a")
-    await tty.waitForOutput((o) => o.includes("Filter"))
+    await tty.waitForOutput((o) => o.includes("OpenAI"))
     await tty.send("Custom")
     await tty.send(KEY.enter)
     await tty.waitForOutput((o) => o.includes("Base URL"))
@@ -208,7 +208,7 @@ describe.serial("provider-manager: add (a)", () => {
     tty = installFakeTty({ rows: 24 })
     const mgr = await openManager()
     await tty.send("a")
-    await tty.waitForOutput((o) => o.includes("Filter"))
+    await tty.waitForOutput((o) => o.includes("OpenAI"))
     await tty.send("Custom")
     await tty.send(KEY.enter)
     await tty.waitForOutput((o) => o.includes("Base URL"))
@@ -229,7 +229,7 @@ describe.serial("provider-manager: add (a)", () => {
     tty = installFakeTty({ rows: 24 })
     const mgr = await openManager()
     await tty.send("a")
-    await tty.waitForOutput((o) => o.includes("Filter"))
+    await tty.waitForOutput((o) => o.includes("OpenAI"))
     await tty.send(KEY.enter)
     await tty.waitForOutput((o) => o.includes("Base URL"))
     await tty.send(KEY.tab) // URL → key (kosong)
@@ -252,7 +252,7 @@ describe.serial("provider-manager: add (a)", () => {
     tty = installFakeTty({ rows: 24 })
     const mgr = await openManager()
     await tty.send("a")
-    await tty.waitForOutput((o) => o.includes("Filter"))
+    await tty.waitForOutput((o) => o.includes("OpenAI"))
     await tty.send(KEY.enter)
     await tty.waitForOutput((o) => o.includes("Base URL"))
     await tty.send(KEY.ctrlC, 90)
@@ -270,7 +270,7 @@ describe.serial("provider-manager: add (a)", () => {
     tty = installFakeTty({ rows: 24 })
     const mgr = await openManager()
     await tty.send("a")
-    await tty.waitForOutput((o) => o.includes("Filter"))
+    await tty.waitForOutput((o) => o.includes("OpenAI"))
     await tty.send(KEY.enter)
     await tty.waitForOutput((o) => o.includes("Base URL"))
     await tty.send("X") // kotori prefill
@@ -291,7 +291,7 @@ describe.serial("provider-manager: add (a)", () => {
     tty = installFakeTty({ rows: 24 })
     const mgr = await openManager()
     await tty.send("a")
-    await tty.waitForOutput((o) => o.includes("Filter"))
+    await tty.waitForOutput((o) => o.includes("OpenAI"))
     await tty.send(KEY.enter)
     await tty.waitForOutput((o) => o.includes("Base URL"))
     await tty.send(KEY.tab)
@@ -310,7 +310,7 @@ describe.serial("provider-manager: add (a)", () => {
     tty = installFakeTty({ rows: 24 })
     const mgr = await openManager()
     await tty.send("a")
-    await tty.waitForOutput((o) => o.includes("Filter"))
+    await tty.waitForOutput((o) => o.includes("OpenAI"))
     await tty.send(KEY.esc, 90)
     await waitFor(() => {
       const t = tty
@@ -337,7 +337,7 @@ describe.serial("provider-manager: add (a)", () => {
     const t = tty
     if (!t) throw new Error("fake tty is missing")
     await t.send("a")
-    await t.waitForOutput((o) => o.includes("Filter"))
+    await t.waitForOutput((o) => o.includes("OpenAI"))
     await t.send(KEY.enter) // preset pertama = openai (duplikat)
     await t.waitForOutput((o) => o.includes("Overwrite"))
     // Isi key dulu (wajib), ke scope, ke overwrite (default Tidak) + Enter.
@@ -367,7 +367,7 @@ describe.serial("provider-manager: add (a)", () => {
     tty = installFakeTty({ rows: 24 })
     const mgr = await openManager()
     await tty.send("a")
-    await tty.waitForOutput((o) => o.includes("Filter"))
+    await tty.waitForOutput((o) => o.includes("OpenAI"))
     await tty.send(KEY.enter)
     await tty.waitForOutput((o) => o.includes("Overwrite"))
     await tty.send(KEY.tab)
@@ -395,7 +395,7 @@ describe.serial("provider-manager: add (a)", () => {
     tty = installFakeTty({ rows: 24 })
     const mgr = await openManager()
     await tty.send("a")
-    await tty.waitForOutput((o) => o.includes("Filter"))
+    await tty.waitForOutput((o) => o.includes("OpenAI"))
     await tty.send("zzz-tidak-ada")
     await tty.send(KEY.enter)
     await waitFor(() => {
@@ -411,7 +411,7 @@ describe.serial("provider-manager: add (a)", () => {
     tty = installFakeTty({ rows: 24 })
     const mgr = await openManager()
     await tty.send("a")
-    await tty.waitForOutput((o) => o.includes("Filter"))
+    await tty.waitForOutput((o) => o.includes("OpenAI"))
     await tty.send(KEY.enter)
     await tty.waitForOutput((o) => o.includes("Base URL"))
     await tty.send(KEY.tab)
@@ -705,7 +705,7 @@ describe.serial("provider-manager: navigasi", () => {
     await mgr.close()
   })
 
-  test("list longer than screen shows remaining-items indicator", async () => {
+  test("list longer than screen stays compact", async () => {
     await writeLocalProviders(
       Array.from({ length: 12 }, (_, i) => ({
         id: `gw${i}`,
@@ -714,11 +714,13 @@ describe.serial("provider-manager: navigasi", () => {
         models: ["m1"],
       })),
     )
-    // rows 12 -> visibleRows = max(1, min(12-5, 14)) = 7 (< 12 item).
-    // Popup butuh layar ≥10 baris (gate); rows 8 kini ditolak bersuara.
+    // Baris tambahan tidak ditampilkan; daftar tetap dibatasi tinggi terminal.
     tty = installFakeTty({ columns: 80, rows: 12 })
     const mgr = await openManager()
-    expect(visible(tty)).toContain("more")
+    const screen = tty.screen().join("\n")
+    expect(screen).toContain("gw0")
+    expect(screen).not.toContain("gw11")
+    expect(screen).not.toContain("more")
     await mgr.close()
   })
 })
@@ -732,7 +734,7 @@ describe.serial("provider-manager: non-TTY", () => {
     await runProviderManager({ cwd: workspace, allowLocalConfig: true })
     const out = visible(tty)
     expect(out).toContain("gw")
-    expect(out).toContain("2 models")
+    expect(out).not.toContain("2 models")
   })
 })
 

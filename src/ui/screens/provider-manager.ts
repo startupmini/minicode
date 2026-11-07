@@ -11,7 +11,7 @@ import {
 } from "../input/prompt-engine.ts"
 import { sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, glyphs, stripAnsi } from "../render/theme.ts"
-import { displayWidth, padToWidth, truncateToWidth } from "../render/width.ts"
+import { truncateToWidth } from "../render/width.ts"
 import { type AltScreen, openAltScreen } from "../runtime/screen.ts"
 import { boxLeftPad, dialogBox } from "./dialog.ts"
 import { runForm, validateRequired, validateUrl } from "./form.ts"
@@ -19,8 +19,8 @@ import { runPicker } from "./picker.ts"
 
 const dim = (s: string): string => c.dim(s)
 
-/** Lebar kotak popup provider TETAP (lebih lebar: kolom URL panjang). */
-const PROVIDER_BOX_W = 76
+/** Lebar tetap popup provider setelah daftar diringkas ke nama provider. */
+const PROVIDER_BOX_W = 52
 
 export interface ProviderRow {
   id: string
@@ -86,19 +86,18 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
   }
 
   return new Promise<void>((resolve) => {
-    // Ukuran mengikuti terminal SUNGGUHAN (lihat picker.ts untuk alasan sama).
-    // Popup: jatah dialog rows−4 sudah termasuk baris counter/notice, jadi
-    // item dibatasi rows−5 (lihat picker.ts).
+    // Ukuran mengikuti terminal sungguhan; satu baris border atas/bawah dan
+    // kemungkinan notice tetap masuk ke perhitungan tinggi.
     const visibleRows = () => {
       const rows = process.stdout.rows || 24
-      return Math.max(1, Math.min(rows - 5, 14))
+      return Math.max(1, Math.min(rows - 3, 14))
     }
     // Lebar konten = lebar kotak TETAP (min=max, paritas picker/model) —
     // dikurangi chrome dialog (lihat picker.ts).
     const width = () =>
       Math.max(8, Math.min((process.stdout.columns || 80) - 2 - 4, PROVIDER_BOX_W - 4))
 
-    // Isi popup (judul + hint dibingkai dialog).
+    // Isi popup ringkas: nama provider dan hasil aksi sementara.
     const bodyLines = (): string[] => {
       const v = visibleRows()
       if (sel < scroll) scroll = sel
@@ -113,23 +112,14 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
         for (let i = 0; i < rows.length; i++) {
           const it = rows[i]!
           const picked = i === sel - scroll
-          // Tandai provider yang sedang aktif supaya user tahu apa yang akan
-          // hilang bila ia menekan d. ID/URL dari config (data kotor mungkin)
-          // disanitasi seperti label picker.
+          // Nama provider dan status aktif cukup untuk memilih tanpa memenuhi
+          // daftar dengan URL dan jumlah model.
           const aktif = opts.currentModel?.startsWith(`${it.id}::`)
             ? ` (${t("common.active")})`
             : ""
-          // Status aktif TAK BOLEH ikut terpotong: URL dipotong dari budget
-          // sisa SETELAH head+aktif (dulu truncate menelan "(aktif)" dulu
-          // saat URL panjang — user tak tahu mana yang aktif).
-          const head = `${padToWidth(sanitizeAnsiLine(it.id), 18)} ${t("prov.models", { n: it.models })}  `
-          const urlBudget = Math.max(8, w - 4 - displayWidth(head) - displayWidth(aktif))
-          const label = `${head}${truncateToWidth(sanitizeAnsiLine(it.baseUrl), urlBudget, "…")}${aktif}`
+          const label = `${truncateToWidth(sanitizeAnsiLine(it.id), Math.max(8, w - 4 - aktif.length), "…")}${aktif}`
           if (picked) lines.push(`  ${c.accent("›")} ${c.accent(c.bold(label))}`)
           else lines.push(`   ${dim(label)}`)
-        }
-        if (providers.length > scroll + v) {
-          lines.push(cut(dim(t("dlg.more", { n: providers.length - scroll - v }))))
         }
       }
       // Struk transient (jalur legacy maupun modal).
@@ -137,23 +127,13 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
       return lines
     }
 
-    const hintText = (): string =>
-      t("prov.hint", {
-        select: c.accent(t("verb.select")),
-        add: c.accent(t("verb.add")),
-        delete: c.accent(t("verb.delete")),
-        edit: c.accent(t("verb.edit")),
-        close: c.accent(t("verb.close")),
-      })
-
     const render = () => {
       // Popup komposit: HANYA region kotak (tanpa clear) di atas konten
-      // pemilik layar. Lebar TETAP 76 (min=max) — tak bernapas.
+      // pemilik layar. Lebar tetap 52 agar daftar tidak kosong terlalu lebar.
       const box = dialogBox(
         {
-          title: t("prov.title"),
+          title: "",
           body: bodyLines(),
-          footer: hintText(),
           minWidth: PROVIDER_BOX_W,
           maxWidth: PROVIDER_BOX_W,
         },
@@ -350,7 +330,6 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
                   { name: t("prov.customUrl"), provider: "", value: CUSTOM },
                 ],
                 filterable: true,
-                placeholder: t("pick.placeholder"),
                 onPick: (v) => resolvePick(v),
                 onCancel: () => resolvePick(null),
               }).catch(() => resolvePick(null))

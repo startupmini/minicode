@@ -31,7 +31,7 @@ const VALUE_FLAGS = new Set([
   "--ratelimit",
   "--budget",
   "--tool-scope", // full | explore (read-only) — tanpa ini jadi kata prompt!
-  "--work-mode", // DISCUSS | PLAN | EXECUTE — HARUS dikenal agar tak bocor ke prompt.
+  "--work-mode", // DISCUSS | PLAN | BUILD — HARUS dikenal agar tak bocor ke prompt.
   // [P1 M15] Mode runtime produksi (off | constructed | owned). HARUS terdaftar:
   // flag tak dikenal menghentikan scan `hasFlag`/`getArg` (dianggap prompt
   // boundary), sehingga flag yang diletakkan SETELAH `--runtime` akan hilang
@@ -104,18 +104,12 @@ export function allowLocalConfig(argv: string[]): boolean {
 
 export type CliWorkMode = "DISCUSS" | "PLAN" | "EXECUTE"
 
-/**
- * P12 S2.2 — Parse nilai WorkMode dari argumen operator (command `/work-mode`).
- * Murni + diekspor untuk test. Tiga nilai sah + alias produk `BUILD` (→ EXECUTE
- * internal); nilai lain = tak dikenal (undefined) agar pemanggil bisa menolak
- * tanpa mengubah state.
- */
+/** Parse tiga nilai Work Mode yang ditampilkan ke operator. */
 export function parseWorkModeValue(raw: string): CliWorkMode | undefined {
   const norm = raw.trim().toUpperCase()
-  // Alias produk: BUILD == identitas runtime/persistence EXECUTE (satu identitas,
-  // dua ejaan — bukan enum kedua).
+  // BUILD adalah nama produk untuk identitas runtime EXECUTE.
   if (norm === "BUILD") return "EXECUTE"
-  if (norm === "DISCUSS" || norm === "PLAN" || norm === "EXECUTE") return norm
+  if (norm === "DISCUSS" || norm === "PLAN") return norm
   return undefined
 }
 
@@ -131,27 +125,25 @@ export function displayWorkMode(workMode: CliWorkMode): "DISCUSS" | "PLAN" | "BU
 /**
  * P12 S2.2 — Resolusi WorkMode dari flag CLI + env, murni & diekspor untuk
  * test (pola repo). Flag `--work-mode` mengalahkan env `MINICODE_WORK_MODE`;
- * keduanya tak ada = EXECUTE (perilaku lama). Nilai tak dikenal TIDAK
- * melebar diam-diam — gagal ke EXECUTE + pesan peringatan (fail-closed).
+ * keduanya tak ada = DISCUSS. Nilai tak dikenal jatuh ke DISCUSS (fail-closed).
  * Case-insensitive agar konsisten dengan flag permission lainnya.
  */
 export function resolveWorkModeFlag(getArg: (n: string) => string | undefined): {
   workMode: CliWorkMode
   /** Benar bila operator memberi sinyal WorkMode eksplisit (flag ATAU env),
-   *  terlepas nilainya sah/tidak. Dipakai composition root untuk transparansi
-   *  resume (D-2): WorkMode TIDAK dipersist, jadi resume tanpa sinyal eksplisit
-   *  kembali ke EXECUTE dan diberi tahu satu baris. */
+   *  terlepas nilainya sah/tidak. Dipakai composition root untuk membedakan
+   *  resume yang memakai nilai tersimpan dari default DISCUSS. */
   explicit: boolean
   warning?: string
 } {
   const raw = getArg("--work-mode") ?? process.env.MINICODE_WORK_MODE
-  if (raw === undefined) return { workMode: "EXECUTE", explicit: false }
+  if (raw === undefined) return { workMode: "DISCUSS", explicit: false }
   const parsed = parseWorkModeValue(raw)
   if (parsed) return { workMode: parsed, explicit: true }
   return {
-    workMode: "EXECUTE",
+    workMode: "DISCUSS",
     explicit: true,
-    warning: `--work-mode requires DISCUSS|PLAN|BUILD, ignoring "${raw}" (using BUILD/EXECUTE)`,
+    warning: `--work-mode requires DISCUSS|PLAN|BUILD, ignoring "${raw}" (using DISCUSS)`,
   }
 }
 

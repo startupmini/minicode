@@ -2,8 +2,8 @@
 //
 // Slice 2 membuktikan: (1) WorkMode dapat dipilih via --work-mode / env dengan
 // prioritas flag > env, (2) nilai invalid TIDAK diam-diam melebar (gagal ke
-// EXECUTE + warning), (3) WorkMode diteruskan sampai factory session (ACP).
-// Default selalu EXECUTE (kompatibilitas). `--plan` (permission mode) TIDAK
+// DISCUSS + warning), (3) WorkMode diteruskan sampai factory session (ACP).
+// Default DISCUSS; BUILD dipetakan ke identitas runtime EXECUTE. `--plan` TIDAK
 // disamakan dengan WorkMode PLAN — diuji sebagai lapisan terpisah.
 
 import { afterEach, describe, expect, test } from "bun:test"
@@ -19,10 +19,10 @@ afterEach(() => {
 })
 
 describe("resolveWorkModeFlag — flag vs env vs default", () => {
-  test("tanpa flag & tanpa env → EXECUTE (default, tanpa warning)", () => {
+  test("tanpa flag & tanpa env → DISCUSS (default, tanpa warning)", () => {
     delete process.env.MINICODE_WORK_MODE
     const r = resolveWorkModeFlag(getFrom([]))
-    expect(r.workMode).toBe("EXECUTE")
+    expect(r.workMode).toBe("DISCUSS")
     expect(r.warning).toBeUndefined()
   })
 
@@ -36,7 +36,7 @@ describe("resolveWorkModeFlag — flag vs env vs default", () => {
     process.env.MINICODE_WORK_MODE = "PLAN"
     expect(resolveWorkModeFlag(getFrom([])).explicit).toBe(true)
     // invalid pun tetap "eksplisit": operator sudah menyatakan intent, transisi
-    // resume tidak boleh menimpa dengan notice "default EXECUTE" menggandakan
+    // resume tidak boleh menimpa dengan notice "default DISCUSS" menggandakan
     // warning invalid yang sudah dicetak.
     expect(resolveWorkModeFlag(getFrom(["--work-mode", "YOLO"])).explicit).toBe(true)
   })
@@ -60,26 +60,37 @@ describe("resolveWorkModeFlag — flag vs env vs default", () => {
     expect(r.workMode).toBe("PLAN")
   })
 
-  test("nilai invalid → EXECUTE + warning (fail-closed, tidak melebar)", () => {
+  test("nilai invalid → DISCUSS + warning (fail-closed, tidak melebar)", () => {
     const r = resolveWorkModeFlag(getFrom(["--work-mode", "YOLO"]))
-    expect(r.workMode).toBe("EXECUTE")
+    expect(r.workMode).toBe("DISCUSS")
     expect(r.warning).toContain("DISCUSS|PLAN|BUILD")
+    expect(r.warning).toContain("using DISCUSS")
+  })
+
+  test("EXECUTE tidak diterima sebagai nama Work Mode operator", () => {
+    const r = resolveWorkModeFlag(getFrom(["--work-mode", "EXECUTE"]))
+    expect(r.workMode).toBe("DISCUSS")
+    expect(r.warning).toContain("using DISCUSS")
   })
 })
 
 describe("parseRunParams — kontrak workMode ACP", () => {
-  test("tanpa workMode → default EXECUTE", () => {
+  test("tanpa workMode → default DISCUSS", () => {
     const r = parseRunParams({ prompt: "x" })
     if (!r.ok) throw new Error("unexpected")
-    expect(r.value.workMode).toBe("EXECUTE")
+    expect(r.value.workMode).toBe("DISCUSS")
   })
 
-  test("workMode DISCUSS/PLAN/EXECUTE diterima", () => {
-    for (const wm of ["DISCUSS", "PLAN", "EXECUTE"] as const) {
+  test("workMode DISCUSS/PLAN/BUILD diterima; BUILD menjadi identitas internal EXECUTE", () => {
+    for (const wm of ["DISCUSS", "PLAN", "BUILD"] as const) {
       const r = parseRunParams({ prompt: "x", workMode: wm })
       if (!r.ok) throw new Error("unexpected")
-      expect(r.value.workMode).toBe(wm)
+      expect(r.value.workMode).toBe(wm === "BUILD" ? "EXECUTE" : wm)
     }
+  })
+
+  test("EXECUTE tidak diterima sebagai nama Work Mode ACP", () => {
+    expect(parseRunParams({ prompt: "x", workMode: "EXECUTE" }).ok).toBe(false)
   })
 
   test("workMode invalid → error (bukan diam default)", () => {
@@ -87,10 +98,10 @@ describe("parseRunParams — kontrak workMode ACP", () => {
   })
 
   test("mode tetap permission mode terpisah dari workMode", () => {
-    // mode:"plan" (permission) TIDAK mengubah workMode; keduanya independen.
-    const r = parseRunParams({ prompt: "x", mode: "plan", workMode: "DISCUSS" })
+    // mode:"ask" hanya memilih persetujuan; tidak mengubah workMode.
+    const r = parseRunParams({ prompt: "x", mode: "ask", workMode: "DISCUSS" })
     if (!r.ok) throw new Error("unexpected")
-    expect(r.value.mode).toBe("plan")
+    expect(r.value.mode).toBe("ask")
     expect(r.value.workMode).toBe("DISCUSS")
   })
 })
@@ -141,15 +152,15 @@ describe("runAcpSession — workMode diteruskan ke factory session", () => {
     expect(opts.plan).toBe(false)
   })
 
-  test("tanpa workMode → EXECUTE (kompatibel)", async () => {
+  test("tanpa workMode → DISCUSS", async () => {
     delete process.env.MINICODE_WORK_MODE
     const f = fakeFactory()
     const out: string[] = []
     await runAcpSession(2, { prompt: "x" }, depsOf(f, out))
     const opts = f.options() as Record<string, unknown>
-    expect(opts.workMode).toBe("EXECUTE")
+    expect(opts.workMode).toBe("DISCUSS")
     const parsed = JSON.parse(out.at(-1) ?? "{}") as { result?: { workMode?: string } }
-    expect(parsed.result?.workMode).toBe("EXECUTE")
+    expect(parsed.result?.workMode).toBe("DISCUSS")
   })
 
   test("Q5=A5: ACP menghormati fallback MINICODE_WORK_MODE dan menggemakan result.workMode", async () => {

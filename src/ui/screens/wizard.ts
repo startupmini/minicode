@@ -62,7 +62,6 @@ export async function runSetupWizardView(opts: SetupWizardViewOptions): Promise<
       title: t("wiz.gateway"),
       items,
       filterable: true,
-      placeholder: t("pick.placeholder"),
       onPick: (v) => {
         picked = v
       },

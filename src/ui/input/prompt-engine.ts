@@ -261,11 +261,8 @@ export function applyKey(
       return { state: { ...state, sel: (state.sel + 1) % n }, action: "render" }
     }
     case "tab": {
-      // Tab sekarang HANYA putar mode (cycle `auto→ask→plan→allowlist`),
-      // ditangani di REPL via `onKey` agar selalu jalan bahkan saat mengetik.
-      // Completion dropdown tidak lagi pakai Tab — user pilih via ↑/↓ lalu
-      // Enter (lengkapi + kirim). Tanpa ini Tab saat mengetik tidak bisa
-      // ganti mode (keluhan nyata) dan menabrak completion.
+      // TUI menangani Tab sebagai siklus Work Mode sebelum editor generik.
+      // Picker command memilih item dengan ↑/↓ lalu Enter.
       return { state, action: "none" }
     }
     case "enter": {

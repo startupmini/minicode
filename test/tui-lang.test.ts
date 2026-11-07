@@ -77,6 +77,15 @@ function fakeSession(): FakeSession {
   } as unknown as FakeSession
 }
 
+async function waitForState(read: () => Promise<boolean> | boolean): Promise<void> {
+  const deadline = Date.now() + 2000
+  while (Date.now() < deadline) {
+    if (await read()) return
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  throw new Error("/lang state did not settle")
+}
+
 describe("/lang end-to-end", () => {
   async function closeTuiIfRunning(
     activeTty: ReturnType<typeof installFakeTty> | null,
@@ -101,8 +110,9 @@ describe("/lang end-to-end", () => {
       expect(currentLocale()).toBe("en")
       await tty.send("/lang id")
       await tty.send(KEY.enter)
-      await tty.waitForOutput((o) => o.includes("lang: id"))
+      await waitForState(() => currentLocale() === "id")
       expect(currentLocale()).toBe("id")
+      await waitForState(async () => (await loadLang()) === "id")
       expect(await loadLang()).toBe("id")
       await tty.send("/exit")
       await tty.send(KEY.enter)

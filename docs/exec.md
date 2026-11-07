@@ -91,8 +91,8 @@ Mode `--json` memakai envelope lifecycle dan summary yang dijelaskan di atas ser
 
 ```bash
 # gate PR: verify + budget ketat + hasil JSON
-minicode exec "perbaiki lint di src/ lalu jalankan bun run lint" --json \
-  --verify --budget 0.50 --budget-strict --max-steps 40
+minicode exec --work-mode BUILD --verify --json --budget 0.50 --budget-strict --max-steps 40 \
+  "perbaiki lint di src/ lalu jalankan bun run lint"
 
 # pakai provider tertentu tanpa mengubah config
 minicode exec "ringkas diff ini" --json --provider openai --model gpt-4o

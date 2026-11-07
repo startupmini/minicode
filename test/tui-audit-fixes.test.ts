@@ -93,10 +93,12 @@ describe("TUI-002: Home/End jump + Shift+PgUp/PgDn half-page", () => {
     const { runP } = await boot()
     transcript.pushInfo(Array.from({ length: 25 }, (_, i) => `isi-${i}`))
     await tty!.send("/")
-    await tty!.waitForOutput((o) => o.includes("commands"))
+    await tty!.waitForOutput((o) => o.includes("model"))
     await tty!.send(KEY.home)
     // Dropdown tetap terbuka — Home tidak diubah jadi jump saat menu aktif.
-    expect(tty!.screen().join("\n")).toContain("commands")
+    const menu = tty!.screen().join("\n")
+    expect(menu).toContain("model")
+    expect(menu).not.toContain("/model")
     // Keluar bersih: Esc menutup dropdown (baris "/" tetap), hapus baris
     // dulu — Ctrl+D saat baris berisi diabaikan (kontrak I19). Settle 90ms:
     // flush lone-ESC butuh ~50ms. Kursor ke akhir dulu (Home tadi

@@ -1,4 +1,17 @@
-# Kontrak Terminal MiniCode (TUI fullscreen — v7.7, 2026-11-07)
+# Kontrak Terminal MiniCode (TUI fullscreen — v7.9, 2026-11-07)
+
+Perubahan v7.9: input command slash tidak ditambahkan sebagai pesan transkrip;
+aksi popup provider/model/sesi dan toggle UI tidak meninggalkan riwayat status
+di transkrip. Output command yang informatif, error, dan hasil prompt model tetap
+tampil. Jawaban model membuang blank line di tepi dan merapatkan jeda berulang
+di luar code fence; isi code fence tetap literal.
+
+Perubahan v7.8: sesi baru dan sesi legacy tanpa WorkMode mulai di `Discuss`;
+operator hanya dapat memilih `Discuss`, `Plan`, atau `Build`. Permission Mode
+awal `Auto` dan kontrolnya hanya `Auto`/`Ask`. Dropdown `/` menampilkan nama
+command tanpa slash, judul, deskripsi, atau baris tambahan. Picker provider,
+model, dan pilihan umum tidak memakai judul/footer; baris provider/model dibuat
+ringkas.
 
 Perubahan v7.7: footer memakai label title case `Work Mode: Build` di sisi kiri
 dan `Permission Mode: Auto` di sisi kanan dekat pemakaian konteks. Nilai kedua
@@ -144,7 +157,7 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
   atas, TANPA bayangan) di atas konten redup; `dialogBox` untuk komposit,
   `dialogFrame` (backdrop `░` faint) hanya untuk layar yang memiliki buffer
   sendiri.
-- **Lebar kotak popup TETAP** per permukaan (model 64, picker 64, provider 76,
+- **Lebar kotak popup TETAP** per permukaan (model 64, picker 64, provider 52,
   form 64 — min=max): geometri stabil, tak bernapas saat filter/error.
   Nama/ID di DEPAN label (truncasi memakan ekor — tanggal/konteks boleh
   hilang, id selamat).
@@ -203,7 +216,7 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     live dibatasi 1.000.000 karakter dan menampilkan marker truncasi; satu
     layout paint tidak boleh memproyeksikan transcript dua kali.
 
-13. Status bar: 1 baris dasar (`✦ 00.00.00 Work Mode: Build  model  cwd …
+13. Status bar: 1 baris dasar (`✦ 00.00.00 Work Mode: Discuss  model  cwd …
      context  Permission Mode: Auto`) dari sumber yang sama dengan angka sesi.
      Work Mode berada di kiri; Permission Mode cyan berada di kanan dekat
      konteks. Pada terminal sempit, label berubah menjadi `Work:`/`Permission:`
@@ -268,7 +281,7 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     berkas histori lama). `/copy [n]` menyalin 1–10 turn terakhir (default 1,
     oldest-to-newest) melalui OSC 52.
 19. Dropdown `/` inline berbingkai; Enter pada menu melengkapi + kirim.
-20. Lebar kotak popup TETAP per permukaan (model 64, picker 64, provider 76,
+20. Lebar kotak popup TETAP per permukaan (model 64, picker 64, provider 52,
     form 64 — min=max); nama/ID di depan label; seleksi murni warna; search
     selalu tampil.
 21. Form dalam popup: semua input teks/pilihan di dalam kotak (text/secret/
@@ -362,7 +375,7 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     (ceiling rencana: 16 tool baca lokal + `web_fetch`/`web_search` wajib lewat
     pengawasan eksplisit + ekstra rencana bila diizinkan Tool Access Policy) ·
     `EXECUTE` (tanpa ceiling tambahan). Nama produk `BUILD` memetakan ke
-    `EXECUTE`; default runtime tetap `EXECUTE` untuk kompatibilitas.
+    identitas internal `EXECUTE`; sesi baru memakai default `DISCUSS`.
     **Gerbang penolakan & side-effect ceiling:** Tool Access Policy menentukan
     capability yang tersedia; PermissionMode menentukan pengawasan persetujuan;
     WorkMode memasang ceiling tambahan. Irisan ketiganya tidak pernah
@@ -370,9 +383,8 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     hooks diblokir pada `DISCUSS` maupun `PLAN` untuk semua PM, dan `--verify`
     ditolak fail-closed saat startup bila digabung `DISCUSS`/`PLAN` (exit 2)
     serta dilewati otomatis saat mode turun ke `DISCUSS`/`PLAN` di TUI.
-    **Command `/work-mode <DISCUSS|PLAN|BUILD>`:** aksi operator EKSPLISIT;
-    `EXECUTE` juga diterima sebagai alias kompatibilitas dan ditampilkan sebagai
-    `BUILD` di UI.
+    **Command `/work-mode <DISCUSS|PLAN|BUILD>`:** tiga nilai produk yang dapat
+    dipilih operator; `EXECUTE` hanya nama internal dan ditolak sebagai input.
     Tanpa argumen → tampilkan mode aktif + usage; nilai invalid → pesan
     kesalahan dan mode AKTIF TIDAK berubah; sesi tanpa kontrol WorkMode
     (handler izin terinjeksi = policy, bukan mode) → ditolak, bukan
@@ -385,18 +397,19 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     **Resume (P0.2 Q5 — menggantikan D-2):** WorkMode DIPERSIST di metadata sesi
     (`sessions.work_mode`) lintas `--resume`. Saat resume tanpa sinyal eksplisit
     (`--work-mode` / `MINICODE_WORK_MODE`), WorkMode dipulihkan dari metadata
-    sesi (baris legacy tanpa `work_mode` kembali ke default `EXECUTE`) dan
+    sesi (baris legacy tanpa `work_mode` kembali ke default `DISCUSS`; nilai
+    tersimpan `EXECUTE` lama ditampilkan sebagai `BUILD`) dan
     composition root menulis SATU baris stderr human-facing
     (`[resume] WorkMode <MODE> restored from session...` atau notice override/
     legacy) agar otoritas sesi hasil resume selalu terlihat eksplisit. Baris itu
     keluar lewat stderr, BUKAN proyeksi mesin/JSON/ACP — kanal machine tetap
     terstruktur (`summary.workMode` / `result.workMode`), tanpa teks dekoratif.
     **Surfacing lintas-surface (F-DISCUSS-4):** WorkMode terlihat di TUI lewat
-    footer (`<WorkMode>·<permission mode>`), di one-shot/exec linear lewat SATU
-    baris stderr human-facing `[work-mode] <MODE> …` hanya saat WorkMode ≠
-    EXECUTE (EXECUTE = default, tanpa baris), dan di `exec --json` lewat field
-    terstruktur `summary.workMode` (selalu hadir, termasuk EXECUTE) — bukan teks
-    dekoratif. ACP memakai `params.workMode` (terstruktur) dan tak menambah baris
+    footer (Work Mode kiri; Permission Mode kanan), di one-shot/exec linear
+    lewat SATU baris stderr human-facing `[work-mode] <MODE> …`, dan di
+    `exec --json` lewat field `summary.workMode` dengan nilai produk `DISCUSS`,
+    `PLAN`, atau `BUILD` — bukan teks dekoratif. ACP memakai `params.workMode`
+    (terstruktur) dan tak menambah baris
     dekoratif. WorkMode selalu dibedakan tegas dari PermissionMode (`[work-mode]`
     vs `/mode`/`--plan`) dan dari status sesi.
     **Pemisahan dari PermissionMode:** `Tab` memutar WorkMode;
@@ -421,7 +434,7 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
 
 prompt `minicode ›` tampil saat boot/idle dan hilang saat busy (dropdown `/`
 berbingkai di atasnya) ·
-status bar `✦ 00.00.00 Work Mode: Build  model  cwd … context  Permission Mode: Auto`
+status bar `✦ 00.00.00 Work Mode: Discuss  model  cwd … context  Permission Mode: Auto`
 (timer redup idle; detik putih aktif, menit mulai terang di 60 dtk, jam di 1
 jam; tanpa bullet separator; permission rata kanan dekat token konteks; label
 dipadatkan pada terminal sempit)
@@ -561,7 +574,8 @@ panjang).
 - `test/work-mode-subagent.test.ts` — I35 (child mewarisi WorkMode parent;
   tak ada eskalasi lewat mode child; default tanpa WorkMode = perilaku lama).
 - `test/work-mode-cli.test.ts` — I35 (`--work-mode`/env: flag > env > persisted
-  resume > default EXECUTE; nilai invalid → EXECUTE + peringatan; `--verify`
+  resume > default DISCUSS; nilai invalid → DISCUSS + peringatan; input operator
+  hanya DISCUSS/PLAN/BUILD; `--verify`
   ditolak fail-closed pada DISCUSS/PLAN; ACP `workMode` + fallback env; daemon
   `workMode` parity).
 - `test/tui-app.test.ts`, `test/tui-popup.test.ts` — I13/I14/I17 (composer

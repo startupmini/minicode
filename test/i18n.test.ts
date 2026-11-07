@@ -68,26 +68,22 @@ describe("t()", () => {
     expect(t("form.required")).toBe("required")
     setSessionLocale("id")
     expect(t("form.required")).toBe("wajib diisi")
-    expect(t("app.moreLines", { n: 3 })).toBe("  … 3 lagi")
+    expect(t("app.newBelow", { n: 3 })).toBe("↓ 3 baris baru di bawah · PgDn ke ekor")
     setSessionLocale("en")
-    expect(t("app.moreLines", { n: 3 })).toBe("  … 3 more")
+    expect(t("app.newBelow", { n: 3 })).toBe("↓ 3 new lines below · PgDn to bottom")
   })
   test("param tak dikenal dibiarkan (bukan crash)", () => {
-    expect(t("app.moreLines", {})).toBe("  … {n} more")
+    expect(t("app.newBelow", {})).toBe("↓ {n} new lines below · PgDn to bottom")
   })
   test("dict id lengkap (kunci = en)", () => {
     expect(Object.keys(id).sort()).toEqual(Object.keys(en).sort())
   })
   test("nilai id diterjemahkan (bukan copy-paste en), kecuali netral-locale", () => {
-    // String netral-locale: template diisi nilai terjemahan saat render
-    // (prov.hint), label teknis universal (st.model, st.budget, tui.modeLine,
+    // String netral-locale: label teknis universal (st.model, st.budget, tui.modeLine,
     // tui.langLine), nama perintah (help.cMore), nilai dinamis (tui.modelSet,
     // tui.thinkingSet).
     const NEUTRAL = new Set([
-      "pick.filter",
-      "pick.hint",
       "form.footerDefault",
-      "prov.hint",
       "st.model",
       "st.budget",
       "help.cMore",

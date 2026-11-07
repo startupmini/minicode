@@ -274,11 +274,10 @@ describe("guard P2.12 — hidup-mati & peta", () => {
     expect(CONTROL_OPS).toHaveLength(8)
   })
 
-  test("peta struktur hidup memuat semua modul daemon", () => {
-    // AGENTS.md: struktur berubah → docs/ARCHITECTURE.html ikut berubah.
-    const html = read("docs/ARCHITECTURE.html")
-    const missing = daemonFiles().filter((f) => !html.includes(f.split("/").pop()!))
-    expect(missing).toEqual([])
+  test("peta arsitektur aktif mencatat boundary daemon", () => {
+    const architecture = read("docs/architecture.md")
+    expect(architecture).toContain("src/daemon/")
+    expect(architecture).toContain("cli/commands/daemon.ts")
     expect(daemonFiles().length).toBeGreaterThanOrEqual(16)
   })
 

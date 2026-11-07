@@ -301,18 +301,18 @@ export interface CliSessionOptions {
   /** Harness-P2: scope tool sesi — explore = subset read-only. */
   toolScope?: "full" | "explore"
   /**
-   * P12 S2.2 — WorkMode (lapis intent di ATAS permission mode). Default
-   * EXECUTE = perilaku lama. DISCUSS = read-only ceiling; PLAN = ceiling
+   * WorkMode (lapis intent di atas profil izin). Default DISCUSS = read-only;
+   * PLAN = ceiling
    * rencana (explore + tool rencana). TIDAK pernah memperluas permission mode
    * (INV-WM1). Diisi CLI dari --work-mode / MINICODE_WORK_MODE; diserahkan ke
    * setupToolLayer (visibilitas) dan createMinicodeSession (handler ceiling).
    */
   workMode?: "DISCUSS" | "PLAN" | "EXECUTE"
   /**
-   * P12 S2.2 (D-2) — transparansi resume. Benar bila operator memberi sinyal
-   * WorkMode eksplisit (--work-mode / MINICODE_WORK_MODE). WorkMode TIDAK
-   * dipersist antar-sesi; saat resume tanpa sinyal eksplisit, WorkMode kembali
-   * ke EXECUTE. Bila scope ini `false` DAN identitas sesi `resumed`, composition
+   * Transparansi resume. Benar bila operator memberi sinyal WorkMode eksplisit
+   * (--work-mode / MINICODE_WORK_MODE). Saat resume tanpa sinyal eksplisit,
+   * WorkMode tersimpan dipulihkan; legacy tanpa nilai kembali ke DISCUSS.
+   * Bila scope ini `false` DAN identitas sesi `resumed`, composition
    * root menulis SATU baris stderr human-facing (bukan output machine) agar
    * transisi tidak terjadi diam-diam.
    */
@@ -400,7 +400,7 @@ export interface CliSession {
   effectiveInitialModel: string
   effectiveTimeoutMs: number
   permissionMode: string
-  /** P12 S2.2 — WorkMode efektif sesi ini (default EXECUTE). Dipakai label/
+  /** WorkMode efektif sesi ini (default DISCUSS). Dipakai label/
    * readout TUI; diisi composition root dari flag/env. */
   workMode: "DISCUSS" | "PLAN" | "EXECUTE"
   /** P12 S2.2 Slice 5 — handle kontrol WorkMode runtime (transisi operator
@@ -904,7 +904,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     runtimeMode,
     adoptTask,
     allowLocalConfig,
-    workMode = "EXECUTE",
+    workMode = "DISCUSS",
     workModeExplicit = false,
     maxSteps,
     contextWindowTokens,
@@ -982,21 +982,21 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     )
   }
   // P0.2 (Q5): saat `--resume` tanpa sinyal WorkMode eksplisit, pulihkan
-  // WorkMode tersimpan dari metadata sesi (NULL legacy → default EXECUTE).
+  // WorkMode tersimpan dari metadata sesi (NULL legacy → default DISCUSS).
   //
   // [mode-architecture] --plan = alias warisan WorkMode PLAN (bukan permission
   // mode). Dilipat di sini (satu titik untuk semua pemanggil: index/exec/acp).
   const persistedWorkMode = identity.resumed ? loadSessionWorkMode(sessionId, cwd) : undefined
   const planAsWorkMode =
-    plan && !workModeExplicit && workMode === "EXECUTE" ? ("PLAN" as const) : workMode
-  if (plan && !workModeExplicit && workMode === "EXECUTE") {
+    plan && !workModeExplicit && workMode === "DISCUSS" ? ("PLAN" as const) : workMode
+  if (plan && !workModeExplicit && workMode === "DISCUSS") {
     process.stderr.write(
       `${c.dim("[deprecated] --plan is now WorkMode PLAN; use --work-mode PLAN\n")}`,
     )
   }
   const effectiveWorkMode: "DISCUSS" | "PLAN" | "EXECUTE" =
     identity.resumed && !workModeExplicit && !plan
-      ? (persistedWorkMode ?? "EXECUTE")
+      ? (persistedWorkMode ?? "DISCUSS")
       : planAsWorkMode
   // P0.2 (Q4): tolak startup (fail-closed) bila `--verify` digabung dengan
   // WorkMode DISCUSS atau PLAN (baik dari flag/env maupun pulihan `--resume`).
@@ -1291,14 +1291,14 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   if (identity.resumed) {
     // P0.2 (Q5 / Invariant #6) — transparansi resume: WorkMode dipulihkan dari
     // metadata sesi bila operator tidak memberi sinyal eksplisit (NULL legacy
-    // kembali ke default EXECUTE). Satu baris stderr human-facing memastikan
+    // kembali ke default DISCUSS). Satu baris stderr human-facing memastikan
     // otoritas sesi hasil resume selalu terlihat eksplisit.
     const resumeNotice = !workModeExplicit
       ? persistedWorkMode !== undefined
-        ? `[resume] WorkMode ${effectiveWorkMode} restored from session; pass --work-mode DISCUSS|PLAN|EXECUTE to override\n`
-        : `[resume] WorkMode default EXECUTE (legacy session without saved workMode); pass --work-mode DISCUSS|PLAN to change\n`
+        ? `[resume] WorkMode ${effectiveWorkMode === "EXECUTE" ? "BUILD" : effectiveWorkMode} restored from session; pass --work-mode DISCUSS|PLAN|BUILD to override\n`
+        : `[resume] WorkMode default DISCUSS (legacy session without saved workMode); pass --work-mode PLAN|BUILD to change\n`
       : persistedWorkMode !== undefined && persistedWorkMode !== effectiveWorkMode
-        ? `[resume] WorkMode ${effectiveWorkMode} (overriding saved ${persistedWorkMode})\n`
+        ? `[resume] WorkMode ${effectiveWorkMode === "EXECUTE" ? "BUILD" : effectiveWorkMode} (overriding saved ${persistedWorkMode === "EXECUTE" ? "BUILD" : persistedWorkMode})\n`
         : ""
     if (resumeNotice) process.stderr.write(resumeNotice)
     // P2.4: aktivasi default Thread SEBELUM seed kernel — backfill aditif

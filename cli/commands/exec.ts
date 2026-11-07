@@ -20,6 +20,7 @@ import { formatUsd } from "../../src/ui/render/money.ts"
 import { cleanUntrusted } from "../../src/ui/render/sanitize.ts"
 import {
   allowLocalConfig,
+  displayWorkMode,
   flagsAfterPromptBoundary,
   hasFlag,
   promptFromArgs,
@@ -118,18 +119,19 @@ export async function handleExec(
     ""
   ).toLowerCase()
   const toolScope = toolScopeRaw === "explore" ? ("explore" as const) : ("full" as const)
-  // P12 S2.2 — WorkMode (flag > env, default EXECUTE; invalid → EXECUTE+warn).
+  // WorkMode (flag > env, default DISCUSS; invalid → DISCUSS + warning).
   const workModeResolved = resolveWorkModeFlag(getArg)
   const workMode = workModeResolved.workMode
   if (workModeResolved.warning) console.error(`[warn] ${workModeResolved.warning}`)
   // P12 S2.2 (F-DISCUSS-4): exec non-JSON = linear manusia tanpa footer TUI.
   // Mode non-EXECUTE ditulis SATU baris stderr human-facing agar ceiling
   // read-only/rencana terlihat, bukan diam-diam. JSON memakai field terstruktur
-  // (summary.workMode) — bukan teks dekoratif. EXECUTE = default = tanpa baris.
-  if (!jsonMode && workMode !== "EXECUTE") {
-    process.stderr.write(
-      `[work-mode] ${workMode}${workMode === "PLAN" ? " (read-only planning)" : " (read-only)"}\n`,
-    )
+  // (summary.workMode) — bukan teks dekoratif. BUILD = mode yang mengizinkan tulis.
+  if (!jsonMode && (workMode !== "EXECUTE" || workModeResolved.explicit)) {
+    const modeLabel = displayWorkMode(workMode)
+    const modeNote =
+      workMode === "PLAN" ? " (read-only planning)" : workMode === "DISCUSS" ? " (read-only)" : ""
+    process.stderr.write(`[work-mode] ${modeLabel}${modeNote}\n`)
   }
   const ratelimitRaw = getArg("--ratelimit")
   let rateLimiter: ReturnType<typeof createRateLimiter> | undefined
@@ -194,7 +196,7 @@ export async function handleExec(
   const effectivePrompt = prompt.trim()
   if (!effectivePrompt) {
     console.error(
-      'usage: minicode exec [--json] [--work-mode DISCUSS|PLAN|EXECUTE] [--cwd <dir>] [--model <m>] [--sandbox docker|os] "prompt"',
+      'usage: minicode exec [--json] [--work-mode DISCUSS|PLAN|BUILD] [--cwd <dir>] [--model <m>] [--sandbox docker|os] "prompt"',
     )
     if (jsonMode)
       writeMachineLine(
@@ -234,7 +236,7 @@ export async function handleExec(
     ...(contextWindowTokens && contextWindowTokens > 0 ? { contextWindowTokens } : {}),
     ...(keepRecentTurns ? { keepRecentTurns } : {}),
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    // P12 S2.2 — WorkMode efektif (sudah di-resolve, default EXECUTE).
+    // WorkMode efektif (sudah di-resolve, default DISCUSS).
     workMode,
     workModeExplicit: workModeResolved.explicit,
     rateLimiter,
@@ -250,7 +252,7 @@ export async function handleExec(
           e instanceof VerifyWorkModeConflictError
             ? machineSummary(false, {
                 prompt: effectivePrompt,
-                workMode,
+                workMode: displayWorkMode(workMode),
                 error: { category: "USER_ERROR", message: e.message },
               })
             : machineFailure(effectivePrompt, e)
@@ -340,7 +342,7 @@ export async function handleExec(
         ...(ue.cacheWriteTokens ? { cacheWriteTokens: ue.cacheWriteTokens } : {}),
         eventCount: streamed,
         // P12 S2.2 (F-DISCUSS-4) + P0.2: surface terstruktur WorkMode efektif di summary mesin
-        workMode: ctx.workMode,
+        workMode: displayWorkMode(ctx.workMode),
         ...(submitted ? { submitted: submitted.result } : {}),
         ...(lastVerify
           ? {

@@ -449,7 +449,7 @@ describe("runPicker", () => {
     value: `p::model-${i}`,
   }))
 
-  test("render awal menampilkan judul dan item pertama tersorot", async () => {
+  test("render awal hanya menampilkan item dan seleksi", async () => {
     tty = installFakeTty({ rows: 24 })
     let picked: string | null | undefined
     const p = runPicker({
@@ -465,7 +465,7 @@ describe("runPicker", () => {
     })
     await tty.ready()
     const out = visible(tty)
-    expect(out).toContain("Select Model")
+    expect(out).not.toContain("Select Model")
     expect(out).toContain("model-0")
     expect(out).toMatch(SELECTED)
     await tty.send(KEY.esc, 20)
@@ -491,7 +491,7 @@ describe("runPicker", () => {
     await tty.send(KEY.up, 30)
     const out = visible(tty)
     expect(out).toContain("model-31")
-    expect(out).toContain("1/40 matches")
+    expect(out).not.toContain("matches")
     expect(out).not.toContain("model-0")
     await tty.send(KEY.esc, 20)
     await tty.send(KEY.esc, 20)
@@ -560,16 +560,16 @@ describe("runPicker", () => {
     expect(picked).toBe("p::model-1")
   })
 
-  test("daftar lebih panjang dari layar menampilkan indikator sisa", async () => {
+  test("daftar panjang tetap bersih tanpa baris indikator sisa", async () => {
     tty = installFakeTty({ rows: 16 })
     const p = runPicker({ title: "t", items, onPick: () => {}, onCancel: () => {} })
     await tty.ready()
-    expect(visible(tty)).toContain("more")
+    expect(visible(tty)).not.toContain("more")
     await tty.send(KEY.esc, 20)
     await p
   })
 
-  test("fallback non-TTY mencetak daftar bernomor", async () => {
+  test("fallback non-TTY mencetak nama model saja", async () => {
     tty = installFakeTty({ isTTY: false })
     await runPicker({
       title: "Pilih",
@@ -578,9 +578,10 @@ describe("runPicker", () => {
       onCancel: () => {},
     })
     const out = visible(tty)
-    expect(out).toContain("Pilih")
-    expect(out).toContain("[0]")
-    expect(out).toContain("[1]")
+    expect(out).not.toContain("Pilih")
+    expect(out).toContain("prov-b::model-0")
+    expect(out).toContain("prov-a::model-1")
+    expect(out).not.toContain("[0]")
   })
 
   test("memulihkan kursor saat keluar", async () => {
@@ -616,20 +617,19 @@ describe("runProviderManager", () => {
       },
     })
     await tty.ready()
-    expect(visible(tty)).toContain("Provider")
+    expect(visible(tty)).toContain("No providers")
     await tty.send(KEY.esc, 30)
     await p
     expect(overridden).toBeUndefined()
   })
 
-  test("footer menyebut operasi add/delete/edit", async () => {
+  test("daftar provider tanpa footer hint", async () => {
     tty = installFakeTty({ rows: 24 })
     const p = runProviderManager({ cwd: process.cwd() })
     await tty.ready()
     const out = visible(tty)
-    expect(out).toContain("add")
-    expect(out).toContain("delete")
-    expect(out).toContain("edit")
+    expect(out).not.toContain("delete")
+    expect(out).not.toContain("edit")
     await tty.send(KEY.esc, 30)
     await p
   })

@@ -17,6 +17,7 @@ import {
   EXPLORE_TOOL_NAMES,
   type SubAgentSpec,
   setSubAgentSessionFactory,
+  setSubAgentWorkMode,
 } from "../src/tools/task.ts"
 import { todoSession } from "../src/tools/todo.ts"
 
@@ -82,6 +83,10 @@ test("delegate: explore = 12 read-only tepat; plan = 29 tanpa denylist", async (
   const restore = providerEnv()
   const dir = tmpRoot()
   const prevTodo = todoSession.id
+  // Tool singleton dipakai lintas tes; pin mode agar sesi lain yang baru
+  // dibuat tidak mengubah jumlah tool yang diuji lewat callback global.
+  clearSubAgentSessionFactory()
+  setSubAgentWorkMode(() => "EXECUTE")
   todoSession.id = "p-tools"
   try {
     const seen: SubAgentSpec[] = []

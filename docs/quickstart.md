@@ -20,7 +20,7 @@ minicode auth status         # lihat kredensial + kapan kedaluwarsa
 ## 2. Prompt pertama (2 menit)
 
 ```bash
-minicode "buat http server hello world di server.ts" --verbose
+minicode --work-mode BUILD "buat http server hello world di server.ts" --verbose
 ```
 
 Yang terjadi: model menerima system prompt berisi `# Environment` (cwd + platform) + repo-map ringkas, lalu loop ReAct `Thought → Action → Observation` sampai jawaban final atau batas (`--max-steps` default 50, `--timeout` default 15 menit).
@@ -38,7 +38,7 @@ minicode --interactive
 ## 3. Verify otomatis (2 menit)
 
 ```bash
-minicode --verify "fix bugs lalu typecheck"
+minicode --work-mode BUILD --verify "fix bugs lalu typecheck"
 ```
 
 Sebelum agen jalan, baseline diuji dulu. Bila baseline sudah merah, catatan Health-Check ditempel ke prompt awal agar agen memperbaiki dulu. Setelah run, verify dijalankan; bila gagal, agen self-heal maks 3 siklus. Output error dibungkus fence agar tidak jadi prompt injection. Custom command via `MINICODE_VERIFY_CMD` atau `verifyCommand` di config.

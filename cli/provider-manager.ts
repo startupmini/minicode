@@ -30,9 +30,7 @@ export async function runProviderManager(opts: {
 }): Promise<void> {
   if (!process.stdin.isTTY) {
     const cfg = await loadConfig(opts.cwd, { allowLocal: opts.allowLocalConfig })
-    console.log(`\n${t("prov.title")}:`)
-    for (const p of cfg.providers)
-      console.log(`  ${p.id} - ${p.baseUrl} (${t("prov.models", { n: p.models.length })})`)
+    for (const p of cfg.providers) console.log(p.id)
     return
   }
 

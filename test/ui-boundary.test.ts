@@ -1,6 +1,6 @@
 // Penjaga batas presentation layer (`src/ui/`).
 //
-// Aturan arah dependensi (lihat docs/ARCHITECTURE.html):
+// Aturan arah dependensi (lihat docs/architecture.md):
 //   cli/ ──► src/ui/ (presentation; mandiri)
 //   cli/ ──► src/ (logic) ──► vendor/minicore (#minicore)
 //

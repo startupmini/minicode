@@ -100,7 +100,7 @@ describe("model-manager: alur interactive", () => {
     expect(boxW()).toBe(64)
     // Effort picker (kotak lain) dibuka lalu dibatalkan → kembali 64.
     await tty.send(KEY.enter, 30)
-    await tty.waitForOutput((o) => o.includes("Thinking effort"), 2000)
+    await tty.waitForOutput((o) => o.includes("default"), 2000)
     await tty.send(KEY.esc, 80)
     await tty.waitForOutput((o) => o.includes("prov::m1"), 2000)
     expect(boxW()).toBe(64)
@@ -113,20 +113,19 @@ describe("model-manager: alur interactive", () => {
     await p
   }, 8000)
 
-  test("kursor diparkir di ujung baris search (bukan judul)", async () => {
-    // Gagal-di-kode-lama: parkir di baris judul (off-by-one; judul "Models"
-    // ditambah belakangan tanpa update offset) lalu di ujung baris (void).
+  test("kursor diparkir di ujung baris search pada jendela tanpa judul", async () => {
+    // Pencarian tetap menerima ketikan tanpa menambah baris judul.
     // Benar: tepat sebelum penanda █ tempat ketikan menempel.
     tty = installFakeTty({ columns: 100, rows: 24 })
     const p = runModelManager({ cwd: workspace, currentModel: "prov::m1" })
     await tty.ready()
     const frame = tty.screen()
     const top0 = frame.findIndex((l) => l.includes("┌"))
-    const srow = frame[top0 + 2] ?? ""
+    const srow = frame[top0 + 1] ?? ""
     const m = /^ */.exec(srow)
     const leftPad = m ? m[0].length : 0
     // Baris search body[0]: padding + border + spasi + "> " + filter(0) + 1.
-    const row = top0 + 1 + 2
+    const row = top0 + 1 + 1
     const col = Math.max(1, Math.min(100, leftPad + 2 + 2 + 0 + 1))
     expect(srow).toContain(">")
     expect(tty.all()).toContain(`\x1b[${row};${col}H`)
@@ -160,7 +159,7 @@ describe("model-manager: alur interactive", () => {
     await tty.send(KEY.down, 20) // highlight cap::o3-mini (keluarga reasoning)
     await tty.send(KEY.enter, 30)
     // Enter sekarang membuka picker effort — pilih default
-    await tty.waitForOutput((out) => out.includes("Thinking effort"), 2000)
+    await tty.waitForOutput((out) => out.includes("default"), 2000)
     await tty.send(KEY.enter, 30)
     await p
     expect(overrideLog).toEqual(["cap::o3-mini"])
@@ -180,7 +179,7 @@ describe("model-manager: alur interactive", () => {
     await tty.send(KEY.down, 20) // highlight prov::m2
     await tty.send(KEY.down, 20) // highlight cap::o3-mini
     await tty.send(KEY.enter, 30)
-    await tty.waitForOutput((out) => out.includes("Thinking effort"), 2000)
+    await tty.waitForOutput((out) => out.includes("default"), 2000)
     await tty.send(KEY.down, 20) // low
     await tty.send(KEY.down, 20) // medium
     await tty.send(KEY.down, 20) // high
@@ -204,7 +203,7 @@ describe("model-manager: alur interactive", () => {
     })
     await tty.ready()
     await tty.send(KEY.enter, 30) // pilih cap::o3-mini → picker terbuka
-    await tty.waitForOutput((out) => out.includes("Thinking effort"), 2000)
+    await tty.waitForOutput((out) => out.includes("default"), 2000)
     // Settle >50ms: lone-ESC flush input.ts — Esc berikut ditujukan ke manager
     // yang baru resume, bukan ke picker yang sedang menutup.
     await tty.send(KEY.esc, 80) // batal: kembali ke daftar, tanpa select
@@ -259,7 +258,7 @@ describe("model-manager: alur interactive", () => {
     })
     await tty.ready()
     await tty.send(KEY.enter, 30)
-    await tty.waitForOutput((out) => out.includes("Thinking effort"), 2000)
+    await tty.waitForOutput((out) => out.includes("default"), 2000)
     await tty.send(KEY.down, 20) // low
     await tty.send(KEY.down, 20) // medium
     await tty.send(KEY.enter, 30)
@@ -338,7 +337,7 @@ describe("model-manager: alur interactive", () => {
     await tty.ready()
     await tty.send(KEY.up, 20) // sudah di atas (satu-satunya baris): tidak melewati 0
     await tty.send(KEY.enter, 30) // buka picker effort
-    await tty.waitForOutput((out) => out.includes("Thinking effort"), 2000)
+    await tty.waitForOutput((out) => out.includes("default"), 2000)
     // Settle >50ms (lone-ESC flush): Esc berikut ke manager, bukan ke picker.
     await tty.send(KEY.esc, 80) // batal total
     await tty.waitForListener(2000)
@@ -470,7 +469,7 @@ describe("model-manager: cari/filter", () => {
     expect(one).toContain("cap::o3-mini")
     expect(one).not.toContain("prov::m1")
     await tty.send(KEY.enter, 30) // pilih satu-satunya baris tersaring
-    await tty.waitForOutput((out) => out.includes("Thinking effort"), 2000)
+    await tty.waitForOutput((out) => out.includes("default"), 2000)
     // Settle >50ms (lone-ESC flush): Esc berikut ke manager, bukan ke picker.
     await tty.send(KEY.esc, 80) // batal effort = batal total
     await tty.waitForListener(2000)

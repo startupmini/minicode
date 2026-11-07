@@ -15,6 +15,7 @@ import { formatError } from "../../src/ui/assistant/simple.ts"
 import type { UiPresentationEvent, UiPresentationSnapshot } from "../../src/ui/contract.ts"
 import { formatUsd } from "../../src/ui/render/money.ts"
 import { cleanUntrusted } from "../../src/ui/render/sanitize.ts"
+import { displayWorkMode, parseWorkModeValue, resolveWorkModeFlag } from "../args.ts"
 import { createCliSession } from "../setup.ts"
 
 // minicode acp — server JSON-RPC via stdio untuk IDE (Fase 5, subset minimal).
@@ -26,7 +27,7 @@ import { createCliSession } from "../setup.ts"
 //
 //   -> {"id":1,"method":"initialize","params":{"client":"zed"}}
 //   <- {"id":1,"result":{"server":"minicode-acp","capabilities":{...}}}
-//   -> {"id":2,"method":"run","params":{"prompt":"...","cwd":"...","model":"...","maxSteps":50,"timeoutMs":600000,"budget":0.5,"mode":"auto"|"plan"}}
+//   -> {"id":2,"method":"run","params":{"prompt":"...","cwd":"...","model":"...","maxSteps":50,"timeoutMs":600000,"budget":0.5,"mode":"auto"|"ask","workMode":"DISCUSS"|"PLAN"|"BUILD"}}
 //   <- {"type":"text","delta":"..."} ... (notifikasi, tanpa id)
 //   <- {"type":"tool","name":"read_file"} ... (notifikasi legacy, tanpa id)
 //   <- {"type":"tool.started","toolCallId":"...","name":"read_file"} ...
@@ -92,13 +93,13 @@ export interface AcpRunParams {
   maxSteps?: number
   timeoutMs?: number
   budget?: number
-  mode?: "auto" | "plan"
-  /** P12 S2.2 — WorkMode terpisah dari `mode` (permission). Default EXECUTE. */
+  mode?: "auto" | "ask"
+  /** WorkMode terpisah dari mode persetujuan; input BUILD dipetakan internal. */
   workMode?: "DISCUSS" | "PLAN" | "EXECUTE"
 }
 
 /** Validasi params `run`: prompt wajib non-kosong; angka harus hingga-positif;
- * mode hanya auto/plan. Murni + diekspor untuk test. */
+ * mode persetujuan hanya auto/ask. Murni + diekspor untuk test. */
 export function parseRunParams(
   params: unknown,
 ): { ok: true; value: AcpRunParams } | { ok: false; error: string } {
@@ -117,26 +118,14 @@ export function parseRunParams(
     !(typeof p.budget === "number" && Number.isFinite(p.budget) && p.budget >= 0)
   )
     return { ok: false, error: "params.budget must be a non-negative number" }
-  const mode =
-    p.mode === undefined || p.mode === "auto" ? "auto" : p.mode === "plan" ? "plan" : null
-  if (mode === null) return { ok: false, error: 'params.mode must be "auto" or "plan"' }
-  // P12 S2.2 + P0.2 (Q5) — WorkMode: params.workMode eksplisit mengalahkan env
-  // MINICODE_WORK_MODE; keduanya absen → EXECUTE. Nilai params.workMode yang
-  // invalid ditolak fail-closed (bukan diam melebar).
-  const envWmRaw = (process.env.MINICODE_WORK_MODE ?? "").trim().toUpperCase()
-  const envWorkMode =
-    envWmRaw === "DISCUSS" || envWmRaw === "PLAN" || envWmRaw === "EXECUTE" ? envWmRaw : "EXECUTE"
-  const wmRaw = p.workMode === undefined ? envWorkMode : String(p.workMode).toUpperCase()
+  const mode = p.mode === undefined || p.mode === "auto" ? "auto" : p.mode === "ask" ? "ask" : null
+  if (mode === null) return { ok: false, error: 'params.mode must be "auto" or "ask"' }
   const workMode =
-    wmRaw === "DISCUSS"
-      ? "DISCUSS"
-      : wmRaw === "PLAN"
-        ? "PLAN"
-        : wmRaw === "EXECUTE"
-          ? "EXECUTE"
-          : null
-  if (workMode === null)
-    return { ok: false, error: 'params.workMode must be "DISCUSS" | "PLAN" | "EXECUTE"' }
+    p.workMode === undefined
+      ? resolveWorkModeFlag(() => undefined).workMode
+      : parseWorkModeValue(String(p.workMode))
+  if (workMode === undefined)
+    return { ok: false, error: 'params.workMode must be "DISCUSS" | "PLAN" | "BUILD"' }
   const out: AcpRunParams = { prompt, mode, workMode }
   if (typeof p.cwd === "string" && p.cwd) out.cwd = p.cwd
   if (typeof p.model === "string" && p.model) out.model = p.model
@@ -402,11 +391,11 @@ export async function runAcpSession(
       machineOutput: true,
       verbose: false,
       allowAll: false,
-      ask: false,
-      plan: rp.mode === "plan",
+      ask: rp.mode === "ask",
+      plan: false,
       allowlist: false,
       verify: false,
-      // P12 S2.2 — WorkMode terpisah dari `mode` (permission). Default EXECUTE.
+      // WorkMode terpisah dari mode persetujuan; default DISCUSS.
       workMode: rp.workMode,
       budget: rp.budget,
       budgetStrict: false,
@@ -471,7 +460,11 @@ export async function runAcpSession(
             ok: true,
             sessionId: ctx.sessionId,
             model: ctx.modelRef.current,
-            workMode: (ctx as { workMode?: string }).workMode ?? rp.workMode ?? "EXECUTE",
+            workMode: displayWorkMode(
+              ((ctx as { workMode?: "DISCUSS" | "PLAN" | "EXECUTE" }).workMode ??
+                rp.workMode ??
+                "DISCUSS") as "DISCUSS" | "PLAN" | "EXECUTE",
+            ),
             tokens: ue.totalTokens,
             inputTokens: ue.inputTokens,
             outputTokens: ue.outputTokens,

@@ -273,7 +273,7 @@ describe("web ssg", () => {
     const fm = parseFrontmatter(raw, "x")
     // Judul dipangkas 2026-09-18 (audit SEO: <=65 char termasuk sufiks
     // " — Minicode" di layout, supaya tak terpotong di SERP).
-    expect(fm.title).toBe("Kenapa Minicode bekerja di terminal biasa")
+    expect(fm.title).toBe("Kenapa Minicode memisahkan TUI dan output shell-first")
   })
 
   test("JSON-LD valid JSON di semua halaman (P1 web)", () => {
@@ -394,7 +394,7 @@ describe("web ssg", () => {
     const planRow = agents.split("\n").find((l) => l.startsWith("| `plan`"))
     expect(planRow).toBeTruthy()
     expect(planRow!).not.toMatch(/rencana tertulis/i)
-    expect(planRow!).toMatch(/todo_read|tanpa.*todo_write|tanpa mutasi/i)
+    expect(planRow!).toMatch(/todo_read|tanpa.*todo_write|tidak mendapat.*todo_write|tanpa mutasi/i)
   })
 
   test("heading id stabil + duplikat unik + TOC sinkron (FIX#7 web)", async () => {
@@ -816,7 +816,8 @@ describe("web audit 2026-09-16", () => {
     expect(entries[1]!.date).toBe("")
 
     // Build asli: PLAN.md menyisipkan marker guard, halaman dirender satu
-    // kali (file md stub TIDAK ikut), dan sidebar menandai halaman aktif.
+    // kali (file md stub TIDAK ikut). Header menandai route aktif di browser;
+    // snapshot HTML cukup memastikan target route tersedia.
     // CI checkout segar tak menjalankan web:build — artefak dijaga web-check.
     if (!existsSync(join(repoRoot, "site"))) return
     const html = readFileSync(join(repoRoot, "site", "docs", "changelog.html"), "utf8")
@@ -824,7 +825,7 @@ describe("web audit 2026-09-16", () => {
     // Anti-dobel-render: kalimat khas stub docs/changelog.md TIDAK boleh ikut.
     expect(html).not.toContain("saat build website")
     expect(html).not.toMatch(/<h1>Changelog<\/h1>[\s\S]*<h1>Changelog<\/h1>/)
-    expect(html).toContain('href="/docs/changelog.html" aria-current="page"')
+    expect(html).toContain('href="/docs/changelog.html">Changelog</a>')
   })
 
   test("discoverability AI: llms-full.txt, robots AI-crawler, FAQPage JSON-LD", () => {
@@ -851,7 +852,7 @@ describe("web audit 2026-09-16", () => {
       expect(i, `llms-full urut: ${s}`).toBeGreaterThan(at)
       at = i
     }
-    expect(full).not.toMatch(/\]\([^)]*\.md/)
+    expect(full).not.toMatch(/\]\((?!https?:\/\/)[^)]*\.md/)
     expect(full).toContain("# Status eksekusi")
     // robots: crawler AI utama eksplisit di-allow; admin tetap disallow.
     const robots = readFileSync(join(repoRoot, "site", "robots.txt"), "utf8")
@@ -948,7 +949,7 @@ describe("web audit 2026-09-16", () => {
     // "Minicode — X" + suffix layout "— Minicode".
     const tools = readFileSync(join(repoRoot, "site", "docs", "tools.html"), "utf8")
     expect(tools).toContain("BreadcrumbList")
-    expect(tools).toContain("<title>Tools (37) — Minicode</title>")
+    expect(tools).toContain("<title>Tools — Minicode</title>")
     expect(tools).not.toContain("— Minicode — Minicode")
     expect(tools).not.toMatch(/<title>Minicode — /)
   })
@@ -978,7 +979,7 @@ describe("web audit 2026-09-16", () => {
       }
     )["@graph"]
     const bcDoc = graph.find((n) => n["@type"] === "BreadcrumbList")!
-    expect(bcDoc.itemListElement!.map((e) => e.name)).toEqual(["Beranda", "Docs", "Tools (37)"])
+    expect(bcDoc.itemListElement!.map((e) => e.name)).toEqual(["Beranda", "Docs", "Tools"])
     expect(bcDoc.itemListElement![2]!.item).toBeUndefined()
   })
 
@@ -1014,7 +1015,7 @@ describe("web audit 2026-09-16", () => {
     const html = readFileSync(join(site, "docs", "tools.html"), "utf8")
     expect(html).toContain('<header class="doc-head">')
     expect(html).toContain(`<p class="kicker">${tools.group}</p>`)
-    expect(html).toContain(`<h1>${tools.title}</h1>`)
+    expect(html).toMatch(new RegExp(`<h1>${tools.title}(?: \\(\\d+\\))?</h1>`))
     expect(html).not.toMatch(/<article class="doc-body"><h1>/)
     expect(html).toMatch(/<nav class="toc"[^>]*><p>Daftar isi<\/p><ol>/)
   })
@@ -1064,7 +1065,7 @@ describe("web audit 2026-09-16", () => {
 
     // Sumber README tetap utuh untuk pembaca repo (hanya web yang membuang).
     const readme = readFileSync(join(repoRoot, "docs", "README.md"), "utf8")
-    expect(readme).toContain("## Navigasi")
+    expect(readme).toContain("## Peta dokumentasi")
 
     const site = join(repoRoot, "site")
     if (!existsSync(site)) return

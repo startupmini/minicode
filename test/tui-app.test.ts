@@ -268,6 +268,20 @@ describe("TuiApp", () => {
     await tty!.send(KEY.ctrlD)
     await runP
   })
+  test("slash command tetap dijalankan tetapi tak masuk transcript", async () => {
+    const { app, calls, transcript, screenText } = setup()
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
+    await tty!.send("/help")
+    await tty!.send(KEY.enter)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(calls).toEqual(["/help"])
+    expect(transcript.size()).toBe(0)
+    expect(screenText()).not.toContain("minicode › /help")
+    await tty!.send(KEY.ctrlD)
+    await runP
+  })
   test("submit melempar → baris error tampil, sesi lanjut (tak ada jalur diam)", async () => {
     const { app, calls } = setup()
     const runP = app.run()
@@ -355,7 +369,7 @@ describe("TuiApp", () => {
     const frame = tty!.screen()
     const last = frame[frame.length - 1]!
     // [mode-architecture] footer menampilkan kedua mode dengan label proper.
-    expect(last).toContain("Build")
+    expect(last).toContain("Discuss")
     expect(last).toContain("Auto")
     expect(last).toContain("1k")
     expect(last.indexOf("1k")).toBeLessThan(last.lastIndexOf("Auto"))
@@ -611,17 +625,20 @@ describe("TuiApp", () => {
     await tty!.send(KEY.ctrlD)
     await runP
   })
-  test("dropdown / tampil di atas input; Esc menutup (I16)", async () => {
+  test("dropdown / hanya menampilkan nama command, tanpa slash atau judul (I16)", async () => {
     const { app, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/")
-    await tty!.waitForOutput((o) => o.includes("commands"))
-    expect(screenText()).toContain("/model")
+    expect(screenText().split("\n")).toContain("model")
+    expect(screenText().split("\n")).toContain("help")
+    expect(screenText().split("\n")).toContain("exit")
+    expect(screenText().split("\n")).not.toContain("/model")
+    expect(screenText()).not.toContain("commands")
     // Esc butuh flush lone-ESC (~50ms) — settle pendek membuatnya hilang.
     await tty!.send(KEY.esc, 90)
-    expect(screenText()).not.toContain("commands")
+    expect(screenText().split("\n")).not.toContain("model")
     await tty!.send(KEY.backspace)
     await tty!.send(KEY.ctrlD)
     await runP
@@ -688,7 +705,7 @@ describe("TuiApp", () => {
     expect(app.isSuspended()).toBe(true)
     const dimmedFrame = tty!.screen()
     expect(dimmedFrame[dimmedFrame.length - 2]).toBe("")
-    expect(dimmedFrame[dimmedFrame.length - 1]).toContain("Build")
+    expect(dimmedFrame[dimmedFrame.length - 1]).toContain("Discuss")
     expect(dimmedFrame[dimmedFrame.length - 1]).toContain("Auto")
     // Backdrop redup tertulis sebagai frame (bukan hitam polos).
     expect(tty!.all()).toContain("\x1b[2m")
@@ -900,8 +917,8 @@ describe("TuiApp", () => {
     expect(tty!.promptListeners()).toBe(1)
     // Ujung-ke-ujung: ketik "/" → dropdown rekomendasi muncul lagi.
     await tty!.send("/")
-    await tty!.waitForOutput((o) => o.includes("commands"))
-    expect(screenText()).toContain("/model")
+    expect(screenText().split("\n")).toContain("model")
+    expect(screenText().split("\n")).not.toContain("/model")
     await tty!.send(KEY.backspace)
     await tty!.send(KEY.ctrlD)
     await runP
@@ -965,8 +982,8 @@ describe("TuiApp", () => {
     app.resume()
     expect(tty!.promptListeners()).toBe(1)
     await tty!.send("/")
-    await tty!.waitForOutput((o) => o.includes("commands"))
-    expect(screenText()).toContain("/model")
+    expect(screenText().split("\n")).toContain("model")
+    expect(screenText().split("\n")).not.toContain("/model")
     await tty!.send(KEY.backspace)
     await tty!.send(KEY.ctrlD)
     await runP

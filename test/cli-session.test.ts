@@ -271,7 +271,7 @@ describe("cli: sesi one-shot dasar", () => {
         { kind: "tool", name: "write_file", args: { path: "hasil.txt", content: "isi dari tool" } },
         { kind: "text", text: "selesai" },
       ],
-      ["buat hasil.txt"],
+      ["--work-mode", "BUILD", "buat hasil.txt"],
     )
     expect(r.code).toBe(0)
     const target = join(ws.dir, "hasil.txt")
@@ -346,7 +346,7 @@ describe("cli: exec --json machine envelope", () => {
 
 // ── F-DISCUSS-4: WorkMode terlihat di one-shot/exec (bukan hanya TUI/ACP).
 // One-shot & exec non-JSON = linear manusia → SATU baris stderr [work-mode] saat
-// mode ≠ EXECUTE (EXECUTE = default, tanpa baris). exec --json = field terstruktur.
+// mode yang read-only tampil di stderr; exec --json memakai field terstruktur.
 describe("cli: WorkMode surfacing (F-DISCUSS-4)", () => {
   test("one-shot --work-mode DISCUSS → stderr [work-mode] DISCUSS (read-only)", async () => {
     const { run: r } = await runWithProvider(
@@ -365,10 +365,10 @@ describe("cli: WorkMode surfacing (F-DISCUSS-4)", () => {
     expect(r.stderr).toContain("[work-mode] PLAN (read-only planning)")
   })
 
-  test("one-shot tanpa --work-mode → tanpa baris [work-mode] (default EXECUTE)", async () => {
+  test("one-shot tanpa --work-mode → default DISCUSS", async () => {
     const { run: r } = await runWithProvider([{ kind: "text", text: "ok" }], ["biasa saja"])
     expect(r.code).toBe(0)
-    expect(r.stderr).not.toContain("[work-mode]")
+    expect(r.stderr).toContain("[work-mode] DISCUSS (read-only)")
   })
 
   test("exec non-JSON --work-mode DISCUSS → stderr [work-mode] DISCUSS (read-only)", async () => {
@@ -392,7 +392,7 @@ describe("cli: WorkMode surfacing (F-DISCUSS-4)", () => {
     expect(summary.workMode).toBe("PLAN")
   })
 
-  test("exec --json default → summary.workMode === 'EXECUTE' (selalu hadir)", async () => {
+  test("exec --json default → summary.workMode === 'DISCUSS' (selalu hadir)", async () => {
     const { run: r } = await runWithProvider(
       [{ kind: "text", text: "ok" }],
       ["exec", "--json", "baca a.ts"],
@@ -400,7 +400,18 @@ describe("cli: WorkMode surfacing (F-DISCUSS-4)", () => {
     expect(r.code).toBe(0)
     const lines = r.stdout.split("\n").filter(Boolean)
     const summary = JSON.parse(lines[lines.length - 1]!) as Record<string, unknown>
-    expect(summary.workMode).toBe("EXECUTE")
+    expect(summary.workMode).toBe("DISCUSS")
+  })
+
+  test("exec --json BUILD melaporkan nilai produk BUILD", async () => {
+    const { run: r } = await runWithProvider(
+      [{ kind: "text", text: "ok" }],
+      ["exec", "--json", "--work-mode", "BUILD", "baca a.ts"],
+    )
+    expect(r.code).toBe(0)
+    const lines = r.stdout.split("\n").filter(Boolean)
+    const summary = JSON.parse(lines[lines.length - 1]!) as Record<string, unknown>
+    expect(summary.workMode).toBe("BUILD")
   })
 })
 
@@ -422,7 +433,7 @@ describe("cli: exec --json verify summary", () => {
     return [
       "exec",
       "--json",
-      ...(verify ? ["--verify"] : []),
+      ...(verify ? ["--verify", "--work-mode", "BUILD"] : []),
       prompt,
       "--cwd",
       ws.dir,
@@ -570,6 +581,8 @@ describe("cli: exec prompt scoping (P11.2)", () => {
           "--json",
           "exec",
           "--verify",
+          "--work-mode",
+          "BUILD",
           "tugas cepat",
           "--cwd",
           ws.dir,
@@ -817,6 +830,8 @@ describe("cli: --resume", () => {
       const first = await run(ws, [
         "--session",
         "s-task",
+        "--work-mode",
+        "BUILD",
         "--cwd",
         ws.dir,
         "--model",
@@ -848,6 +863,8 @@ describe("cli: --resume", () => {
       const second = await run(ws, [
         "--resume",
         "s-task",
+        "--work-mode",
+        "BUILD",
         "--cwd",
         ws.dir,
         "--model",
@@ -972,6 +989,8 @@ describe("cli: --verify (self-heal)", () => {
         [
           "perbaiki sesuatu",
           "--verify",
+          "--work-mode",
+          "BUILD",
           "--cwd",
           ws.dir,
           "--model",
@@ -1023,6 +1042,8 @@ describe("cli: --verify (self-heal)", () => {
           "--session",
           "pf07",
           "--verify",
+          "--work-mode",
+          "BUILD",
           "--cwd",
           ws.dir,
           "--model",
@@ -1117,6 +1138,8 @@ describe("cli: --verify (self-heal)", () => {
           "--session",
           sid,
           "--verify",
+          "--work-mode",
+          "BUILD",
           "--cwd",
           ws.dir,
           "--model",
@@ -1166,6 +1189,8 @@ describe("cli: --verify (self-heal)", () => {
           "--resume",
           sid,
           "--verify",
+          "--work-mode",
+          "BUILD",
           "--cwd",
           ws.dir,
           "--model",
@@ -1203,6 +1228,8 @@ describe("cli: --verify (self-heal)", () => {
       const first = await run(ws, [
         "--session",
         "idtest",
+        "--work-mode",
+        "BUILD",
         "--cwd",
         ws.dir,
         "--model",
@@ -1232,6 +1259,8 @@ describe("cli: --verify (self-heal)", () => {
       const second = await run(ws, [
         "--resume",
         "idtest",
+        "--work-mode",
+        "BUILD",
         "--cwd",
         ws.dir,
         "--model",
@@ -1268,7 +1297,17 @@ describe("cli: --verify (self-heal)", () => {
       writeProviderConfig(ws, provider.baseUrl)
       const r = await run(
         ws,
-        ["perbaiki", "--verify", "--cwd", ws.dir, "--model", "gpt-4o-mini", "--allow-local-config"],
+        [
+          "perbaiki",
+          "--verify",
+          "--work-mode",
+          "BUILD",
+          "--cwd",
+          ws.dir,
+          "--model",
+          "gpt-4o-mini",
+          "--allow-local-config",
+        ],
         {
           MINICODE_VERIFY_CMD: `${process.execPath} selalu-gagal.ts`,
         },
@@ -1318,6 +1357,8 @@ describe("cli: --verify (self-heal)", () => {
           "--session",
           "pf01",
           "--verify",
+          "--work-mode",
+          "BUILD",
           "--cwd",
           ws.dir,
           "--model",
@@ -1355,6 +1396,8 @@ describe("cli: --verify (self-heal)", () => {
       const r = await run(ws, [
         "perbaiki",
         "--verify",
+        "--work-mode",
+        "BUILD",
         "--cwd",
         ws.dir,
         "--model",

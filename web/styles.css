@@ -1,7 +1,7 @@
 /* Minicode web — konsep "Soft & Flat".
    Hierarki dari tipografi + whitespace + blok lembut (soft).
    Tanpa border, tanpa shadow, tanpa dimensi kaca. Tanpa turunan
-   ARCHITECTURE.html: token, lebar kolom, struktur beda total.
+   Peta arsitektur developer memakai gaya dokumen Markdown.
    Font: satu tingkat di bawah landing (15px) untuk merasa ringan. */
 :root {
   --bg: #ffffff;

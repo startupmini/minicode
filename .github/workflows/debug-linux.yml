@@ -13,12 +13,15 @@ jobs:
           bun-version: 1.4.3
       - name: Install
         run: bun install
-      - name: Run full coverage (default reporter, capture failure detail)
+      - name: Run full coverage (capture to file, don't fail)
         shell: bash
         run: |
-          bun test --coverage 2>&1 | tee /tmp/full.txt | tail -40
-      - name: Show chain 4 failure detail
+          bun test --coverage --reporter dot > /tmp/full.txt 2>&1 || true
+          echo "=== captured, lines: $(wc -l < /tmp/full.txt) ==="
+      - name: Show failure details
         shell: bash
         run: |
-          echo "=== looking for chain 4 ==="
-          grep -n -A 40 "chain 4" /tmp/full.txt || echo "(chain 4 not found in log)"
+          echo "=== (fail) lines ==="
+          grep -n "(fail)" /tmp/full.txt || echo "(none)"
+          echo "=== context around chain 4 / delegation / toBe / toMatch ==="
+          grep -n -i -A 25 -B 3 "chain 4\|delegasi nyata\|childSessionId\|write_file.*committed\|jurnal menautkan" /tmp/full.txt | head -120 || echo "(no match)"

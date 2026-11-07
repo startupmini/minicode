@@ -1,5 +1,9 @@
 # Task Identity Spec
 
+> **Snapshot desain historis:** asumsi di bawah berasal dari fase sebelum
+> TaskStore/TaskGraph produksi. Jangan gunakan sebagai kontrak saat ini;
+> lihat `src/task/` dan [peta arsitektur](architecture.md).
+
 Mode DESIGN. Companion dari `CANONICAL_TASK_MODEL_DESIGN.md`.
 
 ## Masalah yang harus diselesaikan

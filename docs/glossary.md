@@ -6,16 +6,18 @@ Istilah Minicode yang punya makna spesifik. Dokumentasi berbahasa Indonesia deng
 |---|---|
 | **MiniCore** | Kernel runtime `STATE / MODEL / ACTION / LOOP` di-vendor ke `vendor/minicore`; inti beku, zero-dep, di-resolve via `#minicore` |
 | **Minicode** | Layer agencode di atas MiniCore: tools, agents, policy, providers, memory, sessions, CLI |
-| **Tool** | Kemampuan yang dipilih model dalam loop ReAct (37 bawaan + MCP dinamis `serverId.toolName`) |
-| **Tool scope** | `full` (semua 37) atau `explore` (subset read-only 12 tool) — flag `--tool-scope` |
-| **Permission mode** | Keputusan siapa yang memutuskan aksi: `auto / readonly / plan / allowlist / ask / allow-all` |
+| **Tool** | Kemampuan yang dipilih model dalam loop ReAct; tool MCP dapat ditambahkan dinamis sebagai `serverId.toolName` |
+| **Tool scope** | `full` atau subset read-only `explore` — flag `--tool-scope` |
+| **WorkMode** | Cara agent bekerja: `DISCUSS`, `PLAN`, atau `BUILD` (alias produk untuk identitas internal `EXECUTE`) |
+| **PermissionMode** | Pilihan pengawasan: `AUTO` menjalankan capability yang diotorisasi; `ASK` meminta persetujuan untuk aksi yang digate |
+| **Tool Access Policy** | Batas capability yang tersedia, seperti read-only, allowlist, atau profil akses warisan `--allow-all` |
 | **Gate** | Tool wajib persetujuan manusia saat TTY; non-TTY selalu tolak (mis. `git_commit`, MCP, `delegate_task`) |
 | **Path jail** | Pembatasan akses file ke workspace (realpath + symlink; `O_NOFOLLOW` pada POSIX dan pencocokan identitas handle `dev+ino` pada semua platform); aktif bahkan `--allow-all` |
 | **Bash-guard** | Normalisasi + blokir pola bash berbahaya sebelum eksekusi (quote-split, indirection, wrapper) |
 | **Sandbox OS** | bubblewrap (Linux) / seatbelt (macOS) — otomatis bila tersedia |
 | **Sandbox Docker** | Container ephemeral `--network none`, 512m, 1 CPU, `node:22-alpine` |
 | **Checkpoint** | Snapshot per turn via shadow-git: SHA tree di `refs/minicode/…` (O(delta), HEAD/index tak tersentuh) |
-| **Recovery journal** | `journal-<sesi>.jsonl`: `pending` → `committed` → `finalized`; sumber direktif verifikasi saat resume |
+| **Recovery journal** | `journal-<sesi>.jsonl`: `pending` → `committed`/`failed`/`unknown`; finalisasi menandai cakupan turn yang sudah durable |
 | **Session** | Riwayat percakapan di `.minicode/sessions.db` (SQLite WAL); `--resume` lanjut full history |
 | **Memory dua lapis** | `MEMORY.md` hierarki (selalu ke system prompt) + vector RAG hybrid (injeksi bila skor ≥ ambang) |
 | **RAG hybrid** | Pencarian memory cosine 0.7 + keyword 0.3, ranking MMR (λ 0.7), dedup >0.92 |
@@ -29,7 +31,7 @@ Istilah Minicode yang punya makna spesifik. Dokumentasi berbahasa Indonesia deng
 | **Transient** | UI muncul-sekali yang menghapus dirinya (spinner, garis status turn) — vs transkrip yang menetap |
 | **Composition root** | `cli/index.ts` + `cli/setup.ts`: satu tempat wiring DI (provider, RAG, session, tools) |
 | **Seam aditif** | Satu-satunya patch yang dibolehkan ke kernel beku: `compactAsync`, `initialMessages`, `cwd` |
-| **Self-contained** | Tanpa clone repo lain — kernel di-vendor, runtime zero-dep, butuh Bun ≥ 1.0 |
+| **Self-contained** | Tanpa clone repo lain — kernel di-vendor, runtime zero-dep, butuh Bun ≥ 1.1.13 |
 
 ## Lanjut
 

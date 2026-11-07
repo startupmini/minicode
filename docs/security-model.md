@@ -21,20 +21,19 @@ Permission → Jail → Bash Guard → Argument Validation → Executor → Jour
 | **Bash Guard** | Perintah shell dinormalisasi dulu (buang quote/wrapper/variabel sederhana), baru diperiksa polanya. Menolak env-dump, exfiltrasi upload, interpreter inline, destruksi luas. |
 | **Argument Validation** | Skema argumen divalidasi kernel sebelum eksekusi; argumen invalid ditolak tanpa efek. |
 | **Executor** | Menjalankan yang lolos: read paralel, write dibatasi konkurensinya, abort-aware, output dipotong dengan penanda (tak pernah diam-diam). |
-| **Journal / Recovery** | Tiap mutasi dicatat `pending` → `committed`/`failed` → `finalized`. Resume tak pernah mengulang buta (lihat [Recovery](#recovery)). |
+| **Journal / Recovery** | Tiap mutasi dicatat sebagai `pending` lalu `committed`/`failed`/`unknown`; finalisasi menandai cakupan turn durable. Resume tak pernah mengulang buta (lihat [Recovery](#recovery)). |
 
-## Permission Modes
+## Mode dan akses
 
-| Mode | Boleh | Tidak boleh | Approval |
-|---|---|---|---|
-| `auto` (default) | Baca + tulis file terjail + bash aman + memori/todo | Gated tools tanpa persetujuan | Sekali per tool gated (TTY); non-TTY = tolak |
-| `ask` | Sama seperti `auto` | Tanpa jawaban allow | Tiap tool non-sepele |
-| `readonly` | 18 tool baca di gerbang izin (model melihat 12) | Mutasi apa pun, bash, commit, delegasi | Tidak perlu (tak ada efek) |
-| `plan` | Baca + `todo_write` + `delegate_task` (anak dipaksa read-only) + `submit_result` | Tulis file, bash, git, memori | Tidak perlu |
-| `allowlist` | Bash pola aman + tulis terjail | Shell di luar pola, tool gated | Tidak perlu |
-| `allow-all` | Semua tool | Bash berbahaya, path di luar jail | Tidak perlu |
+Pilihan yang terlihat oleh operator dipisah menjadi tiga sumbu:
 
-PENTING: **`allow-all` bukan akses host tanpa batas.** Jail path dan bash-guard tetap aktif di mode ini. Yang dimatikan hanya gerbang persetujuan, bukan batas filesystem dan pola perintah.
+| Sumbu | Nilai | Dampak |
+|---|---|---|
+| **WorkMode** | `DISCUSS`, `PLAN`, `BUILD` (`EXECUTE` internal) | Membatasi ruang kerja agent. `DISCUSS` read-only; `PLAN` dapat menulis artefak rencana; `BUILD` tidak menambahkan ceiling. WorkMode hanya mempersempit akses. |
+| **PermissionMode** | `AUTO`, `ASK` | `AUTO` menjalankan capability yang sudah diotorisasi tanpa persetujuan rutin; `ASK` meminta persetujuan untuk pemanggilan yang digate. `ask_user` ditolak di `AUTO`. |
+| **Tool Access Policy** | kebijakan capability dan profil akses warisan | Menentukan tools yang tersedia. `readonly`, `plan`, `allowlist`, dan `allow-all` tetap menjadi identitas internal/kompatibilitas untuk batas akses, bukan mode persetujuan tambahan. |
+
+**Profil `allow-all` tetap terbatas.** Path jail, penolakan state milik runtime, bash-guard, dan validasi argumen tetap berlaku; profil ini tidak memberi akses host tanpa batas. Detail implementasi dan opsi CLI ada di [Policy & Sandbox](policy-sandbox.md).
 
 ## Trust Boundaries
 
@@ -44,9 +43,9 @@ PENTING: **`allow-all` bukan akses host tanpa batas.** Jail path dan bash-guard 
 | Output model | Tak dipercaya untuk klaim | Teks/keputusan model bisa salah; bukti (hasil tool, test, HEAD) yang menentukan |
 | Hasil tool | Data | Dibaca model sebagai fakta observasi, bukan instruksi baru |
 | Data repository (kode, AGENTS.md, MEMORY, skill) | Data | Bisa berisi instruksi injeksi; system prompt menandainya tak-terpercaya |
-| Server MCP | External capability | Efek di sisi server arbitrer dan tak terlihat; tiap pemanggilan di-gate; pembatalan tak membatalkan efek yang sudah terjadi |
+| Server MCP | External capability | Efek di sisi server arbitrer dan tak terlihat; persetujuan mengikuti mode dan authorization; pembatalan tak membatalkan efek yang sudah terjadi |
 | Provider / network | External | Prompt dan hasil melewati provider yang Anda pilih; tak ada telemetri/analitik dari Minicode sendiri |
-| Child agent | Terisolasi | Memori, sinyal, budget, dan jurnal sendiri; tanpa MCP/commit/tulis-memori/nesting |
+| Child agent | Terisolasi | Memori, sinyal, budget, dan jurnal sendiri; tool scope mengikuti kebijakan delegasi dan WorkMode parent (lihat [Sub-Agents & Tasks](agents.md)) |
 | Local config (`.minicode/config.json`) | Tak dipercaya default | Diabaikan kecuali `--allow-local-config`; repo clone-an tak bisa men-spawn server |
 | Skills / memory tersimpan | Data | Dibaca sebagai konteks, bukan kebijakan |
 
@@ -65,11 +64,11 @@ Catatan jujur: operasi itu tetap BISA diketik lewat `bash` (tunduk pada bash-gua
 Setiap mutasi meninggalkan bukti, bukan janji (disebut *mutation journal* di kode: `src/session/journal.ts`):
 
 ```
-intent (sebelum eksekusi) → committed/failed (sesudahnya) → finalized (turn durable)
+intent pending → committed/failed/unknown → finalisasi cakupan turn durable
 ```
 
 - `committed` yang turn-nya hilang → **tidak diulang**; model diberi catatan narasi.
-- `pending`/`failed` → direktif verifikasi; **dilarang redo buta**.
+- `pending`/`failed`/`unknown` → direktif verifikasi; **dilarang redo buta**.
 - Klaim sukses pihak ketiga (MCP) diperlakukan sebagai "kata server", wajib baca-balik bila penting.
 
 Kejujuran yang disengaja: crash ambiguity TETAP MUNGKIN (filesystem dan database tak bisa commit atomik bersama). Yang dijamin adalah: ambiguitas selalu diperlakukan sebagai ambigu — diverifikasi dulu, tidak diasumsikan sukses maupun gagal.

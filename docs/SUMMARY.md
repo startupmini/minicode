@@ -23,8 +23,9 @@
 
 ## Referensi
 
-* [Tools (37)](tools.md)
+* [Tools](tools.md)
 * [Sub-Agents & Tasks](agents.md)
+* [Autonomous Scheduler (experimental)](autonomous-scheduler.md)
 * [MCP & LSP](mcp-lsp.md)
 * [Memory & Sessions](memory-sessions.md)
 * [Verify & Benchmark](verify-benchmark.md)

@@ -1,5 +1,10 @@
 # Canonical Task Model - Design
 
+> **Snapshot historis:** dokumen design-only ini memakai basis repo `979efa4`.
+> Ia bukan kontrak subsystem task saat ini. Untuk struktur terkini, lihat
+> [Arsitektur](architecture.md) dan implementasi di `src/task/` serta
+> `src/tools/todo.ts`.
+
 Mode: **DESIGN** (agent-task-architect). Tidak ada kode yang diimplementasikan.
 Basis: repo `979efa4`, audit `docs/TASK_ARCHITECTURE_AUDIT.md`,
 `docs/TASK_FOUNDATION_POST_AUDIT.md`, `docs/TASK_FOUNDATION_GAP_MAP.md`, dan

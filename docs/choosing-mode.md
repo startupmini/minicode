@@ -12,7 +12,7 @@ Hard security (path jail, sensitive-file, owned-state, bash-guard) selalu berlak
 
 | Saya ingin… | Gunakan | Karena |
 |---|---|---|
-| Memahami repo tanpa mengubah apa pun | `--work-mode DISCUSS` | Ceiling read-only lokal (16 tool baca); network read ditolak; tulis/bash/commit/delegasi ditolak di gerbang |
+| Memahami repo tanpa mengubah apa pun | `--work-mode DISCUSS` | Ceiling read-only lokal; network read ditolak; tulis/bash/commit/delegasi ditolak di gerbang |
 | Minta agen membuat perubahan | `BUILD` + `AUTO` (default) | Tulis terjail + bash + commit + delegasi + MCP authorized jalan otonom; hard-deny tetap berlaku |
 | Menyetujui setiap perubahan | `--ask` (`BUILD` + `ASK`) | Tiap tool non-sepele menunggu jawaban; baca/bookkeeping tak ditanya |
 | Menyusun rencana tanpa eksekusi | `--work-mode PLAN` | Baca + artefak rencana (`todo_write`) + delegasi read-only; tanpa mutasi file/git/commit |

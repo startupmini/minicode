@@ -1,5 +1,9 @@
 # Task Mutation / Merge Semantics
 
+> **Snapshot desain historis:** analisis dan opsi di bawah mendahului
+> implementasi TaskStore/TaskGraph saat ini. Jangan gunakan sebagai kontrak
+> runtime; lihat `src/task/` dan [peta arsitektur](architecture.md).
+
 Mode DESIGN. Companion dari `CANONICAL_TASK_MODEL_DESIGN.md`.
 
 ## Masalah yang harus diselesaikan

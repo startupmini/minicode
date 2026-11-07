@@ -1,4 +1,4 @@
-# Tools (37)
+# Tools
 
 Referensi lengkap tool Minicode: filesystem, search, exec, git, web, memory, plan, agents, MCP, LSP.
 
@@ -90,7 +90,7 @@ Batas `BASH_BACKGROUND_MAX_JOBS`; semua job mati saat CLI keluar.
 
 | Tool | Fungsi | Catatan |
 |---|---|---|
-| `delegate_task` | Sub-agen isolasi `explore`/`plan` | Pool 3, isolasi context/memory/signal/budget, abort-aware. Di-gate (TTY prompt, non-TTY tolak). Anak SELALU mode `auto` tanpa ask: tanpa MCP/commit/memory-tulis/todo-tulis/job/nesting; plan-parent dipaksa explore. Satu approval = delegasi ini saja; turn gagal setelah anak committed → warning `[recovery]` anti re-delegasi buta |
+| `delegate_task` | Sub-agen isolasi `explore`/`plan` | Pool 3, context/memory/signal/budget terpisah, abort-aware. Di ASK, TTY meminta persetujuan dan non-TTY menolak; AUTO berjalan tanpa prompt bila authorized. Parent PermissionMode `ASK`/`plan`/`readonly` memaksa `explore`; WorkMode `DISCUSS`/`PLAN` membatasi tool anak ke subset eksplorasi. Anak tidak mendapat MCP, commit, memory/todo writes, nesting, atau job background. Satu approval mencakup satu delegasi; turn gagal setelah anak committed → warning `[recovery]` |
 
 ## MCP
 

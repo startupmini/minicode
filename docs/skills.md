@@ -45,4 +45,4 @@ Hooks global + lokal di-merge dari allowlist secara atomik (chmod 600). Karena h
 
 - [TUI](repl.md) - dropdown + slash command.
 - [Config](config.md) — lokasi file & skema config.
-- [Tools](tools.md) — referensi 37 tool yang bisa dipanggil skill.
+- [Tools](tools.md) — capability yang tersedia untuk skill.

@@ -15,7 +15,7 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
   // Key = slug (readDocNav selalu lowercase) — key "README" dulu tak pernah
   // kena lookup dan halaman docs/index jatuh ke desc fallback 29 char.
   readme: {
-    desc: "Dokumentasi Minicode: coding agent CLI shell-native di atas MiniCore.",
+    desc: "Dokumentasi Minicode: instalasi, penggunaan, keamanan, dan pengembangan.",
     src: "docs/README.md",
   },
   "getting-started": {
@@ -23,12 +23,12 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
     src: "src/config.ts",
   },
   concepts: {
-    desc: "Konsep Minicode: kernel MiniCore, loop ReAct, shell-native, kejujuran.",
+    desc: "Konsep MiniCode: kernel MiniCore, loop agent, TUI interaktif, dan jalur one-shot.",
     src: "docs/ARCHITECTURE.html",
   },
   glossary: {
     desc: "Glosarium istilah Minicode: kernel, jail, checkpoint, ledger, RAG.",
-    src: "docs/USAGE.md",
+    src: "docs/glossary.md",
   },
   exec: {
     desc: "Otomasi & CI: one-shot, pipe, exec --json, submit_result, budget.",
@@ -40,7 +40,7 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
   },
   environment: {
     desc: "Referensi penuh MINICODE_*: sandbox, memory, terminal, aksesibilitas.",
-    src: "docs/USAGE.md",
+    src: "docs/environment.md",
   },
   skills: {
     desc: "Skills markdown, hooks pre/post-run, dan AGENTS.md proyek.",
@@ -55,11 +55,11 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
     src: "src/policy/bash-guard.ts",
   },
   "security-model": {
-    desc: "Model keamanan Minicode: rantai eksekusi, 6 mode izin, trust boundary, limitasi.",
+    desc: "Model keamanan Minicode: rantai eksekusi, trust boundary, dan batasnya.",
     src: "src/policy/permission.ts",
   },
   terminal: {
-    desc: "Kontrak terminal FROZEN: TUI fullscreen, stdout/stderr, invariant I1–I30, dan peta test proteksinya.",
+    desc: "Kontrak terminal FROZEN: TUI fullscreen, stdout/stderr, dan peta test proteksinya.",
     src: "docs/TERMINAL_CONTRACT.md",
   },
   quickstart: {
@@ -79,19 +79,19 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
     src: "src/ui/tui/app.ts",
   },
   "config-providers": {
-    desc: "14 preset gateway, OAuth device-code, model dan effort.",
+    desc: "Gateway AI, OAuth device-code, model, dan effort.",
     src: "src/providers/build.ts",
   },
   "pricing-budget": {
-    desc: "Harga offline, sync 3.162 model, dan --budget fail-closed.",
+    desc: "Harga model, sinkronisasi katalog, dan --budget fail-closed.",
     src: "src/policy/pricing.ts",
   },
   tools: {
-    desc: "Referensi 37 tool: filesystem, exec, git, web, memory, MCP, LSP.",
+    desc: "Referensi tool filesystem, exec, git, web, memory, MCP, dan LSP.",
     src: "src/tools/index.ts",
   },
   "policy-sandbox": {
-    desc: "6 permission mode, bash-guard, sandbox otomatis, path jail.",
+    desc: "WorkMode, izin, tool access policy, bash guard, sandbox, dan path jail.",
     src: "src/policy/permission.ts",
   },
   "memory-sessions": {
@@ -149,7 +149,7 @@ const DOC_META: Record<string, { desc: string; src: string }> = {
     src: "docs/OUTPUT_IMPLEMENTATION_PLAN.md",
   },
   terminal_contract: {
-    desc: "Kontrak terminal FROZEN untuk kontributor: 30 invariant dan peta test proteksinya.",
+    desc: "Kontrak terminal FROZEN untuk kontributor dan peta test proteksinya.",
     src: "docs/TERMINAL_CONTRACT.md",
   },
   "control-plane-map": {

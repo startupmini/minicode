@@ -21,12 +21,13 @@ adalah **otoritas** untuk:
 Jangan mengarang status fase; kalau status fase tidak tertulis eksplisit di
 `ROADMAP.md`, nyatakan belum tersedia.
 
-> **Status integrasi (2026-10-21):** `ROADMAP.md` saat ini masih **draft
-> working-tree yang belum di-commit**. Master aslinya tetap milik pemilik di
-> Library; bila master diperbarui, salinan repo wajib disinkronkan ulang dan
-> setiap perbedaan harus dilaporkan. **Jangan mengklaim roadmap sudah
-> committed**, dan jangan mengklaim repository hijau hanya karena `ROADMAP.md`
-> ada.
+> **Status integrasi (2026-11-07):** `ROADMAP.md` terlacak di Git; commit
+> terakhir yang mengubahnya adalah `677d77d` (2026-10-26), sedangkan teks di
+> dalamnya masih menyebut draft working-tree dan checkpoint HEAD lama
+> `2d9e11e…`. Master Library milik pemilik tidak tersedia untuk dibandingkan,
+> jadi kesamaan salinan tidak terverifikasi. Jangan menulis ulang roadmap
+> sebagai agent; laporkan drift metadata ini dan jangan menganggap keberadaan
+> atau status Git-nya sebagai bukti repository hijau.
 
 **`PLAN.md` = ledger produk/milestone legacy.** **Tetap ada, tidak dihapus,
 tidak direnumber.** Isinya riwayat implementasi + status historis era 0.9.x,
@@ -37,7 +38,7 @@ Laporan audit Closure/Handoff/QA di root adalah **artefak historis yang
 terikat checkpoint** — pakai untuk memahami keputusan, jangan pakai sebagai
 klaim "status sekarang".
 
-### Status terkini (2026-11-05) — Final Integration & Repository Consolidation
+### Status terkini (2026-11-07) — Final Integration & Repository Consolidation
 
 Fase aktif proyek adalah **Final Integration & Repository Consolidation**
 (bukan fase produk baru; **tidak ada P3**). P0, P1, P2, dan penutupan P2.3
@@ -49,6 +50,11 @@ telah mencapai **stage-scoped closure** dengan bukti di `docs/audit/`:
 - `P2_3_OPERATIONAL_CLOSURE_AND_FINAL_INTEGRATION_REPORT_2026-11-05.md`
 - `FINAL_INTEGRATION_AND_REPOSITORY_CONSOLIDATION_REPORT_2026-11-05.md`
 
+`CHANGELOG.md` mencatat v0.14.2 pada 2026-11-07. Rilis tersebut tidak
+memperbarui bukti closure P0–P2.3: jangan menganggap gate lulus pada HEAD
+sekarang tanpa menjalankannya pada kandidat yang sama. Dogfooding MiniChat
+tetap fixture evaluasi dan tidak membuktikan audit sistem penuh.
+
 **Peta dokumen kanonik:**
 
 | Subjek | Dokumen kanonik |
@@ -56,17 +62,19 @@ telah mencapai **stage-scoped closure** dengan bukti di `docs/audit/`:
 | Aturan agent & status fase | `AGENTS.md` (ini) |
 | Peta arsitektur/stuktur | `docs/ARCHITECTURE.html` |
 | Kontrak terminal/output (FROZEN) | `docs/TERMINAL_CONTRACT.md` |
-| Roadmap arsitektur (master pemilik) | `ROADMAP.md` (salinan draft; bukan untuk ditulis ulang agent) |
+| Roadmap arsitektur (master pemilik) | `ROADMAP.md` (salinan terlacak dengan metadata checkpoint lama; master Library belum diverifikasi, bukan untuk ditulis ulang agent) |
 | Ledger legacy 0.9.x | `PLAN.md` |
 | Panduan operasional | `docs/*.md` (cli, tools, memory-sessions, mcp-lsp, exec, security, dll.) |
 | Audit & verifikasi historis | `docs/audit/**`, root `P*_*.md`, `PHASE-*.md` |
 
-**Limitasi yang masih berlaku (jangan diklaim selesai):** MCP
+**Limitasi produk yang masih berlaku (jangan diklaim selesai):** MCP
 subscriptions/notifications belum didukung; producer `FAILED`/`RETRYING` belum
 ada (keputusan produk); daemon tidak auto-resume setelah restart; manual TUI
-UAT dan gateway cache **UNVERIFIED**; `gate:pack` gagal **size-only**
-(3.902 KB, efisiensi — bukan blocker correctness). Selalu bedakan klaim
-stage-scoped dari klaim release-ready.
+UAT dan gateway cache **UNVERIFIED**; snapshot repository besar dapat gagal
+atau lambat. Pengukuran `gate:pack` 3.902,6 KiB berasal dari checkpoint
+v0.14.0; v0.14.2 mengubah isi tarball, sehingga hasil gate terkini belum
+terverifikasi di sini. Selalu bedakan klaim stage-scoped dari klaim
+release-ready.
 
 ### Disambiguasi nomor P (baca sebelum menyebut "P12"/"P13")
 

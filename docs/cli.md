@@ -45,7 +45,7 @@ Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `s
 | `--tool-scope <s>` | `full` (default) \| `explore` = subset read-only 12 tool |
 | `--plan` | **Deprecated** — alias untuk `--work-mode PLAN` (read-only planning) |
 | `--allowlist` | Bash hanya perintah aman (tool-access policy warisan) |
-| `--ask` | Tanya persetujuan setiap tool (human-supervised) |
+| `--ask` | Minta persetujuan untuk pemanggilan yang digate (human-supervised) |
 | `--allow-all` | Profil akses privileged (path jail + bash-guard tetap aktif) |
 | `--model <name>` | Override model (`providerId::model` paksa provider) |
 | `--provider <id>` | Paksa provider id agnostik |
@@ -87,6 +87,7 @@ Kepala tabel penuh ada di [Environment Variables](environment.md); yang paling s
 | `MINICODE_SANDBOX_ALLOW_FALLBACK=1` | Izinkan fallback host secara eksplisit bila backend tak tersedia |
 | `MINICODE_BUDGET_STRICT=1` | Sama dengan `--budget-strict` |
 | `MINICODE_ALLOW_LOCAL_CONFIG=1` | Sama dengan `--allow-local-config` |
+| `MINICODE_WORK_MODE` | `DISCUSS` / `PLAN` / `BUILD` — WorkMode default; precedence ada di [Environment Variables](environment.md) |
 | `MINICODE_TOOL_SCOPE=explore` | Subset read-only |
 | `MINICODE_GREP_ENGINE=js` | Paksa walker internal |
 | `MINICODE_MEMORY_SCOPE` | `cwd` \| `global` \| `all` |
@@ -98,27 +99,9 @@ Kepala tabel penuh ada di [Environment Variables](environment.md); yang paling s
 | `MINICODE_ASCII=1` | Glyph ASCII untuk konsol tanpa UTF-8 |
 | `MINICODE_STATUSLINE=rich` | Spinner tampilkan token + biaya sesi |
 
-## Config `.minicode/config.json`
+## Config
 
-```json
-{
-  "providers": [{ "id": "my-provider", "baseUrl": "...", "apiKey": "...", "models": ["gpt-4o"] }],
-  "mcpServers": [
-    { "id": "fs", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem"] },
-    { "id": "remote", "url": "https://mcp.example.com/mcp", "headers": { "authorization": "Bearer xxx" } }
-  ],
-  "lspServers": [{ "ext": ".ts", "command": "typescript-language-server", "args": ["--stdio"] }],
-  "verifyCommand": "bun run typecheck",
-  "bashAllowlist": ["git status*", "bun test*", "npm run build*"]
-}
-```
-
-Global (`~/.minicode/config.json`) selalu dibaca. Lokal (`.minicode/config.json`)
-adalah input repo tak terpercaya dan DIABAIKAN kecuali operator opt-in per
-invokasi (`--allow-local-config` / `MINICODE_ALLOW_LOCAL_CONFIG=1`) — tanpa
-itu MCP server lokal tidak di-spawn, endpoint provider lokal tidak dipakai,
-`verifyCommand`/`bashAllowlist` lokal tidak berlaku. Tulis eksplisit
-(`config add --local`) tak terpengaruh.
+Skema, contoh, scope global/lokal, dan lokasi seluruh data ada di [Config — File & Lokasi Data](config.md). Config lokal tetap diabaikan kecuali operator memilih `--allow-local-config` atau `MINICODE_ALLOW_LOCAL_CONFIG=1`.
 
 ## Anti-injeksi flag
 

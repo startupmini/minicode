@@ -44,11 +44,11 @@ bun run gate:slow   # extreme fuzz + shadow-git stress + MCP adversarial (nightl
 
 Lambat/stokastik (fuzz multi-seed, stress, docker) tinggal di `slow.yml` — kegagalannya sinyal investigasi, bukan penolakan PR. CI per-commit (`ci.yml`) hanya menjalankan yang deterministik.
 
-### Budget ukuran paket (3,5 MiB)
+### Budget ukuran paket (3.920 KiB)
 
-`bun run gate:pack` mengukur ukuran tarball (`npm pack --dry-run`, KiB) dan menolak bila **melebihi 3.584 KiB (3,5 MiB)**. Angka tunggalnya ada di `scripts/pack-budget.ts` — satu sumber untuk gate dan tes, jadi keduanya tak bisa menyimpang. Batas ini **alarm regresi** (menangkap `node_modules`/`test` ikut terbawa), bukan target ukuran yang perlu dikejar.
+`bun run gate:pack` mengukur ukuran tarball (`npm pack --dry-run`, KiB) dan menolak bila **melebihi 3.920 KiB (3,83 MiB)**. Angka tunggalnya ada di `scripts/pack-budget.ts` — satu sumber untuk gate dan tes, jadi keduanya tak bisa menyimpang. Batas ini **alarm regresi** (menangkap `node_modules`/`test` ikut terbawa), bukan target ukuran yang perlu dikejar.
 
-Re-baseline dari 2,25 MiB disetujui owner (Quality Remediation Stage 8.1) karena batas lama ditetapkan saat payload runtime repo ±1.605 KiB, sedangkan sekarang runtime saja ±2.788 KiB — pertumbuhan itu fitur sah, bukan modul tak terjangkau (modul yang dipack tapi tak terjangkau dari entry point = 0). Saat runtime tumbuh melewati batas, **jangan** menaikkan lagi tanpa bukti baru + persetujuan owner: hitung dulu payload runtime (`git ls-tree -r -l HEAD -- src cli vendor`) dan bandwidth non-runtime yang bisa dipangkas (dokumen di luar closure tautan, `PLAN.md`/`AGENTS.md`), lalu usulkan angka barunya ke owner.
+Batas 3.920 KiB disetujui pemilik pada 2026-11-05 untuk rilis v0.14.0. Jangan menaikkan anggaran tanpa bukti baru dan persetujuan pemilik; ukur dulu runtime serta berkas non-runtime yang dapat dipangkas.
 
 Gerbang lain:
 

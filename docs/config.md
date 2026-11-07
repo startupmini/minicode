@@ -17,7 +17,7 @@ Di mana pengaturan dan data Minicode tinggal, dan bagaimana file lokal yang tak 
 }
 ```
 
-- `providers` — bisa juga diisi lewat wizard/`minicode config add`/`/provider` (14 preset, lihat [Config & Provider](config-providers.md)).
+- `providers` — bisa juga diisi lewat wizard/`minicode config add`/`/provider`; lihat daftar preset di [Config & Provider](config-providers.md).
 - `mcpServers` — dua bentuk: stdio (`command`+`args`) dan HTTP (`url`+opsional `headers`). Detail transport di [MCP & LSP](mcp-lsp.md).
 - `verifyCommand` — dipakai `--verify` bila auto-detect tidak menemukan (urutan deteksi: `typecheck` → `test` → `tsconfig`).
 - `bashAllowlist` — pola koma/pola glob perintah bash yang dianggap aman (mode `allowlist`).
@@ -44,13 +44,14 @@ Kredensial OAuth di `~/.minicode/auth.json` (chmod 600) — terpisah dari config
 | `~/.minicode/config.json` | Config global |
 | `~/.minicode/auth.json` | Token OAuth (chmod 600) |
 | `.minicode/config.json` | Config lokal (default diabaikan) |
-| `.minicode/sessions.db` | Sessions SQLite (WAL, capped + busy-retry) |
-| `vector.db` | Index memory vector hybrid |
+| `.minicode/sessions.db` atau `~/.minicode/sessions.db` | Sessions SQLite (WAL, capped + busy-retry); lokasi dipilih oleh `resolveDbPath` berdasarkan keberadaan `.minicode/` workspace |
+| `.minicode/vector.db` atau `~/.minicode/vector.db` | Index memory vector hybrid; memakai aturan lokasi database yang sama dengan sessions |
+| `.minicode/tasks.db` | TaskGraph dan scheduler; selalu lokal pada workspace |
 | `.minicode/repomap.json` | Cache repo-map (sig mtime) |
 | `.minicode/traces.jsonl` | Telemetry per run (prompt di-scrub) |
 | `.minicode/step-traces.jsonl` | Trace keputusan tool (sumber `minicode stats`) |
 | `.minicode/checkpoints/` | Manifest checkpoint (cap 20 terbaru) |
-| `.minicode/todos/<id>.json` + `.minicode/plans/<id>.md` | Rencana per sesi |
+| `.minicode/todos/<id>.json` + `.minicode/plans/<id>.md` | Todo dan artefak rencana per sesi |
 | `.minicode/.trash/` | Soft-delete `delete_file` (cap 100, gitignored) |
 | `.minicode/MEMORY.md` + hierarki | File memory (global → lokal → root) |
 

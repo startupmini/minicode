@@ -1,21 +1,16 @@
 # Policy & Sandbox
 
-Siapa boleh apa: enam mode izin, penjaga perintah shell, dan isolasi eksekusi — plus batas jujurnya.
+WorkMode, persetujuan, tool access policy, penjaga perintah shell, dan isolasi eksekusi adalah kontrol yang berbeda. Hard deny path jail, state milik runtime, dan bash guard tetap berlaku di atasnya.
 
-## 6 permission mode
+## Tiga sumbu kontrol
 
-`type PermissionMode = "auto"|"readonly"|"plan"|"allow-all"|"ask"|"allowlist"` (`permission.ts`). Keputusan data-driven per mode.
+| Sumbu | Nilai | Fungsi |
+|---|---|---|
+| **WorkMode** | `DISCUSS` / `PLAN` / `BUILD` (`EXECUTE` internal) | Membatasi cara agent bekerja. `DISCUSS` read-only; `PLAN` boleh membuat artefak rencana; `BUILD` tidak menambah ceiling. WorkMode hanya mempersempit akses. |
+| **PermissionMode** | `AUTO` / `ASK` | Menentukan pengawasan manusia. `AUTO` menjalankan capability yang diotorisasi tanpa persetujuan rutin; `ASK` meminta persetujuan untuk aksi yang digate. Hard deny tetap berlaku. |
+| **Tool Access Policy** | capability read-only, plan, allowlist, profil akses warisan | Menentukan capability yang tersedia. Nilai internal `readonly`, `plan`, `allowlist`, dan `allow-all` masih dipakai untuk kompatibilitas dan batas akses, bukan sebagai pilihan pengawasan. |
 
-| Mode | Semantik |
-|---|---|
-| `auto` | Readonly + gated-prompt + file/internal-write allow; `code_run`/`bash` dengan guard. `delegate_task`/`mcp_call`/semua MCP bertitik di-gate (prompt saat TTY, tolak tanpa TTY) |
-| `ask` | Readonly + `NO_PROMPT_TOOLS` auto-allow; sisanya prompt/TTY + allowlist persist |
-| `readonly` | Gerbang izin: 18 tool `READONLY_TOOLS`. Visibilitas: model hanya melihat 12 tool baca (`EXPLORE_TOOL_NAMES`) |
-| `plan` | `readonly` + `todo_write` + `delegate_task` (anak dipaksa explore/read-only) + `submit_result`. Tetap tanpa mutasi file/git/memory |
-| `allowlist` | Bash hanya pola `DEFAULT_BASH_ALLOWLIST`/env; file-write/internal-write sesuai set. Diwariskan ke sub-agent (parent allowlist → anak allowlist, bukan auto) |
-| `allow-all` | Allow semua; **tetap** tolak bash berbahaya + path jail tetap aktif |
-
-Cycle Tab/Shift+Tab hanya 5 (`auto,ask,plan,allowlist,allow-all` — `allow-all` dilewati agar tak aktif tak sengaja). Mode bisa dioverride: `--plan`, `--allowlist`, `--ask`, `--allow-all`, `MINICODE_PLAN=1`, `MINICODE_PERMISSION=allowlist`, `Shift+Tab` runtime.
+`PermissionMode` internal masih berupa union kompatibilitas yang juga memuat profil akses warisan. Untuk pilihan mode, flag, dan kombinasi yang menghadap pengguna, lihat [Memilih Mode](choosing-mode.md) dan [CLI](cli.md). Delegasi juga mewarisi batas parent; lihat [Sub-Agents & Tasks](agents.md).
 
 Set terkait: `INTERNAL_WRITE_TOOLS`, `FILE_WRITE_TOOLS`, `GATED_TOOLS` (+ `*.*` MCP), `NO_PROMPT_TOOLS`. `move_file`/`delete_file` dijail di permission layer (berlaku semua mode termasuk `--allow-all`).
 
@@ -31,11 +26,18 @@ Set terkait: `INTERNAL_WRITE_TOOLS`, `FILE_WRITE_TOOLS`, `GATED_TOOLS` (+ `*.*` 
 | `node --eval "1"` | ditolak |
 | `env`, `set`, `export -p` | ditolak |
 | `curl -F file=@~/.ssh/id_rsa` | ditolak |
+| `echo x > ..\evil` (redirect keluar workspace) | ditolak; target redirect di-resolve ke cwd sebelum lolos allowlist |
+| `echo x > "%TEMP%\evil"` | ditolak; target berisi ekspansi `%NAMA%` tak bisa dipastikan aman secara statis |
+| `py -c …`, `python3.14 -c …` | ditolak bersama varian launcher dan versi Python |
 | `type ..\..\windows\system32\config\sam`, `Get-Content .../ntds.dit` | ditolak (hive Windows + `reg save|export` hive + `vssadmin create|delete shadow` + `ntdsutil`; `reg query`, `vssadmin list`, `system.txt` biasa tetap lolos) |
 | `write_file .minicode/<apa-pun>` | ditolak fail-closed (kunci penuh segmen `.minicode/`; kecuali restore `.trash/` → workspace dan skrip `.minicode/hooks/`) |
 | `bash <(curl x)` | ditolak |
 | `rm -rf ..`, `rm --recursive --force /`, `rm -rf /; :` | ditolak |
 | `command env`, `nice env`, dkk. (wrapper) | deteksi env-dump ter-anchor ke awal | ditolak via `stripCommandWrappers` (buang wrapper berlapis) |
+| Baca lewat hardlink menuju luar workspace | ditolak jika handle yang dibuka memiliki `nlink > 1`; pengecekan memakai `fstat` |
+| `type .e^nv`, `ty^pe .env` (escape caret cmd.exe) | ditolak setelah caret dinormalisasi sebelum aturan nama/jail |
+| `type %USERPROFILE%\notes.txt` | ditolak; argumen pembaca berpola `%NAMA%` tak bisa dipastikan aman |
+| `for /f %i in (.env) do @echo %i` | ditolak; file set pada loop `for /f` ikut diperiksa |
 
 Allowlist (juga default bila tanpa sandbox): `git status/diff/log/branch/show`, `bun test/run/x tsc`, `npm run/exec`, `npx`, `ls cat head tail wc grep rg find which echo pwd`. Tulis via shell (`mkdir cp mv rm touch`) ditahan — pakai `write_file`/`edit` yang ter-jail. `npm exec`/`npx`/`bun run`/`bun x` tak boleh ada ekspansi shell (`$`, backtick) atau redirection.
 
@@ -72,7 +74,7 @@ workspace yang sudah terjadi sebelum container dihentikan.
 ## Lapisan lain
 
 - **Path jail** realpath-based + symlink `realpath` di permission layer; `.env`/`.git/config`/`node_modules`/hive Windows deny; `.minicode/` terkunci penuh untuk tool tulis berdasarkan target NYATA (realpath best-effort `isOwnedStateReal` — junction/symlink internal ke `.minicode/` ikut ditahan; kecuali restore `.trash/` + skrip `hooks/`); bash-guard menahan PEMBUATAN link yang operannya sensitif/owned-state. Untuk pembacaan, `safeOpenRead` memeriksa boundary ulang setelah stat dan mencocokkan `dev+ino` dari handle yang terbuka; `O_NOFOLLOW` juga dipakai pada POSIX. Stress test symlink tetap skip bila host tidak memberi privilege membuat symlink.
-- **Env scrub** `sanitizeSpawnEnv`: strip kata-kunci kredensial dari merge final; `GITHUB_WORKSPACE`/`REDIS_HOST`/`AWS_REGION` tetap ada, `GITHUB_TOKEN`/`AWS_SECRET_ACCESS_KEY`/`DATABASE_URL` tetap di-strip.
+- **Env scrub** `sanitizeSpawnEnv`: strip kata-kunci kredensial dari merge final; `GITHUB_WORKSPACE`/`GITHUB_REF`/`GOOGLE_CHROME_PATH`/`REDIS_HOST`/`AWS_REGION` tetap ada, `GITHUB_TOKEN`/`AWS_SECRET_ACCESS_KEY`/`DATABASE_URL` tetap di-strip.
 - **web_fetch/web_search**: redirect manual 5 hop + DNS pinning 30 dtk + body 2 MB.
 - **Secret scrubber**: `sk-`, `ghp_`, `AKIA`, PEM, JWT, Bearer, `api_key=...` di-redact sebelum ke LLM (read_file/bash/grep) — tanpa whitelist kata.
 - **Config/allowlist**: atomic randomUUID tmp+rename + chmod 600. MCP serve curated tools + permission aktif.

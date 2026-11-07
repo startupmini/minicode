@@ -1,17 +1,20 @@
-# Kontrak Terminal MiniCode (TUI fullscreen — v7.5, 2026-11-06)
+# Kontrak Terminal MiniCode (TUI fullscreen — v7.6, 2026-11-07)
+
+Perubahan v7.6: sinkronisasi kontrak WorkMode ke mode produk 0.14.1 — label
+`BUILD` untuk identitas runtime `EXECUTE`, footer dua sumbu yang selalu tampil,
+dan pintasan `Tab`/`Shift+Tab` untuk WorkMode/PermissionMode.
 
 Perubahan v7.5: kepemilikan frame stdout interaktif diperjelas; cleanup `TuiApp.run()`
 berpasangan melalui `finally`; gap proteksi teardown, startup, spacer, layar kecil,
 dan writer ownership ditutup dengan test app/subprocess/PTY.
 
-Perubahan v7.4 (P12 S2.2 WorkMode): invarian baru I35 — WorkMode (lapis
-intent `DISCUSS`/`PLAN`/`EXECUTE`) sebagai dimensi TERPISAH dari permission
-mode. Command `/work-mode <DISCUSS|PLAN|EXECUTE>` (aksi operator eksplisit,
-transisi berlaku pada sesi yang sedang berjalan); footer menampilkan
-`<WorkMode>·<permission mode>` saat WorkMode ≠ EXECUTE (`PLAN·auto`,
-`DISCUSS·auto`, `PLAN·readonly`); `EXECUTE` (default) mempertahankan label
-permission mode seperti sebelumnya. Tab/Shift+Tab dan `/mode` TETAP khusus
-permission mode. Rincian di I35.
+Perubahan v7.4 (P12 S2.2 WorkMode): invarian I35 — WorkMode runtime
+`DISCUSS`/`PLAN`/`EXECUTE` terpisah dari PermissionMode. Nama produk `BUILD`
+adalah alias input dan label tampilan untuk identitas runtime `EXECUTE`; nilai
+persisten tetap `EXECUTE`. Command `/work-mode <DISCUSS|PLAN|BUILD>` juga
+menerima `EXECUTE` sebagai alias kompatibilitas. Footer menampilkan pasangan
+`<WorkMode>·<PermissionMode>`; defaultnya `BUILD · AUTO`. `Tab` memutar WorkMode,
+sedangkan `Shift+Tab` dan `/mode` mengubah PermissionMode. Rincian di I35.
 
 Perubahan v7.3 (P11 Presentation & UX): invarian baru I34 — subcommand `exec`
 dan `daemon` menerima argv SCOPE dari router (flag global dikenal yang
@@ -210,7 +213,7 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      **Shift+PgUp/PgDn (ESC[5;2~/6;2, modifier 2) = setengah halaman; Home/End
      saat prompt KOSONG = lompat baris-teratas/ekor transkrip (baris berisi =
      editing awal/akhir baris; dropdown terbuka = jalur engine)**; Up/Down
-     histori; Tab/Shift+Tab mode; Ctrl+O/T compact/thinking; Ctrl+D baris-kosong
+     histori; Tab WorkMode / Shift+Tab PermissionMode; Ctrl+O/T compact/thinking; Ctrl+D baris-kosong
      keluar; Esc membersihkan selection lebih dulu, lalu batal input / abort
      turn (busy: SEMUA input dibekukan kecuali abort, scroll, dan selection —
      Enter pun sunyi; berlaku juga saat layar MENCIUT: abort+scroll selalu lolos
@@ -344,20 +347,22 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      invokasi flag-mendahului yang dulu salah rute menjadi rute benar.
 35. **WorkMode = lapis intent di ATAS permission mode (P12 S2.2 + P0.2)** — dua
     dimensi yang BERJALAN BERSAMA, bukan pengganti:
-    **Nilai:** `DISCUSS` (investigasi baca-saja lokal: tepat 16 tool `PURE_READ`
+    **Nilai runtime:** `DISCUSS` (investigasi baca-saja lokal: tepat 16 tool `PURE_READ`
     lokal, network read `web_fetch`/`web_search` ditolak penuh) · `PLAN`
     (ceiling rencana: 16 tool baca lokal + `web_fetch`/`web_search` wajib lewat
-    approval prompt + ekstra rencana bila diizinkan PM) · `EXECUTE` (tanpa
-    ceiling tambahan). Default `EXECUTE` = perilaku lama (kompatibel: sesi baru
-    tanpa WorkMode eksplisit tetap EXECUTE).
-    **Gerbang penolakan & side-effect ceiling:** permission handler tetap
-    satu-satunya yang menentukan keamanan eksekusi. WorkMode hanya MEMASANG
-    CEILING di atasnya; ia tidak pernah memperluas kewenangan permission mode
-    dasar (INV-WM1), `visible === callable` terjaga lintas transisi runtime,
+    pengawasan eksplisit + ekstra rencana bila diizinkan Tool Access Policy) ·
+    `EXECUTE` (tanpa ceiling tambahan). Nama produk `BUILD` memetakan ke
+    `EXECUTE`; default runtime tetap `EXECUTE` untuk kompatibilitas.
+    **Gerbang penolakan & side-effect ceiling:** Tool Access Policy menentukan
+    capability yang tersedia; PermissionMode menentukan pengawasan persetujuan;
+    WorkMode memasang ceiling tambahan. Irisan ketiganya tidak pernah
+    memperluas akses (INV-WM1), `visible === callable` terjaga lintas transisi runtime,
     hooks diblokir pada `DISCUSS` maupun `PLAN` untuk semua PM, dan `--verify`
     ditolak fail-closed saat startup bila digabung `DISCUSS`/`PLAN` (exit 2)
     serta dilewati otomatis saat mode turun ke `DISCUSS`/`PLAN` di TUI.
-    **Command `/work-mode <DISCUSS|PLAN|EXECUTE>`:** aksi operator EKSPLISIT.
+    **Command `/work-mode <DISCUSS|PLAN|BUILD>`:** aksi operator EKSPLISIT;
+    `EXECUTE` juga diterima sebagai alias kompatibilitas dan ditampilkan sebagai
+    `BUILD` di UI.
     Tanpa argumen → tampilkan mode aktif + usage; nilai invalid → pesan
     kesalahan dan mode AKTIF TIDAK berubah; sesi tanpa kontrol WorkMode
     (handler izin terinjeksi = policy, bukan mode) → ditolak, bukan
@@ -384,28 +389,28 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     dekoratif. ACP memakai `params.workMode` (terstruktur) dan tak menambah baris
     dekoratif. WorkMode selalu dibedakan tegas dari PermissionMode (`[work-mode]`
     vs `/mode`/`--plan`) dan dari status sesi.
-    **Pemisahan dari permission mode:** Tab/Shift+Tab dan `/mode` TETAP
-    khusus permission mode — WorkMode tak masuk siklus Tab. Permission mode
-    yang memutuskan allow/deny per tool; WorkMode memilih postur
-    (diskusi/rencana/bebas) dan hanya mempersempit.
+    **Pemisahan dari PermissionMode:** `Tab` memutar WorkMode;
+    `Shift+Tab` dan `/mode` mengubah PermissionMode. PermissionMode menentukan
+    pengawasan persetujuan (`AUTO`/`ASK`) dan Tool Access Policy menentukan
+    capability. WorkMode memilih postur (diskusi/rencana/bebas) dan hanya
+    mempersempit akses.
     **Hooks:** gate `shouldRunHooks(permissionMode, workMode)` dievaluasi
-    **per pemanggilan** dengan WorkMode **AKTIF** (transisi `/work-mode`
-    langsung berlaku); sisi permission mode memakai **nilai startup sesi**
-    (semantik lama dipertahankan — `Tab`/`Shift+Tab` menggeser mode izin di
-    dalam handler, bukan nilai gate hooks). WorkMode `DISCUSS` tetap menahan
-    hook walau permission mode `auto`.
+    **per pemanggilan** dengan WorkMode dan PermissionMode **AKTIF**. Hooks
+    ditahan pada WorkMode `DISCUSS`/`PLAN` dan PermissionMode warisan
+    `plan`/`readonly`; `Tab` mengubah WorkMode, sedangkan `Shift+Tab` mengubah
+    PermissionMode AUTO/ASK.
     **Footer:** mode WorkMode aktif tampil sebagai
-    `<WorkMode>·<permission mode>` hanya saat WorkMode ≠ EXECUTE (mis.
-    `PLAN·auto`, `DISCUSS·auto`, `PLAN·readonly`); saat EXECUTE label
-    permission mode apa adanya (mis. `auto`) — perilaku lama dipertahankan.
+    `<WorkMode> · <PermissionMode>` dengan label produk `BUILD`, `PLAN`, atau
+    `DISCUSS` dan `AUTO`/`ASK` (mis. `BUILD · AUTO`, `PLAN · ASK`); alias internal
+    `EXECUTE` tidak ditampilkan di footer.
 
 ## Grammar (ringkas)
 
 prompt `minicode ›` tampil saat boot/idle dan hilang saat busy (dropdown `/`
 berbingkai di atasnya) ·
 status bar `✦ 00.00.00 mode  model  cwd` (timer redup idle; detik putih aktif,
-menit mulai terang di 60 dtk, jam di 1 jam; tanpa bullet separator; mode =
-permission mode, atau `<WorkMode>·<permission mode>` bila WorkMode ≠ EXECUTE)
+menit mulai terang di 60 dtk, jam di 1 jam; tanpa bullet separator; mode selalu
+`<WorkMode> · <PermissionMode>` seperti `BUILD · AUTO`)
 + satu spacer sebelum footer · ledger tool
 `  › name target` (hijau) / merah saat error · error `✗ pesan` sekali per
 kegagalan · pesan error TUI = formatter kanonik (`formatError`,
@@ -520,14 +525,14 @@ panjang).
   Esc-1 kembalikan prefill, Esc-2 batal).
 - `test/approval-tui.test.ts` — I23 (blok + keputusan tercatat, deny;
   stdout-pipe tanpa sink = deny).
-- `test/footer-render.test.ts` — I13 (footer minimal tanpa label status).
+- `test/footer-render.test.ts` — I13 (footer minimal dengan label WorkMode + PermissionMode; lebar kolom stabil).
 - `test/work-mode-runtime.test.ts` — I35 (WorkMode runtime: ceiling permission
-  dievaluasi per pemanggilan tool; transisi EXECUTE↔DISCUSS↔PLAN pada sesi
+  dievaluasi per pemanggilan tool; transisi BUILD/EXECUTE↔DISCUSS↔PLAN pada sesi
   yang sama; daftar tool yang dilihat kernel ikut berubah; hooks mengikuti
   WorkMode aktif; delegasi mewarisi WorkMode parent terbaru; argumen
   delegasi tak bisa menaikkan WorkMode; `/work-mode` end-to-end lewat TUI
   termasuk nilai invalid; `/mode` + Shift+Tab tak menyentuh WorkMode; label
-  footer `PLAN·auto`/`DISCUSS·auto`).
+  footer `BUILD · AUTO`/`PLAN · ASK`; Tab mengubah WorkMode dan Shift+Tab tidak).
 - `test/work-mode-contract.test.ts` — I35 (ceiling handler WorkMode di atas
   handler PM: 18 sel matriks, gerbang approval `PLAN × PM` termasuk `web_fetch`/
   `web_search`, `DISCUSS` memblokir network read, `describeDenial` per pemilik

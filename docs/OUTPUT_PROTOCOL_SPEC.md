@@ -136,7 +136,7 @@ Semua event machine SHOULD menggunakan bentuk:
   "sessionId": "s1",
   "turnId": 1,
   "correlationId": "call-1",
-  "source": "runtime",
+  "source": "derived",
   "severity": "info",
   "status": "completed",
   "visibility": ["machine"],

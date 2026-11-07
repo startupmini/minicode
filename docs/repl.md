@@ -22,8 +22,8 @@ en. `/lang` tanpa argumen = tampilkan aktif. Semua string lewat kamus i18n
 | `/redo` | Terapkan ulang yang dibatalkan |
 | `/sessions` | Tanpa argumen = popup picker resume; `/sessions <id>` = langsung resume |
 | `/status` | Runtime + pemakaian & biaya **kumulatif sesi** |
-| `/mode [nama]` | Ganti permission (`auto`, `ask`, `plan`, `allowlist`); tanpa argumen = putar |
-| `/work-mode [DISCUSS\|PLAN\|EXECUTE]` | WorkMode = **lapis intent di atas** permission mode: `DISCUSS` read-only penuh, `PLAN` ceiling rencana, `EXECUTE` tanpa ceiling tambahan. Tanpa argumen = tampilkan mode aktif + usage; nilai invalid ditolak dan mode aktif tidak berubah. Terpisah dari `/mode` dan dari Tab/Shift+Tab (keduanya khusus permission mode). Di footer tampil `PLAN·auto` dsb. hanya saat WorkMode ≠ `EXECUTE`. |
+| `/mode [AUTO\|ASK]` | Ganti pengawasan persetujuan; tanpa argumen = toggle AUTO/ASK |
+| `/work-mode [DISCUSS\|PLAN\|BUILD]` | WorkMode membatasi cara agent bekerja. `DISCUSS` read-only, `PLAN` memakai ceiling rencana, `BUILD` tidak menambah ceiling (identitas internal `EXECUTE`). Tanpa argumen = tampilkan mode aktif + usage; nilai invalid ditolak dan mode aktif tidak berubah. Tab dan `/work-mode` mengubah WorkMode; Shift+Tab dan `/mode` mengubah PermissionMode. |
 | `/lang [en|id]` | Bahasa UI; tanpa argumen = tampilkan aktif |
 | `/init` | Buat `AGENTS.md` proyek ini |
 | `/copy [n]` | Salin `n` turn terakhir (default `1`, maksimal `10`) via OSC 52 |
@@ -42,7 +42,8 @@ Did-you-mean: typo `/sessoons` → `Did you mean /sessions?` (jarak ≤ 2).
 | Tombol | Fungsi |
 |---|---|
 | `enter` | Kirim prompt (di picker/form: pilih/simpan; kosong = batal di picker) |
-| `tab` / `shift+tab` | Putar mode izin (di form: pindah field) |
+| `tab` | Putar WorkMode (`DISCUSS` → `PLAN` → `BUILD`) |
+| `shift+tab` | Toggle PermissionMode (`AUTO` ↔ `ASK`) |
 | `↑` / `↓` | Riwayat prompt, atau navigasi item di picker/manager/form |
 | `pgup` / `pgdn` | Gulir transkrip satu halaman; dengan `shift`: setengah halaman (di picker/manager: gulir daftar) |
 | `mouse drag` | Select teks transkrip; `Ctrl+C` menyalin selection app-level |

@@ -1,5 +1,9 @@
 # Task Event Model
 
+> **Snapshot desain historis:** model event di bawah adalah proposal yang
+> mendahului implementasi TaskStore/TaskGraph saat ini. Jangan menganggapnya
+> sebagai event API aktif; lihat `src/task/` dan [peta arsitektur](architecture.md).
+
 Mode DESIGN. Companion dari `CANONICAL_TASK_MODEL_DESIGN.md`.
 
 ## Prinsip: state dan history adalah dua hal berbeda

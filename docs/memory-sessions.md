@@ -44,10 +44,10 @@ Batas: snapshot memakai `git add -A`, jadi file ber-`.gitignore` tidak ikut (dis
 
 ## Recovery journal
 
-Setiap mutasi (tulis/edit/hapus, `bash`, `git_commit`, `mcp_call`, `code_run`, `delegate_task`, memory tulis/hapus) dicatat di `.minicode/journal-<sesi>.jsonl` — di kode disebut *mutation journal*: `pending` → `committed`/`failed` → `finalized` (setelah turn durable di SQLite). Saat resume, dibaca **sebelum** seed kernel:
+Setiap mutasi (tulis/edit/hapus, `bash`, `git_commit`, `mcp_call`, `code_run`, `delegate_task`, memory tulis/hapus) dicatat di `.minicode/journal-<sesi>.jsonl` — di kode disebut *mutation journal*: `pending` → `committed`/`failed`/`unknown`; finalisasi menandai cakupan turn yang sudah durable di SQLite. Saat resume, dibaca **sebelum** seed kernel:
 
 - `committed` yang turn-nya hilang → tidak diulang; model diberi catatan narasi.
-- `pending`/`failed` → direktif verifikasi; dilarang redo buta.
+- `pending`/`failed`/`unknown` → direktif verifikasi; dilarang redo buta.
 - `committed` MCP = *external-acknowledged*, wajib baca-balik.
 
 Jurnal bukan transaksi atomik; `pending` = ambigu (efek mungkin sudah terjadi). Hanya hash + path relatif (tanpa isi/kredensial). File dibuat eager saat sesi terpasang. Jurnal anak terpisah per sesi anak. `sessions purge` ikut hapus jurnal basi.

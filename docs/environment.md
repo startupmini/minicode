@@ -12,6 +12,8 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | Variabel | Fungsi |
 |---|---|
 | `MINICODE_TIMEOUT_MS` | Default timeout (ms) bila `--timeout` tidak diset; `0` = Infinity |
+| `NO_UPDATE_CHECK` | `1` → lewati pemeriksaan pembaruan saat startup |
+| `MINICODE_AUTO_UPDATE` | `0`/`false`/`off` → nonaktifkan pemeriksaan dan pemasangan pembaruan otomatis |
 | `MINICODE_PLAN` | `1` → alias warisan `--work-mode PLAN` (tanpa `--plan`) |
 | `MINICODE_PERMISSION` | `allowlist` → tool-access policy bash (profil warisan) |
 | `MINICODE_TOOL_SCOPE` | `explore` → subset read-only 12 tool (sama `--tool-scope explore`) |

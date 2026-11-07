@@ -234,6 +234,14 @@ describe.skipIf(!gitAvailable)("checkpoint: integrasi mode git", () => {
     expect(pre.mode).toBe("git")
   })
 
+  test("beginTurnSnapshot tidak memakai fallback terbatas saat snapshot repo gagal", async () => {
+    git(["config", "core.bare", "true"])
+
+    const pre = await beginTurnSnapshot("sess-snapshot-failed", root)
+
+    expect(pre).toEqual({ mode: "unavailable", reason: "git-snapshot-failed" })
+  })
+
   test("undo lalu redo lintas tree", async () => {
     const sess = "sess-ur"
     const pre = await beginTurnSnapshot(sess, root)

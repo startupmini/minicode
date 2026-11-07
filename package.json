@@ -1,6 +1,6 @@
 {
   "name": "minicode-ai",
-  "version": "0.14.1",
+  "version": "0.14.2",
   "description": "Coding agent CLI built on the frozen MiniCore runtime — tools, MCP, LSP, sandbox, shadow-git checkpoints",
   "type": "module",
   "private": false,
@@ -49,7 +49,6 @@
     "vendor/minicore/package.json",
     "vendor/minicore/VENDOR.md",
     "README.md",
-    "CHANGELOG.md",
     "LICENSE",
     "docs/OUTPUT_ARCHITECTURE_AUDIT.md",
     "docs/OUTPUT_EVENT_MODEL.md",
@@ -57,7 +56,6 @@
     "docs/OUTPUT_PROTOCOL_SPEC.md",
     "docs/OUTPUT_RENDERING_SPEC.md",
     "docs/OUTPUT_UX_RULES.md",
-    "docs/PLAN_UIUX_V6.md",
     "docs/TERMINAL_CONTRACT.md",
     "docs/agents.md",
     "docs/architecture.md",

@@ -4,7 +4,7 @@ Coding agent built on **MiniCore** (kernel di-vendor ke `vendor/minicore`, seam 
 
 MiniCore = kernel runtime `STATE/MODEL/ACTION/LOOP` (inti di-freeze; satu-satunya patch = seam additif backward-compatible). Minicode = layer agencode: tools FS/bash/git/memory/todo/MCP/LSP, sub-agents, skills, hooks ask, CLI shell-first pure ANSI (output linier di scrollback, tanpa Ink/React), memory hybrid RAG, sessions sqlite, repo-map, verifier.
 
-> Angka yang bisa dihitung mesin (jumlah test, tool, coverage) **tidak ditulis di sini** — jalankan `bun test`, `bun run gate:coverage`, atau lihat CI. Riwayat perubahan per versi ada di [CHANGELOG.md](CHANGELOG.md).
+> Angka yang bisa dihitung mesin (jumlah test, tool, coverage) **tidak ditulis di sini** — jalankan `bun test`, `bun run gate:coverage`, atau lihat CI. Riwayat perubahan per versi ada di [GitHub Releases](https://github.com/startupmini/minicode/releases).
 
 📖 **Mulai dari [docs/](docs/)** — [Instalasi](docs/getting-started.md), [Quickstart](docs/quickstart.md), [Memilih Mode](docs/choosing-mode.md) · [docs/ARCHITECTURE.html](docs/ARCHITECTURE.html) untuk peta struktur repo.
 

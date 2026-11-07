@@ -36,6 +36,14 @@ export class McpTransport {
     })
 
     this.proc.on("error", (err) => this.failAll(err))
+    this.proc.stdin?.on("error", (err) => {
+      // Server dapat keluar tepat sebelum request ditulis. EPIPE pada stdin
+      // tetap harus menjadi penolakan request, bukan uncaught exception proses.
+      this.closed = true
+      this.writeQueue = []
+      this.draining = false
+      this.failAll(err)
+    })
     this.proc.on("exit", (code) => {
       if (!this.closed) this.failAll(new Error(`MCP server exited with code ${code}`))
     })
@@ -95,25 +103,33 @@ export class McpTransport {
     } catch {}
     this.killSignal.abort()
     if (this.proc) {
-      await new Promise<void>((r) => {
-        const p = this.proc!
-        const t = setTimeout(() => {
-          try {
-            p.kill("SIGKILL")
-          } catch {}
-          r()
-        }, 2_000)
-        p.once("exit", () => {
-          clearTimeout(t)
-          r()
+      const p = this.proc
+      if (p.exitCode === null && p.signalCode === null) {
+        await new Promise<void>((r) => {
+          const t = setTimeout(() => {
+            try {
+              p.kill("SIGKILL")
+            } catch {}
+            r()
+          }, 2_000)
+          p.once("exit", () => {
+            clearTimeout(t)
+            r()
+          })
         })
-      })
+      }
     }
     this.proc = null
   }
 
   private write(msg: unknown) {
-    if (!this.proc?.stdin) throw new Error("transport not connected")
+    const proc = this.proc
+    if (!proc?.stdin) throw new Error("transport not connected")
+    if (this.closed || proc.exitCode !== null || proc.stdin.destroyed) {
+      throw new Error(
+        `MCP transport is closed${proc.exitCode === null ? "" : ` (exit ${proc.exitCode})`}`,
+      )
+    }
     let line: string
     try {
       line = `${JSON.stringify(msg)}\n`
@@ -124,10 +140,10 @@ export class McpTransport {
       this.writeQueue.push(line)
       return
     }
-    const ok = this.proc.stdin.write(line)
+    const ok = proc.stdin.write(line)
     if (!ok) {
       this.draining = true
-      this.proc.stdin.once("drain", () => {
+      proc.stdin.once("drain", () => {
         this.draining = false
         this.flushQueue()
       })

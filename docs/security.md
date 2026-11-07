@@ -41,6 +41,12 @@
 4. **Env scrub** `sanitizeSpawnEnv`: strip kata-kunci kredensial dari merge final. `GITHUB_WORKSPACE`/`GITHUB_REF`/`GOOGLE_CHROME_PATH`/`REDIS_HOST`/`AWS_REGION` **tetap ada** (pernah terhapus dan memecahkan build CI), sementara `GITHUB_TOKEN`/`AWS_SECRET_ACCESS_KEY`/`DATABASE_URL` di-strip. Bila non-rahasia ikut hilang, itu bug — laporkan nama variabelnya.
 5. **web_fetch/web_search**: redirect manual ≤5 hop + DNS pinning 30 dtk + body cap 2 MB. Host privat ditolak (sama untuk MCP HTTP).
 
+`grep` memakai ripgrep bila tersedia. Biner di-resolve dari PATH absolut yang
+tepercaya, environment child disanitasi, dan config eksternal dinonaktifkan
+(`--no-config`, tanpa `RIPGREP_CONFIG_PATH`). Config ripgrep mendukung
+preprocessor yang mengeksekusi program per berkas; karena itu tool pencarian
+tidak mewarisi konfigurasi tersebut.
+
 ## Prompt injection
 
 - Output verify dibungkus fence agar instruksi di error build tidak diikuti model.

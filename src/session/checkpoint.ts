@@ -8,7 +8,7 @@ import { GIT_SAFE_BASE } from "../lib/git-hardening.ts"
 import { sanitizeSessionPart } from "../lib/session-id.ts"
 import { isPathOutsideRoot } from "../policy/jail.ts"
 import { appendUndoMarker, loadJournal } from "./journal.ts"
-import { diffTrees, ephemeralTree, restoreTree, snapshotTree } from "./shadow-git.ts"
+import { diffTrees, ephemeralTree, isGitRepo, restoreTree, snapshotTree } from "./shadow-git.ts"
 
 /** Alias back-compat: satu-satunya sanitizer kini di lib/session-id.ts (F-17). */
 export function sanitizeSessionId(id: string): string {
@@ -335,9 +335,16 @@ export async function snapshotWorkspace(
 export async function beginTurnSnapshot(
   sessionId: string,
   cwd: string = process.cwd(),
-): Promise<{ mode: "git"; tree: string } | { mode: "files"; snapshots: FileSnapshot[] }> {
+): Promise<
+  | { mode: "git"; tree: string }
+  | { mode: "files"; snapshots: FileSnapshot[] }
+  | { mode: "unavailable"; reason: "git-snapshot-failed" }
+> {
   const shadow = await snapshotTree(cwd, sessionId, "pre")
   if (shadow) return { mode: "git", tree: shadow.tree }
+  // Fallback file snapshot dibatasi 200 path. Memakainya saat repo Git gagal
+  // membuat snapshot dapat memberi kesan rollback lengkap padahal parsial.
+  if (await isGitRepo(cwd)) return { mode: "unavailable", reason: "git-snapshot-failed" }
   return { mode: "files", snapshots: await snapshotWorkspace(cwd, LIMITS.WORKSPACE_SNAPSHOT_LIMIT) }
 }
 

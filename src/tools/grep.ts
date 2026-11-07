@@ -1,12 +1,13 @@
 import { spawn, spawnSync } from "node:child_process"
 import { readdir, realpath, stat } from "node:fs/promises"
-import { join, relative, resolve } from "node:path"
+import { isAbsolute, join, relative, resolve } from "node:path"
 import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { isIgnored, loadIgnoreMatchers } from "../lib/ignore.ts"
 import { safeReadFile } from "../lib/safe-open.ts"
+import { resolveTrustedExecutable } from "../lib/trusted-exec.ts"
 import { isPathOutsideRoot, isSensitive } from "../policy/jail.ts"
-import { scrubSecrets } from "../policy/scrub.ts"
+import { sanitizeSpawnEnv, scrubSecrets } from "../policy/scrub.ts"
 import { requireToolCwd } from "./context.ts"
 
 async function walkGrep(
@@ -81,8 +82,22 @@ let rgPath: string | null | undefined
 export function ripgrepAvailable(): boolean {
   if (rgPath !== undefined) return rgPath !== null
   try {
-    const r = spawnSync("rg", ["--version"], { stdio: "ignore", timeout: 3000 })
-    rgPath = r.status === 0 ? "rg" : null
+    const executable = resolveTrustedExecutable("rg")
+    // Resolver fallback berupa nama telanjang tidak aman untuk workspace
+    // Windows: CreateProcess dapat mencari executable bernama sama di cwd.
+    // Tanpa PATH tepercaya, gunakan walker JS alih-alih mencari ulang dari cwd.
+    if (!isAbsolute(executable)) {
+      rgPath = null
+      return false
+    }
+    const env = sanitizeSpawnEnv(process.env)
+    delete env.RIPGREP_CONFIG_PATH
+    const r = spawnSync(executable, ["--no-config", "--version"], {
+      stdio: "ignore",
+      timeout: 3000,
+      env,
+    })
+    rgPath = r.status === 0 ? executable : null
   } catch {
     rgPath = null
   }
@@ -119,6 +134,7 @@ function runRipgrep(
   include?: string,
 ): Promise<string[]> {
   const args = [
+    "--no-config", // config ripgrep dapat menjalankan --pre pada berkas workspace
     "--vimgrep", // path:line:col:text
     "--no-heading",
     "--color=never",
@@ -139,7 +155,15 @@ function runRipgrep(
   args.push("--regexp", pattern, "--", ".")
 
   return new Promise((resolveOut, reject) => {
-    const p = spawn("rg", args, { cwd: root, stdio: ["ignore", "pipe", "pipe"] })
+    const env = sanitizeSpawnEnv(process.env)
+    // Config pengguna tidak ikut diterapkan pada operasi pencarian agent.
+    // --no-config tetap dipasang sebagai pagar kedua pada argv ripgrep.
+    delete env.RIPGREP_CONFIG_PATH
+    const p = spawn(resolveTrustedExecutable("rg"), args, {
+      cwd: root,
+      stdio: ["ignore", "pipe", "pipe"],
+      env,
+    })
     const out: string[] = []
     let buf = ""
     let stderr = ""

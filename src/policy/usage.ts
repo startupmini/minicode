@@ -237,10 +237,8 @@ export function watchContextWindowLimit(opts: {
   bus: EventBus
   /** Batas window konteks (W). Bila 0/undefined → no-op. */
   windowTokens: number
-  /** Estimasi token INPUT (pesan) pada sesi; output allowance = max(256, W - input). */
-  getInputTokens: () => number
-  /** Token output turn berjalan (dari usage collector). */
-  getOutputTokens: () => number
+  /** Snapshot token request provider aktif; window berlaku per request. */
+  getRequestTokens: () => { inputTokens: number; outputTokens: number } | null
   onOver: (allowed: number, actual: number) => void
 }): () => void {
   const W = opts.windowTokens
@@ -248,9 +246,12 @@ export function watchContextWindowLimit(opts: {
   let fired = false
   const check = () => {
     if (fired) return
-    const input = opts.getInputTokens()
-    const allowedOutput = Math.max(256, Math.floor(W - input))
-    const output = opts.getOutputTokens()
+    const request = opts.getRequestTokens()
+    // Belum ada usage untuk request aktif: jangan memakai snapshot request
+    // sebelumnya atau total token kumulatif turn sebagai pengganti.
+    if (!request) return
+    const allowedOutput = Math.max(256, Math.floor(W - request.inputTokens))
+    const output = request.outputTokens
     if (output > allowedOutput) {
       fired = true
       opts.onOver(allowedOutput, output)
@@ -556,6 +557,15 @@ export function createUsageCollector(
     getTurnCount: () => sessionTurns,
     /** [Fase 3 / CTX-03] Laporan token terakhir dari provider untuk kalibrasi. */
     lastProviderTokens: () => lastProviderUsage,
+    /** Snapshot request provider aktif; null di antara request agar watcher
+     * window tidak keliru memakai total kumulatif turn/sesi. */
+    currentRequestTokens: () =>
+      pendingRequestTokens
+        ? {
+            inputTokens: pendingRequestTokens.inputTokens,
+            outputTokens: pendingRequestTokens.outputTokens,
+          }
+        : null,
     modelUsed: () => ({ effective: effectiveModel, provider: effectiveProvider }),
     reset: () => {
       // [Fase 7 / Live #2] reset() = batas turn. `pendingRequestTokens` masih

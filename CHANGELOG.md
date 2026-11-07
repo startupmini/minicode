@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.14.2] - 2026-11-07
+
+### Fixed — reliability dan security saat dogfooding
+
+- `grep` menjalankan ripgrep dengan executable tepercaya, konfigurasi repo dinonaktifkan, dan variabel konfigurasi yang dapat mengubah perilaku subprocess dibersihkan.
+- Snapshot token request provider memakai hitungan konteks terkini, sehingga percakapan panjang tidak keliru diperlakukan sebagai pemakaian kumulatif.
+- Kegagalan `stdin` child MCP (EPIPE) ditangani dan request tertunda diselesaikan dengan error terkontrol.
+- Checkpoint Git yang gagal tidak lagi diam-diam beralih ke snapshot manual terbatas; operator menerima status bahwa undo/redo tidak mencakup perubahan tersebut.
+- Peta arsitektur dan dokumentasi keamanan diperbarui untuk mencerminkan batas SSE, grep, dan checkpoint.
+- Tarball npm mengecualikan changelog lengkap dan arsip rencana UI/UX; riwayat versi tetap tersedia di repository dan GitHub Releases.
+
+### Keterbatasan yang diketahui
+
+- Snapshot repository besar masih dapat gagal atau lambat; checkpoint skala besar tetap menjadi risiko P2 yang belum ditutup.
+- Dogfooding MiniChat hanya menjadi fixture evaluasi; audit ini tidak menyatakan seluruh audit sistem selesai.
+
 ## [0.14.1] - 2026-11-05
 
 ### Mode Architecture Migration — WorkMode / PermissionMode / Tool Access Policy

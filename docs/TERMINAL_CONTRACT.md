@@ -459,7 +459,7 @@ panjang).
 > **benar-benar di-assert** oleh test yang disebut. Kehadiran nama file test
 > bukan bukti klaim. Baris yang hanya "nominal" (test ada, tapi assertion-nya
 > tak menyentuh perilaku yang diklaim) dipindah ke bagian
-> [Gap proteksi](#gap-proteksi-terbukti-belum-ditutup) di bawah — jangan
+> [Gap proteksi](#peta-proteksi-dan-gap-tersisa) di bawah — jangan
 > dipoles dengan mengganti kata-kata.
 
 - `test/tui-app.test.ts` — I1/I13/I14/I17-I20 (boot/exit pairing, transcript

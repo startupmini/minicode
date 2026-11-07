@@ -188,8 +188,7 @@ describe("10.2 cross-dimension frontier contract readiness (6 dimensions)", () =
     const stop = watchContextWindowLimit({
       bus,
       windowTokens: 500,
-      getInputTokens: () => 100,
-      getOutputTokens: () => 500,
+      getRequestTokens: () => ({ inputTokens: 100, outputTokens: 500 }),
       onOver: (allowed) => fired.push(allowed),
     })
     expect(fired[0]).toBe(400)

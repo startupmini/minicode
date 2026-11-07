@@ -716,7 +716,7 @@ footer.site .spacer { flex: 1; }
   </details>
 
   <details class="group" id="g-providers">
-    <summary><span class="chip c2">L2</span> src/providers/ <span class="role">— koneksi model</span> <span class="cnt">11 modul</span></summary>
+    <summary><span class="chip c2">L2</span> src/providers/ <span class="role">— koneksi model</span> <span class="cnt">12 modul</span></summary>
     <div class="mods">
       <div class="mod"><div class="fname">router.ts</div><div class="fdesc">Pilih provider untuk satu request (byId per-stream + updateProviders agar provider baru langsung dikenali; fallback berantai; 429 + retry-after ditunggu — cap 30 dtk — lalu fallback, atau coba-ulang-di-tempat bila provider tunggal). Menyelipkan system prompt sebagai pesan user pertama untuk adapter tanpa dukungan system native (openai-compat; Anthropic/Responses diurus di adapter).</div><div class="exports">createRouterProvider</div></div>
       <div class="mod"><div class="fname">anthropic.ts</div><div class="fdesc">Adapter Anthropic native (stream SSE).</div></div>
@@ -726,6 +726,7 @@ footer.site .spacer { flex: 1; }
       <div class="mod"><div class="fname">oauth.ts · auth-store.ts</div><div class="fdesc">Alur OAuth dan penyimpanan kredensial.</div></div>
       <div class="mod"><div class="fname">effort.ts</div><div class="fdesc">Thinking per keluarga model (fail-soft universal): reasoning_effort/budget/adaptive hanya untuk keluarga reasoning terbukti; default = omit (tune vendor).</div><div class="exports">thinkingFamily · allowedEfforts · effortOptionsForModel · withEffortFallback</div></div>
       <div class="mod"><div class="fname">guards.ts</div><div class="fdesc">Penjaga stream semua adapter: fetch timeout (server hung = ProviderError server) + text-cap anti-OOM; preservasi kind/chain.</div><div class="exports">withStreamGuards</div></div>
+      <div class="mod"><div class="fname">sse-bounds.ts</div><div class="fdesc">Batas byte untuk SSE provider, body error, dan argumen tool streaming sebelum buffer/parser membesar; membatalkan stream saat batas terlampaui.</div><div class="exports">boundedSseBody · readProviderErrorBody · appendToolArgument · parseProviderToolArguments</div></div>
     </div>
   </details>
 

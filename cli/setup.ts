@@ -2195,6 +2195,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
             ? e.result.usage.turns
             : session.state.turnCount
         const desc = `turn ${turn}`
+        if (pre.mode === "unavailable") {
+          warnLine(`checkpoint unavailable: ${pre.reason}; undo/redo will not cover turn ${turn}`)
+          return
+        }
         if (pre.mode === "git") {
           const after = await snapshotTree(cwd ?? ".", sessionId, `post-${turn}`)
           const checkpoint = await recordCheckpointFromTrees(
@@ -2754,8 +2758,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       const stopCtxWindow = watchContextWindowLimit({
         bus: session.events,
         windowTokens: contextWindowTokens ?? 0,
-        getInputTokens: () => usage.get().inputTokens,
-        getOutputTokens: () => usage.get().outputTokens,
+        getRequestTokens: () => usage.currentRequestTokens(),
         onOver: (allowed, actual) => {
           const windowTokens = contextWindowTokens ?? 0
           // F-CTX-1 + P1.4: meter occupancy konteks (bukan output cutoff).

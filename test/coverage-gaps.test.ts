@@ -21,7 +21,20 @@ import { webSearchTool } from "../src/tools/web_search.ts"
 const workspace = mkdtempSync(join(tmpdir(), "minicode-coverage-gaps-"))
 const ctx = { signal: new AbortController().signal, cwd: workspace } as never
 
-afterAll(() => rmSync(workspace, { recursive: true, force: true }))
+afterAll(async () => {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rm(workspace, { recursive: true, force: true })
+      return
+    } catch (error) {
+      const code = (error as { code?: string }).code
+      // Windows may briefly retain SQLite/WAL handles after close; a finite
+      // retry smooths that release delay while a persistent leak still fails.
+      if ((code !== "EBUSY" && code !== "EPERM") || attempt === 9) throw error
+      await Bun.sleep(Math.min(50 * 2 ** attempt, 1_000))
+    }
+  }
+})
 
 describe("withMcpTools: dedup nama tool", () => {
   const base = [{ name: "a" }, { name: "b" }] as never
@@ -111,9 +124,19 @@ describe("McpTransport: jalur gagal tertutup", () => {
 
   test("notify tanpa response tidak menggantung; exit server menolak request", async () => {
     const t = new McpTransport()
-    await t.connect(process.execPath, ["-e", "process.exit(0)"])
-    await new Promise((r) => setTimeout(r, 50))
-    await expect(t.request("ping", {}, 10)).rejects.toThrow()
+    try {
+      await t.connect(process.execPath, ["-e", "process.exit(0)"])
+      // Startup/exit bisa lebih lambat saat seluruh suite diinstrumentasi.
+      // Tunggu liveness yang benar dengan batas waktu, bukan tidur 50 ms.
+      const deadline = Date.now() + 1_000
+      while (!t.isClosed && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 10))
+      }
+      expect(t.isClosed).toBe(true)
+      await expect(t.request("ping", {}, 10)).rejects.toThrow()
+    } finally {
+      await t.close()
+    }
   })
 })
 

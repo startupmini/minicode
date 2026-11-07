@@ -200,9 +200,8 @@ describe("7.2 Context-window mid-stream cutoff (Live #2b)", () => {
     const stop = watchContextWindowLimit({
       bus,
       windowTokens: 500,
-      // Asumsikan input pesan 100 token → allowedOutput = max(256, 500-100) = 400.
-      getInputTokens: () => 100,
-      getOutputTokens: () => 500, // simulasi output sudah 500 > 400
+      // Input 100 token pada request ini → allowedOutput = 400.
+      getRequestTokens: () => ({ inputTokens: 100, outputTokens: 500 }),
       onOver: (allowed, actual) => fired.push({ allowed, actual }),
     })
     // Saat pertama dipanggil, watcher sudah mengecek → fired langsung.

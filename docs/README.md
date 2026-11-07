@@ -34,7 +34,7 @@ Beberapa hal penting yang perlu Anda tahu:
 - **Tidak ada data yang dikirim tanpa sepengetahuan Anda.** Konfigurasi Anda tersimpan di komputer Anda sendiri. Token akses disimpan dengan aman dan tidak disebarkan.
 - **Kegagalan dilaporkan apa adanya.** Jika ada masalah, Minicode akan memberitahu secara langsung, tanpa disamarkan.
 - **Informasi kuantitatif tidak ditulis secara permanen di sini.** Jika Anda ingin tahu jumlah test, cakupan, atau jumlah alat yang tersedia, jalankan perintah `bun test`, `bun run gate:coverage`, atau lihat hasil di layanan continuous integration (CI). Informasi seperti ini bisa berubah sewaktu-waktu.
-- **Riwayat perubahan** tercatat di `CHANGELOG.md` di direktori utama repo.
+- **Riwayat perubahan** tercatat di [GitHub Releases](https://github.com/startupmini/minicode/releases); changelog lengkap tersedia pada repository.
 
 ## Mulai dalam 5 menit
 
@@ -100,7 +100,7 @@ Habis itu, baca sesuai kebutuhan lewat tabel Navigasi di bawah — tak perlu ber
 | Kontrak internal kontributor: terminal FROZEN, control-plane, pipeline render | [Internal & Arsitektur](TERMINAL_CONTRACT.md) (grup di sidebar) |
 | Audit dan target arsitektur output/presentation | [Output Architecture Audit](OUTPUT_ARCHITECTURE_AUDIT.md) |
 | Ikut kontribusi, gate, batas lapisan | [Contributing](contributing.md) |
-| Perubahan per versi | [Changelog](changelog.md) |
+| Perubahan per versi | [Changelog](https://github.com/startupmini/minicode/releases) |
 | Arsip panduan monolit lama (baca hanya bila perlu) | `USAGE.md` (file pendamping, status legacy) |
 
 ## Konvensi dokumen ini

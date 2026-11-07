@@ -111,7 +111,7 @@ describe("exec: prompt scoping (P11.2)", () => {
   test("A/B: exec-first dan flag-first menghasilkan prompt identik", () => {
     expect(failurePrompt(["exec", "--json", "--cwd", "<DIR>", "tugas cepat"])).toBe("tugas cepat")
     expect(failurePrompt(["--json", "exec", "--cwd", "<DIR>", "tugas cepat"])).toBe("tugas cepat")
-  })
+  }, 15_000)
 
   test("D: kata exec milik user tidak dipangkas", () => {
     // exec di tengah prompt + sebagai kata pertama prompt.

@@ -73,6 +73,35 @@ describe("resolveContextWindow integrasi katalog", () => {
   })
 })
 
+describe("alias router (auto/best) → default konservatif 128K", () => {
+  const cfg = { providers: [] } as unknown as MinicodeConfig
+
+  test("auto → 131072 (bukan 32K) supaya kompaksi tak prematur", () => {
+    const r = resolveContextWindow(cfg, "auto")
+    expect(r.source).toBe("safe-default")
+    expect(r.tokens).toBe(131_072)
+  })
+
+  test("best/default/router/cheapest/auto:reasoning juga dianggap alias", () => {
+    for (const m of ["best", "default", "router", "cheapest", "auto:reasoning", "auto-extended"]) {
+      expect(resolveContextWindow(cfg, m).tokens).toBe(131_072)
+    }
+  })
+
+  test("bukan alias (mis. 'automotive') tetap 32K", () => {
+    expect(resolveContextWindow(cfg, "automotive").tokens).toBe(32_000)
+  })
+
+  test("alias tetap bisa ditimpa contextWindows eksplisit", () => {
+    const cfg2 = {
+      providers: [{ id: "p", models: ["auto"], contextWindows: { auto: 999 } }],
+    } as unknown as MinicodeConfig
+    const r = resolveContextWindow(cfg2, "p::auto")
+    expect(r.source).toBe("model")
+    expect(r.tokens).toBe(999)
+  })
+})
+
 describe("models.dev overlay (context_length)", () => {
   test("extractContextWindows: number & objek context_length", () => {
     const win = extractContextWindows({

@@ -8,6 +8,13 @@ import { contextWindowsCachePath } from "./pricing.ts"
  * explicit `--context-window` override when a gateway exposes aliases. */
 export const DEFAULT_FALLBACK_CONTEXT_WINDOW_TOKENS = 32_000
 
+// Alias router (`auto`/`best`/...) model aslinya tak diketahui dari config.
+// Default konservatif 128K (bukan 32K) supaya kompaksi tidak prematur; bila
+// aktual lebih besar (mis. 1M), jalur recovery 400→compact-and-retry tetap
+// menyelamatkan. User bisa set `provider.contextWindows` untuk nilai eksak.
+export const DEFAULT_ALIAS_CONTEXT_WINDOW_TOKENS = 131_072
+const ROUTER_ALIAS_RE = /^(auto|best|default|cheapest|router)([:_-]|$)/i
+
 export interface ContextWindowResolution {
   readonly tokens: number
   readonly source:
@@ -162,6 +169,18 @@ export function resolveContextWindow(
         ...(modelId ? { model: modelId } : {}),
         ...(providerId ? { providerId } : {}),
       }
+    }
+  }
+  // Alias router (`auto`, `best`, ...) — model asli tak dapat dipastikan tanpa
+  // konfigurasi. Pakai default konservatif 128K (bukan 32K) agar kompaksi tak
+  // prematur; sumber tetap "safe-default" supaya warning di cli/setup.ts tetap
+  // menyala dan meminta user set nilai eksak.
+  if (modelId && ROUTER_ALIAS_RE.test(modelId)) {
+    return {
+      tokens: DEFAULT_ALIAS_CONTEXT_WINDOW_TOKENS,
+      source: "safe-default",
+      ...(modelId ? { model: modelId } : {}),
+      ...(providerId ? { providerId } : {}),
     }
   }
   return {

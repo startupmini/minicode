@@ -56,7 +56,7 @@ Setup wizard berjalan otomatis saat `minicode` pertama kali bila belum ada provi
 |---|---|---|---|
 | Linux + bubblewrap | Ya, tanpa flag | `auto` | Paling terisolasi untuk `bash` |
 | macOS + seatbelt | Ya, tanpa flag | `auto` | Sama, via seatbelt |
-| Windows (semua) / tanpa bwrap-seatbelt | Tidak tersedia | Turun ke `allowlist` + alasan dicetak sekali | Lebih baik membatasi perintah daripada label aman palsu. Pilih sendiri dengan `--allow-all` / `--ask`, matikan dengan `--sandbox none`, atau pakai `--sandbox docker` |
+| Windows (semua) / tanpa bwrap-seatbelt | Tidak tersedia | `auto` (bash `restrictBash` allow-list otomatis) | Lebih baik membatasi perintah daripada label aman palsu. Pilih sendiri dengan `--allow-all` / `--ask`, matikan dengan `--sandbox none`, atau pakai `--sandbox docker` |
 
 Docker **tidak** dipakai otomatis meski tersedia — menarik image tanpa diminta terlalu invasif untuk default.
 

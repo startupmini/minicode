@@ -1,4 +1,13 @@
-# Kontrak Terminal MiniCode (TUI fullscreen — v7.9, 2026-11-07)
+# Kontrak Terminal MiniCode (TUI fullscreen — v7.10, 2026-11-08)
+
+Perubahan v7.10: pembatas bash allow-list (fallback "no-sandbox") ditampilkan
+sebagai **ikon gembok** `🔒` di ujung footer (setelah Permission Mode), terang
+saat aktif (mode Auto + restrictBash) dan redup saat nonaktif. Sumbu persetujuan
+tetap Auto/Ask; nilai Permission Mode untuk `--allow-all` sengaja ditampilkan
+sebagai `Auto` (auto ≈ allow-all: otonom penuh tanpa izin) — catatan desain,
+bukan bug. Angka konteks footer memakai satu sumber yang sama dengan guard
+cutoff (`guardInputTokens`, estimasi terkalibrasi pada request terakhir),
+bukan estimasi store terpisah.
 
 Perubahan v7.9: input command slash tidak ditambahkan sebagai pesan transkrip;
 aksi popup provider/model/sesi dan toggle UI tidak meninggalkan riwayat status
@@ -218,6 +227,8 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
 
 13. Status bar: 1 baris dasar (`✦ 00.00.00 Work Mode: Discuss  model  cwd …
      context  Permission Mode: Auto`) dari sumber yang sama dengan angka sesi.
+     Ikon gembok `🔒` mengikuti Permission Mode di ujung kanan: terang bila
+     bash allow-list aktif (restrictBash + mode `Auto`), redup bila tidak.
      Work Mode berada di kiri; Permission Mode cyan berada di kanan dekat
      konteks. Pada terminal sempit, label berubah menjadi `Work:`/`Permission:`
      atau nilai saja sebelum salah satu nilai mode dihilangkan. `✦` tetap
@@ -434,10 +445,10 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
 
 prompt `minicode ›` tampil saat boot/idle dan hilang saat busy (dropdown `/`
 berbingkai di atasnya) ·
-status bar `✦ 00.00.00 Work Mode: Discuss  model  cwd … context  Permission Mode: Auto`
+status bar `✦ 00.00.00 Work Mode: Discuss  model  cwd … context  Permission Mode: Auto 🔒`
 (timer redup idle; detik putih aktif, menit mulai terang di 60 dtk, jam di 1
 jam; tanpa bullet separator; permission rata kanan dekat token konteks; label
-dipadatkan pada terminal sempit)
+dipadatkan pada terminal sempit; `🔒` terang = bash allow-list aktif, redup = tidak)
 + satu spacer sebelum footer · ledger tool
 `  › name target` (hijau) / merah saat error · error `✗ pesan` sekali per
 kegagalan · pesan error TUI = formatter kanonik (`formatError`,
@@ -552,7 +563,7 @@ panjang).
   Esc-1 kembalikan prefill, Esc-2 batal).
 - `test/approval-tui.test.ts` — I23 (blok + keputusan tercatat, deny;
   stdout-pipe tanpa sink = deny).
-- `test/footer-render.test.ts` — I13 (label title case, Work Mode kiri dan Permission Mode cyan rata kanan dekat konteks, posisi kolom stabil, fallback terminal sempit).
+- `test/footer-render.test.ts` — I13 (label title case, Work Mode kiri dan Permission Mode cyan rata kanan dekat konteks, posisi kolom stabil, fallback terminal sempit, ikon gembok 🔒 terang/redup).
 - `test/work-mode-runtime.test.ts` — I35 (WorkMode runtime: ceiling permission
   dievaluasi per pemanggilan tool; transisi BUILD/EXECUTE↔DISCUSS↔PLAN pada sesi
   yang sama; daftar tool yang dilihat kernel ikut berubah; hooks mengikuti

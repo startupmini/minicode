@@ -59,6 +59,8 @@ import {
   matchTurnBySummary,
   pendingVerificationObservation,
   projectProvenance,
+  provenanceMark,
+  verificationMark,
 } from "../src/presentation/projection.ts"
 import {
   createReducerDiagnostics,
@@ -3015,6 +3017,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         describeActivity,
         matchTurn: matchTurnBySummary,
         elapsedVisible,
+        verificationMark,
+        provenanceMark,
       },
     })
     if (enterRepl === true) {

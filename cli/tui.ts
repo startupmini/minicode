@@ -21,6 +21,8 @@ import {
   describeActivity,
   elapsedVisible,
   matchTurnBySummary,
+  provenanceMark,
+  verificationMark,
 } from "../src/presentation/projection.ts"
 import { redoLastCheckpoint, undoLastCheckpoint } from "../src/session/checkpoint.ts"
 import { renderSkill } from "../src/skills/loader.ts"
@@ -58,6 +60,7 @@ const DRIVER_COMMANDS = [
   "/thinking",
   "/expand [id]",
   "/minimize",
+  "/fold",
   "/mode",
   "/work-mode",
 ]
@@ -153,7 +156,8 @@ export async function runTui(ctx: CliSession): Promise<void> {
   } = ctx
   const { session } = ctx
   // [Area A · PROMPT 06] State UI sesi. `runTui` juga dijalankan fixture tes
-  // dengan CliSession parsial — absen berarti pakai instance default.
+  // dengan CliSession parsial — absen berarti pakai instance default (dipakai
+  // tes yang memasangkan logger linier + TUI pada state yang sama).
   const ui: UiSessionState = ctx.uiState ?? defaultUiState
   const getPresentationSnapshot = () =>
     typeof ctx.getPresentationSnapshot === "function"
@@ -163,6 +167,12 @@ export async function runTui(ctx: CliSession): Promise<void> {
   let mode: string = permissions?.getMode() ?? permissionMode ?? "auto"
   if (process.env.MINICODE_COMPACT === undefined) ui.setCompactMode(true)
   if (process.env.MINICODE_MINIMIZE_TOOL === undefined) ui.setSectionMinimized("tool", true)
+  // Grouping aktivitas tool jadi satu baris (opencode-like): default ON di TUI;
+  // `MINICODE_MINIMIZE_ACTIVITY=0` eksplisit mematikan (transparan). Hanya
+  // disetel pada instance MILIK SESI (ctx.uiState ada) — bukan singleton default
+  // (dipakai path tes) agar nilai tidak bocor antar tes.
+  if (ctx.uiState !== undefined && process.env.MINICODE_MINIMIZE_ACTIVITY === undefined)
+    ui.setMinimizeActivity(true)
   let warned80 = false
   let abort: AbortController | null = null
 
@@ -184,6 +194,8 @@ export async function runTui(ctx: CliSession): Promise<void> {
       describeActivity,
       matchTurn: matchTurnBySummary,
       elapsedVisible,
+      verificationMark,
+      provenanceMark,
     },
   })
 
@@ -524,6 +536,12 @@ export async function runTui(ctx: CliSession): Promise<void> {
     if (name === "thinking") {
       const next = args === "" ? undefined : args === "on" || args === "1"
       ui.setReasoningVisible(next)
+      return
+    }
+    if (name === "fold") {
+      const next = args === "" ? undefined : args === "on" || args === "1"
+      const on = ui.setMinimizeActivity(next)
+      transcript.pushInfo([c.muted(t("tui.activityFold", { v: on ? "folded" : "expanded" }))])
       return
     }
     if (name === "expand") {

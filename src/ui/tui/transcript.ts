@@ -234,6 +234,9 @@ export class Transcript {
   private presentedTerminals = new Set<string>()
   private presentedVerifications = new Set<string>()
   private summarizedTurns = new Set<number>()
+  /** Lipat aktivitas (minimizeActivity): baris ledger per-tool ditahan dulu,
+   * lalu di-flush jadi satu section /expand saat turn selesai. */
+  private activityFold: string[] = []
   private unsubs: (() => void)[] = []
 
   constructor(bus: UiBus, opts: TranscriptOptions = {}) {
@@ -326,11 +329,12 @@ export class Transcript {
     if (!text) return
     const clean = sanitizeAnsi(text)
     if (this.uiState.reasoningVisible) {
-      // Expanded: alir redup per baris (line-buffered, ekor hidup).
+      // Expanded: alir per baris dengan indentasi 2 kolom (line-buffered, ekor
+      // hidup) — membedakan thinking dari jawaban model yang mulai di kolom 0.
       this.thinkingTail += clean
       const parts = this.thinkingTail.split("\n")
       for (let i = 0; i < parts.length - 1; i++)
-        this.append(c.muted(parts[i] ?? ""), { kind: "diagnostic" })
+        this.append(c.thinking(`  ${parts[i] ?? ""}`), { kind: "diagnostic" })
 
       this.thinkingTail = parts[parts.length - 1] ?? ""
     } else {
@@ -340,10 +344,10 @@ export class Transcript {
   }
 
   /** Selesaikan fase thinking: minimized → penanda hilang; expanded → flush
-   * ekor redup. */
+   * ekor (berindentasi sama dengan baris thinking). */
   private commitThinking(): void {
     if (this.thinkingTail) {
-      this.append(c.muted(this.thinkingTail), { kind: "diagnostic" })
+      this.append(c.thinking(`  ${this.thinkingTail}`), { kind: "diagnostic" })
       this.thinkingTail = ""
     }
     this.thinkingBuf = ""
@@ -412,6 +416,7 @@ export class Transcript {
     this.presentedTerminals.clear()
     this.presentedVerifications.clear()
     this.summarizedTurns.clear()
+    this.activityFold = []
   }
 
   /** Jumlah baris logis (untuk test; bukan API paint). */
@@ -752,12 +757,19 @@ export class Transcript {
     this.pendingTruncated = false
     const text = normalizeAssistantOutput(rawText)
     if (!text) return
+    // Pisahkan jawaban dari thinking/diagnostik tepat di atasnya dengan satu
+    // baris kosong — supaya "berpikir" tidak nempel ke jawaban.
+    if (this.lastKind() === "diagnostic") this.append("", { kind: "assistant" })
     for (const block of parseMarkdownBlocks(sanitizeAnsi(text))) {
       if (block.type === "table") this.appendTable(block.table, { kind: "assistant" })
       else {
         for (const row of block.text.split("\n")) this.append(row, { kind: "assistant" })
       }
     }
+  }
+
+  private lastKind(): TranscriptMeta["kind"] | undefined {
+    return this.meta[this.meta.length - 1]?.kind
   }
 
   private presentationSnapshot(): UiPresentationSnapshot | null {
@@ -774,6 +786,7 @@ export class Transcript {
       this.commit()
       this.commitThinking()
       this.turnSummary(event.summary, event)
+      this.flushActivityFold()
       return
     }
     // F-TASK-1: status task kanonik (t<n>) + DAG dirender sebagai baris ledger,
@@ -803,6 +816,8 @@ export class Transcript {
     if (event.type === "tool.started") {
       this.commit()
       this.commitThinking()
+      // Turn baru: jangan membawa lipatan aktivitas dari turn sebelumnya.
+      this.activityFold = []
       return
     }
     this.presentationLedger(event)
@@ -880,14 +895,20 @@ export class Transcript {
     // P2.11: penanda verifikasi/provenans dari deskripsi policy (ASCII aman).
     // Absen = unknown/live — tidak dirender sebagai keberhasilan.
     const verification = desc?.verification ?? activity?.verification
-    const verificationMark = !verification
-      ? ""
-      : verification.verdict === "present"
-        ? " [verified]"
-        : ` [unverified:${verification.verdict}]`
     const provenance = desc?.provenance ?? activity?.provenance
-    const provenanceMark =
-      provenance === "reconstructed"
+    // Keputusan marker lewat policy kanonik bila di-inject; fallback inline
+    // legacy (tanpa policy) dijaga test display agar tak divergen dari
+    // projection.ts (`verificationMark`/`provenanceMark`).
+    const verificationMark = this.policy
+      ? this.policy.verificationMark(verification)
+      : !verification
+        ? ""
+        : verification.verdict === "present"
+          ? " [verified]"
+          : ` [unverified:${verification.verdict}]`
+    const provenanceMark = this.policy
+      ? this.policy.provenanceMark(provenance)
+      : provenance === "reconstructed"
         ? " [reconstructed]"
         : provenance === "replay"
           ? " [replay]"
@@ -904,6 +925,13 @@ export class Transcript {
         ? `: ${truncateToWidth(sanitizeAnsi(denyReason), 200, "…").split("\n")[0] ?? ""}`
         : ""
     const line = `  ${this.statusGlyph(status)} ${name}${targetText} ${this.statusWord(status)}${retry}${child}${verificationMark}${provenanceMark}${message}`
+    // Lipat aktivitas (opencode-like): saat minimizeActivity aktif, baris ledger
+    // per-tool TIDAK dicetak — ditahan lalu jadi satu section /expand saat turn
+    // selesai. Ringkasan turn (`turn n · k ok · …`) tetap tampil di turn.completed.
+    if (this.uiState.minimizeActivity) {
+      this.activityFold.push(line)
+      return
+    }
     this.append(this.statusPaint(status, line), {
       kind: "activity",
       ...(event.seq !== undefined ? { seq: event.seq } : {}),
@@ -1118,6 +1146,13 @@ export class Transcript {
       ...(event.seq !== undefined ? { seq: event.seq } : {}),
       ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
     })
+  }
+
+  /** Flush lipatan aktivitas (minimizeActivity) menjadi satu section /expand. */
+  private flushActivityFold(): void {
+    if (this.activityFold.length === 0) return
+    this.uiState.rememberCollapsedSection("activity", this.activityFold.join("\n"))
+    this.activityFold = []
   }
 
   private runningRows(): string[] {

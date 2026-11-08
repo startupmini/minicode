@@ -273,6 +273,10 @@ export interface PresentationPolicy {
   ) => ActivityPolicyDescription
   matchTurn: (turns: UiPresentationTurn[], summary: UiTurnSummary) => UiPresentationTurn | undefined
   elapsedVisible: (tsStart: number, now: number) => boolean
+  /** Marker display status verifikasi — keputusan policy (ASCII aman). */
+  verificationMark: (verification: UiVerificationDisplay | undefined) => string
+  /** Marker display provenans (hanya non-live dirender). */
+  provenanceMark: (provenance: UiProvenance | undefined) => string
 }
 
 export interface UiPresentationSnapshot {

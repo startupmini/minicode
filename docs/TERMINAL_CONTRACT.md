@@ -96,7 +96,7 @@ proteksi").
 | Stream | Isi | Catatan |
 |---|---|---|
 | stdout | Permanent output pada non-interaktif; frame TUI saat sesi interaktif | `App` satu-satunya pemilik frame interaktif; machine output tetap murni |
-| stderr | Human-facing progress/diagnostic: ledger tool (`› …` hijau/merah), reasoning (verbose), warning, error | Boleh transient rendering bila stderr TTY |
+| stderr | Human-facing progress/diagnostic: ledger tool (`› …` hijau/merah), reasoning (default terlihat; `MINICODE_SHOW_THINKING=0` minimized), warning, error | Boleh transient rendering bila stderr TTY |
 | keduanya | Warna hanya bila stream TTY (`stdout.isTTY`); `NO_COLOR` menang; TERM/COLORTERM env TIDAK menyalakan warna pada pipe/redirect | Lihat `src/ui/render/theme.ts` `colorLevel()` |
 
 Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
@@ -303,9 +303,12 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      di footer form ("batal dalam 10 dtk" — bukan countdown hidup), 10 dtk
      berikutnya = auto-batal (cancel), total semantik 90 dtk lama; SATU
      ketikan apa pun me-reset kedua timer.
-22. Thinking terlihat: composer memakai dots clock; transkrip minimized =
-     bersih tanpa marker (`… thinking`), expanded = alir redup; isi tetap
-     tersedia di `/expand`; fase berakhir = commit (tak ada thinking yatim).
+22. Thinking terlihat SECARA DEFAULT (expanded): composer memakai dots clock;
+     transkrip expanded = alir thinking ber-warna terbaca (`c.thinking`,
+     abu-kebiruan) dan ber-indentasi 2 kolom, dipisah SATU baris kosong dari
+     jawaban/ledger — bukan `dim`; minimized (`/thinking`, `MINICODE_SHOW_THINKING=0`)
+     = bersih tanpa marker (`… thinking`); isi tetap tersedia di `/expand`;
+     fase berakhir = commit (tak ada thinking yatim).
 23. Approval & ask_user tercatat di transkrip (pertanyaan + keputusan) dan
      terlihat sebelum menjawab; non-TTY = deny/null fail-closed; stdout
      di-pipe tanpa sink TUI = deny/null (prompt tak terlihat + mencemari
@@ -454,10 +457,12 @@ dipadatkan pada terminal sempit; `🔒` terang = bash allow-list aktif, redup = 
 kegagalan · pesan error TUI = formatter kanonik (`formatError`,
 `src/ui/render/errors.ts`): credential di-redaksi (bearer/key/query), escape
 ANSI dibuang, body provider diringkas + dipotong; `e.message` mentah tak
-pernah tampil · thinking: dots clock / alir redup · popup: konten redup di
+pernah tampil · thinking: dots clock / alir thinking terbaca · popup: konten redup di
 belakang + kotak terpusat (form di dalam) + Esc tutup · approval tercatat ·
 `/status`, `/history`, `/help` ringkas & `/expand` mengalir ke transkrip ·
 `/mode` = permission mode · `/work-mode` = WorkMode (intent layer) ·
+`/fold` = lipat aktivitas tool per turn (`MINICODE_MINIMIZE_ACTIVITY`) — baris
+ledger per-tool ditahan, diganti ringkasan turn, detail dibuka via `/expand` ·
 Projection V2: `› name target … running`, ledger status ber-glyph/kata,
 retry/grup anak (anak ber-identitas run = baris `↳ run_<8>` sendiri; tanpa
 identitas run = hitungan `n child tools`), ringkasan turn, dan marker evict

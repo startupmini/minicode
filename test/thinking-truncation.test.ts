@@ -6,6 +6,7 @@
 import { describe, expect, test } from "bun:test"
 import { attachSimpleLogger } from "../src/ui/assistant/simple.ts"
 import { clearCollapsedSections, collapsedSectionsSnapshot } from "../src/ui/render/collapse.ts"
+import { setReasoningVisible } from "../src/ui/render/reasoning.ts"
 
 function makeBus(): {
   on(type: string, h: (e: never) => void): () => void
@@ -28,10 +29,11 @@ function makeBus(): {
 describe("F3: marker truncasi thinking", () => {
   test("thinking >200KB: /expand membawa marker head terpotong", () => {
     clearCollapsedSections()
+    // Minimized eksplisit (default thinking kini expanded) → path buffer/truncasi.
+    setReasoningVisible(false)
     const bus = makeBus()
     const detach = attachSimpleLogger(bus, {})
     bus.emit("turn:started", { turn: 0 } as never)
-    // Mode minimized (default: MINICODE_SHOW_THINKING tak diset) → buffer.
     bus.emit("provider:extension", {
       kind: "reasoning",
       data: { text: "t".repeat(250_000) },
@@ -48,6 +50,7 @@ describe("F3: marker truncasi thinking", () => {
 
   test("thinking kecil: tanpa marker (tak ada yang dibuang)", () => {
     clearCollapsedSections()
+    setReasoningVisible(false)
     const bus = makeBus()
     const detach = attachSimpleLogger(bus, {})
     bus.emit("turn:started", { turn: 0 } as never)

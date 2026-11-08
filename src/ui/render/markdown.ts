@@ -133,9 +133,14 @@ export function decorateMarkdown(text: string): string {
       continue
     }
 
-    // Bullet list -> indentasi
-    if (/^\s*[-*]\s/.test(line)) {
-      out.push(`  ${renderInline(line.trimStart())}`)
+    // Daftar (bullet `-`/`*`/`+` atau bernomor `1.`/`2)`) — indentasi BERSARANG
+    // mengikuti lekukan sumber, bukan diratakan jadi satu level. Marker
+    // dipertahankan; isi didekorasi inline (bold/italic/code tetap jalan).
+    const listItem = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(line)
+    if (listItem) {
+      const depth = Math.min(8, Math.floor((listItem[1]!.length + 1) / 2))
+      const indent = "  ".repeat(depth + 1)
+      out.push(`${indent}${listItem[2]} ${renderInline(listItem[3] ?? "")}`)
       continue
     }
 

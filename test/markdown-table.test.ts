@@ -170,6 +170,18 @@ describe("grid renderer", () => {
       Object.defineProperty(process.stdout, "columns", { value: previous, configurable: true })
     }
   })
+
+  test("wrap: sel panjang dilanjutkan ke baris berikutnya, bukan truncate", () => {
+    const output = stripAnsi(
+      renderGridTable(
+        { headers: ["H"], rows: [["value-long-long-long"]] },
+        { width: 20, wrap: true },
+      ),
+    )
+    // Tak ada ellipsis (bukan truncate); seluruh konten dipertahankan walau dibungkus.
+    expect(output).not.toContain("…")
+    expect(output.replace(/[\s─]/g, "")).toContain("value-long-long-long")
+  })
 })
 
 describe("linear table streaming", () => {
@@ -294,7 +306,10 @@ describe("TUI table transcript", () => {
     )
     expect(wideTable.length).toBe(2)
     expect(narrowTable.length).toBe(2)
-    expect(narrow.some((line) => line.includes("…"))).toBe(true)
+    // Wrap (bukan truncate): konten panjang dilanjutkan ke baris berikutnya
+    // dalam sel — info tidak dipotong hilang (tak ada ellipsis "…").
+    expect(narrow.some((line) => line.includes("long-long"))).toBe(true)
+    expect(narrow.some((line) => line.includes("…"))).toBe(false)
     for (const line of narrow.filter(Boolean)) expect(displayWidth(line)).toBeLessThanOrEqual(30)
     expect(transcript.view(80, 8, 0).map(stripAnsi)).toEqual(wide)
   })

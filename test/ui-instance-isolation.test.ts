@@ -113,7 +113,9 @@ describe("Area A: dua sesi produksi nyata → state UI terisolasi", () => {
     expect(b.uiState.sectionMinimized("tool")).toBe(false)
     expect(b.uiState.sectionMinimized("answer")).toBe(false)
     expect(b.uiState.compact).toBe(false)
-    expect(b.uiState.reasoningVisible).toBe(false)
+    // Default reasoning kini TERLIHAT (true) — membalik toggle A ke false tak
+    // boleh mengubah B yang masih memegang default-nya.
+    expect(b.uiState.reasoningVisible).toBe(true)
 
     // Instance default modul juga tak tersentuh oleh penulisan sesi A/B.
     expect(defaultUiState.sectionMinimized("tool")).toBe(defaultToolBefore)
@@ -132,6 +134,9 @@ describe("Area A: dua logger linier + dua transcript nyata hidup bersamaan", () 
   test("buffer /copy, buffer /expand, compact, dan reasoning tak bocor", () => {
     const stateA = new UiSessionState({ compact: false, reasoningVisible: true })
     const stateB = new UiSessionState({ compact: false, reasoningVisible: true })
+    // Default singleton bisa saja sudah dimutasi suite lain (delegasi lama);
+    // yang dilarang adalah penulisan sesi A/B menyentuhnya.
+    const defaultReasoningBefore = defaultUiState.reasoningVisible
 
     const busA = createFakeBus()
     const busB = createFakeBus()
@@ -173,7 +178,7 @@ describe("Area A: dua logger linier + dua transcript nyata hidup bersamaan", () 
       expect(defaultUiState.getLastTurnText()).toBe("")
       expect(defaultUiState.collapsedSectionsSnapshot()).toHaveLength(0)
       expect(defaultUiState.compact).toBe(false)
-      expect(defaultUiState.reasoningVisible).toBe(false)
+      expect(defaultUiState.reasoningVisible).toBe(defaultReasoningBefore)
     } finally {
       detachA()
       detachB()

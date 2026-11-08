@@ -76,6 +76,13 @@ const TOKENS = {
   warning: "38;2;204;167;0",
   info: "38;2;117;190;255",
   accent: "38;2;0;122;204",
+  // String literal kode (VS Code Dark+ `string` #CE9178) — sengaja terpisah dari
+  // `success` (green): string harus tampak jingga-salm ala VS Code, sementara
+  // status sukses tetap hijau. Alias lama `green` tetap menyasar success.
+  string: "38;2;206;145;120",
+  // Thinking/reasoning: abu-kebiruan yang tetap terbaca nyaman (bukan `dim` yang
+  // meredupkan seluruh teks) — jelas sekunder dari jawaban model tapi tak silau.
+  thinking: "38;2;135;146;160",
   // Faint: abu gelap untuk garis footer — lebih redup dari `gray` (bright-black)
   // dan dari `muted` (dim). Dipakai elemen yang harus ada tapi hampir tak
   // terlihat, seperti separator baris dasar.
@@ -110,6 +117,8 @@ interface Palette {
   brightYellow: Paint
   brightMagenta: Paint
   brightCyan: Paint
+  string: Paint
+  thinking: Paint
 }
 
 const paletteCache = new Map<string, Palette>()
@@ -146,6 +155,8 @@ function buildPalette(): Palette {
     brightYellow: mono ? identity : truecolor ? wrap("38;2;215;186;125", 39) : wrap(93, 39),
     brightMagenta: mono ? identity : truecolor ? wrap("38;2;197;134;192", 39) : wrap(95, 39),
     brightCyan: mono ? identity : truecolor ? wrap("38;2;78;201;176", 39) : wrap(96, 39),
+    string: paintFrom(TOKENS.string),
+    thinking: paintFrom(TOKENS.thinking),
   }
 }
 
@@ -264,6 +275,12 @@ export const c = {
   },
   get brightCyan() {
     return palette().brightCyan
+  },
+  get string() {
+    return palette().string
+  },
+  get thinking() {
+    return palette().thinking
   },
 }
 

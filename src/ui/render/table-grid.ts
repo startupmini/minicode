@@ -1,7 +1,7 @@
 import type { MarkdownTable, PipeTableAlignment } from "./markdown-table.ts"
 import { cleanUntrusted, sanitizeAnsiLine } from "./sanitize.ts"
 import { c, getTerminalWidth } from "./theme.ts"
-import { displayWidth, padToWidth, truncateToWidth } from "./width.ts"
+import { chunkByWidth, displayWidth, padToWidth, truncateToWidth } from "./width.ts"
 
 export interface GridColumn {
   header: string
@@ -23,6 +23,9 @@ export interface GridRenderOptions {
   minCellWidth?: number
   styleHeader?: boolean
   formatCell?: (value: string) => string
+  /** Wrap isi sel ke baris berikutnya (untuk tabel markdown jawaban model)
+   * alih-alih truncate dengan ellipsis — info panjang TIDAK hilang. */
+  wrap?: boolean
 }
 
 const DEFAULT_ELLIPSIS = "…"
@@ -140,6 +143,48 @@ export function renderGridTable(table: GridTable, options: GridRenderOptions = {
   if (!widths) return renderVertical(table, width, ellipsis).join("\n")
 
   const aligns = table.aligns ?? table.headers.map(() => "left" as const)
+  const styleHeader = options.styleHeader !== false
+  const separator = c.dim(widths.map((value) => "─".repeat(value + 2)).join(" "))
+
+  if (options.wrap) {
+    // Wrap isi sel di batas kolom (BUKAN truncate) agar info panjang tidak hilang
+    // — dilanjutkan ke baris berikutnya dalam sel. ANSI terjaga via chunkByWidth
+    // (mengembalikan SGR yang terbuka ke potongan berikutnya).
+    const cellWrapped = (value: unknown, column: number): string[] => {
+      const colWidth = widths[column]!
+      const align = aligns[column] ?? "left"
+      const raw = cleanCell(value)
+      const rendered = options.formatCell?.(raw) ?? raw
+      return chunkByWidth(rendered, colWidth).map((l) => alignCell(l, colWidth, align))
+    }
+    // Header bergaya bold+accent DITERAPKAN SEBELUM wrap agar baris lanjutan tetap
+    // bergaya; header jarang wrap tapi tetap ditangani.
+    const headerCols = table.headers.map((value, i) => {
+      const colWidth = widths[i]!
+      const align = aligns[i] ?? "left"
+      const raw = cleanCell(value)
+      const rendered = options.formatCell?.(raw) ?? raw
+      const styled = styleHeader ? c.bold(c.accent(rendered)) : rendered
+      return chunkByWidth(styled, colWidth).map((l) => alignCell(l, colWidth, align))
+    })
+    const lineOf = (cols: string[][], li: number): string =>
+      cols.map((lines, ci) => ` ${lines[li] ?? padToWidth("", widths[ci]!)} `).join(" ")
+
+    const headerHeight = headerCols.reduce((m, lines) => Math.max(m, lines.length), 1)
+    const headerLines: string[] = []
+    for (let li = 0; li < headerHeight; li++) headerLines.push(lineOf(headerCols, li))
+
+    const bodyLines: string[] = []
+    for (const row of table.rows) {
+      const cols = row.map((_, i) => cellWrapped(row[i] ?? "", i))
+      const height = cols.reduce((m, lines) => Math.max(m, lines.length), 0)
+      for (let li = 0; li < height; li++) bodyLines.push(lineOf(cols, li))
+    }
+    return [separator, ...headerLines, ...bodyLines].join("\n")
+  }
+
+  // Mode default (tabel UI: config/sessions/skills): kolom lebar-tetap, nilai
+  // kepanjangan dipotong dengan ellipsis — kolom TIDAK melebar / multi-baris.
   const cell = (value: unknown, column: number): string => {
     const colWidth = widths[column]!
     const align = aligns[column] ?? "left"
@@ -149,10 +194,9 @@ export function renderGridTable(table: GridTable, options: GridRenderOptions = {
   }
   const header = table.headers.map((value, i) => {
     const rendered = cell(value, i)
-    return options.styleHeader === false ? ` ${rendered} ` : ` ${c.bold(c.accent(rendered))} `
+    return styleHeader ? ` ${c.bold(c.accent(rendered))} ` : ` ${rendered} `
   })
   const rows = table.rows.map((row) => table.headers.map((_, i) => ` ${cell(row[i] ?? "", i)} `))
-  const separator = c.dim(widths.map((value) => "─".repeat(value + 2)).join(" "))
   return [separator, header.join(" "), ...rows.map((row) => row.join(" "))].join("\n")
 }
 
@@ -170,7 +214,7 @@ export function renderMarkdownTable(
       rows: table.rows,
       aligns: table.aligns,
     },
-    { width, styleHeader: true, formatCell },
+    { width, styleHeader: true, formatCell, wrap: true },
   )
 }
 

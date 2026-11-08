@@ -235,6 +235,7 @@ export const id: Record<MsgKey, string> = {
   "tui.toolCall": "pemanggilan tool: {v}",
   "tui.modelSet": "model: {v}",
   "tui.thinkingSet": "thinking: {v}",
+  "tui.activityFold": "aktivitas: {v}",
   "tui.sectionsMin": "bagian: diminimalkan",
   "tui.sectionsExp": "bagian: dibuka",
   "tui.minUse": "pakai: /minimize [on|off]",

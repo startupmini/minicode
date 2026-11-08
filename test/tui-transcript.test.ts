@@ -258,15 +258,21 @@ describe("Transcript", () => {
     bus.emit("context:compacted", { reason: "penuh" })
     expect(t.view(40, 2, 0).join("\n")).toContain("compacted")
   })
-  test("thinking minimized: transcript bersih, indikator dots dimiliki App", () => {
-    const { bus, t } = setup()
-    bus.emit("provider:extension", { kind: "reasoning", data: { text: "hmm " } })
-    bus.emit("provider:extension", { kind: "reasoning", data: { text: "mikirmodelrahasia" } })
-    const live = t.view(40, 3, 0).join("\n")
-    expect(live).not.toContain("thinking")
-    expect(live).not.toContain("mikirmodelrahasia")
-    bus.emit("turn:completed", {})
-    expect(t.view(40, 3, 0).join("\n")).not.toContain("thinking")
+  test("thinking minimized: transcript bersih, indikator dots dimiliki App", async () => {
+    const { setReasoningVisible } = await import("../src/ui/render/reasoning.ts")
+    setReasoningVisible(false)
+    try {
+      const { bus, t } = setup()
+      bus.emit("provider:extension", { kind: "reasoning", data: { text: "hmm " } })
+      bus.emit("provider:extension", { kind: "reasoning", data: { text: "mikirmodelrahasia" } })
+      const live = t.view(40, 3, 0).join("\n")
+      expect(live).not.toContain("thinking")
+      expect(live).not.toContain("mikirmodelrahasia")
+      bus.emit("turn:completed", {})
+      expect(t.view(40, 3, 0).join("\n")).not.toContain("thinking")
+    } finally {
+      setReasoningVisible(false)
+    }
   })
   test("thinking expanded: mengalir redup per baris", async () => {
     const { setReasoningVisible } = await import("../src/ui/render/reasoning.ts")

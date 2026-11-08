@@ -234,6 +234,7 @@ export const en = {
   "tui.toolCall": "tool call: {v}",
   "tui.modelSet": "model: {v}",
   "tui.thinkingSet": "thinking: {v}",
+  "tui.activityFold": "activity: {v}",
   "tui.sectionsMin": "sections: minimized",
   "tui.sectionsExp": "sections: expanded",
   "tui.minUse": "usage: /minimize [on|off]",

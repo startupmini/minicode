@@ -40,6 +40,7 @@ export interface UiSessionStateOptions {
   minimizeTool?: boolean
   compact?: boolean
   reasoningVisible?: boolean
+  minimizeActivity?: boolean
 }
 
 /**
@@ -54,6 +55,7 @@ export class UiSessionState {
   #minimizeTool: boolean
   #compact: boolean
   #reasoningVisible: boolean
+  #minimizeActivity: boolean
   #views: CollapsedSectionView[] = []
 
   // Buffer /copy + error tertunda (logger linier). Berlifecycle per sesi:
@@ -68,7 +70,14 @@ export class UiSessionState {
     this.#minimizeAnswer = opts.minimizeAnswer ?? process.env.MINICODE_MINIMIZE_ANSWER === "1"
     this.#minimizeTool = opts.minimizeTool ?? process.env.MINICODE_MINIMIZE_TOOL === "1"
     this.#compact = opts.compact ?? process.env.MINICODE_COMPACT === "1"
-    this.#reasoningVisible = opts.reasoningVisible ?? process.env.MINICODE_SHOW_THINKING === "1"
+    // Thinking/teks berpikir TERLIHAT secara default (expanded) — alasannya user
+    // ingin membaca proses berpikir model tanpa flag. `MINICODE_SHOW_THINKING=0`
+    // eksplisit mematikan (minimized); `=1` eksplisit menghidupkan.
+    this.#reasoningVisible = opts.reasoningVisible ?? process.env.MINICODE_SHOW_THINKING !== "0"
+    // Lipat aktivitas tool per turn (opencode-like): baris ledger per-tool
+    // ditahan, diganti satu ringkasan turn. Opt-in (`MINICODE_MINIMIZE_ACTIVITY=1`),
+    // default transparan sesuai filosofi "agentic Unix shell".
+    this.#minimizeActivity = opts.minimizeActivity ?? process.env.MINICODE_MINIMIZE_ACTIVITY === "1"
   }
 
   // ── Collapse ────────────────────────────────────────────────────────────
@@ -168,6 +177,23 @@ export class UiSessionState {
   setReasoningVisible(next?: boolean): boolean {
     const nextVal = next ?? !this.#reasoningVisible
     this.#reasoningVisible = nextVal
+    return nextVal
+  }
+
+  // ── Lipat aktivitas tool (opencode-like) ────────────────────────────────
+
+  get minimizeActivity(): boolean {
+    return this.#minimizeActivity
+  }
+
+  set minimizeActivity(v: boolean) {
+    this.#minimizeActivity = v
+  }
+
+  /** Set eksplisit (on/off) atau toggle bila `next` tidak diberikan. */
+  setMinimizeActivity(next?: boolean): boolean {
+    const nextVal = next ?? !this.#minimizeActivity
+    this.#minimizeActivity = nextVal
     return nextVal
   }
 

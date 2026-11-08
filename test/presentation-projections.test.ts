@@ -3,6 +3,8 @@ import {
   describeActivity,
   elapsedVisible,
   matchTurnBySummary,
+  provenanceMark,
+  verificationMark,
 } from "../src/presentation/projection.ts"
 import { attachSimpleLogger } from "../src/ui/assistant/simple.ts"
 import type {
@@ -310,7 +312,13 @@ describe("P5 transcript projection", () => {
     const views: string[][] = []
     for (const policy of [
       undefined,
-      { describeActivity, matchTurn: matchTurnBySummary, elapsedVisible },
+      {
+        describeActivity,
+        matchTurn: matchTurnBySummary,
+        elapsedVisible,
+        verificationMark,
+        provenanceMark,
+      },
     ]) {
       const bus = createFakeBus()
       const transcript = new Transcript(bus as never, {
@@ -327,6 +335,64 @@ describe("P5 transcript projection", () => {
     }
     expect(views[1]).toEqual(views[0])
     expect(views[0]!.join("\n")).toContain("delegate_task completed")
+  })
+
+  test("marker verifikasi/provenans identik lewat policy vs fallback (B1)", () => {
+    setSessionLocale("en")
+    const snapshot: UiPresentationSnapshot = {
+      activities: [
+        activity({
+          toolCallId: "v1",
+          name: "write_file",
+          target: "b.ts",
+          status: "completed",
+          verification: { invocationId: "i1", verdict: "present", method: "m", observedAt: 1 },
+          provenance: "replay",
+        }),
+        activity({
+          toolCallId: "v2",
+          name: "read_file",
+          target: "c.ts",
+          status: "completed",
+          verification: { invocationId: "i2", verdict: "absent", method: "m", observedAt: 1 },
+          provenance: "reconstructed",
+        }),
+      ],
+      turns: [],
+    }
+    const events: UiPresentationEvent[] = [
+      { type: "tool.completed", seq: 1, turnId: 1, toolCallId: "v1", status: "completed" },
+      { type: "tool.completed", seq: 2, turnId: 1, toolCallId: "v2", status: "completed" },
+    ]
+    const views: string[][] = []
+    for (const policy of [
+      undefined,
+      {
+        describeActivity,
+        matchTurn: matchTurnBySummary,
+        elapsedVisible,
+        verificationMark,
+        provenanceMark,
+      },
+    ]) {
+      const bus = createFakeBus()
+      const transcript = new Transcript(bus as never, {
+        getSnapshot: () => snapshot,
+        policy,
+      })
+      const handler = (
+        transcript as unknown as {
+          presentationEvent: (e: UiPresentationEvent) => void
+        }
+      ).presentationEvent.bind(transcript)
+      for (const event of events) handler(event)
+      views.push(transcript.view(120, 20, 0))
+    }
+    // Policy dan fallback legacy harus byte-identik (dedup tanpa drift).
+    expect(views[1]).toEqual(views[0])
+    const joined = views[0]!.join("\n")
+    expect(joined).toContain("[verified] [replay]")
+    expect(joined).toContain("[unverified:absent] [reconstructed]")
   })
 
   test("projection metadata tetap terikat pada baris ledger", () => {

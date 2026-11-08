@@ -82,7 +82,8 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | `MINICODE_BELL` | `0` → matikan bell `\x07` saat approval (aksesibilitas) |
 | `MINICODE_STATUSLINE` | `rich` → statusline turn menampilkan token kumulatif + biaya sesi (default hemat) |
 | `MINICODE_A11Y` | `1` → live-region approval untuk screen reader (baris polos tanpa ANSI) |
-| `MINICODE_SHOW_THINKING` | `1` → tampilkan reasoning model (`--verbose` atau env) |
+| `MINICODE_SHOW_THINKING` | reasoning model terlihat SECARA DEFAULT; `0` → minimized (hanya penanda), `1` → paksa terlihat |
+| `MINICODE_MINIMIZE_ACTIVITY` | ON secara default di TUI; `0` → transparan (baris per-tool). Lipat aktivitas tool per turn jadi satu ringkasan (detail via `/expand`) |
 | `MINICODE_THINKING` | `off` → kirim `enable_thinking:false` ke OpenAI-compat (DeepSeek) |
 | `NO_COLOR` | Set apa pun selain `0` → matikan seluruh warna |
 

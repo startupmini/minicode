@@ -218,6 +218,17 @@ describe("markdown: fence & inline", () => {
       expect(stripAnsi(renderInline(src)), src).toBe(src)
     }
   })
+
+  test("list bernomor & bersarang tetap mempertahankan tingkatnya", () => {
+    const src = "1. satu\n2. dua\n   - sub a\n   - sub b"
+    const out = stripAnsi(decorateMarkdown(src)).split("\n")
+    expect(out[0]).toContain("1. satu")
+    expect(out[1]).toContain("2. dua")
+    // Item bersarang lebih dalam (indentasi ekstra), tidak diratakan ke level 1.
+    expect(out[2]).toMatch(/^\s{3,}- sub a/)
+    expect(out[3]).toMatch(/^\s{3,}- sub b/)
+    expect(out[2]!.length).toBeGreaterThan(out[0]!.length)
+  })
 })
 
 describe("format: preview argumen tool", () => {

@@ -4,6 +4,8 @@ import {
   describeActivity,
   elapsedVisible,
   matchTurnBySummary,
+  provenanceMark,
+  verificationMark,
 } from "../src/presentation/projection.ts"
 import { attachSimpleLogger } from "../src/ui/assistant/simple.ts"
 import type {
@@ -41,6 +43,8 @@ const canonicalPolicy: PresentationPolicy = {
   describeActivity,
   matchTurn: matchTurnBySummary,
   elapsedVisible,
+  verificationMark,
+  provenanceMark,
 }
 
 function linearSetup(policy?: PresentationPolicy) {

@@ -188,7 +188,7 @@ function highlightTsTokens(text: string): string {
     /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b\d+(?:\.\d+)?\b|\b[A-Za-z_$][A-Za-z0-9_$]*\b|[{}()[\];:,.<>=+\-*/%!&|^~?]+|\s+)/g
   return text.replace(tokenRe, (token) => {
     if (token.startsWith('"') || token.startsWith("'") || token.startsWith("`")) {
-      return c.green(token)
+      return c.string(token)
     }
     if (/^\d+(?:\.\d+)?$/.test(token)) {
       return c.brightYellow(token)
@@ -223,7 +223,7 @@ function highlightPythonTokens(text: string): string {
     /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_]*\b|[{}()[\];:,.<>=+\-*/%!&|^~?]+|\s+)/g
   return text.replace(tokenRe, (token) => {
     if (token.startsWith('"') || token.startsWith("'")) {
-      return c.green(token)
+      return c.string(token)
     }
     if (/^\d+/.test(token)) return c.brightYellow(token)
     if (PY_KEYWORDS.has(token)) return c.brightMagenta(c.bold(token))
@@ -239,7 +239,7 @@ function highlightJsonLine(line: string): string {
     (match, str, colon, bool, num) => {
       if (str) {
         if (colon) return c.brightCyan(str) + colon
-        return c.green(str)
+        return c.string(str)
       }
       if (bool) return c.yellow(bool)
       if (num) return c.brightYellow(num)
@@ -264,7 +264,7 @@ function highlightShellTokens(text: string): string {
   return text.replace(
     /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\$[A-Za-z0-9_]+|-{1,2}[A-Za-z0-9][A-Za-z0-9_-]*|\b[A-Za-z_][A-Za-z0-9_-]*\b|\s+)/g,
     (token) => {
-      if (token.startsWith('"') || token.startsWith("'")) return c.green(token)
+      if (token.startsWith('"') || token.startsWith("'")) return c.string(token)
       if (token.startsWith("$")) return c.brightCyan(token)
       if (SH_KEYWORDS.has(token)) return c.brightMagenta(c.bold(token))
       if (token.startsWith("-")) return c.yellow(token)

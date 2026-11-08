@@ -36,6 +36,28 @@ const convo = (n: number): Message[] => {
   return out
 }
 
+describe("mechanical compaction keeps tool results (Q1)", () => {
+  test("fallback mekanikal menyimpan isi hasil tool, bukan `<result omitted>`", () => {
+    const messages: Message[] = [
+      { role: "user", content: "baca file" },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{ id: "c1", name: "read_file", args: { path: "a.txt" } }],
+      },
+      { role: "tool", toolCallId: "c1", name: "read_file", content: "ISI FILE PENTING abcdef" },
+      { role: "user", content: "lanjut" },
+      { role: "assistant", content: "jawaban akhir" },
+    ]
+    const s = createLlmCompaction({ getContextWindowTokens: () => 16_000 })
+    const out = s.compact(storeOf(messages), { keepRecentTurns: 1 })
+    const summary = String(out[0]!.content as string)
+    expect(summary).toContain("Previous context")
+    expect(summary).toContain("ISI FILE PENTING")
+    expect(summary).not.toContain("<result omitted>")
+  })
+})
+
 describe("compactWithLlm", () => {
   test("ringkasan LLM menggantikan prefix, pesan terbaru dipertahankan", async () => {
     const messages = convo(6)
@@ -258,8 +280,10 @@ describe("compactWithLlm", () => {
       // Fakta siklus TERAKHIR harus selamat walau yang lama dipangkas.
       expect(head).toContain("siklus 11")
       // Pemangkasan bersifat eksplisit, bukan diam-diam: model tak boleh
-      // menyimpulkan ringkasan ini lengkap.
-      expect(head).toContain("elided")
+      // menyimpulkan ringkasan ini lengkap. Marker gabungan prior memakai
+      // "omitted" (SUMMARY_ELISION), bukan "elided" (yang hanya muncul saat
+      // response provider melebihi jendela stream).
+      expect(head).toContain("omitted")
     },
     { timeout: 15_000 },
   )

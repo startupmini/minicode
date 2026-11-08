@@ -31,7 +31,7 @@ export const LIMITS = {
   MEMORY_FILE_MAX_BYTES: 200_000,
   MEMORY_TRUNCATE_KEEP_BYTES: 150_000,
   AGENTS_MD_MAX_CHARS: 3_000,
-  COMPACTION_SUMMARY_MAX_CHARS: 1_500,
+  COMPACTION_SUMMARY_MAX_CHARS: 4_000,
   COMPACTION_LLM_TIMEOUT_MS: 10_000,
   /** F3.1 anti-thrash: kompaksi LLM yang mengurangi <10% dihitung tak
    * berprogres (satu output tool raksasa mendominasi jendela); 2× beruntun

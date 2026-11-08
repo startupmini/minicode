@@ -1793,9 +1793,20 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     }
   }
   const compaction = createLlmCompaction({
-    ...(process.env.DEEPSEEK_API_KEY ? { apiKey: process.env.DEEPSEEK_API_KEY } : {}),
-    baseUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1",
-    model: "deepseek-chat",
+    // LLM compaction DIUTAMAKAN supaya fakta tak hilang lewat fallback mekanikal
+    // yang lossy. Provider: summarizer murah khusus (DEEPSEEK_API_KEY) ATAU
+    // pakai ulang provider sesi (router) — jangan diam-diam jatuh ke mekanikal
+    // bila sesi punya provider.
+    ...(process.env.DEEPSEEK_API_KEY
+      ? {
+          apiKey: process.env.DEEPSEEK_API_KEY,
+          baseUrl: process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1",
+          model: "deepseek-chat",
+        }
+      : {
+          provider: router,
+          model: modelRef.current ?? cfg.providers[0]?.models[0] ?? "deepseek-chat",
+        }),
     cwd: cwd ?? process.cwd(),
     getContextWindowTokens,
     onUsage: (u) => {
@@ -1810,8 +1821,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
             totalTokens: u.totalTokens,
             source: "compaction",
             // P1.4: atribusi biaya compaction memakai model yang benar-benar
-            // dipakai (deepseek-chat), bukan model utama sesi.
-            model: "deepseek-chat",
+            // dipakai (u.model dari compactWithLlm), bukan hardcode.
+            model: u.model,
           },
         })
       } catch {}

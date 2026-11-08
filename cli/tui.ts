@@ -641,7 +641,10 @@ export async function runTui(ctx: CliSession): Promise<void> {
           // Normalisasi: sumbu persetujuan hanya AUTO/ASK. Profil warisan
           // (allow-all/allowlist) tak lagi bocor sebagai label mode.
           mode: mode === "ask" ? "ask" : "auto",
-          strictBash: permissions?.getRestrictBash?.() ?? false,
+          // Gembok (allow-list) terang HANYA saat allow-list benar-benar menahan
+          // bash: restrictBash + mode AUTO. Di ASK bash diawasi prompt (bukan
+          // allow-list), dan di allow-all bash bebas — keduanya gembok redup.
+          strictBash: (permissions?.getRestrictBash?.() ?? false) && mode === "auto",
           // P12 S2.2 Slice 5 - WorkMode LIVE (bukan snapshot boot): footer
           // mencerminkan mode aktif saat frame digambar.
           workMode: workModeControl?.getWorkMode() ?? "DISCUSS",

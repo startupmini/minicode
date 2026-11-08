@@ -33,7 +33,7 @@ describe("footer render", () => {
   })
 
   test("1 baris: status mode, model, cwd, konteks + spark (tanpa garis)", () => {
-    tty = installFakeTty({ columns: 90 })
+    tty = installFakeTty({ columns: 96 })
     const [status] = renderFooter(
       {
         mode: "auto",
@@ -42,7 +42,7 @@ describe("footer render", () => {
         cwd: "C:\\Users\\dokument",
         context: "14.2k",
       },
-      90,
+      96,
     )
     const plain = stripAnsi(status!)
     expect(plain).toContain("✦")
@@ -95,9 +95,9 @@ describe("footer render", () => {
   })
 
   test("footer tetap stabil di terminal sempit", () => {
-    tty = installFakeTty({ columns: 40 })
+    tty = installFakeTty({ columns: 46 })
     const lines = ["Thinking 0s", "Working 10s"].map((activity) =>
-      stripAnsi(renderFooter({ mode: "auto", model: "m1", cwd: "cwd", activity }, 40)[0]!),
+      stripAnsi(renderFooter({ mode: "auto", model: "m1", cwd: "cwd", activity }, 46)[0]!),
     )
     const modeColumn = lines[0]!.indexOf("Work: Discuss")
     const modelColumn = lines[0]!.indexOf("m1")
@@ -107,7 +107,7 @@ describe("footer render", () => {
       expect(line).toContain("Permission: Auto")
       expect(line.indexOf("m1")).toBe(modelColumn)
       expect(line).not.toMatch(/Thinking|Working|Running|\d+s/)
-      expect(displayWidth(line)).toBeLessThanOrEqual(39)
+      expect(displayWidth(line)).toBeLessThanOrEqual(45)
     }
   })
 
@@ -154,7 +154,8 @@ describe("footer render", () => {
     tty = installFakeTty({ columns: 90 })
     const [status] = renderFooter({ mode: "auto", model: "m1", cwd: "cwd", context: "14.2k" }, 90)
     const plain = stripAnsi(status!)
-    expect(plain.endsWith("Permission Mode: Auto")).toBe(true)
+    expect(plain.endsWith("🔒")).toBe(true)
+    expect(plain).toContain("Permission Mode: Auto")
     expect(plain.indexOf("14.2k")).toBeLessThan(plain.indexOf("Permission Mode: Auto"))
     expect(displayWidth(plain)).toBeLessThanOrEqual(89)
     expect(plain).toContain("Permission Mode: Auto")
@@ -181,15 +182,18 @@ describe("footer render", () => {
     expect(c.success("Build")).not.toBe(c.info("Auto"))
   })
 
-  test("restrictBash: badge bash:strict muncul hanya saat aktif", () => {
+  test("restrictBash: gembok selalu tampil (terang aktif, redup nonaktif)", () => {
     tty = installFakeTty({ columns: 80 })
-    expect(paintBashStrict(true)).toContain("bash:strict")
-    expect(paintBashStrict(false)).toBe("")
-    expect(paintBashStrict(undefined)).toBe("")
+    expect(stripAnsi(paintBashStrict(true))).toBe("🔒")
+    expect(stripAnsi(paintBashStrict(false))).toBe("🔒")
+    expect(stripAnsi(paintBashStrict(undefined))).toBe("🔒")
+    // aktif = kuning/terang, nonaktif = redup.
+    expect(paintBashStrict(true)).toContain(c.yellow("🔒"))
+    expect(paintBashStrict(false)).toContain(c.faint("🔒"))
     const [strict] = renderFooter({ mode: "auto", strictBash: true, model: "m1", cwd: "cwd" }, 80)
-    const [plain] = renderFooter({ mode: "auto", model: "m1", cwd: "cwd" }, 80)
-    expect(stripAnsi(strict!)).toContain("bash:strict")
-    expect(stripAnsi(plain!)).not.toContain("bash:strict")
+    const [plain] = renderFooter({ mode: "auto", strictBash: false, model: "m1", cwd: "cwd" }, 80)
+    expect(stripAnsi(strict!)).toContain("🔒")
+    expect(stripAnsi(plain!)).toContain("🔒")
   })
 
   test("terminal sempit: 1 baris visual, spark+mode kekal (cwd/model dibuang)", () => {
@@ -258,15 +262,15 @@ describe("footer render", () => {
   })
 
   test("terminal sedang: menggunakan shortened cwd sebelum dibuang total", () => {
-    tty = installFakeTty({ columns: 65 })
+    tty = installFakeTty({ columns: 70 })
     const longCwd = "D:\\very\\long\\nested\\workspace\\directory\\for\\testing\\repo"
     const [status] = renderFooter(
       { mode: "auto", model: "gpt-4o", cwd: longCwd, context: "10k" },
-      65,
+      70,
     )
     const plain = stripAnsi(status!)
     expect(plain).toContain("...\\testing\\repo")
     expect(plain).not.toContain("D:\\very\\long")
-    expect(displayWidth(plain)).toBeLessThanOrEqual(64)
+    expect(displayWidth(plain)).toBeLessThanOrEqual(69)
   })
 })

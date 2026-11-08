@@ -99,9 +99,11 @@ export function paintPermissionMode(mode: string, style: ModeLabelStyle = "full"
   return `${c.gray(prefix)}${c.info(value)}`
 }
 
-/** Badge kecil pembatas bash allow-list (lapis kapabilitas, terpisah mode). */
+/** Badge pembatas bash allow-list: gembok selalu tampil — terang saat aktif,
+ * redup saat nonaktif (lapis kapabilitas, terpisah dari mode persetujuan). */
 export function paintBashStrict(strictBash?: boolean): string {
-  return strictBash ? c.yellow("bash:strict") : ""
+  const lock = "🔒"
+  return strictBash ? c.yellow(lock) : c.faint(lock)
 }
 
 /** Spark glyph: redup saat idle, pulse putih↔abu saat busy (frame genap/ganjil). */

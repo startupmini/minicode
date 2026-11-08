@@ -7,10 +7,10 @@ simpan seam ini saat menyinkronkan source upstream.
 
 - source commit: `0d33571047c0ed3778986108fd42e4bde6828bb0`
 - source hash: `c8d214bb8d5eea86`
-- overlay sha256: `7545ff914e4f83745634ee106c9a2e774dfea3bf4541e58ea98eba216902d432`
+- overlay sha256: `fa3e3a789982523c3de99c2d31c173789a7fee2bf0f8087267c222ce9b4eebcf`
 - files: 20
-- hash: `b5e27f72d08afb98`
-- shipped hash: `4998979304b3c6e2` (18 file) — fingerprint file vendor yang ikut paket npm
+- hash: `4cee16b60d65d18f`
+- shipped hash: `b714c2adc59ea720` (18 file) — fingerprint file vendor yang ikut paket npm
   (hash di atas mencakup test/fakes.ts yang sengaja tidak ikut paket;
    verifikasi dari paket terbit: hitung hash vendor/minicore di dalam tarball)
 

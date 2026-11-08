@@ -2,6 +2,7 @@ import { resolve } from "node:path"
 import type { RecoveryAction } from "#minicore/core/errors.ts"
 import { AgentError, ProviderError } from "#minicore/core/errors.ts"
 import type {
+  BudgetPolicy,
   ModelProvider,
   PermissionHandler,
   ProviderEvent,
@@ -43,6 +44,23 @@ import { contractForTool } from "../policy/tool-contract.ts"
 import { maxTurnsExceededError } from "../policy/usage.ts"
 import { createWorkModePermissionHandler, type WorkMode } from "../policy/work-mode.ts"
 import type { ApprovalEventHook } from "../presentation/events.ts"
+
+// Kebijakan kompaksi lebih agresif: ringkas lebih DINI (medium mulai 65%,
+// high 85%) daripada default kernel (75%/90%), supaya konteks jarang menyentuh
+// dinding. Murni host-side — kernel mengizinkan `budget` di-inject, tanpa
+// mengubah vendor. Diekspor agar teruji langsung.
+export const aggressiveBudgetPolicy: BudgetPolicy = {
+  evaluate({ usedTokens, limitTokens }) {
+    const ratio = usedTokens / Math.max(1, limitTokens)
+    if (ratio >= 1) return "critical"
+    if (ratio >= 0.85) return "high"
+    if (ratio >= 0.65) return "medium"
+    return "low"
+  },
+  shouldCompact(pressure) {
+    return pressure !== "low"
+  },
+}
 
 // P2 cap wrapper: limit retryAfter to 30s without mutating original error.
 // F-12: sanitasi PENUH di satu titik sentral (mencakup adapter vendor yang
@@ -660,6 +678,8 @@ export async function createMinicodeSession(
     ...rest,
     contextWindowTokens: contextWindowForModel(currentContextModel()),
     contextWindowTokensForModel: contextWindowForModel,
+    // Kompaksi lebih agresif (host-side): ringkas mulai 65% jendela, bukan 75%.
+    budget: aggressiveBudgetPolicy,
     provider: dynamicProvider,
     system: computeLiveSystem(),
     systemForContext: computeLiveSystem,

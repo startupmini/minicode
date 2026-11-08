@@ -50,7 +50,7 @@ export async function executeTurn(
   // Permit one follow-up policy compaction after tool results grow the current
   // turn. The hard cap prevents a no-progress compactor from looping forever.
   let budgetCompactions = 0;
-  const maxBudgetCompactions = 2;
+  const maxBudgetCompactions = 3;
   let compactedForRecovery = false;
 
   // Resolve once for the turn: model switching is a between-turn operation,

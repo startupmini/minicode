@@ -5,9 +5,9 @@ sebagai **ikon gembok** `🔒` di ujung footer (setelah Permission Mode), terang
 saat aktif (mode Auto + restrictBash) dan redup saat nonaktif. Sumbu persetujuan
 tetap Auto/Ask; nilai Permission Mode untuk `--allow-all` sengaja ditampilkan
 sebagai `Auto` (auto ≈ allow-all: otonom penuh tanpa izin) — catatan desain,
-bukan bug. Angka konteks footer memakai satu sumber yang sama dengan guard
-cutoff (`guardInputTokens`, estimasi terkalibrasi pada request terakhir),
-bukan estimasi store terpisah.
+bukan bug. Angka konteks footer memakai `session.contextTokens` — estimasi
+terkalibrasi yang memakai estimator yang SAMA dengan guard cutoff, sehingga
+footer dan guard tidak pernah menghasilkan dua angka sumber berbeda.
 
 Perubahan v7.9: input command slash tidak ditambahkan sebagai pesan transkrip;
 aksi popup provider/model/sesi dan toggle UI tidak meninggalkan riwayat status

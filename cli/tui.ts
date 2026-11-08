@@ -81,10 +81,7 @@ function fmtUsageMetrics(ctx: CliSession): string | undefined {
   // P1.4: persentase footer = OCCUPANCY konteks saat ini, bukan total token
   // yang sudah dibelanjakan sepanjang sesi. Memakai spend membuat footer
   // mentok 100% setelah beberapa step meski konteks masih jauh di bawah window.
-  // Satu sumber konteks: pilih estimasi terkalibrasi guard (request terakhir)
-  // bila tersedia, fallback ke estimasi store — agar angka footer = angka yang
-  // dipakai guard saat memutuskan cutoff.
-  const used: number = ctx.session.guardInputTokens || ctx.session.contextTokens
+  const used: number = ctx.session.contextTokens
   const parts: string[] = []
   if (cost !== undefined && Number.isFinite(cost) && cost > 0) parts.push(formatUsd(cost))
   if (
@@ -653,7 +650,7 @@ export async function runTui(ctx: CliSession): Promise<void> {
           workMode: workModeControl?.getWorkMode() ?? "DISCUSS",
           model: modelRef.current ?? cfg.providers[0]?.models[0] ?? t("tui.noModel"),
           cwd: cwd ?? process.cwd(),
-          context: fmtCtx(session.guardInputTokens || session.contextTokens),
+          context: fmtCtx(session.contextTokens),
           metrics: fmtUsageMetrics(ctx),
         },
         busy: abort != null,

@@ -374,7 +374,7 @@ export interface CliSessionOptions {
 }
 
 export interface CliSession {
-  session: Session & { guardInputTokens: number }
+  session: Session
   cfg: MinicodeConfig
   cwd?: string
   sessionId: string

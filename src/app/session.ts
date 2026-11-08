@@ -217,7 +217,7 @@ export async function createMinicodeSession(
      */
     beforeToolEffect?: (call: { id: string; name: string; args: unknown }) => Promise<void>
   },
-): Promise<Session & { guardInputTokens: number }> {
+): Promise<Session> {
   // Normalisasi root sekali di composition agar ToolContext selalu memiliki path tepercaya.
   const defaultCwd = resolve(opts.cwd ?? process.cwd())
   // Fail-closed lebih awal (sebelum provider/system prompt): WorkMode non-
@@ -494,10 +494,6 @@ export async function createMinicodeSession(
   const calibratedEstimator = (text: string) =>
     calibrationFor(currentContextModel()).estimator(text)
   let lastRequestLocalEstimate: { model: string; tokens: number } | undefined
-  // Estimasi input terkalibrasi pada request terakhir (dipakai guard cutoff) —
-  // di-ekspos agar footer membaca ANGKA YANG SAMA dengan yang dipakai guard,
-  // bukan estimasi store terpisah (satu sumber kebenaran konteks).
-  let lastGuardInputTokens = 0
   const contextWindowForModel = (model?: string): number => {
     const explicit = rest.contextWindowTokens
     if (
@@ -540,7 +536,6 @@ export async function createMinicodeSession(
         estimateMessages(req.messages, estimator) +
         estimateSystem(system, estimator) +
         estimateTools(tools, estimator)
-      lastGuardInputTokens = inputTokens
       lastRequestLocalEstimate = {
         model: contextModelKey(estimatorModel),
         tokens: localInputTokens,
@@ -611,7 +606,6 @@ export async function createMinicodeSession(
                   estimateSystem(system, estimator) +
                   estimateTools(tools, estimator),
               )
-              lastGuardInputTokens = inputTokens
               reserve = Math.min(256, Math.floor(limit / 10))
               outputAllowance = Math.max(0, limit - inputTokens - reserve)
             }
@@ -624,7 +618,6 @@ export async function createMinicodeSession(
                 estimateSystem(system, estimator) +
                 estimateTools(tools, estimator),
             )
-            lastGuardInputTokens = inputTokens
             reserve = Math.min(256, Math.floor(limit / 10))
             outputAllowance = Math.max(0, limit - inputTokens - reserve)
           }
@@ -759,11 +752,6 @@ export async function createMinicodeSession(
     },
     get contextTokens() {
       return core.contextTokens
-    },
-    /** Estimasi input terkalibrasi pada request terakhir (guard cutoff).
-     * 0 bila belum ada request — pemanggil fallback ke contextTokens. */
-    get guardInputTokens() {
-      return lastGuardInputTokens
     },
     run(input: string, runOpts?: { signal?: AbortSignal; model?: string }) {
       activeContextModel = runOpts?.model ?? opts.model

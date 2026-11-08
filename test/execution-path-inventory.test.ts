@@ -179,6 +179,12 @@ export const EXECUTION_PATHS: Readonly<Record<string, RegisteredPath>> = {
     entry: "syncPricing (fetch models.dev)",
     note: "Cache harga. Tanpa efek ke workspace.",
   },
+  "src/policy/tokenizer-registry.ts": {
+    cls: "external-integration",
+    entry: "loadTokenizer (fetch HuggingFace tokenizer.json)",
+    proof: "fetch(",
+    note: "Tokenizer presisi on-demand (cache disk ~/.minicode/tokenizers); fallback densitas bila gagal/tak dikenal. Tanpa efek ke workspace.",
+  },
   "src/memory/vector.ts": {
     cls: "external-integration",
     entry: "fetchEmbeddingsOnce (fetch)",

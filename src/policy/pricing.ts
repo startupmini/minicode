@@ -63,7 +63,19 @@ export function pricingCachePath(): string {
   return join(homeDir(), ".minicode", "pricing.json")
 }
 
+/** Cache terpisah untuk jendela konteks (diisi dari `models.dev` saat sync). */
+export function contextWindowsCachePath(): string {
+  return join(homeDir(), ".minicode", "context-windows.json")
+}
+
 const MODELS_DEV_URL = "https://models.dev/api.json"
+
+interface ContextWindowsCache {
+  fetchedAt: number
+  source: string
+  /** modelId → jendela konteks (token). Kunci di-lowercase. */
+  models: Record<string, number>
+}
 
 interface PricingCache {
   fetchedAt: number
@@ -157,6 +169,7 @@ export interface ModelsDevPayload {
       {
         id?: string
         cost?: { input?: number; output?: number; cache_read?: number; cache_write?: number }
+        context_length?: unknown
       }
     >
   }
@@ -197,6 +210,36 @@ export function extractPricing(payload: ModelsDevPayload): Record<string, ModelP
   for (const [id, list] of candidates) {
     const chosen = pickRepresentativePrice(list)
     if (chosen) out[id] = chosen
+  }
+  return out
+}
+
+/** Normalisasi field `context_length` models.dev (bisa number atau objek). */
+function contextLengthNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return Math.floor(value)
+  if (value && typeof value === "object") {
+    const v = value as { total?: unknown; input?: unknown; output?: unknown }
+    for (const c of [v.total, v.input, v.output]) {
+      if (typeof c === "number" && Number.isFinite(c) && c > 0) return Math.floor(c)
+    }
+  }
+  return undefined
+}
+
+/** Ekstrak jendela konteks (token total) dari payload models.dev. Diekspor untuk test. */
+export function extractContextWindows(payload: ModelsDevPayload): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const provider of Object.values(payload ?? {})) {
+    for (const [key, model] of Object.entries(provider?.models ?? {})) {
+      const cl = contextLengthNumber(model?.context_length)
+      if (cl === undefined) continue
+      const id = (model?.id ?? key).toLowerCase()
+      if (!id) continue
+      // Context length adalah properti model (bukan provider); bila satu id
+      // muncul di beberapa provider dengan nilai beda, ambil max (kapasitas
+      // asli model). Over-estimasi menurun anggun via recovery compact-and-retry.
+      out[id] = out[id] === undefined ? cl : Math.max(out[id]!, cl)
+    }
   }
   return out
 }
@@ -283,6 +326,15 @@ export async function syncPricing(url: string = MODELS_DEV_URL): Promise<SyncRes
   await atomicWriteText(pricingCachePath(), serialized)
   overlay = models
   overlayMeta = { fetchedAt: cache.fetchedAt, count }
+
+  // Sekalian simpan jendela konteks (field `context_length`) ke cache terpisah;
+  // satu fetch, dua artefak. Gagal menulis cache jendela jangan menggagalkan
+  // sync harga — harga tetap lebih penting dan path-nya sudah teruji.
+  const windows = extractContextWindows(payload)
+  if (Object.keys(windows).length > 0) {
+    const wCache: ContextWindowsCache = { fetchedAt: Date.now(), source: url, models: windows }
+    await atomicWriteText(contextWindowsCachePath(), JSON.stringify(wCache))
+  }
   return { count, bytes: serialized.length, path: pricingCachePath() }
 }
 

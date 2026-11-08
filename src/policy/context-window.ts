@@ -1,5 +1,7 @@
+import { readFile } from "node:fs/promises"
 import type { MinicodeConfig } from "../config.ts"
 import { findContextWindowFromCatalog } from "./context-window-catalog.ts"
+import { contextWindowsCachePath } from "./pricing.ts"
 
 /** App fallback for providers that do not publish model metadata.
  * Operators can set an exact `ProviderEntry.contextWindows` value or use the
@@ -8,7 +10,13 @@ export const DEFAULT_FALLBACK_CONTEXT_WINDOW_TOKENS = 32_000
 
 export interface ContextWindowResolution {
   readonly tokens: number
-  readonly source: "override" | "model" | "provider-default" | "catalog" | "safe-default"
+  readonly source:
+    | "override"
+    | "model"
+    | "provider-default"
+    | "catalog"
+    | "models-dev"
+    | "safe-default"
   readonly model?: string
   readonly providerId?: string
 }
@@ -17,6 +25,70 @@ function validWindow(value: unknown): value is number {
   return (
     typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= 20_000_000
   )
+}
+
+// ── Overlay models.dev (jendela konteks) ────────────────────────────────────
+// Diisi dari cache `context-windows.json` saat startup (sync sekali lewat
+// `minicode pricing sync`). Bukan sumber wajib — hanya memperluas cakupan di
+// luar katalog built-in. State dimuat async lalu dibaca sinkron di bawah.
+
+let contextWindowOverlay: Record<string, number> | null = null
+
+/** Reset state modul — untuk test hermetic. */
+export function __resetContextWindowOverlay(): void {
+  contextWindowOverlay = null
+}
+
+/** Suntik overlay — untuk test (jalur produksi lewat loadContextWindowOverlay). */
+export function __setContextWindowOverlay(map: Record<string, number> | null): void {
+  contextWindowOverlay = map
+}
+
+/** Muat cache jendela konteks dari disk (sekali per proses). */
+export async function loadContextWindowOverlay(): Promise<Record<string, number>> {
+  if (contextWindowOverlay) return contextWindowOverlay
+  try {
+    const raw = await readFile(contextWindowsCachePath(), "utf8")
+    const parsed = JSON.parse(raw) as { models?: Record<string, unknown> }
+    if (parsed && typeof parsed.models === "object" && parsed.models) {
+      const out: Record<string, number> = {}
+      for (const [k, v] of Object.entries(parsed.models)) {
+        if (typeof v === "number" && Number.isFinite(v) && v > 0)
+          out[k.toLowerCase()] = Math.floor(v)
+      }
+      contextWindowOverlay = out
+      return out
+    }
+  } catch {
+    // tak ada cache = normal
+  }
+  contextWindowOverlay = {}
+  return contextWindowOverlay
+}
+
+/** Cari jendela konteks dari overlay models.dev (sinkron, setelah dimuat). */
+export function findContextWindowFromOverlay(model: string): number | undefined {
+  const map = contextWindowOverlay
+  if (!map || Object.keys(map).length === 0) return undefined
+  const m = model.toLowerCase()
+  if (map[m] !== undefined) return map[m]
+  // Segmen (pemisah `/`/`:`) dicocokkan dengan kunci overlay sebagai prefiks —
+  // pola sama dengan findPrice sehingga `deepseek-v4-flash` menang atas `deepseek`.
+  let best: { k: string; v: number } | undefined
+  for (const seg of m.split(/[/:]/)) {
+    if (!seg) continue
+    for (const [k, v] of Object.entries(map)) {
+      if (
+        seg === k ||
+        seg.startsWith(`${k}.`) ||
+        seg.startsWith(`${k}-`) ||
+        seg.startsWith(`${k}_`)
+      ) {
+        if (!best || k.length > best.k.length) best = { k, v }
+      }
+    }
+  }
+  return best?.v
 }
 
 /** Resolve a budget in the same order as the router: explicit provider pin,
@@ -73,6 +145,20 @@ export function resolveContextWindow(
       return {
         tokens: catalogTokens,
         source: "catalog",
+        ...(modelId ? { model: modelId } : {}),
+        ...(providerId ? { providerId } : {}),
+      }
+    }
+  }
+  // Overlay models.dev (bila user pernah `minicode pricing sync`): mencakup
+  // model long-tail di luar katalog built-in. Dibawah katalog karena katalog
+  // dikurasi manual dan tak bergantung pada cache yang bisa kedaluwarsa.
+  if (modelId) {
+    const overlayTokens = findContextWindowFromOverlay(modelId)
+    if (validWindow(overlayTokens)) {
+      return {
+        tokens: overlayTokens,
+        source: "models-dev",
         ...(modelId ? { model: modelId } : {}),
         ...(providerId ? { providerId } : {}),
       }

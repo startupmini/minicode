@@ -2,11 +2,17 @@
 // sehingga tak langsung jatuh ke fallback 32k.
 import { describe, expect, test } from "bun:test"
 import type { MinicodeConfig } from "../src/config.ts"
-import { resolveContextWindow } from "../src/policy/context-window.ts"
+import {
+  __resetContextWindowOverlay,
+  __setContextWindowOverlay,
+  findContextWindowFromOverlay,
+  resolveContextWindow,
+} from "../src/policy/context-window.ts"
 import {
   findContextWindowFromCatalog,
   normalizeModelId,
 } from "../src/policy/context-window-catalog.ts"
+import { extractContextWindows } from "../src/policy/pricing.ts"
 
 describe("context window catalog", () => {
   test("normalisasi versi v- agar tak menggagalkan pencocokan keluarga", () => {
@@ -66,3 +72,41 @@ describe("resolveContextWindow integrasi katalog", () => {
     expect(r.tokens).toBe(32_000)
   })
 })
+
+describe("models.dev overlay (context_length)", () => {
+  test("extractContextWindows: number & objek context_length", () => {
+    const win = extractContextWindows({
+      openai: {
+        models: {
+          "my-model": { id: "my-model", context_length: 123_456 },
+          "obj-model": {
+            id: "obj-model",
+            context_length: { total: 200_000, max_output_tokens: 32_000 },
+          },
+          "broken-model": { id: "broken-model", context_length: -1 },
+        },
+      },
+    })
+    expect(win["my-model"]).toBe(123_456)
+    expect(win["obj-model"]).toBe(200_000)
+    expect(win["broken-model"]).toBeUndefined()
+  })
+
+  test("resolveContextWindow: overlay models.dev dipakai setelah katalog", () => {
+    __resetContextWindowOverlay()
+    __setContextWindowOverlay({ "niche-model-xyz": 789_000 })
+    const r = resolveContextWindow(cfgEmpty, "niche-model-xyz")
+    expect(r.source).toBe("models-dev")
+    expect(r.tokens).toBe(789_000)
+    __resetContextWindowOverlay()
+  })
+
+  test("findContextWindowFromOverlay: exact & prefiks segmen", () => {
+    __setContextWindowOverlay({ "deepseek-v4-flash": 999_999 })
+    expect(findContextWindowFromOverlay("deepseek-v4-flash")).toBe(999_999)
+    expect(findContextWindowFromOverlay("p::deepseek-v4-flash-free")).toBe(999_999)
+    __resetContextWindowOverlay()
+  })
+})
+
+const cfgEmpty = { providers: [] } as unknown as MinicodeConfig

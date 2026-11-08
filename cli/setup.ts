@@ -28,7 +28,7 @@ import {
   isAceEnabled,
 } from "../src/policy/consequence-engine.ts"
 import { minicodeEstimator } from "../src/policy/context.ts"
-import { resolveContextWindow } from "../src/policy/context-window.ts"
+import { loadContextWindowOverlay, resolveContextWindow } from "../src/policy/context-window.ts"
 import type { NoProgressDetector } from "../src/policy/no-progress.ts"
 import type { PermissionAsk } from "../src/policy/permission.ts"
 import type { RateLimiter } from "../src/policy/ratelimit.ts"
@@ -1238,6 +1238,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     return resolved.source === "safe-default" ? undefined : resolved.tokens
   }
   router.updateContextWindowResolver(getContextWindowTokens)
+  // Muat overlay jendela konteks models.dev sekali sebelum resolusi dipakai;
+  // bersifat best-effort (cache mungkin belum ada — itu normal).
+  await loadContextWindowOverlay().catch(() => undefined)
   // Emit the fallback warning immediately for the startup-selected model.
   getContextWindowTokens()
   const {

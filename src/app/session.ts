@@ -550,11 +550,16 @@ export async function createMinicodeSession(
           storeMessages: req.messages.length,
         },
       })
-      const overflow = (actualInput = inputTokens, actualOutput = outputTokens) =>
-        new AgentError(
-          "budget_exceeded",
+      const overflow = (actualInput = inputTokens, actualOutput = outputTokens) => {
+        // context_length_exceeded (bukan budget_exceeded) supaya kernel menempuh
+        // jalur recovery `force_compact_and_retry`: meringkas lalu coba lagi,
+        // alih-alih mati `✗ Context window exceeded`. Bounded — loop recovery
+        // menolak bila kompaksi no-op (compactedForRecovery sudah set).
+        return new ProviderError(
+          "context_length_exceeded",
           `context window budget reached for the selected model: input ${actualInput} + output ${actualOutput} exceeds ${limit} tokens; reduce the prompt/tools or select a larger context window`,
         )
+      }
       const requestController = new AbortController()
       const forwardAbort = () => requestController.abort(signal.reason)
       if (signal.aborted) forwardAbort()

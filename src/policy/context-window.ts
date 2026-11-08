@@ -1,4 +1,5 @@
 import type { MinicodeConfig } from "../config.ts"
+import { findContextWindowFromCatalog } from "./context-window-catalog.ts"
 
 /** App fallback for providers that do not publish model metadata.
  * Operators can set an exact `ProviderEntry.contextWindows` value or use the
@@ -7,7 +8,7 @@ export const DEFAULT_FALLBACK_CONTEXT_WINDOW_TOKENS = 32_000
 
 export interface ContextWindowResolution {
   readonly tokens: number
-  readonly source: "override" | "model" | "provider-default" | "safe-default"
+  readonly source: "override" | "model" | "provider-default" | "catalog" | "safe-default"
   readonly model?: string
   readonly providerId?: string
 }
@@ -62,6 +63,19 @@ export function resolveContextWindow(
       source: "provider-default",
       ...(modelId ? { model: modelId } : {}),
       ...(providerId ? { providerId } : {}),
+    }
+  }
+  // Jaring pengaman built-in: kenali keluarga model umum (deepseek, gpt, claude,
+  // gemini, …) tanpa config, supaya model baru tak langsung jatuh ke 32k.
+  if (modelId) {
+    const catalogTokens = findContextWindowFromCatalog(modelId)
+    if (validWindow(catalogTokens)) {
+      return {
+        tokens: catalogTokens,
+        source: "catalog",
+        ...(modelId ? { model: modelId } : {}),
+        ...(providerId ? { providerId } : {}),
+      }
     }
   }
   return {

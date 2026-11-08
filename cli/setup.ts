@@ -2779,7 +2779,14 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       const stopContextGuard = session.events.on("provider:extension", (event) => {
         if (event.kind !== "context-window-limit") return
         const data = event.data as
-          | { inputTokens?: unknown; outputTokens?: unknown; windowTokens?: unknown }
+          | {
+              inputTokens?: unknown
+              outputTokens?: unknown
+              windowTokens?: unknown
+              factor?: unknown
+              localInputTokens?: unknown
+              storeMessages?: unknown
+            }
           | undefined
         const input = typeof data?.inputTokens === "number" ? data.inputTokens : 0
         const output = typeof data?.outputTokens === "number" ? data.outputTokens : 0
@@ -2788,14 +2795,25 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
             ? data.windowTokens
             : getContextWindowTokens()
         const usedTokens = input + output
+        // Diagnostik inflasi kalibrasi: factor > 1 & localInput kecil = cutoff
+        // palsu. Bila factor besar dan localInput ≈ usage nyata (footer),
+        // biang-nya kalibrasi, bukan konteks yang benar-benar penuh.
+        const localInput =
+          typeof data?.localInputTokens === "number" ? Math.round(data.localInputTokens) : null
+        const factor = typeof data?.factor === "number" ? Math.round(data.factor * 100) / 100 : null
+        const storeMessages = typeof data?.storeMessages === "number" ? data.storeMessages : null
+        const diag =
+          localInput !== null || factor !== null || storeMessages !== null
+            ? ` (factor=${factor ?? "?"}, localInput=${localInput ?? "?"}, messages=${storeMessages ?? "?"})`
+            : ""
         presentation?.noteContextCutoff({
-          reason: `context guard stopped request: input ${input} + output ${output} (window ${windowTokens})`,
+          reason: `context guard stopped request: input ${input} + output ${output} (window ${windowTokens})${diag}`,
           usedTokens,
           windowTokens,
           turnId: session.state.turnCount,
         })
         process.stderr.write(
-          `[context] request stopped at context budget: input ${input} + output ${output} (window ${windowTokens}).\n`,
+          `[context] request stopped at context budget: input ${input} + output ${output} (window ${windowTokens})${diag}.\n`,
         )
       })
       try {

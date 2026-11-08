@@ -538,7 +538,17 @@ export async function createMinicodeSession(
       const contextLimitEvent = (input: number, output: number): ProviderEvent => ({
         type: "extension",
         kind: "context-window-limit",
-        data: { inputTokens: input, outputTokens: output, windowTokens: limit },
+        data: {
+          inputTokens: input,
+          outputTokens: output,
+          windowTokens: limit,
+          // Diagnostik: factor kalibrasi (>=1) dan estimasi lokal tanpa
+          // kalibrasi (chars/4). Bila factor besar sementara localInput kecil,
+          // cutoff ini palsu (inflasi kalibrasi) — bukan konteks benar-benar penuh.
+          factor: calibration.snapshot().factor,
+          localInputTokens: localInputTokens,
+          storeMessages: req.messages.length,
+        },
       })
       const overflow = (actualInput = inputTokens, actualOutput = outputTokens) =>
         new AgentError(

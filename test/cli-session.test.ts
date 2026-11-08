@@ -339,7 +339,9 @@ describe("cli: exec --json machine envelope", () => {
     expect(last).toMatchObject({ schema: "minicode.output.v1", type: "summary", ok: true })
     // P1.4: occupancy konteks terpisah dari session spend (`usage`).
     expect(typeof last.contextTokens).toBe("number")
-    expect(last).not.toHaveProperty("contextWindowTokens") // unset → tidak dikarang
+    // `gpt-4o-mini` dikenali katalog built-in → jendela nyata (128k), bukan
+    // fallback 32k yang dulu dikarang. Nilai konteks kini ikut dilaporkan.
+    expect(last.contextWindowTokens).toBe(128_000)
     expect(String(r.stdout)).not.toContain(ESC)
   })
 })

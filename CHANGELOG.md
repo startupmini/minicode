@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.6] - 2026-11-08
+
+### Fixed — clean Permission Mode (Auto/Ask) without the phantom "Allowlist"
+
+- Permission Mode (approval axis) is now purely Auto/Ask. The no-sandbox bash restriction is a separate capability flag (`restrictBash`) and no longer leaks into the footer as a confusing "Allowlist" mode; the footer shows `Auto`/`Ask` plus a `bash:strict` badge when the allow-list is active.
+- `bash-guard` (deny-list) stays always-on; the allow-list only tightens bash when `restrictBash` is set (the Windows no-sandbox default).
+
 ## [0.14.5] - 2026-11-08
 
 ### Improved — automatic context window + graceful full-context handling

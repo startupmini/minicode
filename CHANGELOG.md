@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.14.5] - 2026-11-08
+
+### Improved — automatic context window + graceful full-context handling
+
+- A new built-in model catalog (offline) resolves a real context window for common model families (DeepSeek v4 1M, GPT-5 400k, Claude 200k, Gemini 2M, …) instead of falling back to the 32k safe default, so a freshly-added provider/model no longer starts under-provisioned.
+- `minicode pricing sync` now also collects `context_length` from models.dev (`~/.minicode/context-windows.json`), extending coverage to long-tail models outside the curated catalog.
+- When a request nears the context window, minicode now compacts-and-retries (summarize old turns, then re-ask) instead of hard-failing with "Context window exceeded"; the retry is bounded so a no-op compaction still terminates deterministically.
+- Context cutoff output now includes calibration diagnostics (factor, local estimate, message count) to tell premature cutoffs apart from genuine growth.
+
 ## [0.14.4] - 2026-11-07
 
 ### Improved — clean TUI transcript and model output

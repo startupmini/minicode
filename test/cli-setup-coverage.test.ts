@@ -109,7 +109,7 @@ describe("cli/setup: permissionMode & timeout & budget", () => {
     await s.close()
   })
 
-  test("allowlist -> allowlist", async () => {
+  test("allowlist -> auto + restrictBash (lapis terpisah)", async () => {
     const cwd = makeWorkspace()
     const s = await createCliSession({
       cwd,
@@ -124,7 +124,10 @@ describe("cli/setup: permissionMode & timeout & budget", () => {
       allowlist: true,
       verify: false,
     })
-    expect(s.permissionMode).toBe("allowlist")
+    // [mode-architecture] allowlist BUKAN lagi permission mode — ia jadi
+    // restrictBash (lapis kapabilitas bash), permission tetap auto.
+    expect(s.permissionMode).toBe("auto")
+    expect(s.permissions?.getRestrictBash?.()).toBe(true)
     await s.close()
   })
 

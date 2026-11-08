@@ -334,7 +334,6 @@ export async function createMinicodeSession(
   const withMode = permissions as typeof permissions & {
     __setMode(m: PermissionMode): void
     __getMode(): PermissionMode
-    __getRestrictBash(): boolean
   }
   const wmCtl = permissions as typeof permissions & {
     __setWorkMode?(m: WorkMode): void
@@ -443,7 +442,9 @@ export async function createMinicodeSession(
     onPermissions({
       setMode: (m) => withMode.__setMode(m),
       getMode: () => withMode.__getMode(),
-      getRestrictBash: () => withMode.__getRestrictBash(),
+      // restrictBash adalah opsi tetap (bukan state handler) — dibaca langsung
+      // dari closure, bukan lewat wrapper WorkMode yang tak meneruskannya.
+      getRestrictBash: () => restrictBash === true,
     })
   }
   // P12 S2.2 Slice 5 — handle kontrol WorkMode runtime. Hanya di-wire bila

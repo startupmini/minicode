@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.14.7] - 2026-11-09
+
+### Improved — akurasi token & manajemen konteks (menghentikan mati prematur)
+
+- Estimator token kini **sadar densitas**: kode/JSON (termasuk tool schema) dihitung ~2.4 chars/token, bukan chars/4 — menekan under-count yang membuat konteks meledak melewati jendela tanpa disadari (akar `context_length_exceeded`/`invalid_request` di gateway).
+- **Anchor usage**: estimasi admission di-floor dengan `usage.prompt_tokens` asli terakhir per turn; estimator tak pernah jatuh di bawah ukuran nyata, toleran laporan progresif-kumulatif gateway.
+- **400 `invalid_request`** generik + sesi besar → diklasifikasi `context_length_exceeded` → **compact-and-retry** (bounded), bukan mati fatal.
+- **Model alias router** (`auto`/`best`/`default`/`router`/`cheapest`) kini memakai default konservatif **128K** (bukan 32K) supaya kompaksi tak prematur; tetap bisa ditimpa `provider.contextWindows`.
+- **Tokenizer BPE presisi on-demand** dari HuggingFace untuk model open (deepseek/qwen/mistral/gemma/phi), di-cache lokal; `MINICODE_TOKENIZERS=0/off` mematikan, fallback ke densitas + usage.
+- `web_fetch` default `maxChars` 20k → 8k untuk menahan ledakan konteks dari hasil fetch.
+
+### Improved — kualitas kompaksi (otomatis)
+
+- Kompaksi otomatis lebih agresif (trigger 65%, high 85%, max 3 siklus) supaya konteks jarang menyentuh dinding.
+- Fallback mekanikal kini **mempertahankan isi hasil tool** (bukan `<result omitted>`) agar fakta tidak hilang; ringkasan bekerja lebih kaya (1500 → 4000 chars); jalur LLM memakai ulang provider sesi.
+
+### Improved — render & presentasi
+
+- Thinking **terlihat secara default** dengan warna terbaca (`c.thinking`), di-indent 2 kolom + dipisah baris kosong dari jawaban.
+- Aktivitas tool per turn dilipat jadi **SATU baris ringkas** (`✓ n tools · nama · ok · gagal`) default ON di TUI, detail via `/expand`.
+- Tabel markdown kotak ber-garis (opencode-like) + wrap + margin; teks thinking/jawaban/diff **word-wrap** (tidak memotong tengah kata); string kode memakai palet VS Code.
+
 ## [0.14.6] - 2026-11-08
 
 ### Fixed — clean Permission Mode (Auto/Ask) without the phantom "Allowlist"

@@ -63,11 +63,13 @@ Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `s
 
 Tanpa flag, MiniCode memakai `providers[].contextWindows` dari konfigurasi.
 Jika model/gateway tidak punya metadata itu, MiniCode memakai fallback
-32.000 token dan memberi peringatan saat sesi mulai. Gunakan batas model yang
-tepat pada config atau flag; batas yang terlalu kecil memicu kompaksi dini,
-sedangkan batas yang terlalu besar berisiko ditolak provider. Batas berubah
-otomatis saat `/model` mengganti model. MiniCode juga membatasi keluaran stream
-berdasarkan ruang tersisa setelah system prompt, tools, dan riwayat dihitung.
+32.000 token (model tak dikenal) atau default konservatif 128K untuk alias
+router (`auto`/`best`/...), lalu memberi peringatan saat sesi mulai. Gunakan
+batas model yang tepat pada config atau flag; batas yang terlalu kecil memicu
+kompaksi dini, sedangkan batas yang terlalu besar berisiko ditolak provider.
+Batas berubah otomatis saat `/model` mengganti model. MiniCode juga membatasi
+keluaran stream berdasarkan ruang tersisa setelah system prompt, tools, dan
+riwayat dihitung.
 
 Di TUI, **Tab** memutar Work Mode (`Discuss` → `Plan` → `Build`) dan **Shift+Tab** meng-toggle Permission Mode (`Auto` ↔ `Ask`). `/mode <AUTO|ASK>` mengubah persetujuan; `/work-mode <DISCUSS|PLAN|BUILD>` mengubah operating mode. Footer menampilkan Work Mode di kiri dan Permission Mode berwarna cyan di kanan, dekat penggunaan konteks; pada terminal sempit label dipadatkan.
 

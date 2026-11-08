@@ -44,7 +44,7 @@
 
 ## Internal & Arsitektur (untuk kontributor)
 
-* [Terminal Contract (FROZEN) — 35 invariant, v7.7](TERMINAL_CONTRACT.md)
+* [Terminal Contract (FROZEN) — 35 invariant, v7.11](TERMINAL_CONTRACT.md)
 * [Output Event Model — taksonomi dan lifecycle](OUTPUT_EVENT_MODEL.md)
 * [Output Protocol Spec — stream dan machine contract](OUTPUT_PROTOCOL_SPEC.md)
 * [Output Rendering Spec — boundary renderer](OUTPUT_RENDERING_SPEC.md)

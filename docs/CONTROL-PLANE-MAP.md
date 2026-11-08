@@ -12,7 +12,7 @@ punya owner sendiri; yang disatukan di sini hanya *hubungannya*.
 
 | Konsep | Ukuran | Owner | Sumber kebenaran | Dipakai |
 |---|---|---|---|---|
-| Logical context | token ESTIMASI (chars/4, sadar-gambar) | Kernel loop + `Session.contextTokens` | `estimateSessionContext` (`vendor tokens.ts`) — messages+system+tools | pressure evaluation, footer, `/status` |
+| Logical context | token ESTIMASI (densitas: kode/JSON ~2.4 cpt, CJK ~1, fallback usage anchor + tokenizer exact on-demand) | Kernel loop + `Session.contextTokens` | `estimateSessionContext` (`vendor tokens.ts`) — messages+system+tools | pressure evaluation, footer, `/status` |
 | Serialized context | chars wire (JSON/base64 +overhead) | Adapter provider | `buildRequest` per adapter | dikirim, tidak diukur tersendiri |
 | Provider usage | token yang dilaporkan provider | `createUsageCollector` | event `provider:extension{kind:"usage"}` — **boleh hilang** | akumulasi turn/session, cost |
 | Economic usage | USD estimated dari harga tabel | `costFor`/`findPrice` | harga × usage; `undefined` = unknown | `--budget`, `/status` |

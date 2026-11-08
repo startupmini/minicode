@@ -1,4 +1,9 @@
-# Kontrak Terminal MiniCode (TUI fullscreen — v7.10, 2026-11-08)
+# Kontrak Terminal MiniCode (TUI fullscreen — v7.11, 2026-11-09)
+
+Perubahan v7.11: thinking & jawaban di TUI dan renderer linear kini membungkus di
+batas kata (`wrapByWidth`) — tidak memotong di tengah kata — dan baris diff ikut
+wrap (bukan truncate ellipsis). Tabel markdown tetap kotak ber-garis + wrap
+(v7.10). Thinking di renderer linear ikut di-indent 2 kolom, konsisten dengan TUI.
 
 Perubahan v7.10: pembatas bash allow-list (fallback "no-sandbox") ditampilkan
 sebagai **ikon gembok** `🔒` di ujung footer (setelah Permission Mode), terang

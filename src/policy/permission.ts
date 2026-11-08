@@ -342,9 +342,18 @@ export function createPermissionHandler(
      * ini yang boleh auto-allow. Absen = fail-closed (semua MCP bertitik deny).
      */
     authorizedTools?: ReadonlySet<string> | null
+    /**
+     * [mode-architecture] Pembatas bash TERPISAH dari sumbu persetujuan.
+     * Bila true, mode `auto` juga membatasi `bash` ke allow-list
+     * (DEFAULT_BASH_ALLOWLIST / MINICODE_BASH_ALLOWLIST) — pola "no-sandbox"
+     * (Windows) yang dulu diselipkan sebagai `mode: "allowlist"`. Mode
+     * permission tetap `auto`/`ask`; ini hanya lapis kapabilitas bash.
+     */
+    restrictBash?: boolean
   } = {},
 ): PermissionHandler {
   const state = { mode: (opts.mode ?? "auto") as PermissionMode }
+  const restrictBash = opts.restrictBash === true
   const root = resolve(opts.root ?? cwd())
   const approvalBindings = opts.approvalBindings
   const askUser = opts.ask
@@ -555,6 +564,17 @@ export function createPermissionHandler(
         const cmd = (args?.cmd as string) ?? ""
         const br = bashDenyReason(cmd)
         if (br) return deny(call, `bash-guard: ${br}`)
+        // restrictBash: bash hanya boleh pola allow-list (fallback no-sandbox).
+        if (restrictBash) {
+          const matched = bashAllowlist.filter((pat) => matchBashAllowlist(cmd, pat))
+          if (matched.length === 0)
+            return deny(
+              call,
+              `allowlist: no matching pattern for "${cmd.slice(0, 80)}" — file work: use read_file/write_file/edit; full shell: rerun with --allow-all / --sandbox docker / MINICODE_BASH_ALLOWLIST`,
+            )
+          if (matched.some((p) => /^(npx|npm exec|bun x|bun run)\b/i.test(p)) && !npmNpxSafe(cmd))
+            return deny(call, "allowlist: npm/npx unsafe")
+        }
         return "allow"
       }
       return deny(call, "not authorized in AUTO mode")
@@ -701,6 +721,9 @@ export function createPermissionHandler(
     __getMode(): PermissionMode {
       return state.mode
     },
+    __getRestrictBash(): boolean {
+      return restrictBash
+    },
     // Seam kernel describeDenial: alasan deny terakhir call ini (dicatat
     // check() via deny()). Hapus-saat-baca; tak ada catatan = undefined =
     // pesan deny polos seperti dulu.
@@ -720,6 +743,7 @@ export function createPermissionHandler(
   return returned as unknown as PermissionHandler & {
     __setMode(m: PermissionMode): void
     __getMode(): PermissionMode
+    __getRestrictBash(): boolean
     describeDenial(call: ToolCall): string | undefined
     __promptGated(call: ToolCall, deps?: unknown): Promise<"allow" | "deny">
   }

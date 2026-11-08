@@ -1151,9 +1151,11 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   }
 
   // [mode-architecture] `--plan` legacy bukan lagi permission mode — pemetaannya
-  // ke WorkMode PLAN terjadi di effectiveWorkMode (di atas). Sisa profil warisan
-  // (allow-all/allowlist) tetap tersedia sebagai tool-access profile.
-  const permissionMode = allowAll ? "allow-all" : ask ? "ask" : allowlist ? "allowlist" : "auto"
+  // ke WorkMode PLAN terjadi di effectiveWorkMode (di atas). `--allow-all` tetap
+  // profil privileged. `--allowlist`/fallback no-sandbox TIDAK lagi mengubah
+  // PermissionMode: ia jadi `restrictBash` (lapis kapabilitas bash terpisah).
+  const permissionMode = allowAll ? "allow-all" : ask ? "ask" : "auto"
+  const restrictBash = allowlist
 
   // Home guard: sesi dibuka di home berisiko (glob rame, write berbahaya).
   // Standar industri: percaya-tapi-ingatkan, jangan tolak diam-diam maupun
@@ -1897,6 +1899,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       tools: sessionTools,
       cwd,
       permissionMode,
+      restrictBash,
       allowLocalConfig,
       // P12 S2.2 + P0.2 — WorkMode efektif sesi ini (termasuk pulihan resume).
       workMode: effectiveWorkMode,
@@ -1930,6 +1933,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
             setToolPermissionMode?.(m)
           },
           getMode: () => ctl.getMode(),
+          getRestrictBash: () => ctl.getRestrictBash?.() ?? false,
         }
       },
       // P12 S2.2 Slice 5 — handle kontrol WorkMode runtime. Setelah sesi

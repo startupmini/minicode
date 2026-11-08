@@ -8,6 +8,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test"
 import {
+  paintBashStrict,
   paintPermissionMode,
   paintWorkMode,
   renderFooter,
@@ -178,6 +179,17 @@ describe("footer render", () => {
     expect(auto).toContain(c.info("Auto"))
     expect(ask).toContain(c.info("Ask"))
     expect(c.success("Build")).not.toBe(c.info("Auto"))
+  })
+
+  test("restrictBash: badge bash:strict muncul hanya saat aktif", () => {
+    tty = installFakeTty({ columns: 80 })
+    expect(paintBashStrict(true)).toContain("bash:strict")
+    expect(paintBashStrict(false)).toBe("")
+    expect(paintBashStrict(undefined)).toBe("")
+    const [strict] = renderFooter({ mode: "auto", strictBash: true, model: "m1", cwd: "cwd" }, 80)
+    const [plain] = renderFooter({ mode: "auto", model: "m1", cwd: "cwd" }, 80)
+    expect(stripAnsi(strict!)).toContain("bash:strict")
+    expect(stripAnsi(plain!)).not.toContain("bash:strict")
   })
 
   test("terminal sempit: 1 baris visual, spark+mode kekal (cwd/model dibuang)", () => {

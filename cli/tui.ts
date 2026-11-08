@@ -638,7 +638,10 @@ export async function runTui(ctx: CliSession): Promise<void> {
     getStatus: () => {
       const status = {
         footer: {
-          mode,
+          // Normalisasi: sumbu persetujuan hanya AUTO/ASK. Profil warisan
+          // (allow-all/allowlist) tak lagi bocor sebagai label mode.
+          mode: mode === "ask" ? "ask" : "auto",
+          strictBash: permissions?.getRestrictBash?.() ?? false,
           // P12 S2.2 Slice 5 - WorkMode LIVE (bukan snapshot boot): footer
           // mencerminkan mode aktif saat frame digambar.
           workMode: workModeControl?.getWorkMode() ?? "DISCUSS",

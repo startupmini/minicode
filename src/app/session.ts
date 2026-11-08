@@ -74,6 +74,8 @@ export const cappedRecovery = {
 export type PermissionControl = {
   setMode(m: "auto" | "readonly" | "plan" | "allow-all" | "ask" | "allowlist"): void
   getMode(): "auto" | "readonly" | "plan" | "allow-all" | "ask" | "allowlist"
+  /** Bila true, bash dibatasi ke allow-list (lapis kapabilitas, terpisah mode). */
+  getRestrictBash?(): boolean
 }
 
 /**
@@ -129,6 +131,11 @@ export async function createMinicodeSession(
     /** Live model identity used for per-model token calibration. */
     getContextModel?: () => string | undefined
     permissionMode?: "auto" | "readonly" | "plan" | "allow-all" | "ask" | "allowlist"
+    /**
+     * [mode-architecture] Lapis kapabilitas bash TERPISAH dari permission mode.
+     * Bila true, `auto` membatasi bash ke allow-list (fallback "no-sandbox").
+     */
+    restrictBash?: boolean
     /** S2.1: WorkMode adalah lapis intent TERPISAH dari PermissionMode.
      * Default EXECUTE = perilaku lama (base handler apa adanya). Nilai selain
      * EXECUTE memasang ceiling tipis di atas handler PM (lihat work-mode.ts);
@@ -237,6 +244,7 @@ export async function createMinicodeSession(
     concurrency,
     writeConcurrency,
     permissionMode,
+    restrictBash,
     workMode: _workMode,
     allowLocalConfig,
     systemExtra: _extra,
@@ -313,6 +321,7 @@ export async function createMinicodeSession(
         root: defaultCwd,
         ask,
         allowLocalConfig,
+        restrictBash,
         onApprovalEvent,
         authorizedTools,
         // [Area B · PROMPT 06] Store per-sesi: persetujuan dari sesi A tak
@@ -325,6 +334,7 @@ export async function createMinicodeSession(
   const withMode = permissions as typeof permissions & {
     __setMode(m: PermissionMode): void
     __getMode(): PermissionMode
+    __getRestrictBash(): boolean
   }
   const wmCtl = permissions as typeof permissions & {
     __setWorkMode?(m: WorkMode): void
@@ -433,6 +443,7 @@ export async function createMinicodeSession(
     onPermissions({
       setMode: (m) => withMode.__setMode(m),
       getMode: () => withMode.__getMode(),
+      getRestrictBash: () => withMode.__getRestrictBash(),
     })
   }
   // P12 S2.2 Slice 5 — handle kontrol WorkMode runtime. Hanya di-wire bila

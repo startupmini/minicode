@@ -16,6 +16,8 @@ export type TimerHighlight = "seconds" | "minutes" | "hours"
 export interface FooterStatus {
   /** Permission mode efektif sesi ini (umumnya AUTO atau ASK). */
   mode: string
+  /** Bila true, bash dibatasi ke allow-list (lapis kapabilitas, bukan mode). */
+  strictBash?: boolean
   /** WorkMode aktif sesi; identitas internal EXECUTE ditampilkan sebagai Build. */
   workMode?: string
   model: string
@@ -97,6 +99,11 @@ export function paintPermissionMode(mode: string, style: ModeLabelStyle = "full"
   return `${c.gray(prefix)}${c.info(value)}`
 }
 
+/** Badge kecil pembatas bash allow-list (lapis kapabilitas, terpisah mode). */
+export function paintBashStrict(strictBash?: boolean): string {
+  return strictBash ? c.yellow("bash:strict") : ""
+}
+
 /** Spark glyph: redup saat idle, pulse putih↔abu saat busy (frame genap/ganjil). */
 function sparkGlyph(frame: number): string {
   const g = glyphs.thinkingIcon
@@ -173,7 +180,9 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
     return `${lead}${paintWorkMode(s.workMode, style)}`
   }
   const rightFor = (style: ModeLabelStyle): string =>
-    [...contextParts, paintPermissionMode(s.mode, style)].join(fieldGap)
+    [...contextParts, paintPermissionMode(s.mode, style), paintBashStrict(s.strictBash)]
+      .filter(Boolean)
+      .join(fieldGap)
   const align = (left: string, right: string): string | undefined => {
     const leftWidth = displayWidth(left)
     const rightWidth = displayWidth(right)
@@ -224,15 +233,16 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
   // timer/model/CWD/label sebelum konteks; potong konteks lebih dahulu.
   const workValue = paintWorkMode(s.workMode, "value")
   const permissionValue = paintPermissionMode(s.mode, "value")
+  const strictValue = paintBashStrict(s.strictBash)
   const shortWorkValue = workValue.trimEnd()
-  const modeOnly = `${spark} ${shortWorkValue} ${permissionValue}`
+  const modeOnly = `${spark} ${shortWorkValue} ${[permissionValue, strictValue].filter(Boolean).join(" ")}`
   if (ctx || metrics) {
     const context = [ctx, metrics].filter(Boolean).join("  ")
     const baseWidth = displayWidth(modeOnly)
     const contextBudget = target - baseWidth - 2
     if (contextBudget > 0) {
       const shortenedContext = truncateToWidth(context, contextBudget, "…")
-      const withContext = `${spark} ${shortWorkValue} ${c.gray(shortenedContext)} ${permissionValue}`
+      const withContext = `${spark} ${shortWorkValue} ${c.gray(shortenedContext)} ${[permissionValue, strictValue].filter(Boolean).join(" ")}`
       if (displayWidth(withContext) <= target) return [withContext]
     }
   }

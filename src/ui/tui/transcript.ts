@@ -235,8 +235,9 @@ export class Transcript {
   private presentedVerifications = new Set<string>()
   private summarizedTurns = new Set<number>()
   /** Lipat aktivitas (minimizeActivity): baris ledger per-tool ditahan dulu,
-   * lalu di-flush jadi satu section /expand saat turn selesai. */
-  private activityFold: string[] = []
+   * lalu saat turn selesai dirangkum jadi SATU baris (opencode-like) + detail
+   * di-buffer untuk /expand. */
+  private activityFold: { name: string; status: string; line: string }[] = []
   private unsubs: (() => void)[] = []
 
   constructor(bus: UiBus, opts: TranscriptOptions = {}) {
@@ -785,7 +786,9 @@ export class Transcript {
     if (event.type === "turn.completed") {
       this.commit()
       this.commitThinking()
-      this.turnSummary(event.summary, event)
+      // minimizeActivity ON → fold meringkas sendiri (nama tool + ok/gagal);
+      // turnSummary (turn · files · durasi) dilewati agar tidak ada dua ringkasan.
+      if (!this.uiState.minimizeActivity) this.turnSummary(event.summary, event)
       this.flushActivityFold()
       return
     }
@@ -926,10 +929,10 @@ export class Transcript {
         : ""
     const line = `  ${this.statusGlyph(status)} ${name}${targetText} ${this.statusWord(status)}${retry}${child}${verificationMark}${provenanceMark}${message}`
     // Lipat aktivitas (opencode-like): saat minimizeActivity aktif, baris ledger
-    // per-tool TIDAK dicetak — ditahan lalu jadi satu section /expand saat turn
-    // selesai. Ringkasan turn (`turn n · k ok · …`) tetap tampil di turn.completed.
+    // per-tool TIDAK boleh menghilang diam-diam — ditahan lalu dirangkum jadi
+    // SATU baris saat turn selesai (detail via /expand).
     if (this.uiState.minimizeActivity) {
-      this.activityFold.push(line)
+      this.activityFold.push({ name, status, line })
       return
     }
     this.append(this.statusPaint(status, line), {
@@ -1148,11 +1151,33 @@ export class Transcript {
     })
   }
 
-  /** Flush lipatan aktivitas (minimizeActivity) menjadi satu section /expand. */
+  /** Flush lipatan aktivitas (minimizeActivity) menjadi SATU baris ringkas
+   * (opencode-like) + buffer detail untuk /expand. Tidak menghilangkan isi
+   * diam-diam: nama tool + hitung ok/gagal tetap terlihat. */
   private flushActivityFold(): void {
-    if (this.activityFold.length === 0) return
-    this.uiState.rememberCollapsedSection("activity", this.activityFold.join("\n"))
+    const fold = this.activityFold
     this.activityFold = []
+    if (fold.length === 0) return
+    const count = (status: string) => fold.reduce((n, e) => n + (e.status === status ? 1 : 0), 0)
+    const ok = count("completed")
+    const failed = count("failed")
+    const denied = count("denied")
+    const names = [...new Set(fold.map((e) => e.name))]
+    const shown = names.slice(0, 3).join(", ")
+    const more = names.length - 3
+    const namePart = shown ? ` · ${shown}${more > 0 ? ` +${more}` : ""}` : ""
+    const stats = [
+      ok ? `${ok} ok` : "",
+      failed ? `${failed} ${t("ts.statusFailed")}` : "",
+      denied ? `${denied} ${t("ts.statusDenied")}` : "",
+    ]
+      .filter(Boolean)
+      .join(", ")
+    const statPart = stats ? ` · ${stats}` : ""
+    const line = `  ${glyphs.check} ${fold.length} tool${fold.length > 1 ? "s" : ""}${namePart}${statPart}`
+    // Detail tetap tersedia via /expand (tidak dibuang).
+    this.uiState.rememberCollapsedSection("activity", fold.map((e) => e.line).join("\n"))
+    this.append(line, { kind: "activity" })
   }
 
   private runningRows(): string[] {

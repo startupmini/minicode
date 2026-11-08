@@ -461,8 +461,11 @@ pernah tampil · thinking: dots clock / alir thinking terbaca · popup: konten r
 belakang + kotak terpusat (form di dalam) + Esc tutup · approval tercatat ·
 `/status`, `/history`, `/help` ringkas & `/expand` mengalir ke transkrip ·
 `/mode` = permission mode · `/work-mode` = WorkMode (intent layer) ·
-`/fold` = lipat aktivitas tool per turn (`MINICODE_MINIMIZE_ACTIVITY`) — baris
-ledger per-tool ditahan, diganti ringkasan turn, detail dibuka via `/expand` ·
+`/fold` = lipat aktivitas tool per turn (`MINICODE_MINIMIZE_ACTIVITY`, ON di TUI) —
+baris ledger per-tool dirangkum jadi SATU baris ringkas (`✓ n tools · nama · x ok · y gagal`),
+tidak hilang diam-diam; detail dibuka via `/expand` ·
+tabel markdown dirender kotak ber-garis (opencode-like) ber-`wrap` (konten panjang
+tidak kepotong) + margin kiri 1 kolom; teks paragraf ber-margin kiri 1 kolom ·
 Projection V2: `› name target … running`, ledger status ber-glyph/kata,
 retry/grup anak (anak ber-identitas run = baris `↳ run_<8>` sendiri; tanpa
 identitas run = hitungan `n child tools`), ringkasan turn, dan marker evict

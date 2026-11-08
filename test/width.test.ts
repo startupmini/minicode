@@ -12,6 +12,7 @@ import {
   escapeLength,
   padToWidth,
   truncateToWidth,
+  wrapByWidth,
 } from "../src/ui/render/width.ts"
 
 describe("charWidth", () => {
@@ -266,5 +267,34 @@ describe("chunkByWidth", () => {
     const chunks = chunkByWidth(`\x1b[31m${"a".repeat(30)}`, 10)
     expect(chunks.length).toBeGreaterThan(1)
     for (const ch of chunks.slice(0, -1)) expect(ch.endsWith("\x1b[0m")).toBe(true)
+  })
+})
+
+describe("wrapByWidth", () => {
+  test("prosa dipecah di batas kata, bukan di tengah kata", () => {
+    const chunks = wrapByWidth("the quick brown fox jumps", 12)
+    for (const c of chunks) expect(displayWidth(c)).toBeLessThanOrEqual(12)
+    // Kata "brown" utuh dalam SATU potongan (tidak terbelah "br"/"own").
+    const joined = chunks
+      .map((c) => c.trim())
+      .filter(Boolean)
+      .join(" ")
+    expect(joined).toBe("the quick brown fox jumps")
+    expect(
+      chunks.some((c) => c.includes("brown") && !/b\w*\b\s*\w*own/.test(c.replace("brown", ""))),
+    ).toBe(true)
+  })
+
+  test("token tanpa spasi (URL/hash) jatuh-balik ke potong per kolom", () => {
+    const chunks = wrapByWidth("https://example.com/path/to/long", 10)
+    expect(chunks.length).toBeGreaterThan(1)
+    for (const c of chunks) expect(displayWidth(c)).toBeLessThanOrEqual(10)
+    expect(chunks.join("")).toBe("https://example.com/path/to/long")
+  })
+
+  test("ANSI SGR terbuka dibawa ke potongan berikut (tak bocor/tak hilang)", () => {
+    const chunks = wrapByWidth(`\x1b[31m${"a".repeat(30)}\x1b[0m`, 10)
+    expect(chunks.length).toBeGreaterThan(1)
+    for (const c of chunks.slice(0, -1)) expect(c.endsWith("\x1b[0m")).toBe(true)
   })
 })

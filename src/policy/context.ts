@@ -16,8 +16,6 @@ const execFileAsync = promisify(execFile)
 
 const denseTokenCharacters =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Extended_Pictographic}]/gu
-const hasDenseTokenCharacter =
-  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Extended_Pictographic}]/u
 
 export function countDenseTokenCharacters(text: string): number {
   let dense = 0
@@ -26,6 +24,25 @@ export function countDenseTokenCharacters(text: string): number {
   }
   return dense
 }
+
+// Karakter "sintaks" kode/JSON: simbol + tanda baca yang membuat token lebih
+// padat daripada prosa (tokenizer BPE mengkode kode ~2–3 chars/token, prosa
+// ~4). Dipakai menaikkan estimasi pada teks kental-simbol supaya tidak
+// under-count (akar masalah `context_length_exceeded` di gateway).
+const CODE_SYNTAX = /[{}()[\]<>;,=+\-*/&|!#$%^~:?@."'\\]/g
+
+export function countCodeSyntaxCharacters(text: string): number {
+  let n = 0
+  for (const match of text.matchAll(CODE_SYNTAX)) {
+    if (match[0]) n++
+  }
+  return n
+}
+
+const CODE_CHARS_PER_TOKEN = 2.4
+// Ambang rasio sintaks untuk mulai menyesuaikan divisi token (di bawahnya =
+// prosa biasa, tak tersentuh agar estimasi prosa yang sudah di-pin tetap stabil).
+const CODE_SYNTAX_RATIO_FLOOR = 0.15
 
 /** Track a streamed text field without retaining/re-tokenizing its full prefix. */
 export function createIncrementalTokenCounter(): {
@@ -60,13 +77,22 @@ export function createIncrementalTokenCounter(): {
 
 export const minicodeEstimator: TokenEstimator = (text: string) => {
   // Keep the cheap chars/4 baseline for ordinary text, but price CJK and emoji
-  // closer to one token per code point. Plain UTF-16 chars/4 can undercount a
-  // multilingual prompt by several times before the first provider usage sample.
-  if (!hasDenseTokenCharacter.test(text)) {
-    return Math.ceil(text.length / DEFAULT_CHARS_PER_TOKEN)
-  }
+  // closer to one token per code point, and code/JSON closer to ~2.4 chars per
+  // token. Plain UTF-16 chars/4 can undercount a multilingual prompt (CJK) or a
+  // dense JSON schema (tool schemas) by several times before the first provider
+  // usage sample — which is exactly what blew past the model window.
+  const len = text.length
+  if (len === 0) return 0
   const dense = countDenseTokenCharacters(text)
-  return Math.ceil(text.length / DEFAULT_CHARS_PER_TOKEN + dense * 0.75)
+  const syntax = countCodeSyntaxCharacters(text)
+  const syntaxRatio = len > 0 ? syntax / len : 0
+  const cpt =
+    syntaxRatio < CODE_SYNTAX_RATIO_FLOOR
+      ? DEFAULT_CHARS_PER_TOKEN
+      : DEFAULT_CHARS_PER_TOKEN -
+        (DEFAULT_CHARS_PER_TOKEN - CODE_CHARS_PER_TOKEN) *
+          Math.min(1, (syntaxRatio - CODE_SYNTAX_RATIO_FLOOR) / 0.2)
+  return Math.ceil(len / cpt + dense * 0.75)
 }
 
 // helper for image content: base64 overhead 4/3 — use when estimating tool image results

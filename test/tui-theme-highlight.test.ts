@@ -43,7 +43,7 @@ test("markdown: decorates code fences with indentation", () => {
 })
 
 test("markdown: plain text without fences unchanged", () => {
-  expect(decorateMarkdown("just text")).toBe("just text")
+  expect(decorateMarkdown("just text")).toBe(" just text")
 })
 
 test("theme: section separator uses display width for CJK/emoji", () => {

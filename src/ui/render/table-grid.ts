@@ -1,7 +1,7 @@
 import type { MarkdownTable, PipeTableAlignment } from "./markdown-table.ts"
 import { cleanUntrusted, sanitizeAnsiLine } from "./sanitize.ts"
-import { c, getTerminalWidth } from "./theme.ts"
-import { chunkByWidth, displayWidth, padToWidth, truncateToWidth } from "./width.ts"
+import { c, getTerminalWidth, supportsUtf8 } from "./theme.ts"
+import { displayWidth, padToWidth, truncateToWidth, wrapByWidth } from "./width.ts"
 
 export interface GridColumn {
   header: string
@@ -26,11 +26,15 @@ export interface GridRenderOptions {
   /** Wrap isi sel ke baris berikutnya (untuk tabel markdown jawaban model)
    * alih-alih truncate dengan ellipsis — info panjang TIDAK hilang. */
   wrap?: boolean
+  /** Render sebagai kotak ber-garis (opencode-like) dengan padding dalam sel. */
+  box?: boolean
 }
 
 const DEFAULT_ELLIPSIS = "…"
 const DEFAULT_MAX_CELL_WIDTH = 50
 const MIN_CONTENT_WIDTH = 3
+/** Margin kiri kotak tabel — biar tidak menempel ke tepi terminal. */
+const BOX_MARGIN = 1
 
 function cleanCell(value: unknown): string {
   return cleanUntrusted(
@@ -116,6 +120,78 @@ function fitWidths(natural: readonly number[], budget: number, minimum: number):
   return widths
 }
 
+/**
+ * Render tabel sebagai kotak ber-garis (opencode-like) dengan padding 1 kolom
+ * di dalam tiap sel — teks tidak menempel ke garis `│`. Isi sel di-wrap
+ * (bukan truncate) agar info panjang tidak hilang; ANSI terjaga via
+ * chunkByWidth. Fallback ASCII (`+`,`-`,`|`) saat MINICODE_ASCII/terminal non-UTF.
+ */
+function renderBorderedGrid(
+  table: GridTable,
+  widths: number[],
+  aligns: readonly PipeTableAlignment[],
+  styleHeader: boolean,
+  options: GridRenderOptions,
+): string {
+  const g = supportsUtf8()
+    ? {
+        tl: "┌",
+        tm: "┬",
+        tr: "┐",
+        ml: "├",
+        mm: "┼",
+        mr: "┤",
+        bl: "└",
+        bm: "┴",
+        br: "┘",
+        h: "─",
+        v: "│",
+      }
+    : {
+        tl: "+",
+        tm: "+",
+        tr: "+",
+        ml: "+",
+        mm: "+",
+        mr: "+",
+        bl: "+",
+        bm: "+",
+        br: "+",
+        h: "-",
+        v: "|",
+      }
+  const cellLines = (value: unknown, col: number): string[] => {
+    const colWidth = widths[col]!
+    const align = aligns[col] ?? "left"
+    const raw = cleanCell(value)
+    const rendered = options.formatCell?.(raw) ?? raw
+    return wrapByWidth(rendered, colWidth).map((l) => alignCell(l, colWidth, align))
+  }
+  const headerCols = table.headers.map((v, i) => {
+    const rendered = options.formatCell?.(cleanCell(v)) ?? cleanCell(v)
+    const styled = styleHeader ? c.bold(c.accent(rendered)) : rendered
+    return wrapByWidth(styled, widths[i]!).map((l) => alignCell(l, widths[i]!, aligns[i] ?? "left"))
+  })
+  const rowLine = (cols: string[][], li: number): string =>
+    c.dim(g.v) +
+    cols.map((lines, i) => ` ${lines[li] ?? padToWidth("", widths[i]!)} `).join(c.dim(g.v)) +
+    c.dim(g.v)
+  const horiz = (l: string, m: string, r: string): string =>
+    c.dim(l + widths.map((w) => g.h.repeat(w + 2)).join(m) + r)
+
+  const out: string[] = [horiz(g.tl, g.tm, g.tr)]
+  const headerHeight = headerCols.reduce((m, lines) => Math.max(m, lines.length), 1)
+  for (let li = 0; li < headerHeight; li++) out.push(rowLine(headerCols, li))
+  out.push(horiz(g.ml, g.mm, g.mr))
+  for (const row of table.rows) {
+    const cols = row.map((_, i) => cellLines(row[i] ?? "", i))
+    const height = cols.reduce((m, lines) => Math.max(m, lines.length), 0)
+    for (let li = 0; li < height; li++) out.push(rowLine(cols, li))
+  }
+  out.push(horiz(g.bl, g.bm, g.br))
+  return out.map((line) => " ".repeat(BOX_MARGIN) + line).join("\n")
+}
+
 export function renderGridTable(table: GridTable, options: GridRenderOptions = {}): string {
   if (table.headers.length === 0) return ""
   if (table.rows.length === 0 && options.styleHeader === false) return ""
@@ -132,7 +208,12 @@ export function renderGridTable(table: GridTable, options: GridRenderOptions = {
   const minCellWidth = Number.isFinite(requestedMinCellWidth)
     ? Math.max(1, Math.trunc(requestedMinCellWidth))
     : MIN_CONTENT_WIDTH
-  const overhead = table.headers.length * 3 - 1
+  // Overhead batas: format kotak `│ c │` memakan 2 kolom lebih banyak per baris
+  // (baris batas `│` + padding) daripada format separator lama ` c ` + spasi.
+  // `BOX_MARGIN` = margin kiri agar kotak tidak nempel ke tepi terminal.
+  const overhead = options.box
+    ? table.headers.length * 3 + 1 + BOX_MARGIN
+    : table.headers.length * 3 - 1
   const budget = width - overhead
   const natural = naturalWidths(table, maxCellWidth)
   const minimum = Math.max(1, Math.min(minCellWidth, ...natural.map((value) => Math.max(1, value))))
@@ -144,6 +225,9 @@ export function renderGridTable(table: GridTable, options: GridRenderOptions = {
 
   const aligns = table.aligns ?? table.headers.map(() => "left" as const)
   const styleHeader = options.styleHeader !== false
+
+  if (options.box) return renderBorderedGrid(table, widths, aligns, styleHeader, options)
+
   const separator = c.dim(widths.map((value) => "─".repeat(value + 2)).join(" "))
 
   if (options.wrap) {
@@ -155,7 +239,7 @@ export function renderGridTable(table: GridTable, options: GridRenderOptions = {
       const align = aligns[column] ?? "left"
       const raw = cleanCell(value)
       const rendered = options.formatCell?.(raw) ?? raw
-      return chunkByWidth(rendered, colWidth).map((l) => alignCell(l, colWidth, align))
+      return wrapByWidth(rendered, colWidth).map((l) => alignCell(l, colWidth, align))
     }
     // Header bergaya bold+accent DITERAPKAN SEBELUM wrap agar baris lanjutan tetap
     // bergaya; header jarang wrap tapi tetap ditangani.
@@ -165,7 +249,7 @@ export function renderGridTable(table: GridTable, options: GridRenderOptions = {
       const raw = cleanCell(value)
       const rendered = options.formatCell?.(raw) ?? raw
       const styled = styleHeader ? c.bold(c.accent(rendered)) : rendered
-      return chunkByWidth(styled, colWidth).map((l) => alignCell(l, colWidth, align))
+      return wrapByWidth(styled, colWidth).map((l) => alignCell(l, colWidth, align))
     })
     const lineOf = (cols: string[][], li: number): string =>
       cols.map((lines, ci) => ` ${lines[li] ?? padToWidth("", widths[ci]!)} `).join(" ")
@@ -214,7 +298,7 @@ export function renderMarkdownTable(
       rows: table.rows,
       aligns: table.aligns,
     },
-    { width, styleHeader: true, formatCell, wrap: true },
+    { width, styleHeader: true, formatCell, box: true },
   )
 }
 

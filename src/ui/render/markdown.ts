@@ -129,7 +129,8 @@ export function decorateMarkdown(text: string): string {
     // Headings (# ## ###) -> bold with vertical spacing
     if (/^#{1,3}\s/.test(line)) {
       if (out.length > 0 && out[out.length - 1] !== "") out.push("")
-      out.push(c.bold(line))
+      // Margin kiri 1 kolom — jangan menempel ke tepi terminal.
+      out.push(` ${c.bold(line)}`)
       continue
     }
 
@@ -144,7 +145,8 @@ export function decorateMarkdown(text: string): string {
       continue
     }
 
-    out.push(renderInline(line))
+    // Margin kiri 1 kolom untuk paragraf (tidak menempel ke tepi terminal).
+    out.push(` ${renderInline(line)}`)
   }
   return out.join("\n")
 }

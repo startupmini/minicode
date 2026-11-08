@@ -512,6 +512,12 @@ export async function createMinicodeSession(
   const calibratedEstimator = (text: string) =>
     calibrationFor(currentContextModel()).estimator(text)
   let lastRequestLocalEstimate: { model: string; tokens: number } | undefined
+  // Input asli terakhir yang dilaporkan provider (`usage.prompt_tokens`). Dipakai
+  // sebagai ANCHOR (lantai) estimasi admission: estimator chars/4 under-count
+  // kode/JSON hingga beberapa kali lipat, sehingga tanpa anchor request berikutnya
+  // bisa melampaui jendela tanpa disadari. Nilai yang progresif-kumulatif dari
+  // gateway tetap aman karena kita hanya mengambil nilai TERBESAR per turn.
+  let lastProviderInputTokens: number | undefined
   const contextWindowForModel = (model?: string): number => {
     const explicit = rest.contextWindowTokens
     if (
@@ -554,6 +560,12 @@ export async function createMinicodeSession(
         estimateMessages(req.messages, estimator) +
         estimateSystem(system, estimator) +
         estimateTools(tools, estimator)
+      // Anchor ukuran nyata: jangan biarkan estimasi (chars/4, bisa under-count
+      // 2–5× pada kode/JSON) jatuh di bawah input asli terakhir provider. Input
+      // hanya tumbuh antar-turn, jadi lantai ini aman dan monotonik.
+      if (lastProviderInputTokens !== undefined && lastProviderInputTokens > inputTokens) {
+        inputTokens = lastProviderInputTokens
+      }
       lastRequestLocalEstimate = {
         model: contextModelKey(estimatorModel),
         tokens: localInputTokens,
@@ -660,6 +672,22 @@ export async function createMinicodeSession(
           outputTokens += added
           yield event as ProviderEvent
         }
+      } catch (error) {
+        // Generic 400 "invalid_request" dari gateway (tiprouter dll) yang BISA
+        // sebenarnya konteks kepanjangan meski teksnya tak menyebut "context".
+        // Reklasifikasi sebagai context_length_exceeded supaya kernel menempuh
+        // compact-and-retry (bounded + no-op-safe) alih-alih mati fatal. Ambang
+        // `localInputTokens >= 50_000` = proxy monotonik ukuran konteks berbasis
+        // chars/4 (toleran terhadap under-count estimator); sesi kecil dengan
+        // 400 format-argumen yang sah tidak akan salah diklasifikasi.
+        if (
+          error instanceof ProviderError &&
+          (error.category === "invalid_request" || error.category === "unknown") &&
+          localInputTokens >= 50_000
+        ) {
+          throw overflow(inputTokens, outputTokens)
+        }
+        throw error
       } finally {
         signal.removeEventListener("abort", forwardAbort)
         if (!requestController.signal.aborted) {
@@ -718,6 +746,14 @@ export async function createMinicodeSession(
       estimateTools(liveToolSchemas(), minicodeEstimator) +
       estimateMessages(core.state.history, minicodeEstimator)
     const localEstimatedTokens = lastRequestLocalEstimate?.tokens ?? fallbackLocal
+    // Anchor input nyata (nilai terbesar per turn, toleran pada laporan
+    // progresif-kumulatif gateway) untuk lantai admission request berikutnya.
+    if (typeof d.inputTokens === "number" && d.inputTokens > 0) {
+      lastProviderInputTokens =
+        lastProviderInputTokens === undefined
+          ? d.inputTokens
+          : Math.max(lastProviderInputTokens, d.inputTokens)
+    }
     calibrationFor(reportedModel).observeProviderUsage({
       localEstimatedTokens,
       providerInputTokens: d.inputTokens,

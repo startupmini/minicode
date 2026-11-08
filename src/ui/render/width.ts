@@ -369,3 +369,90 @@ export function chunkByWidth(s: string, width: number): string[] {
   if (cur !== "") pushChunk()
   return out.length ? out : [""]
 }
+
+/**
+ * Pecah string ke potongan <= `width` kolom, TAPI word-aware: lebih suka
+ * memutus di batas kata (spasi) daripada membelah kata di tengah. Token tanpa
+ * spasi yang lebih panjang dari `width` (URL, hash, CJK panjang) jatuh-balik
+ * ke pemotongan per-kolom. ANSI-safe (SGR terbuka dibawa ke potongan berikut,
+ * non-SGR dibuang) — identik dengan `chunkByWidth`.
+ *
+ * Spasi yang tepat TIDAK muat menjadi titik putus; spasi itu (dan spasi-trailing
+ * yang tak terlihat) dibuang, bukan dipindah ke baris berikutnya.
+ */
+export function wrapByWidth(s: string, width: number): string[] {
+  if (width <= 0) return [""]
+  const out: string[] = []
+  let line = ""
+  let lineWidth = 0
+  let openSgr: string[] = []
+  let word = ""
+  let wordWidth = 0
+
+  const trackSgr = (seq: string): void => {
+    if (!seq.endsWith("m")) return
+    const params = seq.slice(2, -1).split(/[:;]/)
+    if (params.some((p) => SGR_OFF.has(p) || p === "")) openSgr = []
+    if (params.some((p) => p !== "" && !SGR_OFF.has(p))) {
+      openSgr.push(seq)
+      if (openSgr.length > 8) openSgr = openSgr.slice(-8)
+    }
+  }
+
+  const flush = (): void => {
+    if (line !== "") out.push(openSgr.length > 0 ? `${line}\x1b[0m` : line)
+    line = openSgr.join("")
+    lineWidth = 0
+  }
+
+  const placeWord = (): void => {
+    if (wordWidth === 0) {
+      word = ""
+      return
+    }
+    if (lineWidth + wordWidth <= width) {
+      line += word
+      lineWidth += wordWidth
+    } else if (wordWidth <= width) {
+      // Kata utuh pindah ke baris berikutnya (bukan dibelah di tengah).
+      flush()
+      line += word
+      lineWidth += wordWidth
+    } else {
+      // Token tanpa spasi > width: potong per kolom (chunkByWidth, sgr-safe).
+      if (lineWidth > 0) flush()
+      const pieces = chunkByWidth(word, width)
+      for (let i = 0; i < pieces.length - 1; i++) {
+        const piece = pieces[i]!
+        out.push(openSgr.length > 0 && !piece.endsWith("\x1b[0m") ? `${piece}\x1b[0m` : piece)
+      }
+      line = pieces[pieces.length - 1] ?? ""
+      lineWidth = displayWidth(line)
+    }
+    word = ""
+    wordWidth = 0
+  }
+
+  for (const token of displayTokens(s)) {
+    if (token.escape) {
+      const seq = token.text
+      if (!isSgrSeq(seq)) continue
+      word += seq
+      trackSgr(seq)
+      continue
+    }
+    if (token.text === " ") {
+      placeWord()
+      if (lineWidth + 1 <= width) {
+        line += " "
+        lineWidth += 1
+      }
+      continue
+    }
+    word += token.text
+    wordWidth += token.width
+  }
+  placeWord()
+  if (line !== "" || out.length === 0) flush()
+  return out.length ? out : [""]
+}

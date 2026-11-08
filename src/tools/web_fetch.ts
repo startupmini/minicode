@@ -77,7 +77,7 @@ export const webFetchTool: Tool = {
     type: "object",
     properties: {
       url: { type: "string", description: "https:// URL to fetch" },
-      maxChars: { type: "number", description: "max chars to return (default 20000, max 50000)" },
+      maxChars: { type: "number", description: "max chars to return (default 8000, max 50000)" },
     },
     required: ["url"],
     additionalProperties: false,
@@ -92,7 +92,11 @@ export const webFetchTool: Tool = {
       throw new Error(`invalid url: ${u}`)
     }
 
-    const limit = Math.min(Math.max(Number(maxChars) || 20000, 1000), 50000)
+    // Default 8000 (bukan 20000): hasil web rakus konteks — satu fetch `README`
+    // /halaman GitHub bisa 17 KB yang menggelembungkan jendela konteks hingga
+    // melampaui batas model. 8000 tetap cukup utk membaca section, jauh lebih
+    // hemat agar beberapa fetch beruntun tidak menumpuk jadi ~1M token.
+    const limit = Math.min(Math.max(Number(maxChars) || 8000, 1000), 50000)
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(new Error("fetch timeout 10s")), 10_000)
     // Link parent signal — selalu pasang listener dulu, cek aborted setelahnya

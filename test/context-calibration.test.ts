@@ -6,7 +6,7 @@
 // membuang drift lintas-turn yang sah maupun mematikan cap 64.
 
 import { describe, expect, test } from "bun:test"
-import { createCalibratedEstimator } from "../src/policy/context.ts"
+import { createCalibratedEstimator, minicodeEstimator } from "../src/policy/context.ts"
 
 describe("P1.4 calibration gate", () => {
   test("sampel in-flight (local beku, actual > 3x) tidak menginflasi factor", () => {
@@ -39,5 +39,21 @@ describe("P1.4 calibration gate", () => {
     const cal = createCalibratedEstimator()
     const snap = cal.recordTokenCalibrationSample(1000, 100)
     expect(snap.factor).toBe(1)
+  })
+})
+
+describe("estimator sadar-densitas (kode/JSON)", () => {
+  test("prosa tetap chars/4 (tak tersentuh)", () => {
+    expect(minicodeEstimator("abcd")).toBe(1)
+    expect(minicodeEstimator("hello world")).toBe(3)
+  })
+
+  test("JSON/kode kental-simbol dihitung lebih banyak token (anti under-count)", () => {
+    const json = '{"name":"value","count":3}'
+    expect(minicodeEstimator(json)).toBeGreaterThan(Math.ceil(json.length / 4))
+  })
+
+  test("CJK tetap ~1 token per code point", () => {
+    expect(minicodeEstimator("中文中文")).toBeGreaterThanOrEqual(4)
   })
 })

@@ -53,15 +53,21 @@ describe("activity fold (minimizeActivity)", () => {
     expect(process.env.MINICODE_MINIMIZE_ACTIVITY).toBeUndefined()
   })
 
-  test("on: baris ledger per-tool ditahan, di-flush ke /expand saat turn selesai", () => {
+  test("on: baris ledger per-tool ditahan, dirangkum 1 baris + detail /expand", () => {
     const { transcript, uiState, emit } = build(true)
     emit({ type: "tool.completed", seq: 1, turnId: 1, toolCallId: "c1", status: "completed" })
     emit({ type: "tool.completed", seq: 2, turnId: 1, toolCallId: "c2", status: "completed" })
-    // Selama turn: tidak ada baris ledger individual di viewport.
+    // Selama turn: tidak ada baris ledger individual di viewport (belum selesai).
     expect(transcript.view(40, 10, 0).join("\n")).not.toContain("read_file")
     expect(transcript.view(40, 10, 0).join("\n")).not.toContain("bash")
 
     emit({ type: "turn.completed", seq: 3, turnId: 1 })
+    // Setelah turn selesai: SATU baris ringkas muncul berisi nama tool (bukan
+    // hilang diam-diam); detail penuh tetap tersedia di /expand.
+    const view = transcript.view(40, 10, 0).join("\n")
+    expect(view).toContain("2 tools")
+    expect(view).toContain("read_file")
+    expect(view).toContain("bash")
     const folded = uiState.collapsedSectionsSnapshot().find((s) => s.label === "activity")
     expect(folded).toBeTruthy()
     expect(folded!.text).toContain("read_file")

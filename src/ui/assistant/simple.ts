@@ -279,9 +279,15 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     return sanitizeAnsiLine(tagged)
   }
 
+  const indentThinking = (text: string): string =>
+    text
+      .split("\n")
+      .map((line) => (line ? `  ${line}` : line))
+      .join("\n")
+
   const flushReasoningTail = () => {
     if (reasoningLine) {
-      wErr(c.thinking(`${reasoningLine}\n`))
+      wErr(c.thinking(`  ${reasoningLine}\n`))
       reasoningLine = ""
     }
   }
@@ -695,7 +701,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
             thinkState = "exp"
             wErr(c.muted(t("one.thinkOpen")))
             if (thinkingBuf) {
-              wErr(c.thinking(thinkingBuf))
+              wErr(c.thinking(indentThinking(thinkingBuf)))
               thinkingBuf = ""
             }
           }
@@ -707,7 +713,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
             // Sadar-stream (F1) + kebijakan pipa (F2) seperti teks model.
             reasoningLine += cleanUntrusted(reasoningSan.push(text), !!process.stdout.isTTY)
             const parts = reasoningLine.split("\n")
-            for (let i = 0; i < parts.length - 1; i++) wErr(c.thinking(`${parts[i]}\n`))
+            for (let i = 0; i < parts.length - 1; i++) wErr(c.thinking(`  ${parts[i]}\n`))
             reasoningLine = parts[parts.length - 1] ?? ""
           }
         } else {

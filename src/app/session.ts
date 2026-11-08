@@ -40,6 +40,7 @@ import {
   type PermissionAsk,
   type PermissionMode,
 } from "../policy/permission.ts"
+import { getCachedTokenizer, loadTokenizer } from "../policy/tokenizer-registry.ts"
 import { contractForTool } from "../policy/tool-contract.ts"
 import { maxTurnsExceededError } from "../policy/usage.ts"
 import { createWorkModePermissionHandler, type WorkMode } from "../policy/work-mode.ts"
@@ -509,8 +510,18 @@ export async function createMinicodeSession(
       return selected
     }
   }
-  const calibratedEstimator = (text: string) =>
-    calibrationFor(currentContextModel()).estimator(text)
+  // Estimator presisi: pakai tokenizer EXACT (bila vocab tersedia/cache) lalu
+  // jatuh ke estimasi density + kalibrasi usage. Menutup under-count chars/4
+  // pada model open (deepseek/qwen/mistral/gemma/phi) tanpa tokenizer ter-bundle.
+  const preciseEstimator = (model: string | undefined, text: string): number => {
+    const tok = model ? getCachedTokenizer(model) : null
+    if (tok) return Math.ceil(tok.countTokens(text))
+    return calibrationFor(model).estimator(text)
+  }
+  const calibratedEstimator = (text: string) => preciseEstimator(currentContextModel(), text)
+  // Warm tokenizer model saat ini di belakang layar (fire-and-forget): unduh vocab
+  // dari HuggingFace bila tersedia, cache lokal; request berikutnya otomatis presisi.
+  void loadTokenizer(currentContextModel() ?? "").catch(() => {})
   let lastRequestLocalEstimate: { model: string; tokens: number } | undefined
   // Input asli terakhir yang dilaporkan provider (`usage.prompt_tokens`). Dipakai
   // sebagai ANCHOR (lantai) estimasi admission: estimator chars/4 under-count
@@ -549,7 +560,7 @@ export async function createMinicodeSession(
       let limit = contextWindowForModel(model)
       const estimatorModel = model?.includes("::") ? model : (currentContextModel() ?? model)
       let calibration = calibrationFor(estimatorModel)
-      let estimator = calibration.estimator
+      let estimator = (text: string) => preciseEstimator(estimatorModel, text)
       let admittedFactor = calibration.snapshot().factor
       const tools = req.tools ?? []
       const localInputTokens =
@@ -628,7 +639,7 @@ export async function createMinicodeSession(
               const effectiveLimit = contextWindowForModel(effectiveModel)
               limit = Math.min(limit, effectiveLimit)
               calibration = calibrationFor(effectiveModel)
-              estimator = calibration.estimator
+              estimator = (text: string) => preciseEstimator(effectiveModel, text)
               admittedFactor = calibration.snapshot().factor
               inputTokens = Math.max(
                 inputTokens,

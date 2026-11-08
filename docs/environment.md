@@ -21,6 +21,7 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | `MINICODE_HOOKS` | `1` → jalankan hook `pre/post-run` dari `~/.minicode/hooks/*.js` & `.minicode/hooks/*.js` (konteks di env `MINICODE_HOOK_CTX`; env hook disanitasi tanpa secret; dilewati bila sesi dibatalkan) |
 | `MINICODE_SESSION_TTL_DAYS` | TTL sesi (default 30; `0` = selamanya) |
 | `MINICODE_HOME` | Override home untuk DB lokal/global (sessions + vector); default `~` |
+| `MINICODE_TOKENIZERS` | `0`/`off` → nonaktifkan unduh tokenizer presisi on-demand dari HuggingFace (fallback estimator densitas). Default: aktif untuk model open (deepseek/qwen/mistral/gemma/phi); vocab di-cache di `~/.minicode/tokenizers/`, tak diunduh ulang |
 | `MINICODE_TELEMETRY` | `0`/`false`/`off` → matikan penulisan traces.jsonl |
 | `MINICODE_VERIFY_CMD` | Custom verify command (ganti `detectVerifyCommand`) |
 | `MINICODE_ACE_ENABLED` | `0`/`false`/`off`/`no` → nonaktifkan ACE-Lite consequence engine (rollback instan ke baseline murni, tanpa self-heal loop). Default `true`. Hard-safety/tamper-guard & permission policy TETAP aktif — sakelar ini hanya mematikan evaluasi consequence, bukan batas keamanan |

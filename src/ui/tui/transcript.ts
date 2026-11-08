@@ -21,7 +21,7 @@ import { type MarkdownTable, parseMarkdownBlocks } from "../render/markdown-tabl
 import { sanitizeAnsi, sanitizeAnsiLine, stripSgr } from "../render/sanitize.ts"
 import { renderMarkdownTable } from "../render/table-grid.ts"
 import { c, glyphs } from "../render/theme.ts"
-import { chunkByWidth, displayWidth, truncateToWidth } from "../render/width.ts"
+import { displayWidth, truncateToWidth, wrapByWidth } from "../render/width.ts"
 import { defaultUiState, type UiSessionState } from "../session-state.ts"
 
 /** Cap memori: baris logis tertua dibuang diam-diam (kontrak I12). */
@@ -460,8 +460,8 @@ export class Transcript {
         sourceBase += source.length + 1
         continue
       }
-      const renderedRows = rendered === "" ? [""] : chunkByWidth(rendered, w)
-      const sourceRows = sourcePrefix || source ? chunkByWidth(`${sourcePrefix}${source}`, w) : [""]
+      const renderedRows = rendered === "" ? [""] : wrapByWidth(rendered, w)
+      const sourceRows = sourcePrefix || source ? wrapByWidth(`${sourcePrefix}${source}`, w) : [""]
       let offset = sourceBase
       const count = Math.max(renderedRows.length, sourceRows.length)
       for (let rowIndex = 0; rowIndex < count; rowIndex++) {
@@ -622,10 +622,10 @@ export class Transcript {
     }
     if (this.thinkingTail) {
       for (const chunk of this.thinkingTail.split("\n")) {
-        const chunkRows = chunk === "" ? [""] : chunkByWidth(chunk, w)
+        const chunkRows = chunk === "" ? [""] : wrapByWidth(chunk, w)
         for (const row of chunkRows) {
           rows.push({
-            text: c.muted(row),
+            text: c.thinking(row),
             sourceId: -1,
             sourceStart: 0,
             sourceEnd: 0,

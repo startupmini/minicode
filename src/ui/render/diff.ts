@@ -1,7 +1,7 @@
 // Diff renderer - Ubuntu Server style: indentasi + warna, tanpa border.
 import { sanitizeAnsi, sanitizeAnsiLine } from "./sanitize.ts"
 import { c } from "./theme.ts"
-import { truncateToWidth } from "./width.ts"
+import { truncateToWidth, wrapByWidth } from "./width.ts"
 
 export interface DiffLine {
   type: "add" | "delete" | "context"
@@ -147,9 +147,18 @@ export function renderDiffCard(
   const max = opts.maxLines ?? 12
   // Baris diff bisa sepanjang baris kode aslinya. Tanpa batas, satu baris 300
   // karakter membungkus sendiri di terminal dan merusak frame TUI yang
-  // menghitung tinggi per baris. Default mengikuti lebar terminal.
+  // menghitung tinggi per baris. Default mengikuti lebar terminal. Baris isi
+  // di-WRAP (bukan truncate) agar perubahan tidak hilang — hanya path header
+  // yang dipotong dengan ellipsis (label pendek, semantik satu baris).
   const width = opts.width ?? (process.stdout.columns || 80)
   const cut = (s: string) => truncateToWidth(s, Math.max(8, width - 1))
+  const wrapDiffLine = (prefix: string, body: string, paint: (s: string) => string): string[] => {
+    const bodyWidth = Math.max(6, width - prefix.length)
+    const parts = wrapByWidth(body, bodyWidth)
+    return parts.map((p, i) =>
+      i === 0 ? paint(`${prefix}${p}`) : paint(`${" ".repeat(prefix.length)}${p}`),
+    )
+  }
 
   const lines: string[] = [c.accent(c.bold(cut(`  ${safePath}`)))]
   // collect indices of changes plus 1 context line before/after
@@ -174,12 +183,12 @@ export function renderDiffCard(
     if (d.type === "add") {
       const mask = wordMask.get(i)
       const body = mask ? paintWords(d.content, mask, (s) => c.bold(s)) : d.content
-      lines.push(c.success(cut(`  + ${body}`)))
+      lines.push(...wrapDiffLine("  + ", body, (s) => c.success(s)))
     } else if (d.type === "delete") {
       const mask = wordMask.get(i)
       const body = mask ? paintWords(d.content, mask, (s) => c.bold(s)) : d.content
-      lines.push(c.error(cut(`  - ${body}`)))
-    } else lines.push(c.dim(cut(`    ${d.content}`)))
+      lines.push(...wrapDiffLine("  - ", body, (s) => c.error(s)))
+    } else lines.push(...wrapDiffLine("    ", d.content, (s) => c.dim(s)))
     count++
   }
   return lines.join("\n")

@@ -91,8 +91,10 @@ export const cappedRecovery = {
 }
 
 export type PermissionControl = {
-  setMode(m: "auto" | "readonly" | "plan" | "allow-all" | "ask" | "allowlist"): void
-  getMode(): "auto" | "readonly" | "plan" | "allow-all" | "ask" | "allowlist"
+  setMode(
+    m: "auto" | "readonly" | "plan" | "allow-all" | "ask" | "allowlist" | "unrestricted",
+  ): void
+  getMode(): "auto" | "readonly" | "plan" | "allow-all" | "ask" | "allowlist" | "unrestricted"
   /** Bila true, bash dibatasi ke allow-list (lapis kapabilitas, terpisah mode). */
   getRestrictBash?(): boolean
 }
@@ -149,7 +151,14 @@ export async function createMinicodeSession(
     cwd?: string
     /** Live model identity used for per-model token calibration. */
     getContextModel?: () => string | undefined
-    permissionMode?: "auto" | "readonly" | "plan" | "allow-all" | "ask" | "allowlist"
+    permissionMode?:
+      | "auto"
+      | "readonly"
+      | "plan"
+      | "allow-all"
+      | "ask"
+      | "allowlist"
+      | "unrestricted"
     /**
      * [mode-architecture] Lapis kapabilitas bash TERPISAH dari permission mode.
      * Bila true, `auto` membatasi bash ke allow-list (fallback "no-sandbox").

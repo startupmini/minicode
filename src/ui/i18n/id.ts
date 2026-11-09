@@ -231,6 +231,9 @@ export const id: Record<MsgKey, string> = {
   "tui.workModeLine": "mode kerja: {m}",
   "tui.workModeUsage": "pemakaian: /work-mode <DISCUSS|PLAN|BUILD> — aktif: {m}",
   "tui.workModeUnavailable": "work mode tidak tersedia di sesi ini",
+  "tui.unrestrictedOn":
+    "🔓 unrestricted aktif — akses penuh, tanpa jail/bash-guard/sandbox (hanya sesi ini)",
+  "tui.unrestrictedOff": "🔓 unrestricted nonaktif — mode izin kembali ke {m}",
   "tui.langLine": "lang: {v}",
   "tui.toolCall": "pemanggilan tool: {v}",
   "tui.modelSet": "model: {v}",

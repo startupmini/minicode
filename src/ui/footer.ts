@@ -91,17 +91,22 @@ export function paintWorkMode(workMode?: string, style: ModeLabelStyle = "full")
   )}`
 }
 
-/** Permission Mode selalu cyan agar terpisah secara visual dari Work Mode. */
+/** Permission Mode selalu cyan agar terpisah secara visual dari Work Mode.
+ * `unrestricted` (full akses, /unrestric) menjadi warna peringatan. */
 export function paintPermissionMode(mode: string, style: ModeLabelStyle = "full"): string {
   const value = titleCaseMode(mode, "Auto")
-  if (style === "value") return c.info(value)
+  const isFull = mode === "unrestricted"
+  if (style === "value") return isFull ? c.warning(value) : c.info(value)
   const prefix = style === "full" ? "Permission Mode: " : "Permission: "
-  return `${c.gray(prefix)}${c.info(value)}`
+  return `${c.gray(prefix)}${isFull ? c.warning(value) : c.info(value)}`
 }
 
 /** Badge pembatas bash allow-list: gembok selalu tampil — terang saat aktif,
- * redup saat nonaktif (lapis kapabilitas, terpisah dari mode persetujuan). */
-export function paintBashStrict(strictBash?: boolean): string {
+ * redup saat nonaktif (lapis kapabilitas, terpisah dari mode persetujuan).
+ * Saat `unrestricted` aktif, gembok jadi TERBUKA & gelap (🔓) — sinyal nyata
+ * bahwa seluruh kunci dilepas. */
+export function paintBashStrict(strictBash?: boolean, unrestricted = false): string {
+  if (unrestricted) return c.faint("🔓")
   const lock = "🔒"
   return strictBash ? c.yellow(lock) : c.faint(lock)
 }
@@ -182,7 +187,11 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
     return `${lead}${paintWorkMode(s.workMode, style)}`
   }
   const rightFor = (style: ModeLabelStyle): string =>
-    [...contextParts, paintPermissionMode(s.mode, style), paintBashStrict(s.strictBash)]
+    [
+      ...contextParts,
+      paintPermissionMode(s.mode, style),
+      paintBashStrict(s.strictBash, s.mode === "unrestricted"),
+    ]
       .filter(Boolean)
       .join(fieldGap)
   const align = (left: string, right: string): string | undefined => {
@@ -235,7 +244,7 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
   // timer/model/CWD/label sebelum konteks; potong konteks lebih dahulu.
   const workValue = paintWorkMode(s.workMode, "value")
   const permissionValue = paintPermissionMode(s.mode, "value")
-  const strictValue = paintBashStrict(s.strictBash)
+  const strictValue = paintBashStrict(s.strictBash, s.mode === "unrestricted")
   const shortWorkValue = workValue.trimEnd()
   const modeOnly = `${spark} ${shortWorkValue} ${[permissionValue, strictValue].filter(Boolean).join(" ")}`
   if (ctx || metrics) {

@@ -17,7 +17,7 @@ Permission → Jail → Bash Guard → Argument Validation → Executor → Jour
 | Tahap | Fungsi |
 |---|---|
 | **Permission** | Mode izin (`src/policy/permission.ts`) memutuskan allow/deny/ask per pasangan tool+args. Berlaku SEBELUM efek apa pun. |
-| **Jail** | Path di luar workspace, symlink keluar, file sensitif (`.env`, `.git/config`), dan state milik minicode (`.minicode/*.db`, todos, jurnal, config) ditolak — **bahkan di `--allow-all`**. |
+| **Jail** | Path di luar workspace, symlink keluar, file sensitif (`.env`, `.git/config`), dan state milik minicode (`.minicode/*.db`, todos, jurnal, config) ditolak — **bahkan di `--allow-all`** (kecuali mode `unrestricted`, lihat §Mode dan akses di bawah). |
 | **Bash Guard** | Perintah shell dinormalisasi dulu (buang quote/wrapper/variabel sederhana), baru diperiksa polanya. Menolak env-dump, exfiltrasi upload, interpreter inline, destruksi luas. |
 | **Argument Validation** | Skema argumen divalidasi kernel sebelum eksekusi; argumen invalid ditolak tanpa efek. |
 | **Executor** | Menjalankan yang lolos: read paralel, write dibatasi konkurensinya, abort-aware, output dipotong dengan penanda (tak pernah diam-diam). |
@@ -34,6 +34,8 @@ Pilihan yang terlihat oleh operator dipisah menjadi tiga sumbu:
 | **Tool Access Policy** | kebijakan capability dan profil akses warisan | Menentukan tools yang tersedia. `readonly`, `plan`, `allowlist`, dan `allow-all` tetap menjadi identitas internal/kompatibilitas untuk batas akses, bukan mode persetujuan tambahan. |
 
 **Profil `allow-all` tetap terbatas.** Path jail, penolakan state milik runtime, bash-guard, dan validasi argumen tetap berlaku; profil ini tidak memberi akses host tanpa batas. Detail implementasi dan opsi CLI ada di [Policy & Sandbox](policy-sandbox.md).
+
+**Pengecualian eksplisit: `unrestricted`.** Satu-satunya mode yang melepas seluruh lapisan di atas — tanpa path jail, tanpa bash-guard, tanpa sandbox/allowlist. Diaktifkan eksplisit oleh operator lewat perintah TUI tersembunyi `/unrestric` (bukan flag CLI, sengaja tak muncul di `/help` maupun daftar `/`), berlaku **per-sesi saja** dan tak pernah persist. Gerbang keamanannya adalah kepercayaan operator kepada model — blast radius penuh (file apa pun di host, shell apa pun). Default tetap `DISCUSS`+`AUTO` dengan hard-deny aktif.
 
 ## Trust Boundaries
 

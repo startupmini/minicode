@@ -6,7 +6,7 @@ Tiga sumbu terpisah menentukan apa yang bisa/tidak bisa dilakukan agent:
 2. **PermissionMode** (persetujuan) — *apakah* butuh izin manusia: `AUTO` (otonom) atau `ASK` (diawasi).
 3. **Tool Access Policy** — *apa* yang tersedia (read-only set, bash allowlist, delegasi, MCP, scope).
 
-Hard security (path jail, sensitive-file, owned-state, bash-guard) selalu berlaku, di atas ketiganya.
+Hard security (path jail, sensitive-file, owned-state, bash-guard) selalu berlaku, di atas ketiganya — **kecuali mode `unrestricted`** (lihat baris terakhir tabel).
 
 ## Kalau tujuan Anda X → gunakan Y
 
@@ -18,6 +18,7 @@ Hard security (path jail, sensitive-file, owned-state, bash-guard) selalu berlak
 | Menyusun rencana tanpa eksekusi | `--work-mode PLAN` | Baca + artefak rencana (`todo_write`) + delegasi read-only; tanpa mutasi file/git/commit |
 | Otomasi/CI tanpa manusia | One-shot/`exec` + default `DISCUSS` untuk baca; tambah `--work-mode BUILD` bila perlu mutasi | `AUTO` menolak `ask_user` deterministik (BLOCKED) di non-TTY; MCP tak-terkonfigurasi deny; tidak ada prompt yang bisa menggantung |
 | Otonom penuh di mesin sendiri | `--work-mode BUILD` + `AUTO` + `--sandbox docker` (atau OS) + `--budget` | Tanpa prompt, TETAPI jail path + bash-guard tetap aktif; sandbox memberi isolasi nyata |
+| Full akses tanpa pembatas (VM/VPN tepercaya) | `/unrestric` (perintah TUI tersembunyi, per-sesi) | Melepas jail + bash-guard + sandbox/allowlist; gerbang = kepercayaan operator; gembok footer jadi 🔓 gelap |
 
 ## Rule of thumb
 
@@ -26,6 +27,7 @@ Hard security (path jail, sensitive-file, owned-state, bash-guard) selalu berlak
 3. **`ASK` untuk wilayah asing** — repo orang, perintah yang belum Anda pahami. Jawab `always` hanya untuk pasangan tool+args spesifik yang sudah Anda nilai.
 4. **AUTO ≠ allow-all.** Kapabilitas yang tidak diotorisasi (mis. MCP tak-terkonfigurasi, `ask_user` di AUTO, code tanpa sandbox) di-*deny* dengan alasan, bukan di-prompt.
 5. **Legacy `--allow-all`/`--allowlist`** dipetakan ke profil akses; path jail + bash-guard tetap menolak.
+6. **`/unrestric` hanya untuk lingkungan yang benar-benar Anda percaya** — full akses berarti model bisa menyentuh file apa pun di host. Sering kali `BUILD`+`AUTO`+sandbox sudah cukup.
 
 ## Tradeoff yang jujur
 

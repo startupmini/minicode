@@ -59,8 +59,18 @@ export type ApprovalMode = "auto" | "ask"
  *   - `"plan"`       → ceiling WorkMode PLAN (perencanaan user-facing = PLAN).
  *   - `"allowlist"`  → kebijakan akses bash/tool (flag warisan --allowlist).
  *   - `"allow-all"`  → profil akses privileged (flag warisan --allow-all).
+ *   - `"unrestricted"` → full akses tanpa gerbang apa pun (tanpa jail, tanpa
+ *     bash-guard, tanpa sandbox/allowlist). Diaktifkan EKSPLISIT oleh operator
+ *     via perintah `/unrestric` (per-sesi, tak pernah persist). Bukan default —
+ *     satu-satunya gerbangnya adalah kepercayaan operator kepada model.
  */
-export type PermissionMode = ApprovalMode | "readonly" | "plan" | "allow-all" | "allowlist"
+export type PermissionMode =
+  | ApprovalMode
+  | "readonly"
+  | "plan"
+  | "allow-all"
+  | "allowlist"
+  | "unrestricted"
 
 /**
  * View persetujuan yang di-inject dari composition root (cli/setup.ts memakai
@@ -465,6 +475,10 @@ export function createPermissionHandler(
     ) => Promise<"allow" | "deny">
   > = {
     "allow-all": async () => "allow",
+    // "unrestricted" ditangani di awal check() (short-circuit sebelum jail),
+    // jadi entry ini tak pernah ter-capai saat runtime — ada demi kelengkapan
+    // Record<PermissionMode, …> (TS exhaustiveness).
+    unrestricted: async () => "allow",
     readonly: async (call) =>
       READONLY_TOOLS.has(call.name) ? "allow" : deny(call, "read-only mode"),
     // Plan = readonly + tiga perkecualian aman (PLAN_EXTRA_TOOL_NAMES):
@@ -593,6 +607,11 @@ export function createPermissionHandler(
       // gerbang. Kernel meneruskan signal turn di deps (executor kernel).
       const signal = (_deps as { signal?: AbortSignal } | null | undefined)?.signal
       if (signal?.aborted) return "deny"
+
+      // `unrestricted` = full akses: DILEWATI SEBELUM jail/owned-state/bash-guard.
+      // Operator mengaktifkannya eksplisit (/unrestric, per-sesi). Ini satu-satunya
+      // jalur yang menonaktifkan defense-in-depth — hard guard lain tak tersentuh.
+      if (state.mode === "unrestricted") return "allow"
 
       // universal file-path jail — harus sebelum allow-all (defense-in-depth)
       // realpath-based: symlink keluar workspace tetap tertangkap walau --allow-all

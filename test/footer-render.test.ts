@@ -196,6 +196,19 @@ describe("footer render", () => {
     expect(stripAnsi(plain!)).toContain("🔒")
   })
 
+  test("unrestricted: gembok terbuka gelap (🔓) + label peringatan", () => {
+    tty = installFakeTty({ columns: 80 })
+    // Gembok jadi 🔓 (terbuka) redup/gelap saat unrestricted aktif.
+    expect(stripAnsi(paintBashStrict(false, true))).toBe("🔓")
+    expect(stripAnsi(paintBashStrict(true, true))).toBe("🔓")
+    expect(paintBashStrict(true, true)).toContain(c.faint("🔓"))
+    // Label permission jadi warning (bukan cyan info).
+    expect(paintPermissionMode("unrestricted")).toContain(c.warning("Unrestricted"))
+    const [line] = renderFooter({ mode: "unrestricted", model: "m1", cwd: "cwd" }, 80)
+    expect(stripAnsi(line!)).toContain("Unrestricted")
+    expect(stripAnsi(line!)).toContain("🔓")
+  })
+
   test("terminal sempit: 1 baris visual, spark+mode kekal (cwd/model dibuang)", () => {
     tty = installFakeTty({ columns: 24 })
     const [status] = renderFooter(

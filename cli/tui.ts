@@ -165,6 +165,10 @@ export async function runTui(ctx: CliSession): Promise<void> {
       : { activities: [], turns: [] }
 
   let mode: string = permissions?.getMode() ?? permissionMode ?? "auto"
+  // Mode permission sebelum /unrestric diaktifkan — dipakai untuk memulihkan
+  // saat operator menonaktifkannya kembali (toggle, per-sesi).
+  let modeBeforeUnrestricted: string | null = null
+  let workModeBeforeUnrestricted: "DISCUSS" | "PLAN" | "EXECUTE" | null = null
   if (process.env.MINICODE_COMPACT === undefined) ui.setCompactMode(true)
   if (process.env.MINICODE_MINIMIZE_TOOL === undefined) ui.setSectionMinimized("tool", true)
   // Grouping aktivitas tool jadi satu baris (opencode-like): default ON di TUI;
@@ -509,6 +513,36 @@ export async function runTui(ctx: CliSession): Promise<void> {
       workModeControl.setWorkMode(next)
       return
     }
+    // /unrestric — full akses tanpa gerbang (jail + bash-guard + sandbox/allowlist).
+    // HIDDEN dari daftar "/" dan /help: operator yang tahu perintahnya yang bisa
+    // memanggil. Berlaku per-sesi, toggle. Gerbang keamanan = kepercayaan operator.
+    if (name === "unrestric" || name === "unrestrict") {
+      const norm = args.trim().toLowerCase()
+      const next = norm === "" ? mode !== "unrestricted" : norm === "on" || norm === "1"
+      if (next) {
+        if (mode !== "unrestricted") {
+          modeBeforeUnrestricted = mode
+          workModeBeforeUnrestricted = workModeControl?.getWorkMode() ?? "DISCUSS"
+        }
+        mode = "unrestricted"
+        permissions?.setMode("unrestricted")
+        // WorkMode EXECUTE (BUILD) agar ceiling DISCUSS/PLAN tak menahan tulis.
+        workModeControl?.setWorkMode("EXECUTE")
+        app.repaint()
+        transcript.pushInfo([c.warning(t("tui.unrestrictedOn"))])
+        return
+      }
+      mode = modeBeforeUnrestricted ?? "auto"
+      permissions?.setMode(mode as "auto" | "ask" | "unrestricted")
+      // Pulihkan juga WorkMode semula (DISCUSS/PLAN) agar ceiling read-only
+      // kembali berlaku — tanpa ini toggle-off meninggalkan BUILD (tulis bebas).
+      workModeControl?.setWorkMode(workModeBeforeUnrestricted ?? "DISCUSS")
+      modeBeforeUnrestricted = null
+      workModeBeforeUnrestricted = null
+      app.repaint()
+      transcript.pushInfo([c.muted(t("tui.unrestrictedOff", { m: mode }))])
+      return
+    }
     if (name === "lang") {
       const { currentLocale, setSessionLocale } = await import("../src/ui/i18n/locale.ts")
       if (!args) {
@@ -657,8 +691,9 @@ export async function runTui(ctx: CliSession): Promise<void> {
       const status = {
         footer: {
           // Normalisasi: sumbu persetujuan hanya AUTO/ASK. Profil warisan
-          // (allow-all/allowlist) tak lagi bocor sebagai label mode.
-          mode: mode === "ask" ? "ask" : "auto",
+          // (allow-all/allowlist) tak lagi bocor sebagai label mode. "unrestricted"
+          // adalah mode full-akses eksplisit (/unrestric) — tampil apa adanya.
+          mode: mode === "ask" ? "ask" : mode === "unrestricted" ? "unrestricted" : "auto",
           // Gembok (allow-list) terang HANYA saat allow-list benar-benar menahan
           // bash: restrictBash + mode AUTO. Di ASK bash diawasi prompt (bukan
           // allow-list), dan di allow-all bash bebas — keduanya gembok redup.

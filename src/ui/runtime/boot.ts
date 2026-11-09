@@ -11,7 +11,7 @@
 
 import { sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, glyphs } from "../render/theme.ts"
-import { BOOT_LOGO_ROWS, BOOT_LOGO_WIDTH } from "./boot-logo.ts"
+import { BOOT_LOGO_ROWS, BOOT_LOGO_WIDTH, paintLogoRow } from "./boot-logo.ts"
 import { createSpinner, type SpinnerOptions } from "./spinner.ts"
 import { acquireTransientPaint, paintWrite } from "./statusline.ts"
 
@@ -38,7 +38,7 @@ export function createBootScreen(initialMessage = "", opts: SpinnerOptions = {})
     return createSpinner(initialMessage, opts)
   }
 
-  const intervalMs = opts.intervalMs ?? 110
+  const intervalMs = opts.intervalMs ?? 50
   const delayMs = opts.delayMs ?? 0
   const leftPad = Math.max(1, Math.floor((cols - BOOT_LOGO_WIDTH) / 2))
   const pad = " ".repeat(leftPad)
@@ -52,8 +52,6 @@ export function createBootScreen(initialMessage = "", opts: SpinnerOptions = {})
   let painted = false
   let stopped = false
 
-  const logoLine = (row: string): string => `${pad}${c.gray(row)}`
-
   // Gambar ulang seluruh blok dari posisi tersimpan (idempoten). `\x1b[u`
   // mengembalikan kursor ke titik `\x1b[s` (atas logo) tiap tick, lalu semua
   // baris revealed + status line ditulis dari atas — reveal jadi "mengetik ke
@@ -61,7 +59,7 @@ export function createBootScreen(initialMessage = "", opts: SpinnerOptions = {})
   const paint = (): void => {
     let out = "\x1b[u"
     for (let i = 0; i < revealed; i++) {
-      out += `${logoLine(BOOT_LOGO_ROWS[i]!)}\x1b[K\n`
+      out += `${paintLogoRow(BOOT_LOGO_ROWS[i]!, leftPad)}\x1b[K\n`
     }
     const frame = c.info(glyphs.spinnerFrames[frameIdx % glyphs.spinnerFrames.length]!)
     frameIdx++

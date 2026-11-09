@@ -165,23 +165,6 @@ jobs:
         continue-on-error: true
         run: bun test
 
-  # Web SSG: build + checker (link, anchor, sitemap, SEO, anti-rahasia).
-  # Dulu hanya jalan di push main (web.yml) — PR yang merusak link baru
-  # ketahuan SETELAH merge. Tanpa deploy (itu tetap tugas web.yml).
-  web-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.3
-      - name: Install
-        run: bun install
-      - name: Build web
-        run: bun run web:build
-      - name: Check web
-        run: bun run web:check
-
   # Smoke Windows (temuan audit F2): jalur khusus Windows — pelepasan caret dan
   # %VAR% cmd.exe, junction/symlink owned-state, fsutil/mklink/hardlink, jail
   # path case-insensitive — TIDAK PERNAH dilihat job ubuntu, sehingga regresinya

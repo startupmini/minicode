@@ -49,8 +49,6 @@ jobs:
         run: bun run gate:pack
       - name: Harness evaluation
         run: bun run audit:harness
-      - name: Build web
-        run: bun run web:build && bun run web:check
       - name: Publish to npm
         run: npm publish --access public --provenance
         env:

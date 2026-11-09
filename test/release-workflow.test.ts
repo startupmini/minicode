@@ -17,5 +17,4 @@ test("publish workflow requires matching semver tag and runs release gates on ch
   expect(workflow).toContain("bun run gate:coverage")
   expect(workflow).toContain("bun run gate:pack")
   expect(workflow).toContain("bun run audit:harness")
-  expect(workflow).toContain("bun run web:build && bun run web:check")
 })

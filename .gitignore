@@ -39,6 +39,3 @@ bench/swebench_results.json
 
 # npm pack artifacts
 *.tgz
-
-# Web output (hasil `bun run web:build`, di-deploy via Actions)
-site/

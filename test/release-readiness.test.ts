@@ -90,7 +90,7 @@ describe("release: satu kontrak instalasi di semua permukaan", () => {
   // disetujui pemilik. Bin tetap `minicode`; nama scoped lama tidak boleh
   // tersisa di permukaan install mana pun.
   test("instalasi = `minicode-ai` + Bun-first; nama lama tak boleh tersisa", () => {
-    for (const f of ["README.md", "docs/getting-started.md", "scripts/web/landing1.ts"]) {
+    for (const f of ["README.md", "docs/getting-started.md"]) {
       const src = read(f)
       expect(src).toContain("npm install -g minicode-ai")
       expect(src).not.toContain("@miniroom/minicode")

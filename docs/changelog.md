@@ -1,3 +1,5 @@
 # Changelog
 
-Riwayat rilis dan status eksekusi kini digenerate otomatis dari `PLAN.md` (berkas repo, tidak ikut paket npm) saat build website - lihat [changelog di website](https://minicode.fun/docs/changelog.html).
+Riwayat rilis lengkap: [CHANGELOG.md](https://github.com/startupmini/minicode/blob/main/CHANGELOG.md) pada root repository. Rilis yang dipublikasikan (tag + artefak npm) terdaftar di [GitHub Releases](https://github.com/startupmini/minicode/releases).
+
+Halaman ini tidak menduplikasi isi `CHANGELOG.md` — satu sumber untuk riwayat perubahan, satu sumber untuk daftar rilis.

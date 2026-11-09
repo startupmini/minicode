@@ -1,53 +1,67 @@
 # Summary
 
-* [Minicode — Dokumentasi](README.md)
+* [MiniCode — Dokumentasi](README.md)
 
 ## Memulai
 
-* [Konsep & Desain](concepts.md)
 * [Instalasi](getting-started.md)
 * [Quickstart 5 menit](quickstart.md)
+* [Konsep & Desain](concepts.md)
+* [Memilih Mode](choosing-mode.md)
 * [Glosarium](glossary.md)
 
 ## Menggunakan
 
 * [CLI — Mode & Flags](cli.md)
-* [Memilih Mode](choosing-mode.md)
 * [TUI — Slash & Keyboard](repl.md)
 * [Otomasi & CI](exec.md)
-* [Config — File & Lokasi Data](config.md)
-* [Config & Provider](config-providers.md)
-* [Pricing & Budget](pricing-budget.md)
-* [Environment Variables](environment.md)
 * [Skills & Hooks](skills.md)
+* [Pricing & Budget](pricing-budget.md)
 
-## Referensi
+## Kemampuan (tools & integrasi)
 
 * [Tools](tools.md)
 * [Sub-Agents & Tasks](agents.md)
 * [MCP & LSP](mcp-lsp.md)
+
+## Konfigurasi
+
+* [Config — File & Lokasi Data](config.md)
+* [Config & Provider](config-providers.md)
+* [Environment Variables](environment.md)
+
+## State & Memori
+
 * [Memory & Sessions](memory-sessions.md)
 * [Verify & Benchmark](verify-benchmark.md)
 
 ## Keamanan
 
-* [Security Model](security-model.md)
-* [Policy & Sandbox](policy-sandbox.md)
-* [Keamanan](security.md)
+* [Security Model](security-model.md) — ancaman & trust boundary
+* [Policy & Sandbox](policy-sandbox.md) — mode, guard, sandbox
+* [Keamanan](security.md) — mekanisme & bukti pengukuran
+
+## Bantuan
+
 * [Troubleshooting](troubleshooting.md)
 
-## Kontribusi & Arsitektur
+## Eksperimental
 
-* [Arsitektur](architecture.md)
-* [Kontrak Terminal](terminal.md)
+* [Autonomous Scheduler](autonomous-scheduler.md)
+* [Open Work — Lintas Sesi](P14_OPEN_WORK.md)
+
+## Kontributor & Arsitektur
+
+* [Arsitektur & Peta Repository](architecture.md)
+* [Kontrak Terminal (ringkas)](terminal.md)
 * [Contributing](contributing.md)
 
-## Internal & Arsitektur (untuk kontributor)
+## Spesifikasi internal (FROZEN — untuk kontributor)
 
-* [Terminal Contract (FROZEN) — 35 invariant, v7.11](TERMINAL_CONTRACT.md)
-* [Output Event Model — taksonomi dan lifecycle](OUTPUT_EVENT_MODEL.md)
-* [Output Protocol Spec — stream dan machine contract](OUTPUT_PROTOCOL_SPEC.md)
-* [Output Rendering Spec — boundary renderer](OUTPUT_RENDERING_SPEC.md)
-* [Output UX Rules — grammar human-facing](OUTPUT_UX_RULES.md)
-* [Control Plane — kontrak context/budget/compaction](CONTROL-PLANE-MAP.md)
-* [UI Render Pipeline — jalur stream ke terminal](UI_RENDER_PIPELINE.md)
+* [Terminal Contract — 35 invariant, v7.11](TERMINAL_CONTRACT.md)
+* [Output Event Model](OUTPUT_EVENT_MODEL.md)
+* [Output Protocol Spec](OUTPUT_PROTOCOL_SPEC.md)
+* [Output Rendering Spec](OUTPUT_RENDERING_SPEC.md)
+* [Output UX Rules](OUTPUT_UX_RULES.md)
+* [Control Plane Map](CONTROL-PLANE-MAP.md)
+* [UI Render Pipeline](UI_RENDER_PIPELINE.md)

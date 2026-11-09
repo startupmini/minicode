@@ -2,7 +2,7 @@
 
 Tiga sumbu terpisah menentukan apa yang bisa/tidak bisa dilakukan agent:
 
-1. **WorkMode** (operating mode) — *bagaimana* agent bekerja: `DISCUSS` (investigasi read-only), `PLAN` (analisis/plánning), `BUILD` (implementasi).
+1. **WorkMode** (operating mode) — *bagaimana* agent bekerja: `DISCUSS` (investigasi read-only), `PLAN` (analisis/perencanaan), `BUILD` (implementasi).
 2. **PermissionMode** (persetujuan) — *apakah* butuh izin manusia: `AUTO` (otonom) atau `ASK` (diawasi).
 3. **Tool Access Policy** — *apa* yang tersedia (read-only set, bash allowlist, delegasi, MCP, scope).
 

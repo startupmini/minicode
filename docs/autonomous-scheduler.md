@@ -1,141 +1,142 @@
-# Autonomous scheduler (experimental)
+# Autonomous Scheduler (eksperimental)
 
-> **Experimental.** Opt-in per invocation, off by default, and manually triggered.
-> There is no background timer. Nothing runs unless you ask it to.
+> **Eksperimental.** Opt-in per invokasi, nonaktif secara bawaan, dan dipicu manual.
+> Tidak ada timer latar (no background timer). Tidak ada yang berjalan kecuali Anda memintanya.
 
-The scheduler evaluates your task graph and, if a task is ready, hands it to an
-autonomous MiniCode session that works on it without you.
+Scheduler mengevaluasi task graph Anda dan, bila ada task yang siap, menyerahkannya
+ke sesi MiniCode otonom yang mengerjakannya tanpa Anda.
 
-## 1. Enable
+## 1. Aktifkan
 
-Add the flag to any invocation:
+Tambahkan flag ke sembarang invokasi:
 
 ```bash
 minicode --enable-scheduler
 ```
 
-That is the only way to turn it on. There is no config key, no environment
-variable, and no way to inherit it from a parent process — a flag typed at the
-command line is the whole mechanism. `--enable-scheduler=false` does **not**
-enable it; the flag has no value form, and the bare flag is the only form that
-counts.
+Itu satu-satunya cara menyalakannya. Tidak ada kunci config, tidak ada variabel
+environment, dan tidak ada cara mewarisinya dari proses induk — flag yang diketik
+di baris perintah adalah satu-satunya mekanismenya. `--enable-scheduler=false`
+**tidak** mengaktifkannya; flag tidak punya bentuk nilai, dan bare flag adalah
+satu-satunya bentuk yang dihitung.
 
-On startup with the flag, the process acquires an exclusive lease on your session.
-If another process already holds that lease, startup fails loudly rather than
-starting a second scheduler over the same session.
+Saat startup dengan flag, proses mengakuisisi lease eksklusif pada sesi Anda.
+Bila proses lain sudah memegang lease itu, startup gagal dengan jelas alih-alih
+menjalankan scheduler kedua di atas sesi yang sama.
 
-## 2. Trigger
+## 2. Picu
 
-Scheduling is **manual**. Nothing runs on its own:
+Penjadwalan bersifat **manual**. Tidak ada yang berjalan sendiri:
 
 ```text
 /scheduler run
 ```
 
-This performs exactly one scheduling cycle:
+Ini menjalankan tepat satu siklus penjadwalan:
 
-- re-read the task graph,
-- select one ready task (if any),
-- claim it durably,
-- run one autonomous turn on it,
-- report the outcome.
+- baca ulang task graph,
+- pilih satu task yang siap (bila ada),
+- klaim secara durable,
+- jalankan satu turn otonom di atasnya,
+- laporkan hasilnya.
 
-If nothing is ready, the cycle ends with `no task was ready` and no work is
-created. If a task becomes ready *after* that, it stays pending until you run
-`/scheduler run` again. There is no polling, no timer, and no background
-recurrence — this is the current contract, not an oversight.
+Bila tidak ada yang siap, siklus berakhir dengan `no task was ready` dan tidak ada
+pekerjaan yang dibuat. Jika sebuah task menjadi siap *setelah* itu, ia tetap
+pending sampai Anda menjalankan `/scheduler run` lagi. Tidak ada polling, tidak
+ada timer, dan tidak ada perulangan latar — ini kontrak saat ini, bukan kelalaian.
 
-The command waits for the cycle to finish, then prints the result.
+Perintah menunggu siklus selesai, lalu mencetak hasilnya.
 
-## 3. Observe
+## 3. Amati
 
 ```text
 /scheduler status
 ```
 
-Reports the current state, the session it belongs to, whether the lease is held,
-counters for this process, and the last five lifecycle events.
+Melaporkan state saat ini, sesi yang dimilikinya, apakah lease dipegang, counter
+untuk proses ini, dan lima event lifecycle terakhir.
 
-You will see one of five states:
+Anda akan melihat satu dari lima state:
 
-| State | What it means |
+| State | Artinya |
 | --- | --- |
-| `scheduler OFF` | The flag was not passed. No scheduler exists. |
-| `scheduler ON, idle` | Enabled, holds the lease, waiting for `/scheduler run`. |
-| `scheduler ON, executing` | A cycle is in flight. |
-| `scheduler ON but STOPPED` | Stopped, shut down, or its lease was lost. Will not schedule again in this process. |
-| `scheduler ON, last cycle failed` | A cycle failed. The reason is on the next line. |
+| `scheduler OFF` | Flag tidak diberikan. Tidak ada scheduler. |
+| `scheduler ON, idle` | Aktif, memegang lease, menunggu `/scheduler run`. |
+| `scheduler ON, executing` | Sebuah siklus sedang berjalan. |
+| `scheduler ON but STOPPED` | Dihentikan, dimatikan, atau lease-nya hilang. Tidak akan menjadwalkan lagi di proses ini. |
+| `scheduler ON, last cycle failed` | Siklus gagal. Alasannya ada di baris berikutnya. |
 
-Lifecycle events also appear inline in the transcript as `[scheduler] ...` lines.
-They are system entries, not conversation — they are never sent to the model and
-never appear as tool output.
+Event lifecycle juga muncul inline di transkrip sebagai baris `[scheduler] ...`.
+Itu entri sistem, bukan percakapan — tidak pernah dikirim ke model dan tidak
+pernah muncul sebagai output tool.
 
-Activity is in-memory and resets when the process exits. Durable task state
-survives; diagnostics do not.
+Aktivitas bersifat in-memory dan reset saat proses keluar. State task yang
+durable bertahan; diagnostik tidak.
 
-## 4. Stop
+## 4. Hentikan
 
 ```text
 /scheduler stop
 ```
 
-This prevents any further triggers, prevents new claims, cancels an autonomous
-turn that is still running, and releases the session lease so another process can
-take it.
+Ini mencegah trigger berikutnya, mencegah klaim baru, membatalkan turn otonom
+yang masih berjalan, dan melepas lease sesi agar proses lain bisa mengambilnya.
 
-Stopping twice is fine — the second call says so and does nothing.
+Menghentikan dua kali tidak masalah — panggilan kedua menyatakannya dan tidak
+melakukan apa-apa.
 
-Once stopped, a scheduler cannot be restarted. **Exit and start a new process**
-with the flag to schedule again. There is no in-app toggle for the same reason
-`/scheduler stop` is one-way: stopping a live turn is a shutdown, not a setting.
+Sekali dihentikan, scheduler tidak bisa di-start ulang. **Keluar dan mulai proses
+baru** dengan flag untuk menjadwalkan lagi. Tidak ada toggle in-app karena alasan
+yang sama `/scheduler stop` satu arah: menghentikan turn yang berjalan adalah
+shutdown, bukan pengaturan.
 
-## 5. Recover
+## 5. Pulihkan
 
-If a process dies while holding the lease, the lease is not released. The
-replacement simply waits:
+Bila sebuah proses mati sambil memegang lease, lease tidak dilepas. Penggantinya
+cukup menunggu:
 
-- lease duration is 5 minutes
-- it is renewed every minute while the process is alive
+- durasi lease 5 menit
+- diperbarui tiap menit selama proses hidup
 
-So a crashed scheduler frees its session automatically within 5 minutes. To
-recover immediately, delete the session (`/sessions`), which invalidates it
-outright.
+Jadi scheduler yang crash membebaskan sesinya otomatis dalam 5 menit. Untuk
+memulihkan segera, hapus sesinya (`/sessions`), yang membatalkannya langsung.
 
-If the lease is lost while running (another process took over, or the session was
-deleted), the scheduler **self-disposes**. It will not claim or execute anything
-further, and the reason appears in `/scheduler status`. This is deliberate: a
-scheduler that cannot prove it owns the session does nothing rather than
-racing a process that can.
+Bila lease hilang saat berjalan (proses lain mengambil alih, atau sesi dihapus),
+scheduler **self-dispose**. Ia tidak akan mengklaim atau mengeksekusi apa pun
+lagi, dan alasannya muncul di `/scheduler status`. Ini disengaja: scheduler yang
+tidak bisa membuktikan kepemilikan sesi lebih baik tidak berbuat apa-apa daripada
+balapan dengan proses yang bisa.
 
-## 6. Disable
+## 6. Nonaktifkan
 
-There is nothing to turn off. Remove the flag and the next process has no
-scheduler at all — no lease, no store handle, no background resources. Stopping
-the current one is `/scheduler stop`, or just exit.
+Tidak ada yang perlu dimatikan. Hapus flag dan proses berikutnya tidak punya
+scheduler sama sekali — tanpa lease, tanpa store handle, tanpa resource latar.
+Menghentikan yang sedang berjalan: `/scheduler stop`, atau cukup keluar.
 
-## What the autonomous session may do
+## Yang boleh dilakukan sesi otonom
 
-Autonomous turns run under a **read-only** policy. The tool set is a fixed
-allow-list of read-only capabilities — file reads, search, git inspection, LSP
-queries. Write, edit, execute and anything network-fetching is denied, and
-nothing in the trigger path can widen it: the allow-list is enforced when the
-executor is constructed, so a configuration that tried to widen it fails at
-startup instead of running with more power.
+Turn otonom berjalan di bawah kebijakan **read-only**. Set tool adalah allow-list
+tetap berisi kapabilitas read-only — baca file, search, inspeksi git, query LSP.
+Tulis, edit, eksekusi, dan apa pun yang mengambil network ditolak, dan tidak ada
+yang bisa memperlebar di jalur trigger: allow-list ditegakkan saat executor
+dibangun, sehingga konfigurasi yang mencoba memperlebar gagal di startup alih-alih
+berjalan dengan lebih banyak kekuatan.
 
-Autonomous turns do not prompt for approval. There is no operator in the loop,
-which is why the policy is narrow rather than permissive.
+Turn otonom tidak meminta persetujuan. Tidak ada operator di loop, itulah sebabnya
+kebijakannya sempit, bukan permisif.
 
-## Limitations
+## Batasan
 
-- One cycle per `/scheduler run`; no recurring scheduling.
-- No approval step between claim and execution. The readonly policy is the
-  boundary.
-- Diagnostics are per-process and lost on exit.
-- Two processes cannot schedule the same session at once; the second fails
-  closed.
-- Experimental. The interface may change.
+- Satu siklus per `/scheduler run`; tanpa penjadwalan berulang.
+- Tanpa langkah persetujuan antara klaim dan eksekusi. Kebijakan readonly adalah
+  batasnya.
+- Diagnostik per-proses dan hilang saat keluar.
+- Dua proses tidak bisa menjadwalkan sesi yang sama sekaligus; yang kedua gagal
+  tertutup.
+- Eksperimental. Antarmukanya bisa berubah.
 
-## Related
+## Terkait
 
-- [cli.md](cli.md) — full flag reference
-- [architecture.md](architecture.md) — where the scheduler sits
+- [CLI](cli.md) — referensi lengkap flag.
+- [Arsitektur](architecture.md) — di mana scheduler berada.
+- [Open Work](P14_OPEN_WORK.md) — pekerjaan lintas sesi yang diteruskan scheduler.

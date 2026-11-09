@@ -16,8 +16,8 @@ Setiap prompt berjalan sebagai loop `Thought → Action → Observation` sampai 
 
 ## Shell-first: non-interaktif polos, interaktif fullscreen
 
-Minicode sengaja **tanpa framework TUI** (tanpa Ink/React, tanpa panel
-permanen) dan membagi dua jalur secara tegas:
+Minicode sengaja **tanpa library TUI pihak ketiga** (tanpa Ink/React; TUI-nya
+ditulis sendiri) dan membagi dua jalur secara tegas:
 
 - **Non-interaktif** (one-shot prompt, `exec`, pipe/redirect/CI, `TERM=dumb`):
   output mengalir **append-only ke scrollback** — hasil agen adalah artefak

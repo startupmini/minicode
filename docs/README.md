@@ -16,7 +16,7 @@ MiniCode adalah coding agent terminal yang dibangun di atas kernel MiniCore. Jal
 
 ## Peta dokumentasi
 
-`SUMMARY.md` adalah daftar navigasi yang dibaca generator situs. Untuk referensi terbit, buka [Dokumentasi](/docs/). [Arsitektur](architecture.md) memuat peta struktur dan alur runtime.
+`SUMMARY.md` adalah daftar navigasi; dibaca build minilabs untuk membangun indeks halaman. Versi terbit tersedia di [minilabs.id/projects/minicode/docs](https://minilabs.id/projects/minicode/docs/). [Arsitektur](architecture.md) memuat peta struktur dan alur runtime.
 
 ## Pengembangan
 

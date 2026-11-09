@@ -20,14 +20,14 @@ npm install -g bun
 curl -fsSL https://bun.sh/install | bash
 ```
 
-Cek: `bun --version` harus keluar `1.4.x`. Kalau masih `command not found`, tutup-buka terminal dulu (PATH baru ke-load setelah restart).
+Cek: `bun --version` harus keluar versi ≥ `1.1.13` (contoh `1.4.x`). Kalau masih `command not found`, tutup-buka terminal dulu (PATH baru ke-load setelah restart).
 
 **Langkah 2 — Pasang Minicode:**
 
 ```bash
 npm install -g minicode-ai
 # bin: minicode
-minicode --version  # harus 0.11.x
+minicode --version  # pastikan versi terbaru terpasang
 ```
 
 Kenapa butuh keduanya? `npm` = toko distribusi, `Bun` = mesin yang menjalankan. Tanpa Bun, `minicode` gagal dengan `'bun' is not recognized`.

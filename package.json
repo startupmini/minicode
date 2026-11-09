@@ -1,7 +1,7 @@
 {
   "name": "minicode-ai",
   "version": "0.15.0",
-  "description": "Coding agent CLI built on the frozen MiniCore runtime — tools, MCP, LSP, sandbox, shadow-git checkpoints",
+  "description": "Open-source terminal coding agent on a frozen zero-dependency MiniCore kernel — layered permissions, path jail, sandboxing, MCP/LSP, and durable shadow-git checkpoints",
   "type": "module",
   "private": false,
   "publishConfig": {
@@ -24,7 +24,7 @@
     "anthropic",
     "ollama"
   ],
-  "homepage": "https://minicode.fun",
+  "homepage": "https://minilabs.id/projects/minicode/",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/startupmini/minicode.git"
@@ -55,11 +55,13 @@
     "docs/OUTPUT_PROTOCOL_SPEC.md",
     "docs/OUTPUT_RENDERING_SPEC.md",
     "docs/OUTPUT_UX_RULES.md",
+    "docs/P14_OPEN_WORK.md",
     "docs/SUMMARY.md",
     "docs/TERMINAL_CONTRACT.md",
     "docs/UI_RENDER_PIPELINE.md",
     "docs/agents.md",
     "docs/architecture.md",
+    "docs/autonomous-scheduler.md",
     "docs/choosing-mode.md",
     "docs/cli.md",
     "docs/concepts.md",

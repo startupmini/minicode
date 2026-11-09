@@ -62,7 +62,7 @@ Peta lengkap 35 invariant + test proteksinya (mis. `tui-app`, `screen-buffer`,
 pada invariant itu — mis. tak boleh menulis cursor-control ke stdout non-TTY,
 tak boleh mengandalkan alternate screen di jalur non-interaktif.
 
-Kontrak versi **v7.4** (2026-10-20) juga mencantumkan **peta gap proteksi**:
+Kontrak versi **v7.11** (2026-11-09) juga mencantumkan **peta gap proteksi**:
 klaim yang implementasinya benar tetapi belum punya assertion penjaga. Baca
 saga itu sebelum menyatakan "sudah dijaga".
 

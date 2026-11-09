@@ -13,8 +13,9 @@ en. `/lang` tanpa argumen = tampilkan aktif. Semua string lewat kamus i18n
 
 | Command | Fungsi |
 |---|---|
-| `/help` | Daftar perintah + tombol penting |
-| `/help tombol` | Pintasan papan tombol lengkap |
+| `/help` | Daftar perintah ringkas, terkelompok per kategori (Session/Model/Mode/View/Task) |
+| `/help full` | Daftar lengkap terkelompok dengan deskripsi (alias `/help all`); `/help` kosong dari non-TTY juga menampilkan ini |
+| `/help keys` | Pintasan papan tombol lengkap (alias `/help tombol`) |
 | `/provider` | Kelola provider: popup — picker preset + form (URL/key/scope/timpa), hapus (`d`, menyebut jumlah model yang ikut hilang), ubah (`e`) |
 | `/model [cari]` | Popup semua `provider::model` (argumen = filter awal; di dalam ketik langsung cari live, Ctrl+U clear, Esc keluar filter). Del = hapus (konfirmasi). Enter = pilih + atur thinking effort (`default/low/medium/high`, tersimpan di provider, berlaku sesi berikutnya; Esc = batal total). Effort non-default tampil badge `[low|medium|high]` |
 | `/sync` | Segarkan daftar model semua provider (hanya bilang restart bila benar ada model baru) |
@@ -30,10 +31,12 @@ en. `/lang` tanpa argumen = tampilkan aktif. Semua string lewat kamus i18n
 | `/clear` | Kosongkan transkrip (viewport kembali kosong) |
 | `/expand` | Buka isi tool/thinking yang disembunyikan ledger compact (sekali ambil habis) |
 | `/history` | 20 entri prompt terakhir |
-| `/exit` | Keluar (satu-satunya jalan keluar; `/quit` alias) |
+| `/exit` | Keluar (satu-satunya jalan keluar; `/quit` alias). Setelah keluar, tercetak kop ringkasan sesi: wordmark `minicode` + Session/Model/Usage (token, biaya, durasi) |
 | `/scheduler [status\|run\|stop]` | Kendali Scheduler produksi. **Nonaktif secara bawaan** di setiap sesi (perlu flag `--enable-scheduler`); tanpa flag, perintahnya menjawab "not enabled". Tetap tampil di `/help` supaya operator yang mengaktifkan flag bisa menemukannya. |
 
 Alias (jalan, tidak diiklankan di `/help`): `/models` → `/model`, `/providers` → `/provider`, `/usage` & `/cost` → `/status`, `/resume [id]` → `/sessions [id]`, `/compact`, `/thinking`, `/minimize`, `/quit`.
+
+Perintah tersembunyi (sengaja tak tampil di `/help`/dropdown, per-sesi): `/unrestric` — full akses tanpa jail/bash-guard/sandbox, gerbang = kepercayaan operator (toggle; indikator gembok terbuka 🔓 di footer). Detail di [Security Model](security-model.md).
 
 Did-you-mean: typo `/sessoons` → `Did you mean /sessions?` (jarak ≤ 2).
 

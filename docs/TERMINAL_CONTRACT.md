@@ -202,8 +202,9 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
 - Layar tak mampu (non-TTY, `rows < 10`, `TERM=dumb`): view menolak BERSUARA
   + batal (fail-closed). TAK BOLEH diam.
 - `/status` & `/history` = readout ke transkrip (bukan popup); `/help` ringkas
-  (≤6 baris, penuh via `/help tombol`); `/expand` membuka buffer isi tool;
-  pilihan `/model` persist antar sesi + struk `model: x` di transkrip.
+  (terkelompok ≤8 baris, penuh via `/help full`, pintasan via `/help keys`);
+  `/expand` membuka buffer isi tool; pilihan `/model` persist antar sesi +
+  struk `model: x` di transkrip.
 
 ## Invariant (nomor dipakai di peta proteksi)
 
@@ -322,7 +323,7 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      dengan id membaca satu tool, tanpa id membaca seluruh entry store yang
      masih hidup; miss → durable sqlite → penanda retensi. Pilihan `/model`
      persist antar sesi + struk `model: x`; `/help` ringkas (penuh via
-     `/help tombol`).
+     `/help full`, pintasan via `/help keys`).
 25. Keybinding konsisten: Esc dua-tahap (isi tak hilang sekali tekan);
     backspace/delete edit-teks (hapus-data = confirm); navigasi daftar
     (`↑↓`, pgup/pgdn, home/end) di semua popup; hint footer akurat

@@ -466,17 +466,18 @@ const enterRepl = interactive || (!prompt && process.stdin.isTTY)
 // REPL interaktif: cek update FRESH tiap dibuka → install + restart bila ada
 // versi baru (tak pernah kembali bila restart). Tampilkan spinner 1.8 dtk
 // agar tidak terlihat hang — budget tetap, hanya UX.
-// Spinner transient HANYA lewat ownership tunggal (src/ui/runtime/spinner) —
-// tulis mentah ke stderr melewati arbitrase statusline.ts: pesan [warn] lain
-// dihapus oleh tick berikutnya, dan frame-nya bisa menghapus baris layar
-// interaktif yang sedang menunggu input (wizard setup pertama).
-const { createSpinner } = await import("../src/ui/runtime/spinner.ts")
+// Boot screen transient HANYA lewat ownership tunggal (src/ui/runtime/boot —
+// logo reveal typewriter) — tulis mentah ke stderr lewat arbitrase
+// statusline.ts: pesan [warn] lain di-commit sebagai baris permanen, dan frame
+// boot tak menghapus baris layar interaktif saat wizard setup pertama aktif
+// (statusline.beginInteractiveScreen menahan paintWrite).
+const { createBootScreen } = await import("../src/ui/runtime/boot.ts")
 if (enterRepl) {
   const ctrl = new AbortController()
   const to = setTimeout(() => ctrl.abort(), 1800)
   // Delay 120ms: cek update sering selesai <200ms — tanpa delay, spinner
   // berkedip lalu hilang. Pola frame 80ms sesuai kontrak startup.
-  const spin = createSpinner("Checking for updates…", { delayMs: 120, intervalMs: 80 })
+  const spin = createBootScreen("Checking for updates…", { delayMs: 120, intervalMs: 80 })
   try {
     const { maybeAutoUpdate } = await import("./auto-update.ts")
     // Dipanggil auto-update SEBELUM fase panjang (install npm + respawn anak):
@@ -517,14 +518,14 @@ try {
 // Session setup (provider/RAG/MCP/session) bisa makan detik (network + spawn)
 // TANPA output — user melihat kursor mati. Spinner transient TTY-only selama
 // setup, dibersihkan sebelum banner REPL agar tak ada jejak.
-// Spinner ini berjalan di atas createCliSession — termasuk saat wizard setup
+// Boot screen ini berjalan di atas createCliSession — termasuk saat wizard setup
 // pertama (picker gateway + prompt API key) memegang terminal. Lewat
-// createSpinner, tick-nya otomatis BERHENTI selama layar interaktif aktif
-// (statusline.beginInteractiveScreen di openAltScreen): dulu tulis mentah
-// `\r\x1b[2K` menghapus baris prompt wizard, sehingga user baru hanya melihat
-// "Menyiapkan sesi…" tanpa cara menyelesaikan setup (laporan: minicode dari
-// home selalu macet).
-const setupSpin = enterRepl ? createSpinner("Menyiapkan sesi…") : undefined
+// createBootScreen (yang memakai paintWrite), tick-nya otomatis BERHENTI selama
+// layar interaktif aktif (statusline.beginInteractiveScreen di openAltScreen):
+// dulu tulis mentah `\r\x1b[2K` menghapus baris prompt wizard, sehingga user baru
+// hanya melihat "Menyiapkan sesi…" tanpa cara menyelesaikan setup (laporan:
+// minicode dari home selalu macet).
+const setupSpin = enterRepl ? createBootScreen("Menyiapkan sesi…") : undefined
 // finally: createCliSession yang melempar (provider/MCP gagal) tak boleh
 // membocorkan interval — tanpa ini spinner menulis ke stderr selamanya dan
 // proses tak pernah exit (terlihat hang).

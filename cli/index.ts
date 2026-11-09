@@ -593,12 +593,28 @@ if (enterRepl) {
   // Satu-satunya tampilan interaktif = TUI fullscreen (REPL linier dihapus).
   // One-shot/exec tak tersentuh (cabang else di bawah).
   const { runTui } = await import("./tui.ts")
+  const replStart = Date.now()
   try {
     await runTui(ctx)
   } catch (error) {
     process.stderr.write(`[error] ${formatError(error)}\n`)
     process.exitCode = 1
   }
+  // Kop ringkasan sesi saat exit (logo kecil + detail). Di stdout karena TUI
+  // sudah tutup dan terminal kembali normal; one-shot tidak sampai ke sini.
+  try {
+    const u = ctx.usage.getSession(ctx.modelRef.current)
+    const { renderSessionSummary } = await import("../src/ui/render/session-summary.ts")
+    process.stdout.write(
+      renderSessionSummary({
+        sessionId: ctx.sessionId,
+        model: ctx.modelRef.current ?? "default",
+        totalTokens: u.totalTokens,
+        ...(u.cost != null ? { cost: u.cost } : {}),
+        durationMs: Date.now() - replStart,
+      }),
+    )
+  } catch {}
 } else {
   // P12 S2.2 (F-DISCUSS-4) + P0.2: one-shot linear memakai `ctx.workMode`
   // efektif (termasuk hasil pulihan `--resume`).

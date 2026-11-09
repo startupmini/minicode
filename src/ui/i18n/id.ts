@@ -164,7 +164,7 @@ export const id: Record<MsgKey, string> = {
   "help.k.compact": "alihkan output tool ringkas/penuh",
   "help.k.thinking": "alihkan thinking bentang/ringkas",
   "help.k.esc": "tutup dropdown/picker/hapus baris (busy: batalkan turn)",
-  "help.k.ctrlC": "hapus baris / batalkan prompt (turn TUI: pakai Esc)",
+  "help.k.ctrlC": "salin teks terpilih / batalkan",
   "help.k.ctrlD": "keluar saat baris kosong",
   "help.desc.help": "Tampilkan perintah",
   "help.desc.provider": "Kelola penyedia",

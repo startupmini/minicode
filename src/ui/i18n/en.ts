@@ -163,7 +163,7 @@ export const en = {
   "help.k.compact": "toggle compact/expanded tool output",
   "help.k.thinking": "toggle expand/minimize thinking output",
   "help.k.esc": "close dropdown / picker / clear line (busy: abort turn)",
-  "help.k.ctrlC": "clear line / cancel prompt (TUI turn: use Esc)",
+  "help.k.ctrlC": "copy selected text / cancel",
   "help.k.ctrlD": "exit on empty line",
   "help.desc.help": "Show commands",
   "help.desc.provider": "Manage providers",

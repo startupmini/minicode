@@ -58,12 +58,14 @@ export function formatDuration(ms: number): string {
 export function renderSessionSummary(s: SessionSummary): string {
   const label = (t: string): string => c.muted(t.padEnd(7))
   const cost = s.cost != null ? formatUsd(s.cost) : null
-  return `\n${[
+  return `${[
     paintWordmark(),
     `${label("Session")} ${c.gray(s.sessionId)}`,
     `${label("Model")} ${c.gray(s.model)}`,
     `${label("Usage")} ${s.totalTokens.toLocaleString()} tokens${
       cost != null ? ` · ${cost}` : ""
     } · ${formatDuration(s.durationMs)}`,
-  ].join("\n")}\n`
+  ]
+    .join("\r\n")
+    .concat("\r\n")}`
 }

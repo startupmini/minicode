@@ -600,9 +600,17 @@ if (enterRepl) {
     process.stderr.write(`[error] ${formatError(error)}\n`)
     process.exitCode = 1
   }
-  // Kop ringkasan sesi saat exit (logo kecil + detail). Di stdout karena TUI
-  // sudah tutup dan terminal kembali normal; one-shot tidak sampai ke sini.
+  // Kop ringkasan sesi saat exit (logo + detail). Di stdout karena TUI sudah
+  // tutup dan terminal kembali normal; one-shot tidak sampai ke sini.
+  //
+  // Bersihkan layar + home DULU: keluar dari alternate-screen (?1049l) tak
+  // selalu mengembalikan kursor ke baris bersih di buffer utama (terutama
+  // Windows ConPTY) — tanpa clear, summary menimpa / bertumpuk dengan teks
+  // pra-login (prompt shell + pesan startup).
   try {
+    if (process.stdout.isTTY) {
+      process.stdout.write("\x1b[2J\x1b[H") // clear screen + home
+    }
     const u = ctx.usage.getSession(ctx.modelRef.current)
     const { renderSessionSummary } = await import("../src/ui/render/session-summary.ts")
     process.stdout.write(

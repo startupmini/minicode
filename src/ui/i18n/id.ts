@@ -138,6 +138,11 @@ export const id: Record<MsgKey, string> = {
   "help.cKeys":
     "Tombol: Tab work-mode · Shift+Tab izin · ↑↓ riwayat · Mouse wheel/PgUp/PgDn gulir · Ctrl+R cari · Ctrl+D keluar",
   "help.cMore": "  /help tombol = semua pintasan",
+  "help.gSession": "Sesi",
+  "help.gModel": "Model",
+  "help.gMode": "Mode",
+  "help.gView": "Tampilan",
+  "help.gTask": "Task",
   "help.kHead": "Papan tombol:",
   "help.k.submit": "kirim",
   "help.k.cycleMode": "putar work mode",

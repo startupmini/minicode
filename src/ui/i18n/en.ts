@@ -137,6 +137,11 @@ export const en = {
   "help.cKeys":
     "Keys: Tab work-mode · Shift+Tab permission · ↑↓ history · Mouse wheel/PgUp/PgDn scroll · Ctrl+R search · Ctrl+D exit",
   "help.cMore": "  /help keys = all shortcuts",
+  "help.gSession": "Session",
+  "help.gModel": "Model",
+  "help.gMode": "Mode",
+  "help.gView": "View",
+  "help.gTask": "Task",
   "help.kHead": "Keyboard:",
   "help.k.submit": "submit",
   "help.k.cycleMode": "cycle work mode",

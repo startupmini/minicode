@@ -407,18 +407,18 @@ export async function runTui(ctx: CliSession): Promise<void> {
    * membanjiri transkrip. Detail penuh = `/help tombol` (delegasi).
    */
   function helpConcise(): void {
-    // Diturunkan dari registry (BUILTIN + driver) — perintah baru tak bisa
-    // hilang dari /help diam-diam (satu sumber, bukan daftar hardcode).
-    // Set menjaga urutan deklarasi sekaligus mencegah duplikasi saat perintah
-    // driver terdaftar di completion (DRIVER_COMMANDS) dan help (DRIVER_HELP_COMMANDS).
-    const builtin = BUILTIN_COMMANDS.map((b) => `/${b.name}`).join(" ")
-    const driver = [
-      ...new Set([...DRIVER_COMMANDS, ...DRIVER_HELP_COMMANDS.map((b) => `/${b.name}`)]),
-    ].join(" ")
+    // Grup kurasi (sengaja bukan dump flat dari registry): label + baris pendek
+    // per kategori supaya /help mudah dipindai. Daftar tetap 1:1 dengan command
+    // yang ditangani di `submit` (bila ada command baru, tambahkan ke grup yang
+    // tepat di sini). Tab completion tetap diturunkan dari registry (suggestions).
+    const group = (label: string, cmds: string): string => `  ${label.padEnd(9)}${cmds}`
     transcript.pushInfo([
       t("help.cHead"),
-      `  ${builtin}`,
-      `  ${driver}`,
+      group(t("help.gSession"), "/status /sessions /history /clear /copy /init /exit"),
+      group(t("help.gModel"), "/model /provider /sync"),
+      group(t("help.gMode"), "/mode /work-mode /undo /redo /lang"),
+      group(t("help.gView"), "/compact /thinking /expand /minimize /fold"),
+      group(t("help.gTask"), "/scheduler"),
       t("help.cKeys"),
       t("help.cMore"),
     ])

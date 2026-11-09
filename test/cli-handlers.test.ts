@@ -522,3 +522,49 @@ describe("providers & models", () => {
     expect(r.out).toContain("no matches")
   })
 })
+
+// ── P11.x — flag global yang mendahului subcommand ──────────────────────────
+// Router melewatkan argv scoped (`args.slice(cmdIndex)`) ke handler subcommand.
+// Sebelum perbaikan, handler mengindeks `args[0]`/`args[1]` di argv PENUH,
+// sehingga `--cwd X sessions list` membaca nilai flag sebagai sub-aksi
+// ("unknown subcommand: X") dan `providers` diam-diam exit 0.
+describe("router: leading global flag before subcommand", () => {
+  test("sessions list dengan --cwd di depan tetap menemukan sub 'list'", async () => {
+    const r = await runDispatch(["--cwd", tmp, "sessions", "list"])
+    expect(r.code).toBe(0)
+    expect(r.out).toContain("no recorded sessions yet")
+  })
+
+  test("memory status dengan --cwd di depan tidak menyebut unknown subcommand", async () => {
+    const r = await runDispatch(["--cwd", tmp, "memory", "status"])
+    expect(r.code).toBe(0)
+    expect(r.out).not.toContain("unknown memory subcommand")
+  })
+
+  test("config list dengan --cwd di depan tidak menyebut unknown subcommand", async () => {
+    const r = await runDispatch(["--cwd", tmp, "config", "list"])
+    expect(r.code).toBe(0)
+    expect(r.out).not.toContain("unknown subcommand")
+  })
+
+  test("mcp pins dengan --cwd di depan tidak menyebut unknown mcp subcommand", async () => {
+    const r = await runDispatch(["--cwd", tmp, "mcp", "pins"])
+    expect(r.code).toBe(0)
+    expect(r.out).not.toContain("unknown mcp subcommand")
+  })
+
+  test("pricing status dengan --json di depan tetap menampilkan status", async () => {
+    const r = await runDispatch(["--json", "pricing", "status"])
+    // `pricing` punya default status; dengan --json tak ada mode JSON, jadi
+    // pastikan yang penting: tidak ada "unknown pricing subcommand".
+    expect(r.out).not.toContain("unknown pricing subcommand")
+  })
+
+  test("providers dengan --cwd di depan tidak exit diam-diam", async () => {
+    // Sebelum perbaikan: `firstArg = args[0]` = "--cwd" ≠ providers → exit 0
+    // TANPA output (kegagalan senyap). Perbaikan memastikan selalu ada output.
+    const r = await runDispatch(["--cwd", tmp, "providers"])
+    expect(r.code).toBe(0)
+    expect(r.out.trim().length).toBeGreaterThan(0)
+  })
+})

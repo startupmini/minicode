@@ -71,6 +71,16 @@ export async function dispatch(
     return found
   }
 
+  // P11.x — argv scoped untuk SEMUA handler subcommand: kecuali yang sudah
+  // memakai pola own-scoped (openwork/exec/daemon), handler lain mengindeks
+  // `args[0]`/`args[1]` sebagai token subcommand. `args` di sini adalah argv
+  // PENUH, jadi flag global yang mendahului subcommand (mis. `--cwd X sessions
+  // list` atau `--json pricing status`) membuat `args[1]` menyimpan NILAI flag,
+  // bukan sub-aksi — handler mencetak "unknown subcommand: <path>" atau diam
+  // (providers exit 0). `args.slice(cmdIndex)` menempatkan kembali token
+  // subcommand di indeks 0; flag global tetap terbaca lewat `subGetArg`
+  // (berbasis subArgv yang sudah memuat flag global + argv dari cmd).
+  const scoped = args.slice(cmdIndex)
   if (cmd === "stats") {
     const { handleStats } = await import("./commands/stats.ts")
     await handleStats(subGetArg)
@@ -78,44 +88,46 @@ export async function dispatch(
   }
   if (cmd === "sessions") {
     const { handleSessions } = await import("./commands/sessions.ts")
-    await handleSessions(args, subGetArg)
+    await handleSessions(scoped, subGetArg)
     return true
   }
   if (cmd === "openwork") {
     // [P14.4] Portofolio open-work lintas sesi (read-only) + merge dedup
     // eksplisit (P14.3). Handler process.exit sendiri (kontrak I28).
+    // openwork memakai `args.indexOf("openwork")` (actionAfter), jadi ia tetap
+    // menerima argv penuh agar token "openwork" tetap ditemukan.
     const { handleOpenwork } = await import("./commands/openwork.ts")
     await handleOpenwork(args, subGetArg)
     return true
   }
   if (cmd === "mcp") {
     const { handleMcp } = await import("./commands/mcp.ts")
-    await handleMcp(args, subGetArg, HELP)
+    await handleMcp(scoped, subGetArg, HELP)
     return true
   }
   if (cmd === "config") {
     const { handleConfig } = await import("./commands/config.ts")
-    await handleConfig(args, subGetArg, HELP)
+    await handleConfig(scoped, subGetArg, HELP)
     return true
   }
   if (cmd === "skills") {
     const { handleSkills } = await import("./commands/skills.ts")
-    await handleSkills(args, subGetArg)
+    await handleSkills(scoped, subGetArg)
     return true
   }
   if (cmd === "providers" || cmd === "models" || cmd === "sync") {
     const { handleProviders } = await import("./commands/providers.ts")
-    await handleProviders(args, subGetArg)
+    await handleProviders(scoped, subGetArg)
     return true
   }
   if (cmd === "auth") {
     const { handleAuth } = await import("./commands/auth.ts")
-    await handleAuth(args)
+    await handleAuth(scoped)
     return true
   }
   if (cmd === "pricing") {
     const { handlePricing } = await import("./commands/pricing.ts")
-    await handlePricing(args)
+    await handlePricing(scoped)
     return true
   }
   if (cmd === "exec") {
@@ -151,12 +163,12 @@ export async function dispatch(
   }
   if (cmd === "memory") {
     const { handleMemory } = await import("./commands/memory.ts")
-    await handleMemory(args, subGetArg)
+    await handleMemory(scoped, subGetArg)
     return true
   }
   if (cmd === "doctor") {
     const { handleDoctor } = await import("./commands/doctor.ts")
-    await handleDoctor(args, subGetArg)
+    await handleDoctor(scoped, subGetArg)
     return true
   }
   return false

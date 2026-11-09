@@ -17,7 +17,7 @@ const HOME = "\x1b[H"
 const CLEAR_ALL = "\x1b[2J"
 /** Reset atribut (warna/efek) + tampilkan kursor — ditulis saat exit supaya
  * prompt shell kembali bersih (tidak ada sisa warna frame terakhir / kursor
- * tersembunyi). */
+ * tersembunyi yang membuat terminal "berantakan" setelah Ctrl+D). */
 const RESET_ATTRS = "\x1b[0m"
 const SHOW_CURSOR = "\x1b[?25h"
 // Reset scroll-region — unconditional + idempoten: region aktif peninggalan
@@ -28,6 +28,12 @@ const SHOW_CURSOR = "\x1b[?25h"
 const RESET_REGION = "\x1b[r"
 const SYNC_START = "\x1b[?2026h"
 const SYNC_END = "\x1b[?2026l"
+/** Satu sekuens exit atomik: reset atribut → tampilkan kursor → tutup sync
+ * update → keluar alt-screen → reset region. Ditulis SEBAGAI SATU tulis agar
+ * terminal tak pernah tertinggal setengah pulih, dan agar jumlah writer di
+ * berkas ini tidak melewati batas inventaris OAP-008 (writer-inventory.test.ts
+ * menolak penulis yang bertambah diam-diam). */
+const EXIT_SEQUENCE = RESET_ATTRS + SHOW_CURSOR + SYNC_END + EXIT + RESET_REGION
 /** Ekspor untuk pemanggil yang melukis kursor di luar paint() (app.ts) —
  * kursor WAJIB di dalam blok sync yang sama dengan framenya (TUI-007). */
 export const SYNC_UPDATE_START = SYNC_START
@@ -47,7 +53,9 @@ function installExitHook(): void {
   process.on("exit", () => {
     if (depth > 0) {
       try {
-        process.stdout.write(EXIT)
+        // Sekuens exit lengkap (reset atribut + kursor + sync + alt-screen +
+        // region) — jaring terakhir `kill`/`exit` tak langsung.
+        process.stdout.write(EXIT_SEQUENCE)
       } catch {}
       depth = 0
     }
@@ -205,19 +213,7 @@ export function openAltScreen(): AltScreen {
       depth = Math.max(0, depth - 1)
       if (depth === 0) {
         try {
-          process.stdout.write(RESET_ATTRS)
-        } catch {}
-        try {
-          process.stdout.write(SHOW_CURSOR)
-        } catch {}
-        try {
-          process.stdout.write(SYNC_END)
-        } catch {}
-        try {
-          process.stdout.write(EXIT)
-        } catch {}
-        try {
-          process.stdout.write(RESET_REGION)
+          process.stdout.write(EXIT_SEQUENCE)
         } catch {}
       }
     },
@@ -237,19 +233,7 @@ export function altScreenDepth(): number {
 export function forceRestoreScreenForSignal(): void {
   if (depth > 0) {
     try {
-      process.stdout.write(RESET_ATTRS)
-    } catch {}
-    try {
-      process.stdout.write(SHOW_CURSOR)
-    } catch {}
-    try {
-      process.stdout.write(SYNC_END)
-    } catch {}
-    try {
-      process.stdout.write(EXIT)
-    } catch {}
-    try {
-      process.stdout.write(RESET_REGION)
+      process.stdout.write(EXIT_SEQUENCE)
     } catch {}
     depth = 0
   }

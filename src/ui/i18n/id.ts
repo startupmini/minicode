@@ -138,6 +138,7 @@ export const id: Record<MsgKey, string> = {
   "help.cKeys":
     "Tombol: Tab work-mode · Shift+Tab izin · ↑↓ riwayat · Mouse wheel/PgUp/PgDn gulir · Ctrl+R cari · Ctrl+D keluar",
   "help.cMore": "  /help tombol = semua pintasan",
+  "help.gGeneral": "Umum",
   "help.gSession": "Sesi",
   "help.gModel": "Model",
   "help.gMode": "Mode",
@@ -146,6 +147,8 @@ export const id: Record<MsgKey, string> = {
   "help.kHead": "Papan tombol:",
   "help.k.submit": "kirim",
   "help.k.cycleMode": "putar work mode",
+  "help.k.workMode": "putar work mode (Build/Plan/Discuss)",
+  "help.k.permission": "putar mode izin (Auto/Ask)",
   "help.k.history": "riwayat prompt (di picker: navigasi)",
   "help.k.mouse": "gulir transkrip dengan mouse wheel",
   "help.k.scroll": "gulir transkrip dengan PgUp/PgDn (Shift+ = setengah halaman)",
@@ -179,7 +182,7 @@ export const id: Record<MsgKey, string> = {
   "help.desc.clear": "Bersihkan transkrip",
   "help.desc.copy": "Salin 1–10 turn terakhir ke clipboard (OSC 52)",
   "help.desc.history": "Tampilkan riwayat prompt",
-  "help.desc.scheduler": "Periksa, picu, atau hentikan scheduler otonom",
+  "help.desc.scheduler": "Picu / periksa / hentikan scheduler",
 
   // [PHASE 6AB] Operator strings for `/scheduler`.
   "sched.usage": "pakai: /scheduler [status|run|stop]",

@@ -137,6 +137,7 @@ export const en = {
   "help.cKeys":
     "Keys: Tab work-mode · Shift+Tab permission · ↑↓ history · Mouse wheel/PgUp/PgDn scroll · Ctrl+R search · Ctrl+D exit",
   "help.cMore": "  /help keys = all shortcuts",
+  "help.gGeneral": "General",
   "help.gSession": "Session",
   "help.gModel": "Model",
   "help.gMode": "Mode",
@@ -145,6 +146,8 @@ export const en = {
   "help.kHead": "Keyboard:",
   "help.k.submit": "submit",
   "help.k.cycleMode": "cycle work mode",
+  "help.k.workMode": "cycle work mode (Build/Plan/Discuss)",
+  "help.k.permission": "cycle permission mode (Auto/Ask)",
   "help.k.history": "prompt history (in picker: navigate)",
   "help.k.mouse": "scroll transcript with mouse wheel",
   "help.k.scroll": "scroll transcript with PgUp/PgDn (Shift+ = half page)",
@@ -178,7 +181,7 @@ export const en = {
   "help.desc.clear": "Clear transcript",
   "help.desc.copy": "Copy the last 1–10 turns to clipboard (OSC 52)",
   "help.desc.history": "Show recent prompt history",
-  "help.desc.scheduler": "Inspect, trigger, or stop the autonomous scheduler",
+  "help.desc.scheduler": "Trigger / inspect / stop the scheduler",
 
   // [PHASE 6AB] Operator strings for `/scheduler`. The STATE line itself is
   // deliberately not localised - see `describeOperatorState`, which the

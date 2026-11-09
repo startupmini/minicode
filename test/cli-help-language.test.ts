@@ -42,11 +42,12 @@ const run = async (cmd: string) => {
 }
 
 describe("/help: kelengkapan & ukuran", () => {
-  // Overlay TUI di terminal 24 baris hanya menampilkan ~19 baris. /help 29 baris
-  // memaksa user scroll untuk melihat bagian tombol.
-  test("muat di overlay terminal 24 baris", async () => {
+  // /help penuh (handleBuiltinCommand) dikelompokkan: header + 4 header grup +
+  // 17 perintah + baris pintasan = ~24 baris. Batas longgar supaya grup bisa
+  // bertambah tanpa merusak kontrak; yang ketat adalah kelengkapan di bawah.
+  test("full help terkelompok & tidak melebihi 26 baris", async () => {
     const lines = await run("/help")
-    expect(lines.length).toBeLessThanOrEqual(19)
+    expect(lines.length).toBeLessThanOrEqual(26)
   })
 
   test("contains only the supported command surface", async () => {

@@ -163,14 +163,28 @@ export const DRIVER_HELP_COMMANDS: BuiltinCommand[] = [
   { name: "scheduler", args: "[status|run|stop]", descKey: "help.desc.scheduler" },
 ]
 
-/** Pintasan papan tombol TUI — didokumentasikan di /help, bukan hanya di kode. */
+/** Grup kurasi untuk /help: kategori semantik (bukan urutan registrasi). Dipakai
+ * render full help supaya mudah dipindai; nama di sini harus 1:1 dengan isi
+ * BUILTIN_COMMANDS + DRIVER_HELP_COMMANDS. */
+const HELP_GROUPS: readonly { key: MsgKey; names: readonly string[] }[] = [
+  {
+    key: "help.gGeneral",
+    names: ["help", "status", "sessions", "history", "clear", "copy", "init", "exit"],
+  },
+  { key: "help.gModel", names: ["model", "provider", "sync"] },
+  { key: "help.gMode", names: ["mode", "work-mode", "undo", "redo", "lang"] },
+  { key: "help.gTask", names: ["scheduler"] },
+]
+
+/** Pintasan papan tombol TUI — didokumentasikan di /help keys, bukan hanya kode. */
 const KEYBOARD_HELP: [string, MsgKey][] = [
   ["enter", "help.k.submit"],
-  ["tab / shift+tab", "help.k.cycleMode"],
+  ["tab", "help.k.workMode"],
+  ["shift+tab", "help.k.permission"],
   ["up / down", "help.k.history"],
   ["mouse wheel", "help.k.mouse"],
   ["pgup / pgdn", "help.k.scroll"],
-  ["home / end (prompt)", "help.k.jumpTop"],
+  ["home / end (empty prompt)", "help.k.jumpTop"],
   ["left / right", "help.k.move"],
   ["home / end", "help.k.jump"],
   ["delete", "help.k.delChar"],
@@ -463,28 +477,27 @@ export async function handleBuiltinCommand(
 
   switch (cmd) {
     case "help": {
-      // Ringkas: perintah utama + skill + pintasan yang paling sering dipakai.
-      // /help penuh tidak muat di layar pendek, jadi
-      // pintasan lengkap dipindah ke `/help tombol`.
-      const wantKeys = /^(tombol|keys?|keyboard)$/i.test(args)
-      if (wantKeys) {
+      // /help keys|tombol = pintasan keyboard; selain itu (termasuk /help full,
+      // /help all, atau /help kosong dari non-TTY) = full help terkelompok.
+      if (/^(tombol|keys?|keyboard)$/i.test(args.trim())) {
         console.log(`\n${t("help.kHead")}`)
         for (const [key, keyDesc] of KEYBOARD_HELP) {
-          console.log(`  ${pad(key, 22)}${t(keyDesc)}`)
+          console.log(`  ${pad(key, 24)}${t(keyDesc)}`)
         }
         console.log("")
         return { handled: true }
       }
+      const all = new Map([...BUILTIN_COMMANDS, ...DRIVER_HELP_COMMANDS].map((b) => [b.name, b]))
       console.log(`\n${t("help.head")}`)
-      for (const b of [...BUILTIN_COMMANDS, ...DRIVER_HELP_COMMANDS]) {
-        if (b.hidden) continue
-        const withArgs = b.args ? `${b.name} ${b.args}` : b.name
-        console.log(`  ${pad(`/${withArgs}`, 25)}  ${t(b.descKey)}`)
+      for (const group of HELP_GROUPS) {
+        console.log(`  ${t(group.key)}`)
+        for (const name of group.names) {
+          const b = all.get(name)
+          if (!b || b.hidden) continue
+          const withArgs = b.args ? `${b.name} ${b.args}` : b.name
+          console.log(`    ${pad(`/${withArgs}`, 26)}  ${t(b.descKey)}`)
+        }
       }
-      // Ringkas: perintah utama + skill + pintasan yang paling sering dipakai.
-      // Panjang baris di bawah ≤80 kolom (dijaga test) dan tak boleh menyebut
-      // /help tombol (juga dijaga test) — Ctrl+R satu-satunya yang paling
-      // sering dicari yang muat setelah Enter/Tab/Shift+Tab.
       console.log(`\n${t("help.keysLine")}\n`)
       return { handled: true }
     }

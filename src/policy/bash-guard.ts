@@ -71,10 +71,24 @@ export function stripQuotes(cmd: string): string {
 export function stripCaretEscapes(cmd: string): string {
   let out = ""
   let inDouble = false
+  let inSingle = false
   for (let i = 0; i < cmd.length; i++) {
     const ch = cmd[i]!
-    if (ch === '"') inDouble = !inDouble
-    if (ch === "^" && !inDouble && i + 1 < cmd.length) {
+    if (ch === "\\" && !inSingle && i + 1 < cmd.length) {
+      out += ch + cmd[++i]!
+      continue
+    }
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle
+      out += ch
+      continue
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble
+      out += ch
+      continue
+    }
+    if (ch === "^" && !inDouble && !inSingle && i + 1 < cmd.length) {
       out += cmd[++i]!
       continue
     }
@@ -110,7 +124,7 @@ export function inlineSimpleVars(cmd: string): string {
     let changed = false
     for (const [name, value] of vars) {
       const ref = new RegExp(`\\$\\{${name}\\}|\\$${name}\\b`, "g")
-      const next = out.replace(ref, value)
+      const next = out.replace(ref, () => value)
       if (next !== out) {
         out = next
         changed = true
@@ -280,7 +294,7 @@ const GIT_DANGEROUS_CONFIG =
  * repo/pohon lain (baca objek repo korban = jail-bypass READ, validasi e2e
  * bug-hunt 2026-09-19 F2: `--git-dir=victim/.git log -p` bocor isi repo lain).
  * Nilai dicek di bawah terhadap cwd (resolve+outside/sensitive/owned). */
-const GIT_DIR_OVERRIDE = /(?:^|\s)(?:-C|--git-dir=|--work-tree=)\s*(\S+)/i
+const GIT_DIR_OVERRIDE = /(?:^|\s)(?:-C\s*(\S+)|--(?:git-dir|work-tree)(?:=|\s+)(\S+))/gi
 
 /** Env git eksekusi (`GIT_PAGER=id ...`, `GIT_SSH=...`): efek sama dengan
  * `-c` di atas, lewat assignment env. */
@@ -288,7 +302,7 @@ const GIT_EXEC_ENV = /(?:^|[;&|\n]\s*)GIT_(?:PAGER|SSH|ASKPASS|EDITOR|DIR|WORK_T
 
 /** Interpreter dijalankan dengan kode inline (semua bentuk flag). */
 const INLINE_INTERPRETER =
-  /\b(?:pyw?|python[\d.]*|pypy[\d.]*|sh|bash|dash|zsh|ksh|node|deno|bun|perl|ruby|php|Rscript)(?:\.exe)?\b\s+(?:-\w*\s+)*(?:-c|-e|-E|--eval|--print|-p|--command|-r|--execute)\b/i
+  /\b(?:pyw?|python[\d.]*|pypy[\d.]*|sh|bash|dash|zsh|ksh|node|deno|bun|perl|ruby|php|Rscript)(?:\.exe)?\b\s+(?:-\w*\s+)*(?:-c|-e|-E|--eval|--print|-p|--command|-r|--execute|--require|--import|--loader)\b/i
 // Residual jujur (audit 2026-09-16 B3): eksekusi via stdin/redirect TANPA
 // flag inline (`bash -s < skrip`, `python3 < prog`, `... | python3 -`) tidak
 // ditahan — menahan `| python3 -` mematahkan pipeline sah, dan `bash berkas`
@@ -473,7 +487,14 @@ const STATIC_DENY: [RegExp, string][] = [
   // `git -c k=v <sub>` sebelum subcommand sudah gugur di allowlist (tak cocok
   // pola ^git <sub>), tapi mode auto hanya dijaga guard ini. Alur sah agen
   // (status/diff/log/branch/show dalam repo) tak memakai flag ini.
-  [/\bgit\b[^\n]*?--(?:no-index|exec-path|upload-pack|receive-pack)\b/, "git dangerous flag"],
+  [
+    /\bgit\b[^\n]*?--(?:no-index|exec-path|upload-pack|receive-pack|output(?:=|\s+))/,
+    "git dangerous flag",
+  ],
+  [
+    /\bfind\b[^\n]*\s-(?:exec|execdir|ok|okdir|delete|fprint0?|fls)\b/i,
+    "find exec/delete/write flag",
+  ],
   [/\bext::/, "git ext transport"],
   // Injeksi konfigurasi git via environment (`GIT_EXTERNAL_DIFF=x git diff`
   // setara diff.external repo — repo-side adalah residual terdokumentasi, tapi
@@ -530,12 +551,13 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
   if (both(VAR_UPLOAD)) return { denied: true, reason: "variable data upload to network" }
   if (both(GIT_DANGEROUS_CONFIG)) return { denied: true, reason: "git exec config override" }
   if (both(GIT_EXEC_ENV)) return { denied: true, reason: "git exec env override" }
-  // -C/--git-dir/--work-tree: resolve nilai terhadap cwd seperti redirect —
+  // -C/--git-dir/--work-tree: resolve SEMUA nilai terhadap cwd seperti redirect —
   // di luar workspace/sensitif/owned = deny (baca repo lain = jail-bypass).
-  {
-    const m = norm.match(GIT_DIR_OVERRIDE) ?? raw.match(GIT_DIR_OVERRIDE)
-    if (m?.[1]) {
-      const t = m[1]!.replace(/^["']|["']$/g, "")
+  for (const src of [norm, raw]) {
+    for (const m of src.matchAll(GIT_DIR_OVERRIDE)) {
+      const rawTarget = m[1] ?? m[2]
+      if (!rawTarget) continue
+      const t = rawTarget.replace(/^["']|["']$/g, "")
       if (cwd != null) {
         const abs = isAbsolute(t) ? resolve(t) : resolve(cwd, t)
         if (

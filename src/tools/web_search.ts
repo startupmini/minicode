@@ -40,7 +40,8 @@ export const webSearchTool: Tool = {
         const controller = new AbortController()
         const t = setTimeout(() => controller.abort(), 8000)
         const onAbort = () => controller.abort(ctx.signal.reason)
-        ctx.signal.addEventListener("abort", onAbort, { once: true })
+        if (ctx.signal.aborted) onAbort()
+        else ctx.signal.addEventListener("abort", onAbort, { once: true })
         try {
           const res = await fetch("https://api.tavily.com/search", {
             method: "POST",

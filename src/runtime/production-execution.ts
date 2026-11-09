@@ -324,9 +324,6 @@ export function createProductionExecutionRunner(deps: {
       }
       const executionId = record.executionId
       m.admitted++
-      // Parent lineage (M7): turn anak WAJIB menunjuk turn ini sebagai
-      // parentExecutionId, bukan menjadi akar sendiri.
-      if (request.kind === "turn") currentParentExecutionId.value = executionId
 
       // Bukti durable: intent dispatch ditulis SETELAH admission sukses dan
       // DITUNGGU, jadi redelivery lintas proses bisa dibuktikan (bukan
@@ -365,6 +362,10 @@ export function createProductionExecutionRunner(deps: {
           record,
         )
       }
+      // Parent lineage (M7): catat sebagai parentExecutionId hanya SETELAH
+      // transisi RUNNING komit, agar turn yang ditolak RUNNING tidak menimpa
+      // parentExecutionId aktif milik turn sebelumnya.
+      if (request.kind === "turn") currentParentExecutionId.value = executionId
 
       // track() menutup utang M14: pekerjaan yang masih berjalan saat shutdown
       // HARUS terdaftar, supaya flush jurnal tak mendahului event terakhirnya.

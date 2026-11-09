@@ -314,6 +314,20 @@ export async function handleExec(
       else process.stderr.write(`${msg}\n`)
       process.exit(1)
     }
+    unsubMachine()
+    unsubText()
+    await ctx.persistCurrent(ue)
+    // P2.2: histori yang tak durable = kegagalan jujur (bukan exit 0). Diperiksa
+    // SEBELUM menulis machineSummary(true) agar stdout JSONL tidak pernah
+    // memancarkan dua summary terminal yang saling bertentangan (ok:true lalu ok:false).
+    if (ctx.isWriterStale()) {
+      const msg = `[writer] stale writer, history NOT durable: ${ctx.writerStaleNote()}`
+      if (jsonMode)
+        writeMachineLine(JSON.stringify(machineFailure(effectivePrompt, new Error(msg))))
+      else process.stderr.write(`${msg}\n`)
+      await ctx.close()
+      process.exit(1)
+    }
     // Ringkasan memakai total SESI (ue), bukan turn terakhir: dengan --verify
     // (multi-turn + reset antar-siklus) angka turn mengecilkan pemakaian nyata.
     if (jsonMode) {
@@ -362,18 +376,6 @@ export async function handleExec(
       process.stdout.write(
         `\n[exec] done model=${ctx.modelRef.current} steps=${ctx.session.state.stepCount} tokens=${ue.totalTokens} ${Date.now() - t0}ms\n`,
       )
-    }
-    unsubMachine()
-    unsubText()
-    await ctx.persistCurrent(ue)
-    // P2.2: histori yang tak durable = kegagalan jujur (bukan exit 0).
-    if (ctx.isWriterStale()) {
-      const msg = `[writer] stale writer, history NOT durable: ${ctx.writerStaleNote()}`
-      if (jsonMode)
-        writeMachineLine(JSON.stringify(machineFailure(effectivePrompt, new Error(msg))))
-      else process.stderr.write(`${msg}\n`)
-      await ctx.close()
-      process.exit(1)
     }
     await ctx.close()
     process.exit(0)

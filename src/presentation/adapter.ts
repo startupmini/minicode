@@ -822,7 +822,7 @@ export function createPresentationAdapter(
         type: "tool.failed",
         toolCallId: id,
         durationMs: t0 !== undefined ? Math.max(0, Date.now() - t0) : 0,
-        cause: "exec",
+        cause: mapToolFailCause(r.content),
         message: firstLine(r.content, 200),
         expandRef: { toolCallId: id, idx: 0 },
         ...(drift ? { schemaDrift: drift } : {}),
@@ -1149,11 +1149,15 @@ export function createPresentationAdapter(
       const identity = parseQualifiedName(String(e.call?.name ?? "tool"))
       const argsSummary = summarize(e.call?.args)
       const toolCallId = typeof e.call?.id === "string" ? e.call.id : undefined
+      const childMeta = toolCallId ? openTools.get(toolCallId) : undefined
+      const eventBase = childMeta?.childSessionId
+        ? childBase(currentTurn, childMeta.childSessionId, childMeta.parentLink)
+        : base(currentTurn)
       diag.approvals++
       if (e.kind === "requested") {
         openApprovals.set(e.approvalId, true)
         const out: ApprovalRequestedEvent = {
-          ...base(currentTurn),
+          ...eventBase,
           type: "approval.requested",
           approvalId: e.approvalId,
           identity,
@@ -1168,7 +1172,7 @@ export function createPresentationAdapter(
       }
       openApprovals.delete(e.approvalId)
       const settled: ApprovalSettledEvent = {
-        ...base(currentTurn),
+        ...eventBase,
         type: "approval.settled",
         approvalId: e.approvalId,
         outcome: e.outcome,

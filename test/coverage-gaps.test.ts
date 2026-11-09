@@ -31,6 +31,47 @@ afterAll(
         const code = (error as { code?: string }).code
         // Windows may briefly retain SQLite/WAL handles after close; a finite
         // retry smooths that release delay while a persistent leak still fails.
+        if (attempt === 3) {
+          // DIAG-TEMP
+          const fs = require("node:fs") as typeof import("node:fs")
+          const log: string[] = []
+          const walk = (d: string) => {
+            for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+              const p = join(d, e.name)
+              if (e.isDirectory()) walk(p)
+              else {
+                try {
+                  fs.unlinkSync(p)
+                  log.push(`unlink OK ${p}`)
+                } catch (er) {
+                  log.push(`unlink FAIL ${p}: ${(er as Error).message}`)
+                }
+              }
+            }
+          }
+          try {
+            walk(workspace)
+          } catch (er) {
+            log.push(`walk err ${(er as Error).message}`)
+          }
+          try {
+            fs.rmSync(workspace, { recursive: true })
+            log.push("rmSync after unlink OK")
+          } catch (er) {
+            log.push(`rmSync after unlink FAIL: ${(er as Error).message}`)
+            Bun.gc(true)
+            try {
+              fs.rmSync(workspace, { recursive: true })
+              log.push("rmSync after GC OK")
+            } catch (er2) {
+              log.push(`rmSync after GC FAIL: ${(er2 as Error).message}`)
+            }
+          }
+          fs.writeFileSync(
+            "C:/Users/zo/.gemini/antigravity/brain/f1cc1403-b0ca-429f-babc-28613d39de82/scratch/diag.txt",
+            `cwd=${process.cwd()}\n${log.join("\n")}\n`,
+          )
+        }
         if ((code !== "EBUSY" && code !== "EPERM") || attempt === 9) throw error
         await Bun.sleep(Math.min(50 * 2 ** attempt, 1_000))
       }

@@ -235,15 +235,19 @@ export function createWorkModePermissionHandler(opts: {
       return wm
     },
     describeDenial(call: ToolCall): Promise<string | undefined> | string | undefined {
-      // EXECUTE: base mengambil keputusan langsung (check delegasi), jadi alasan
-      // deny ada di base.describeDenial sendiri — bukan di owner map wrapper.
+      // Cek owner map lebih dulu: bila call ditolak saat mode non-EXECUTE lalu
+      // WorkMode diubah ke EXECUTE sebelum describeDenial dipanggil, alasan
+      // deny tetap diambil dari pemilik yang mencatatnya.
+      const owner = takeDenyOwner(call)
+      if (owner) {
+        const seam = owner.describeDenial
+        return typeof seam === "function" ? seam.call(owner, call) : undefined
+      }
       if (wm === "EXECUTE") {
         const baseSeam = opts.base.describeDenial
         return typeof baseSeam === "function" ? baseSeam.call(opts.base, call) : undefined
       }
-      const owner = takeDenyOwner(call)
-      const seam = owner?.describeDenial
-      return typeof seam === "function" ? seam.call(owner, call) : undefined
+      return undefined
     },
   }
   return handler as WorkModePermissionHandler

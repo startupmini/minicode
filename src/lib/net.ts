@@ -97,21 +97,26 @@ export async function isPrivateHostWithDns(
       return false
     }
   }
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
     const addrs = (await Promise.race([
       lookup(hostname, { all: true } as never).then((r) => {
         if (Array.isArray(r)) return (r as { address: string }[]).map((x) => x.address)
         return [(r as { address: string }).address]
       }),
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("dns timeout")), timeoutMs)),
+      new Promise<never>((_, rej) => {
+        timer = setTimeout(() => rej(new Error("dns timeout")), timeoutMs)
+      }),
     ])) as string[]
     if (!opts.noCache) dnsCache.set(hostname, { addrs, at: Date.now() })
     for (const a of addrs) if (isPrivateHost(a) || isPrivateIPv4(a)) return true
   } catch {
     // lookup gagal/timeout → strict fail-close (embedding/MCP), default fail-open
-    // agar web_fetch tidak block availability bila DNS lambat
-    if (!opts.noCache) dnsCache.set(hostname, { addrs: [], at: Date.now() })
+    // agar web_fetch tidak block availability bila DNS lambat. Jangan cache
+    // `addrs: []` saat gagal supaya panggilan strict berikutnya tetap mengecek ulang.
     if (opts.strict) return true
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
   }
   return false
 }

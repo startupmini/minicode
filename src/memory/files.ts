@@ -136,7 +136,8 @@ export async function appendMemory(
         const entryBoundary = rawKeep.indexOf("\n- ")
         const cut = entryBoundary >= 0 ? entryBoundary + 1 : rawKeep.indexOf("\n")
         const trimmed = cut >= 0 ? rawKeep.slice(cut + (entryBoundary >= 0 ? 0 : 1)) : rawKeep
-        await import("node:fs/promises").then((m) => m.writeFile(path, trimmed, "utf8"))
+        const { atomicWriteText } = await import("../lib/atomic-write.ts")
+        await atomicWriteText(path, trimmed)
       }
     } catch {}
     return path

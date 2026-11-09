@@ -648,15 +648,25 @@ export async function serveMcp(opts: McpServeOptions = {}): Promise<void> {
     }
   }
 
-  // stdin close → shutdown bersih
+  // stdin close → shutdown bersih (bersihkan listener sinyal agar tidak bocor)
   await new Promise<void>((resolve) => {
-    rl.on("close", resolve)
-    for (const sig of ["SIGINT", "SIGTERM"] as const) {
-      process.once(sig, () => {
-        shutdown.abort()
-        resolve()
-      })
+    const onSig = () => {
+      shutdown.abort()
+      cleanup()
+      resolve()
     }
+    const onClose = () => {
+      cleanup()
+      resolve()
+    }
+    const cleanup = () => {
+      rl.off("close", onClose)
+      process.off("SIGINT", onSig)
+      process.off("SIGTERM", onSig)
+    }
+    rl.on("close", onClose)
+    process.once("SIGINT", onSig)
+    process.once("SIGTERM", onSig)
   })
   rl.close()
   todoSession.id = prevTodo

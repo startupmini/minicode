@@ -109,6 +109,7 @@ class LspConnection {
   private async doStart(rootPath: string): Promise<void> {
     this.rootPath = rootPath
     this.stopping = false
+    this.killSignal = new AbortController()
     this.proc = spawn(this.entry.command, this.entry.args, {
       stdio: ["pipe", "pipe", "pipe"],
       // env kredensial di-strip; env eksplisit config server menang setelahnya
@@ -123,10 +124,9 @@ class LspConnection {
     this.proc.stdin?.on("error", () => {})
     this.proc.stdout?.on("error", () => {})
     this.proc.on("exit", (code) => {
-      const wasStarted = this.started
       this.started = false
       this.starting = undefined
-      if (wasStarted) this.failAll(new Error(`LSP server ${this.entry.ext} exited (${code})`))
+      this.failAll(new Error(`LSP server ${this.entry.ext} exited (${code})`))
       // [P13.2] Keluar saat kita TIDAK minta = anak hilang: serahkan ke jalur
       // proses (bounded restart / eskalasi jujur). Keluar karena stop() kita
       // sendiri bukan kegagalan.
@@ -312,16 +312,9 @@ class LspConnection {
 
   async stop(): Promise<void> {
     if (!this.proc) return
-    // [P13.2] Tandai stop yang kita minta → keluarannya tak dilaporkan sebagai
     // [P13.2] Tandai stop yang kita minta: keluarannya tak dilaporkan sebagai
+    // crash tak terduga. Kirim didClose SEBELUM shutdown/exit selagi sesi LSP aktif.
     this.stopping = true
-    try {
-      await this.request("shutdown", {}, 2_000)
-    } catch {}
-    try {
-      this.notify("exit")
-    } catch {}
-    // send didClose for all opened docs
     for (const uri of this.opened.keys()) {
       try {
         this.notify("textDocument/didClose", { textDocument: { uri } })
@@ -329,6 +322,12 @@ class LspConnection {
     }
     this.opened.clear()
     this.diagnostics.clear()
+    try {
+      await this.request("shutdown", {}, 2_000)
+    } catch {}
+    try {
+      this.notify("exit")
+    } catch {}
     try {
       this.proc.stdin?.end()
     } catch {}

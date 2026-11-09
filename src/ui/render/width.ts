@@ -243,8 +243,8 @@ export function escapeLength(s: string, i: number): number {
     if (st !== -1) return st - i + 2
     return s.length - i
   }
-  // ESC ( B, ESC ) 0, ESC # 8 — charset & DEC line size, 3 byte.
-  if (next === "(" || next === ")" || next === "#") return 3
+  // ESC ( B, ESC ) 0, ESC # 8 — charset & DEC line size, 3 byte (dibatasi sisa string).
+  if (next === "(" || next === ")" || next === "#") return Math.min(3, s.length - i)
   // ESC diikuti byte final tunggal (ESC 7, ESC =, ESC M, …) = 2 byte.
   // ESC di ujung string = 1 byte. Karakter setelahnya yang BUKAN bagian
   // sekuens (mis. huruf biasa) tidak boleh ikut ditelan — itu membuat teks

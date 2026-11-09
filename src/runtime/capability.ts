@@ -119,8 +119,14 @@ export function normalizeScopePath(path: string): string {
   if (path.includes("\0")) throw new Error("capability: NUL byte in path")
   const isWin = process.platform === "win32"
   let p = path.replace(/\\/g, "/")
+  // Pertahankan drive prefix Windows (mis. "C:") agar segmen ".." tidak mem-pop
+  // huruf drive keluar dari parts dan menghasilkan path relatif palsu.
+  const driveMatch = /^([A-Za-z]:)(?:\/|$)/.exec(p)
+  const drivePrefix = driveMatch ? driveMatch[1]! : ""
+  const rest = drivePrefix ? p.slice(drivePrefix.length) : p
+  const isAbs = drivePrefix !== "" || p.startsWith("/")
   const parts: string[] = []
-  for (const seg of p.split("/")) {
+  for (const seg of rest.split("/")) {
     if (seg === "" || seg === ".") continue
     if (seg === "..") {
       if (parts.length > 0 && parts[parts.length - 1] !== "..") parts.pop()
@@ -129,8 +135,14 @@ export function normalizeScopePath(path: string): string {
     }
     parts.push(seg)
   }
-  p = (path.startsWith("/") ? "/" : "") + parts.join("/")
-  if (p === "") p = "."
+  const joined = parts.join("/")
+  if (drivePrefix) {
+    p = joined ? `${drivePrefix}/${joined}` : drivePrefix
+  } else if (isAbs) {
+    p = `/${joined}`
+  } else {
+    p = joined || "."
+  }
   return isWin ? p.toLowerCase() : p
 }
 
@@ -138,8 +150,14 @@ export function normalizeScopePath(path: string): string {
 export function isPathWithin(parentPath: string, childPath: string): boolean {
   const parent = normalizeScopePath(parentPath)
   const child = normalizeScopePath(childPath)
+  // Segmen ".." yang tersisa berarti child meloloskan diri di atas root leksikal.
+  if (/(?:^|\/)\.\.(?:\/|$)/.test(child)) return false
   if (child === parent) return true
-  if (parent === ".") return !child.startsWith("..")
+  if (parent === ".") {
+    // Scope "." (workspace relatif) tidak boleh mencakup path absolut ("/etc", "c:/...").
+    if (child.startsWith("/") || /^[a-z]:/i.test(child)) return false
+    return !child.startsWith("..")
+  }
   return child.startsWith(parent.endsWith("/") ? parent : `${parent}/`)
 }
 

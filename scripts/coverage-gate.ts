@@ -170,6 +170,9 @@ if (savedReport) {
   if (res.status !== 0 && !/\d+ pass/.test(output)) {
     process.stderr.write(output.slice(-4000))
     runFailure = "[coverage-gate] test run failed"
+  } else if (res.status !== 0 && !/^\s*[1-9]\d*\s+(?:fail|errors?)\s*$/m.test(output)) {
+    process.stderr.write(output.slice(-4000))
+    runFailure = `[coverage-gate] test run exited with status ${res.status}`
   }
 }
 

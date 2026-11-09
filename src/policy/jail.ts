@@ -10,8 +10,31 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 export const SENSITIVE_RE =
   /(?:^|[/\\])(?:\.env(?:\.[a-z0-9_.-]+)?(?:[/\\]|$)|\.git[/\\](?:config|credentials)(?:[/\\]|$)|\.git-credentials$|\.npmrc(?:\.[a-z0-9_-]+)?(?:[/\\]|$)|\.netrc(?:\.[a-z0-9_-]+)?(?:[/\\]|$)|\.ssh(?:[/\\]|$)|\.aws(?:[/\\]|$)|\.kube(?:[/\\]|$)|\.docker[/\\]config\.json$|id_(?:rsa|ecdsa|ed25519|dsa)(?:\.(?:pub|ppk))?$|credentials\.json$|\.minicode[/\\]auth\.json$|secrets?\.(?:yaml|yml|json)$|terraform(?:\.[a-z0-9_-]+)*\.tfvars$|node_modules(?:[/\\]|$)|system32[/\\]config[/\\](?:sam|system|security|software|default)(?:[/\\]|$)|ntds\.dit$)|\.(?:pem|key|p12|pfx|jks|keystore)$/i
 
+const DOTDOT_SEG_RE = /(?:^|[/\\])\.\.(?:[/\\]|$)/
+
+/**
+ * Normalisasi nama segmen untuk pencocokan sensitif/owned-state lintas-OS:
+ * kupas NTFS Alternate Data Stream (`:$DATA` dkk.) dan titik/spasi ekor yang
+ * diabaikan Win32 pada tiap segmen non-traversal (`.` dan `..` dipertahankan).
+ */
+function cleanPathForMatch(p: string): string {
+  if (!p) return ""
+  const withoutAds = p.replace(/(:[a-zA-Z0-9_.$-]+)+$/, (m, _g, offset) => {
+    // Jangan kupas drive letter Windows seperti "C:" di awal path
+    if (offset === 1 && /^[a-zA-Z]:$/.test(p.slice(0, 2))) return m
+    return ""
+  })
+  return withoutAds
+    .split(/([/\\]+)/)
+    .map((seg) => {
+      if (!seg || /^[/\\]+$/.test(seg) || seg === "." || seg === "..") return seg
+      return seg.replace(/[.\s]+$/, "")
+    })
+    .join("")
+}
+
 export function isSensitive(p: string): boolean {
-  return SENSITIVE_RE.test(p)
+  return SENSITIVE_RE.test(p) || SENSITIVE_RE.test(cleanPathForMatch(p))
 }
 
 // State milik minicode sendiri (temuan audit #04, dikeraskan audit #13):
@@ -38,11 +61,15 @@ const HOOKS_RE = /(?:^|[/\\])\.minicode[/\\]hooks(?:[/\\]|$)/i
 
 /** true bila jalurargumen tool menunjuk skrip hooks user (carve-out tulis). */
 export function isHookScript(p: string): boolean {
-  return !!p && HOOKS_RE.test(p)
+  if (!p || DOTDOT_SEG_RE.test(p)) return false
+  return HOOKS_RE.test(p)
 }
 
 export function isOwnedState(p: string): boolean {
-  return !!p && OWNED_STATE_RE.test(p) && !HOOKS_RE.test(p)
+  if (!p) return false
+  const cleaned = cleanPathForMatch(p)
+  const matchesOwned = OWNED_STATE_RE.test(p) || OWNED_STATE_RE.test(cleaned)
+  return matchesOwned && !isHookScript(p) && !isHookScript(cleaned)
 }
 /**
  * Kunci realpath untuk owned-state (temuan audit 2026-09-22 F-CRIT): cek
@@ -88,6 +115,7 @@ const TRASH_RE = /(?:^|[/\\])\.minicode[/\\]\.trash(?:[/\\]|$)/i
 
 export function isTrashRestore(from: string, to: string): boolean {
   if (!from || !to) return false
+  if (DOTDOT_SEG_RE.test(from) || DOTDOT_SEG_RE.test(to)) return false
   return TRASH_RE.test(from) && !isOwnedState(to)
 }
 
@@ -126,6 +154,23 @@ export function isRealPathOutsideRoot(p: string, root: string): boolean {
     const realRoot = realpathSync(resolve(root))
     return isPathOutsideRoot(real, realRoot)
   } catch {
+    // Bila berkas/subdirektori belum ada (ENOENT), mundur ke ancestor terdekat
+    // yang ada agar symlink pada direktori induk tetap terdeteksi sebelum tulis.
+    let probe = dirname(abs)
+    let tail = basename(abs)
+    for (let i = 0; i < 64; i++) {
+      try {
+        const realAncestor = realpathSync(probe)
+        const realRoot = realpathSync(resolve(root))
+        const real = resolve(realAncestor, tail)
+        return isPathOutsideRoot(real, realRoot)
+      } catch {
+        const parent = dirname(probe)
+        if (parent === probe) break
+        tail = join(basename(probe), tail)
+        probe = parent
+      }
+    }
     return isPathOutsideRoot(p, root)
   }
 }

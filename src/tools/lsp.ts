@@ -21,14 +21,16 @@ const SEVERITY = ["Error", "Warn", "Info", "Hint"]
 // success ke turn yang sudah dibatalkan.
 function raceAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(signal.reason ?? new Error("aborted"))
+  let onAbort: (() => void) | undefined
   return Promise.race([
     p,
-    new Promise<never>((_, rej) =>
-      signal.addEventListener("abort", () => rej(signal.reason ?? new Error("aborted")), {
-        once: true,
-      }),
-    ),
-  ])
+    new Promise<never>((_, rej) => {
+      onAbort = () => rej(signal.reason ?? new Error("aborted"))
+      signal.addEventListener("abort", onAbort, { once: true })
+    }),
+  ]).finally(() => {
+    if (onAbort) signal.removeEventListener("abort", onAbort)
+  })
 }
 
 function toUri(abs: string): string {
@@ -286,9 +288,9 @@ export const lspWorkspaceSymbolsTool: Tool = {
         const uri = s.location.uri ?? "?"
         return `[${kind}] ${s.name}${s.containerName ? ` (${s.containerName})` : ""} — ${uri}`
       })
-      return capLocations(rows, 50)
+      return scrubSecrets(capLocations(rows, 50))
     } catch (e) {
-      return `[lsp] ${(e as Error).message}`
+      return scrubSecrets(`[lsp] ${(e as Error).message}`)
     }
   },
 }

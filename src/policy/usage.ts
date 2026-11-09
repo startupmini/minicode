@@ -478,6 +478,7 @@ export function createUsageCollector(
         cacheIncluded?: boolean
         /** P1.4: model yang menghasilkan segmen ini (mis. compaction). */
         model?: string
+        source?: string
       }
       const input =
         Number.isFinite(d.inputTokens) && (d.inputTokens ?? 0) >= 0 ? (d.inputTokens ?? 0) : 0
@@ -499,6 +500,25 @@ export function createUsageCollector(
         typeof d.totalTokens === "number" && Number.isFinite(d.totalTokens) && d.totalTokens >= 0
           ? Math.max(input + output, d.totalTokens)
           : input + output
+      const segModel = d.model ?? effectiveModel ?? model
+      const segCost = segModel
+        ? costFor(segModel, input, output, cRead, cWrite, segCacheIncluded)
+        : undefined
+      const newSnapshot = {
+        inputTokens: input,
+        outputTokens: output,
+        totalTokens: reportedTotal,
+        cacheReadTokens: cRead,
+        cacheWriteTokens: cWrite,
+        cost: segCost,
+        segModel,
+      }
+      // Segmen kompaksi berdiri sendiri: tambahkan ke akumulasi turn/session
+      // tanpa menimpa lastProviderUsage atau memicu flush/overwrite pendingRequestTokens.
+      if (d.source === "compaction") {
+        applyPending(newSnapshot, null)
+        return
+      }
       lastProviderUsage = { inputTokens: input, outputTokens: output, totalTokens: reportedTotal }
 
       // [Fase 7 / Live #2] JANGAN `+=` langsung ke turn+session per chunk SSE.
@@ -515,19 +535,6 @@ export function createUsageCollector(
         requestBoundary += 1
       }
       lastRequestTotal = reportedTotal
-      const segModel = d.model ?? effectiveModel ?? model
-      const segCost = segModel
-        ? costFor(segModel, input, output, cRead, cWrite, segCacheIncluded)
-        : undefined
-      const newSnapshot = {
-        inputTokens: input,
-        outputTokens: output,
-        totalTokens: reportedTotal,
-        cacheReadTokens: cRead,
-        cacheWriteTokens: cWrite,
-        cost: segCost,
-        segModel,
-      }
       applyPending(newSnapshot, pendingRequestTokens)
       pendingRequestTokens = newSnapshot
     }

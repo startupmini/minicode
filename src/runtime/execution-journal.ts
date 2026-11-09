@@ -407,14 +407,16 @@ export function openExecutionJournal(
   const checkpointFn = opts?.checkpoint
   let db: Database | null = null
   let openError: JournalError | null = null
-  // Statement registry di scope fungsi (bukan blok try): semua pemakai
-  // (insert/fetch/read/flush/close) berbagi; close() finalize semua agar
-  // Windows file lock lepas (tanpa ini rm tmp macet EBUSY).
-  const statements: Statement[] = []
+  // Statement cache di scope fungsi (bukan blok try): satu prepared statement
+  // per SQL string agar tidak bocor ribuan handle pada jurnal berumur panjang,
+  // dan close() mem-finalize semuanya agar Windows file lock lepas.
+  const statementMap = new Map<string, Statement>()
   const prep = (sql: string): Statement => {
     if (!db) throw new Error("journal closed")
+    const cached = statementMap.get(sql)
+    if (cached) return cached
     const stmt = db.prepare(sql)
-    statements.push(stmt)
+    statementMap.set(sql, stmt)
     return stmt
   }
   try {
@@ -882,12 +884,15 @@ export function openExecutionJournal(
 
     integrityCheck(): { checked: number; mismatched: number[] } {
       // Mismatch dilaporkan (seq list), TAK PERNAH dibuang diam-diam.
-      // Reuse storedEventContent agar definisi konten tunggal (anti-drift).
+      // Reuse storedEventContent + storedIntentContent agar definisi konten tunggal.
       const records = api.readAll()
       const mismatched: number[] = []
       for (const rec of records) {
         if (rec.kind === "event") {
           if (hashRecord(storedEventContent(rec)) !== rec.recordHash)
+            mismatched.push(rec.journalSequence)
+        } else if (rec.kind === "intent") {
+          if (hashRecord(storedIntentContent(rec)) !== rec.recordHash)
             mismatched.push(rec.journalSequence)
         }
       }
@@ -901,11 +906,12 @@ export function openExecutionJournal(
     close(): void {
       // Idempoten: ganda aman; post-close append = already-closed eksplisit.
       // Finalize statements DULU (Windows file lock), baru db.close().
-      for (const stmt of statements.splice(0)) {
+      for (const stmt of statementMap.values()) {
         try {
           stmt.finalize()
         } catch {}
       }
+      statementMap.clear()
       if (db) {
         try {
           db.close()

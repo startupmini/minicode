@@ -58,6 +58,7 @@ export async function dispatch(
     for (let i = 0; i < subArgv.length; i++) {
       const a = subArgv[i]
       if (a === undefined) continue
+      if (a === "--") break
       if (a === name) {
         const v = subArgv[i + 1]
         if (v !== undefined && (v === "-" || !v.startsWith("-") || /^-?\d+(\.\d+)?$/.test(v)))

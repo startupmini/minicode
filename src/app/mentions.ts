@@ -44,7 +44,7 @@ export async function expandMentions(
   let prompt = line
   for (const p of parseMentions(line)) {
     const r = await resolveMentionContent(p, cwd)
-    if (r.ok) prompt = prompt.replace(`@${p}`, r.content)
+    if (r.ok) prompt = prompt.replace(`@${p}`, () => r.content)
     else notes.push(`@${p}: ${r.reason}`)
   }
   return { prompt, notes }

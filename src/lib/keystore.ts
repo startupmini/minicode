@@ -5,6 +5,7 @@ import { chmod, mkdir, open, readdir, readFile, unlink } from "node:fs/promises"
 import { homedir, hostname } from "node:os"
 import { basename, join } from "node:path"
 import { atomicWriteText } from "./atomic-write.ts"
+import { resolveTrustedExecutable } from "./trusted-exec.ts"
 
 // Penyimpanan rahasia berlapis (tanpa dependensi):
 // - Windows: DPAPI user-scope via powershell bawaan (hanya user ini yang
@@ -70,11 +71,10 @@ function defaultRunner(
   input?: string,
 ): { status: number | null; stdout: string } {
   try {
-    const r = spawnSync(cmd, args, {
+    const r = spawnSync(resolveTrustedExecutable(cmd), args, {
       input,
       encoding: "utf8",
       timeout: 15000,
-      shell: process.platform === "win32",
       windowsHide: true,
     })
     return { status: typeof r.status === "number" ? r.status : null, stdout: r.stdout ?? "" }
@@ -537,7 +537,7 @@ async function persistStore(store: SecretStore): Promise<boolean> {
 // `Add-Type System.Security` WAJIB eksplisit: assembly ProtectedData tidak
 // di-load default oleh powershell (terbukti gagal tanpanya di Win 10/11).
 const DPAPI_PRELUDE = "Add-Type -AssemblyName System.Security; "
-const DPAPI_PROTECT = [
+const DPAPI_PROTECT_ARGS = [
   "-NoProfile",
   "-NonInteractive",
   "-Command",
@@ -546,9 +546,9 @@ const DPAPI_PROTECT = [
     "$b = [Text.Encoding]::UTF8.GetBytes($t); " +
     "$p = [Security.Cryptography.ProtectedData]::Protect($b, $null, 'CurrentUser'); " +
     "[Convert]::ToBase64String($p)",
-].join(" ")
+]
 
-const DPAPI_UNPROTECT = [
+const DPAPI_UNPROTECT_ARGS = [
   "-NoProfile",
   "-NonInteractive",
   "-Command",
@@ -557,7 +557,7 @@ const DPAPI_UNPROTECT = [
     "$p = [Convert]::FromBase64String($t.Trim()); " +
     "$b = [Security.Cryptography.ProtectedData]::Unprotect($p, $null, 'CurrentUser'); " +
     "[Text.Encoding]::UTF8.GetString($b)",
-].join(" ")
+]
 
 function dpapiAvailable(): boolean {
   if (process.env.MINICODE_KEYSTORE_DISABLE === "1") return false
@@ -574,7 +574,7 @@ function dpapiAvailable(): boolean {
 function dpapiProtect(plaintext: string): string | null {
   const run = runnerOverride ?? defaultRunner
   const exe = process.platform === "win32" ? "powershell" : "pwsh"
-  const r = run(exe, DPAPI_PROTECT.split(" ").filter(Boolean), plaintext)
+  const r = run(exe, DPAPI_PROTECT_ARGS, plaintext)
   if (r.status !== 0) return null
   const out = r.stdout.trim()
   return out ? out : null
@@ -583,7 +583,7 @@ function dpapiProtect(plaintext: string): string | null {
 function dpapiUnprotect(blob: string): string | null {
   const run = runnerOverride ?? defaultRunner
   const shell = process.platform === "win32" ? "powershell" : "pwsh"
-  const r = run(shell, DPAPI_UNPROTECT.split(" ").filter(Boolean), blob)
+  const r = run(shell, DPAPI_UNPROTECT_ARGS, blob)
   if (r.status !== 0) return null
   // powershell mengakhiri output dengan newline — hanya itu yang dibuang,
   // isi secret utuh (bisa mengandung newline di tengah).
@@ -659,7 +659,9 @@ export async function getSecret(key: string): Promise<string | null> {
   } catch {
     value = null
   }
-  secretCache.set(key, value)
+  // Hanya cache hasil positif (non-null) agar kegagalan transien (timeout DPAPI,
+  // EBUSY sesaat) tidak mengunci secret menjadi null sepanjang hidup proses.
+  if (value !== null) secretCache.set(key, value)
   return value
 }
 

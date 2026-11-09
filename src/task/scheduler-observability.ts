@@ -171,6 +171,7 @@ export class SchedulerObservability {
           break
 
         case "task:execution_completed":
+          this.hint = "idle"
           this.record(`execution finished for ${event.taskId}: ok=${String(event.ok)}`)
           break
 

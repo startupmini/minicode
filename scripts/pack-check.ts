@@ -52,7 +52,7 @@ interface PackFile {
   path: string
 }
 
-function filesFromNpm(): string[] | null {
+function inspectNpmPack(): { files: string[]; unpackedKb: number } | null {
   const r = spawnSync("npm", ["pack", "--dry-run", "--json"], {
     cwd: repoRoot,
     encoding: "utf8",
@@ -61,16 +61,20 @@ function filesFromNpm(): string[] | null {
   })
   if (r.status !== 0 || !r.stdout.trim()) return null
   try {
-    const parsed = JSON.parse(r.stdout) as { files?: PackFile[] }[]
+    const parsed = JSON.parse(r.stdout) as { files?: PackFile[]; unpackedSize?: number }[]
     const files = parsed[0]?.files
     if (!Array.isArray(files)) return null
-    return files.map((f) => f.path.replace(/\\/g, "/"))
+    return {
+      files: files.map((f) => f.path.replace(/\\/g, "/")),
+      unpackedKb: Math.round((parsed[0]?.unpackedSize ?? 0) / 1024),
+    }
   } catch {
     return null
   }
 }
 
-const npmFiles = filesFromNpm()
+const packInfo = inspectNpmPack()
+const npmFiles = packInfo?.files ?? null
 if (!npmFiles) {
   console.error("[pack-check] `npm pack --dry-run --json` gagal — tidak bisa memverifikasi tarball")
   console.error("[pack-check] pastikan npm tersedia di PATH")
@@ -233,17 +237,7 @@ check(
 )
 
 // ── 6. ukuran wajar ──
-const sizeR = spawnSync("npm", ["pack", "--dry-run", "--json"], {
-  cwd: repoRoot,
-  encoding: "utf8",
-  timeout: 120_000,
-  shell: process.platform === "win32",
-})
-let unpackedKb = 0
-try {
-  const parsed = JSON.parse(sizeR.stdout) as { unpackedSize?: number }[]
-  unpackedKb = Math.round((parsed[0]?.unpackedSize ?? 0) / 1024)
-} catch {}
+const unpackedKb = packInfo?.unpackedKb ?? 0
 console.log(`\nukuran unpacked: ${unpackedKb} KB`)
 check(
   `ukuran di bawah ${PACK_SIZE_BUDGET_KIB / 1024} MiB (tak ada node_modules/test terbawa)`,

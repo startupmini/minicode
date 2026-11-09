@@ -72,7 +72,10 @@ function resolveUncached(name: string): string {
   for (const dir of validPathEntries()) {
     if (windows) {
       for (const ext of exts) {
-        const candidate = join(dir, name.endsWith(ext.toLowerCase()) ? name : name + ext)
+        const candidate = join(
+          dir,
+          name.toLowerCase().endsWith(ext.toLowerCase()) ? name : name + ext,
+        )
         if (isExecutableFile(candidate)) return candidate
       }
     } else {

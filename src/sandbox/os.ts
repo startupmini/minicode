@@ -87,11 +87,12 @@ export function runInOsSandbox(
   const timeout = opts.timeoutMs ?? LIMITS.DOCKER_TIMEOUT_MS
 
   if (type === "seatbelt") {
-    // macOS seatbelt - simple deny network profile
+    // macOS seatbelt - simple deny network profile (escape \ dan " pada path)
+    const escapedAbs = abs.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
     const profile = `(version 1)
 (deny default)
 (allow process-exec)
-(allow file-read* file-write* (subpath "${abs}"))
+(allow file-read* file-write* (subpath "${escapedAbs}"))
 (allow file-read* (subpath "/usr") (subpath "/bin") (subpath "/private/tmp"))
 (allow sysctl-read)
 (deny network*)
@@ -111,7 +112,7 @@ export function runInOsSandbox(
       "--ro-bind",
       "/lib",
       "/lib",
-      "--ro-bind",
+      "--ro-bind-try",
       "/lib64",
       "/lib64",
       "--proc",

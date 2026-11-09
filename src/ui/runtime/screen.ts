@@ -15,6 +15,11 @@ const ENTER = "\x1b[?1049h"
 const EXIT = "\x1b[?1049l"
 const HOME = "\x1b[H"
 const CLEAR_ALL = "\x1b[2J"
+/** Reset atribut (warna/efek) + tampilkan kursor — ditulis saat exit supaya
+ * prompt shell kembali bersih (tidak ada sisa warna frame terakhir / kursor
+ * tersembunyi). */
+const RESET_ATTRS = "\x1b[0m"
+const SHOW_CURSOR = "\x1b[?25h"
 // Reset scroll-region — unconditional + idempoten: region aktif peninggalan
 // akan memotong paint fullscreen; tulis SEBELUM enter dan SESUDAH exit agar
 // buffer utama kembali steril apa pun yang terjadi di dalam.
@@ -200,6 +205,12 @@ export function openAltScreen(): AltScreen {
       depth = Math.max(0, depth - 1)
       if (depth === 0) {
         try {
+          process.stdout.write(RESET_ATTRS)
+        } catch {}
+        try {
+          process.stdout.write(SHOW_CURSOR)
+        } catch {}
+        try {
           process.stdout.write(SYNC_END)
         } catch {}
         try {
@@ -225,6 +236,12 @@ export function altScreenDepth(): number {
  */
 export function forceRestoreScreenForSignal(): void {
   if (depth > 0) {
+    try {
+      process.stdout.write(RESET_ATTRS)
+    } catch {}
+    try {
+      process.stdout.write(SHOW_CURSOR)
+    } catch {}
     try {
       process.stdout.write(SYNC_END)
     } catch {}

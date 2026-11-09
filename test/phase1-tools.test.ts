@@ -32,6 +32,10 @@ const ctx = {
 
 afterEach(async () => {
   killAllBackgroundJobs()
+  try {
+    const { resetTaskStoreHandles } = await import("../src/task/store.ts")
+    resetTaskStoreHandles()
+  } catch {}
   await rm(tmp, { recursive: true, force: true }).catch(() => {})
 })
 

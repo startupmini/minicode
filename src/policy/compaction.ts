@@ -645,9 +645,16 @@ export async function compactWithLlm(
   }
   // Usage kompaksi dikirim SETELAH stream sukses (bukan di tengah): angka
   // parsial tidak dibuat, unknown tetap unknown (callback tak dipanggil).
-  try {
-    opts.onUsage?.({ ...(compactionUsage ?? {}), model: compactionModel })
-  } catch {}
+  if (
+    compactionUsage &&
+    (compactionUsage.inputTokens !== undefined ||
+      compactionUsage.outputTokens !== undefined ||
+      compactionUsage.totalTokens !== undefined)
+  ) {
+    try {
+      opts.onUsage?.({ ...compactionUsage, model: compactionModel })
+    } catch {}
+  }
   const lruSummary = {
     role: "user" as const,
     content: composeBoundedSummary("", summary),

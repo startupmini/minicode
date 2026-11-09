@@ -263,22 +263,27 @@ export class DaemonClient {
     idem: string,
     timeoutMs = 3_000,
   ): Promise<Extract<ServerMessage, { t: "control_result" }>> {
+    let cleanup = (): void => {}
     const waiter = new Promise<Extract<ServerMessage, { t: "control_result" }>>(
       (resolve, reject) => {
-        this.#pendingControl.set(idem, (m) => {
-          resolve(m as Extract<ServerMessage, { t: "control_result" }>)
-        })
         const off = this.on((e) => {
           if (e.kind === "closed") {
-            off()
-            this.#pendingControl.delete(idem)
+            cleanup()
             reject(new Error(`koneksi ditutup: ${e.reason}`))
           }
+        })
+        cleanup = () => {
+          off()
+          this.#pendingControl.delete(idem)
+        }
+        this.#pendingControl.set(idem, (m) => {
+          cleanup()
+          resolve(m as Extract<ServerMessage, { t: "control_result" }>)
         })
       },
     )
     this.#send({ t: "control", op, idem, args, consumer: this.welcome?.consumer ?? "" })
-    return withTimeout(waiter, timeoutMs, "control timeout")
+    return withTimeout(waiter, timeoutMs, "control timeout").finally(cleanup)
   }
 
   ping(id: string): Promise<ServerMessage> {

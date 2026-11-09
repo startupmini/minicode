@@ -9,7 +9,10 @@
 // await (dynamic import / loadHistory / loadConfig) sebelum memasang listener
 // stdin, dan keystroke yang dikirim sebelum itu hilang tanpa jejak.
 
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { runProviderManager } from "../cli/provider-manager.ts"
 import { askLine } from "../src/ui/input/input.ts"
 import { stripAnsi } from "../src/ui/render/theme.ts"
@@ -601,9 +604,27 @@ describe("runPicker", () => {
 })
 
 describe("runProviderManager", () => {
+  let tmpHome = ""
+  let prevHome: string | undefined
+
+  beforeEach(() => {
+    // Isolasi MINICODE_HOME agar tidak membaca ~/.minicode/config.json mesin dev.
+    prevHome = process.env.MINICODE_HOME
+    tmpHome = mkdtempSync(join(tmpdir(), "minicode-tui-classic-"))
+    process.env.MINICODE_HOME = tmpHome
+  })
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.MINICODE_HOME
+    else process.env.MINICODE_HOME = prevHome
+    try {
+      if (tmpHome) rmSync(tmpHome, { recursive: true, force: true })
+    } catch {}
+  })
+
   test("fallback non-TTY mendaftar provider tanpa raw mode", async () => {
     tty = installFakeTty({ isTTY: false })
-    await runProviderManager({ cwd: process.cwd() })
+    await runProviderManager({ cwd: tmpHome })
     expect(tty.all()).toBeTypeOf("string")
   })
 
@@ -611,7 +632,7 @@ describe("runProviderManager", () => {
     tty = installFakeTty({ rows: 24 })
     let overridden: string | undefined
     const p = runProviderManager({
-      cwd: process.cwd(),
+      cwd: tmpHome,
       setModelOverride: (m) => {
         overridden = m
       },
@@ -625,7 +646,7 @@ describe("runProviderManager", () => {
 
   test("daftar provider tanpa footer hint", async () => {
     tty = installFakeTty({ rows: 24 })
-    const p = runProviderManager({ cwd: process.cwd() })
+    const p = runProviderManager({ cwd: tmpHome })
     await tty.ready()
     const out = visible(tty)
     expect(out).not.toContain("delete")

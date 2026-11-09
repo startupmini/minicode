@@ -529,6 +529,7 @@ export async function createMinicodeSession(
   // bisa melampaui jendela tanpa disadari. Nilai yang progresif-kumulatif dari
   // gateway tetap aman karena kita hanya mengambil nilai TERBESAR per turn.
   let lastProviderInputTokens: number | undefined
+  let lastRequestMessageCount = 0
   const contextWindowForModel = (model?: string): number => {
     const explicit = rest.contextWindowTokens
     if (
@@ -573,7 +574,12 @@ export async function createMinicodeSession(
         estimateTools(tools, estimator)
       // Anchor ukuran nyata: jangan biarkan estimasi (chars/4, bisa under-count
       // 2–5× pada kode/JSON) jatuh di bawah input asli terakhir provider. Input
-      // hanya tumbuh antar-turn, jadi lantai ini aman dan monotonik.
+      // hanya tumbuh antar-turn normal; bila jumlah pesan menyusut (kompaksi,
+      // rewind/checkpoint, atau clear), reset anchor agar tidak memicu overflow palsu.
+      if (req.messages.length < lastRequestMessageCount) {
+        lastProviderInputTokens = undefined
+      }
+      lastRequestMessageCount = req.messages.length
       if (lastProviderInputTokens !== undefined && lastProviderInputTokens > inputTokens) {
         inputTokens = lastProviderInputTokens
       }
@@ -733,6 +739,9 @@ export async function createMinicodeSession(
     cwd: defaultCwd,
     ...(turnCount !== undefined ? { turnCount } : {}),
     ...(stepCount !== undefined ? { stepCount } : {}),
+  })
+  core.events.on("context:compacted", () => {
+    lastProviderInputTokens = undefined
   })
   core.events.on("provider:extension", (e) => {
     if (e.kind !== "usage") return

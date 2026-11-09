@@ -77,21 +77,22 @@ export async function loadTokenizer(modelId: string): Promise<BpeTokenizer | nul
   const repo = findTokenizerRepo(modelId)
   if (!repo) return null
   const url = `https://huggingface.co/${repo}/resolve/main/tokenizer.json`
-  let data: { vocab: Record<string, number>; merges: string[] }
+  let data: { vocab: Record<string, number>; merges: Array<string | [string, string]> }
+  let tok: BpeTokenizer
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(30_000) })
     if (!res.ok) return null
     const parsed = (await res.json()) as {
-      model?: { vocab?: Record<string, number>; merges?: string[] }
+      model?: { vocab?: Record<string, number>; merges?: Array<string | [string, string]> }
     }
     const vocab = parsed.model?.vocab
     const merges = parsed.model?.merges
-    if (!vocab || !merges) return null
+    if (!vocab || !Array.isArray(merges)) return null
     data = { vocab, merges }
+    tok = loadBpeTokenizer(data)
   } catch {
     return null
   }
-  const tok = loadBpeTokenizer(data)
   memoryCache.set(repo, tok)
   try {
     mkdirSync(cacheDir(), { recursive: true })

@@ -55,8 +55,13 @@ export function projectProvenance(
   replayedUpToSeq: number | null,
 ): Provenance | undefined {
   if (replayedUpToSeq === null || replayedUpToSeq === undefined) return undefined
+  // Status/incomplete yang lahir dari inferensi rebuildFromDurable diberi
+  // endSeq = state.seq + 1 (tepat 1 di atas replayedUpToSeq); tetap harus
+  // diklasifikasikan sebagai "reconstructed", bukan dianggap live.
+  if (entry.status === "interrupted" || entry.incomplete === true) {
+    if (eventSeq <= replayedUpToSeq + 1) return "reconstructed"
+  }
   if (eventSeq > replayedUpToSeq) return undefined
-  if (entry.status === "interrupted" || entry.incomplete === true) return "reconstructed"
   return "replay"
 }
 
@@ -318,7 +323,10 @@ export interface ProjectionNode {
 }
 
 function findActivity(state: PresentationState, id: string): ActivityEntry | undefined {
-  return [...state.activities.values()].find((a) => `${a.sessionId}:${a.toolCallId}` === id)
+  return (
+    state.activities.get(id) ??
+    [...state.activities.values()].find((a) => `${a.sessionId}:${a.toolCallId}` === id)
+  )
 }
 
 function findTurn(state: PresentationState, id: string): TurnEntry | undefined {

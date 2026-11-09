@@ -251,6 +251,7 @@ export class Transcript {
       bus.on("turn:started", () => {
         this.commit()
         this.commitThinking()
+        this.activityFold = []
       }),
       bus.on("turn:completed", () => {
         this.commit()
@@ -783,12 +784,24 @@ export class Transcript {
   }
 
   private presentationEvent(event: UiPresentationEvent): void {
+    if (event.type === "turn.started") {
+      this.commit()
+      this.commitThinking()
+      this.activityFold = []
+      return
+    }
     if (event.type === "turn.completed") {
       this.commit()
       this.commitThinking()
       // minimizeActivity ON → fold meringkas sendiri (nama tool + ok/gagal);
       // turnSummary (turn · files · durasi) dilewati agar tidak ada dua ringkasan.
       if (!this.uiState.minimizeActivity) this.turnSummary(event.summary, event)
+      this.flushActivityFold()
+      return
+    }
+    if (event.type === "turn.failed" || event.type === "turn.cancelled") {
+      this.commit()
+      this.commitThinking()
       this.flushActivityFold()
       return
     }
@@ -819,8 +832,6 @@ export class Transcript {
     if (event.type === "tool.started") {
       this.commit()
       this.commitThinking()
-      // Turn baru: jangan membawa lipatan aktivitas dari turn sebelumnya.
-      this.activityFold = []
       return
     }
     this.presentationLedger(event)
@@ -1128,7 +1139,8 @@ export class Transcript {
           )
         }))
       : undefined
-    const turnId = turn?.turnId ?? snapshot?.turns[snapshot.turns.length - 1]?.turnId ?? 0
+    const turnId =
+      event.turnId ?? turn?.turnId ?? snapshot?.turns[snapshot.turns.length - 1]?.turnId ?? 0
     if (event.turnId !== undefined) {
       if (this.summarizedTurns.has(event.turnId)) return
       this.summarizedTurns.add(event.turnId)

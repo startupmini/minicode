@@ -1344,16 +1344,27 @@ export function purgeExpired(db: Database, now = Date.now()): number {
   // than duplicated for exactly that reason: 6O ADR-9's rule is ONE deletion
   // architecture, so the ordering cannot drift between these two entry points.
   const expiring = db
-    .prepare(`SELECT id FROM sessions WHERE COALESCE(updated_at, created_at) < ?`)
-    .all(cutoff) as { id: string }[]
+    .prepare(`SELECT id, cwd FROM sessions WHERE COALESCE(updated_at, created_at) < ?`)
+    .all(cutoff) as { id: string; cwd?: string | null }[]
 
-  const { TaskStore } = require("../task/store.ts") as typeof import("../task/store.ts")
-  const cwd = sessionCwdOf(db, expiring)
-  const tasks = new TaskStore(cwd)
-  for (const row of expiring) {
-    // 1. invalidate in-flight executions, 2. remove task rows.
-    tasks.bumpSessionIncarnation(row.id)
-    tasks.deleteSessionTasks(row.id)
+  if (expiring.length > 0) {
+    const { TaskStore } = require("../task/store.ts") as typeof import("../task/store.ts")
+    const fallbackCwd = sessionCwdOf(db, expiring)
+    const byCwd = new Map<string | undefined, string[]>()
+    for (const row of expiring) {
+      const key = row.cwd || fallbackCwd
+      const list = byCwd.get(key) ?? []
+      list.push(row.id)
+      byCwd.set(key, list)
+    }
+    for (const [cwd, ids] of byCwd) {
+      const tasks = new TaskStore(cwd)
+      for (const sid of ids) {
+        // 1. invalidate in-flight executions, 2. remove task rows.
+        tasks.bumpSessionIncarnation(sid)
+        tasks.deleteSessionTasks(sid)
+      }
+    }
   }
 
   const gone = db

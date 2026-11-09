@@ -163,8 +163,14 @@ function hashKey(h: string | null): string {
 }
 
 export interface NoProgressDetector {
-  evaluateBeforeCall(call: { id?: string; name: string; args?: unknown }): NoProgressVerdict
-  assertBeforeCall(call: { id?: string; name: string; args?: unknown }): void
+  evaluateBeforeCall(
+    call: { id?: string; name: string; args?: unknown },
+    workspaceRoot?: string,
+  ): NoProgressVerdict
+  assertBeforeCall(
+    call: { id?: string; name: string; args?: unknown },
+    workspaceRoot?: string,
+  ): void
   capturePreMutation(
     call: { id: string; name: string; args?: unknown },
     workspaceRoot: string,
@@ -253,7 +259,7 @@ export function createNoProgressDetector(options: NoProgressOptions = {}): NoPro
   const inflightPreHash = new Map<string, { relPath: string; preHash: string | null }>()
   const pendingPost = new Set<Promise<unknown>>()
 
-  const evaluateBeforeCall: NoProgressDetector["evaluateBeforeCall"] = (call) => {
+  const evaluateBeforeCall: NoProgressDetector["evaluateBeforeCall"] = (call, workspaceRoot) => {
     const name = String(call.name ?? "")
     const actionKey = `${name}\0${canonicalArgsHash(call.args)}`
 
@@ -300,8 +306,9 @@ export function createNoProgressDetector(options: NoProgressOptions = {}): NoPro
       const rawPath =
         typeof a.path === "string" ? a.path : typeof a.to === "string" ? a.to : undefined
       if (rawPath) {
-        const key = normalizeTrackPath(rawPath)
-        const tracker = fileTrackers.get(key)
+        const rel = workspaceRoot ? targetRelPathForTool(name, call.args, workspaceRoot) : null
+        const key = normalizeTrackPath(rel ?? rawPath)
+        const tracker = fileTrackers.get(key) ?? fileTrackers.get(normalizeTrackPath(rawPath))
         if (tracker?.oscillationMessage) {
           return {
             allowed: false,
@@ -398,8 +405,8 @@ export function createNoProgressDetector(options: NoProgressOptions = {}): NoPro
 
   return {
     evaluateBeforeCall,
-    assertBeforeCall(call) {
-      const verdict = evaluateBeforeCall(call)
+    assertBeforeCall(call, workspaceRoot) {
+      const verdict = evaluateBeforeCall(call, workspaceRoot)
       if (!verdict.allowed) {
         throw new NoProgressError(verdict.kind, verdict.reason, verdict.message)
       }
@@ -416,7 +423,7 @@ export function createNoProgressDetector(options: NoProgressOptions = {}): NoPro
     },
     async beforeToolEffectCheck(call, workspaceRoot) {
       await flushPending()
-      const verdict = evaluateBeforeCall(call)
+      const verdict = evaluateBeforeCall(call, workspaceRoot)
       if (!verdict.allowed) {
         throw new NoProgressError(verdict.kind, verdict.reason, verdict.message)
       }

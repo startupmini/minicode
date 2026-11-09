@@ -137,6 +137,9 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
         throw new ProviderError("network", e instanceof Error ? e.message : String(e))
       }
       if (!res.ok) {
+        // Bila request gagal saat membawa previous_response_id, hapus ID tersebut
+        // agar turn berikutnya tidak macet permanen pada ID yang kedaluwarsa/ditolak.
+        if (prev) lastResponseByModel.delete(modelKey)
         const txt = await readProviderErrorBody(res).catch(() => "")
         const retryAfter = res.headers.get("retry-after")
         if (res.status === 429) {
@@ -375,12 +378,19 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
                   typeof data.arguments === "string" ? data.arguments : "",
                 )
               }
-              const text = reasoningText
-                ? undefined
-                : ((typeof rawDelta === "string" ? rawDelta : undefined) ??
-                  drec.text ??
-                  drec.content ??
-                  drec.output_text)
+              const isToolEvent =
+                dtype === "response.output_item.added" ||
+                dtype === "response.function_call_arguments.delta" ||
+                dtype === "response.function_call_arguments.done" ||
+                dtype === "response.output_item.done" ||
+                dtype === "function_call"
+              const text =
+                reasoningText || isToolEvent
+                  ? undefined
+                  : ((typeof rawDelta === "string" ? rawDelta : undefined) ??
+                    drec.text ??
+                    drec.content ??
+                    drec.output_text)
               if (typeof text === "string" && text) yield { type: "text", text }
               const finish =
                 (data as { finish_reason?: string }).finish_reason ??

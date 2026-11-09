@@ -145,6 +145,11 @@ export function createAnthropicProvider(config: AnthropicConfig): ModelProvider 
         { id: string; name: string; args: string; argsBytes: number }
       >()
       let pendingToolArgBytes = 0
+      // Pertahankan input/cache tokens dari message_start agar message_delta
+      // (yang sering hanya mengirim output_tokens) tidak menimpa snapshot jadi 0.
+      let startInputTokens: number | undefined
+      let startCacheReadTokens: number | undefined
+      let startCacheWriteTokens: number | undefined
 
       // Anthropic SSE: event: ...\ndata: {...}
       let currentEvent = ""
@@ -183,10 +188,10 @@ export function createAnthropicProvider(config: AnthropicConfig): ModelProvider 
               type: "extension",
               kind: "usage",
               data: {
-                inputTokens: usage.input_tokens,
+                inputTokens: usage.input_tokens ?? startInputTokens,
                 outputTokens: usage.output_tokens,
-                cacheReadTokens: usage.cache_read_input_tokens,
-                cacheWriteTokens: usage.cache_creation_input_tokens,
+                cacheReadTokens: usage.cache_read_input_tokens ?? startCacheReadTokens,
+                cacheWriteTokens: usage.cache_creation_input_tokens ?? startCacheWriteTokens,
                 cacheIncluded: true,
               },
             }
@@ -194,6 +199,11 @@ export function createAnthropicProvider(config: AnthropicConfig): ModelProvider 
         } else if (evType === "message_start") {
           const usage = raw.message?.usage
           if (usage) {
+            if (typeof usage.input_tokens === "number") startInputTokens = usage.input_tokens
+            if (typeof usage.cache_read_input_tokens === "number")
+              startCacheReadTokens = usage.cache_read_input_tokens
+            if (typeof usage.cache_creation_input_tokens === "number")
+              startCacheWriteTokens = usage.cache_creation_input_tokens
             yield {
               type: "extension",
               kind: "usage",

@@ -8,7 +8,7 @@
 
 export interface BpeData {
   vocab: Record<string, number>
-  merges: string[]
+  merges: Array<string | [string, string]>
 }
 
 /** Map byte -> unicode (sama dengan tiktoken/HF): printable = dirinya, non-
@@ -51,7 +51,7 @@ function bpeMerge(token: string[], mergeRanks: Map<string, number>): string[] {
     let bestIdx = -1
     let bestRank = Infinity
     for (let i = 0; i + 1 < parts.length; i++) {
-      const rank = mergeRanks.get(parts[i]! + parts[i + 1]!)
+      const rank = mergeRanks.get(`${parts[i]!} ${parts[i + 1]!}`)
       if (rank !== undefined && rank < bestRank) {
         bestRank = rank
         bestIdx = i
@@ -72,10 +72,17 @@ export class BpeTokenizer {
 
   constructor(data: BpeData) {
     // merges = urutan rank (indeks pertama = prioritas tertinggi).
+    // Gunakan kunci berpemisah spasi ("a b") agar pasangan berbeda seperti
+    // ("ab","c") vs ("a","bc") tidak bertabrakan; dukung juga format tuple HF v2.
     this.mergeRanks = new Map()
     data.merges.forEach((pair, index) => {
-      // pair = "a b" (dua token dipisah spasi)
-      this.mergeRanks.set(pair.replace(" ", ""), index)
+      if (Array.isArray(pair)) {
+        if (typeof pair[0] === "string" && typeof pair[1] === "string") {
+          this.mergeRanks.set(`${pair[0]} ${pair[1]}`, index)
+        }
+      } else if (typeof pair === "string") {
+        this.mergeRanks.set(pair, index)
+      }
     })
   }
 
@@ -97,7 +104,7 @@ export class BpeTokenizer {
 /** Bangun tokenizer dari objek tokenizer.json (model.vocab + model.merges). */
 export function loadBpeTokenizer(model: {
   vocab: Record<string, number>
-  merges: string[]
+  merges: Array<string | [string, string]>
 }): BpeTokenizer {
   return new BpeTokenizer({ vocab: model.vocab, merges: model.merges })
 }

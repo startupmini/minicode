@@ -40,10 +40,13 @@ export interface GateEvaluation {
 
 /** Jumlah gagal + nama test dari ringkasan reporter dots. */
 export function parseFailures(output: string): { count: number; names: string[] } {
-  const m = /^\s*(\d+) fail\s*$/m.exec(output)
-  const count = m ? Number(m[1]) : 0
+  let count = 0
+  for (const m of output.matchAll(/^\s*(\d+)\s+(?:fail|errors?)\s*$/gm)) {
+    const n = Number(m[1])
+    if (Number.isFinite(n)) count += n
+  }
   const names = (output.match(/^\(fail\).*$/gm) ?? []).map((l) => l.slice(0, 160))
-  return { count: Number.isFinite(count) ? count : 0, names }
+  return { count, names }
 }
 
 /** Baris "All files | funcs | lines |" — null bila tak ditemukan. */

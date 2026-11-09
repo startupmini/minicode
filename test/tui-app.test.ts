@@ -29,7 +29,12 @@ beforeEach(() => setSessionLocale("en"))
 const SENTINEL_BEARER = "SENTINEL-BEARER-abcdef123456"
 
 let tty: ReturnType<typeof installFakeTty> | null = null
+let lastApp: TuiApp | null = null
 afterEach(() => {
+  // Pastikan TuiApp yang gagal sebelum Ctrl+D tidak membocorkan listener
+  // SIGTERM/SIGHUP ke berkas test berikutnya dalam proses yang sama.
+  lastApp?.requestQuit()
+  lastApp = null
   tty?.restore()
   tty = null
   resetAltScreenDepth()
@@ -87,6 +92,7 @@ function setup(
     toggleReasoning: () => {},
   }
   const app = new TuiApp(transcript, host)
+  lastApp = app
   const screenText = () => tty!.screen().join("\n")
   // Lepaskan turn lambat + beri kesempatan microtask finally (busy=false)
   // jalan SEBELUM key berikutnya diproses. Tanpa flush, send() harness
@@ -856,7 +862,7 @@ describe("TuiApp", () => {
     const { app } = setup({ columns: 30, rows: 14 })
     const runP = app.run()
     await tty!.ready()
-    await tty!.waitForOutput((o) => o.includes("00.00.00"))
+    await tty!.waitForOutput((o) => o.includes("minicode"))
     await tty!.send("a".repeat(50))
     for (let i = 0; i < 20; i++) await tty!.send(KEY.left)
     expect(tty!.all()).toContain("\x1b[12;12H")

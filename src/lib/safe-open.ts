@@ -23,6 +23,32 @@ const O_RDONLY = constants.O_RDONLY
  * "blocked sensitive file", "symlink points outside workspace") agar test
  * regex tetap hijau.
  */
+/**
+ * Resolusi path nyata atau ancestor terdekat bila target/induk langsung belum
+ * ada (ENOENT), sehingga symlink pada leluhur bertingkat (`symlink_dir/sub/new.txt`)
+ * tidak lolos ke path logis saat membuat subdirektori baru.
+ */
+async function resolveRealOrAncestor(abs: string): Promise<string> {
+  try {
+    return await realpath(abs)
+  } catch {
+    let probe = dirname(abs)
+    let tail = basename(abs)
+    for (let i = 0; i < 64; i++) {
+      try {
+        const realAncestor = await realpath(probe)
+        return resolve(realAncestor, tail)
+      } catch {
+        const parent = dirname(probe)
+        if (parent === probe) break
+        tail = join(basename(probe), tail)
+        probe = parent
+      }
+    }
+    return abs
+  }
+}
+
 export async function resolveSafePath(
   p: string,
   root: string,
@@ -31,9 +57,7 @@ export async function resolveSafePath(
   if (isSensitive(p)) throw new Error(`blocked sensitive file: ${p}`)
   const abs = isAbsolute(p) ? resolve(p) : resolve(root, p)
   const realRoot = await realpath(root).catch(() => root)
-  const realDir = await realpath(dirname(abs)).catch(() => dirname(abs))
-  const fileReal = await realpath(abs).catch(() => null)
-  const real = fileReal ?? resolve(realDir, basename(abs))
+  const real = await resolveRealOrAncestor(abs)
   if (isPathOutsideRoot(real, realRoot)) throw new Error(`symlink points outside workspace: ${p}`)
   if (isSensitive(real)) throw new Error(`blocked sensitive file: ${p}`)
   return { abs, real }
@@ -180,14 +204,14 @@ export async function safeStat(abs: string, root: string) {
 export async function assertSafeWriteTarget(abs: string, root: string): Promise<string> {
   const realRoot = await realpath(root).catch(() => root)
   const dir = dirname(abs)
-  const realDir = await realpath(dir).catch(() => dir)
+  const realDir = await resolveRealOrAncestor(dir)
   if (isPathOutsideRoot(realDir, realRoot)) throw new Error(`parent outside workspace: ${abs}`)
   const fileReal = await realpath(abs).catch(() => null)
   // basename (bukan split "/"): path Windows memakai backslash — split "/"
   // mengembalikan seluruh path absolut sehingga resolve() mengabaikan realDir
   // dan verifikasi parent symlink gugur diam-diam di Windows.
   const realAbs = fileReal ?? resolve(realDir, basename(abs))
-  if (fileReal && isPathOutsideRoot(realAbs, realRoot))
+  if (isPathOutsideRoot(realAbs, realRoot))
     throw new Error(`symlink points outside workspace: ${abs}`)
   return realAbs
 }

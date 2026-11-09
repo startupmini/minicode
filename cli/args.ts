@@ -271,24 +271,36 @@ export function readPrompt(): Promise<string> {
   return new Promise((resolve) => {
     let data = ""
     let done = false
+    const onData = (c: string | Buffer) => {
+      data += String(c)
+    }
+    const onEnd = () => {
+      if (!done) {
+        done = true
+        clearTimeout(t)
+        cleanup()
+        resolve(data.trim())
+      }
+    }
+    const cleanup = () => {
+      process.stdin.off("data", onData)
+      process.stdin.off("end", onEnd)
+    }
     const t = setTimeout(() => {
       if (!done) {
         done = true
+        cleanup()
         resolve("")
       }
     }, 500)
     process.stdin.setEncoding("utf8")
-    process.stdin.on("data", (c) => (data += c))
-    process.stdin.on("end", () => {
-      if (!done) {
-        done = true
-        clearTimeout(t)
-        resolve(data.trim())
-      }
-    })
+    process.stdin.on("data", onData)
+    process.stdin.on("end", onEnd)
     // if stdin already ended
     if (process.stdin.readableEnded) {
+      done = true
       clearTimeout(t)
+      cleanup()
       resolve("")
     }
   })

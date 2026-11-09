@@ -6,7 +6,12 @@ import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
 import { GIT_SAFE_BASE } from "../lib/git-hardening.ts"
 import { sanitizeSessionPart } from "../lib/session-id.ts"
-import { isPathOutsideRoot } from "../policy/jail.ts"
+import {
+  isOwnedState,
+  isPathOutsideRoot,
+  isRealPathOutsideRoot,
+  isSensitive,
+} from "../policy/jail.ts"
 import { appendUndoMarker, loadJournal } from "./journal.ts"
 import { diffTrees, ephemeralTree, isGitRepo, restoreTree, snapshotTree } from "./shadow-git.ts"
 
@@ -308,7 +313,23 @@ export async function snapshotWorkspace(
         .slice(0, limit)
       if (dirty.length > 0) {
         const snaps: FileSnapshot[] = []
-        for (const f of dirty) snaps.push(await captureFileSnapshot(resolve(cwd, f), cwd))
+        const seen = new Set<string>()
+        for (const f of dirty) {
+          const snap = await captureFileSnapshot(resolve(cwd, f), cwd)
+          seen.add(snap.path)
+          snaps.push(snap)
+        }
+        if (snaps.length < limit) {
+          const extra: string[] = []
+          await walkFiles(cwd, "", extra, limit)
+          for (const f of extra) {
+            if (snaps.length >= limit) break
+            const snap = await captureFileSnapshot(resolve(cwd, f), cwd)
+            if (seen.has(snap.path)) continue
+            seen.add(snap.path)
+            snaps.push(snap)
+          }
+        }
         return snaps
       }
     }
@@ -441,14 +462,18 @@ export async function recordCheckpointFromSnapshots(
   })
 }
 
-// Terapkan snapshot dengan jail path: path di luar workspace dilewati.
+// Terapkan snapshot dengan jail path: path di luar workspace atau sensitif dilewati.
 async function applySnapshots(snapshots: FileSnapshot[], cwd: string): Promise<string[]> {
   const root = resolve(cwd)
   const applied: string[] = []
   for (const snap of snapshots) {
     const absPath = resolve(root, snap.path)
-    if (isPathOutsideRoot(absPath, root)) {
+    if (isPathOutsideRoot(absPath, root) || isRealPathOutsideRoot(absPath, root)) {
       applied.push(`${snap.path} (skipped: outside workspace)`)
+      continue
+    }
+    if (isSensitive(absPath) || isOwnedState(absPath)) {
+      applied.push(`${snap.path} (skipped: protected path)`)
       continue
     }
     if (snap.content === null) {

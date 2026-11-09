@@ -11,7 +11,14 @@ import {
   gitFilterNeutralizers,
 } from "../lib/git-hardening.ts"
 import { resolveTrustedExecutable } from "../lib/trusted-exec.ts"
-import { isCwdOutsideRoot, isPathOutsideRoot } from "../policy/jail.ts"
+import {
+  isCwdOutsideRoot,
+  isOwnedState,
+  isOwnedStateReal,
+  isPathOutsideRoot,
+  isRealPathOutsideRoot,
+  isSensitive,
+} from "../policy/jail.ts"
 import { sanitizeSpawnEnv, scrubSecrets } from "../policy/scrub.ts"
 import { requireToolCwd } from "./context.ts"
 
@@ -57,16 +64,22 @@ function runGit(
       if (s.length > room) truncated = true
       return cur + s.slice(0, Math.max(0, room))
     }
+    const onAbort = () => p.kill("SIGTERM")
     p.stdout.on("data", (d) => (out = push(out, d)))
     p.stderr.on("data", (d) => (err = push(err, d)))
-    p.on("error", reject)
+    p.on("error", (e) => {
+      signal.removeEventListener("abort", onAbort)
+      reject(e)
+    })
     p.on("close", (code) => {
+      signal.removeEventListener("abort", onAbort)
       const text = scrubSecrets((out + (err ? `\n${err}` : "")).trim())
       const marked = truncated ? `${text}\n… [git output truncated]` : text
       if (code !== 0 && !marked) reject(new Error(`git ${args.join(" ")} exit ${code}`))
       else resolve(marked || `(exit ${code})`)
     })
-    signal.addEventListener("abort", () => p.kill("SIGTERM"), { once: true })
+    if (signal.aborted) onAbort()
+    else signal.addEventListener("abort", onAbort, { once: true })
   })
 }
 
@@ -217,7 +230,12 @@ function assertPaths(paths: unknown, cwd: string | undefined, sessionRoot: strin
   const out: string[] = []
   for (const p of paths) {
     if (typeof p !== "string" || !p.trim()) continue
-    if (isPathOutsideRoot(p, root)) throw new Error(`path outside workspace: ${p}`)
+    if (isPathOutsideRoot(p, root) || isRealPathOutsideRoot(p, root))
+      throw new Error(`path outside workspace: ${p}`)
+    const abs = resolve(root, p)
+    if (isSensitive(p) || isSensitive(abs)) throw new Error(`blocked sensitive file: ${p}`)
+    if (isOwnedState(p) || isOwnedState(abs) || isOwnedStateReal(p, root))
+      throw new Error(`blocked owned state: ${p}`)
     out.push(p)
   }
   return out

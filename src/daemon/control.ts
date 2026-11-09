@@ -219,15 +219,8 @@ function runOp(op: ControlOp, req: ControlRequest, deps: ControlDeps): ControlOu
   const args = req.args
   const sid = typeof args.sid === "string" ? args.sid : ""
 
-  if (
-    op === "daemon.status" ||
-    op === "daemon.shutdown" ||
-    op === "session.list" ||
-    op === "approval.list"
-  ) {
-    if (deps.shuttingDown() && op !== "daemon.status") {
-      return refuse("SHUTTING_DOWN", "daemon sedang berhenti")
-    }
+  if (deps.shuttingDown() && op !== "daemon.status") {
+    return refuse("SHUTTING_DOWN", "daemon sedang berhenti")
   }
 
   switch (op) {

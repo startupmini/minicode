@@ -6,7 +6,7 @@
 // pekerjaan baru saat itu, bukan terus mencoba dan akhirnya mengarang hasil
 // yang tampak sukses. Jadi tekanan = gerbang, bukan catatan.
 
-import { statfsSync } from "node:fs"
+import { existsSync, statfsSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname } from "node:path"
 
@@ -30,10 +30,11 @@ export type StorageCheck =
 export function checkStorage(target: string, minFreeBytes = MIN_FREE_BYTES): StorageCheck {
   let probe = target
   try {
-    // statfsSync menolak path yang bukan direktori; naikkan sampai ketemu.
-    // (target bisa berupa berkas DB.)
+    // Naikkan ke leluhur terdekat yang SUDAH ADA di disk (target bisa berupa
+    // berkas DB atau subdirektori `.minicode` yang belum dibuat), tanpa
+    // berjalan membabi-buta sampai root `/` bila direktori induk sudah ada.
     let cur = probe
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 16 && !existsSync(cur); i++) {
       const next = dirname(cur)
       if (next === cur) break
       cur = next

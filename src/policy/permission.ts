@@ -492,6 +492,8 @@ export function createPermissionHandler(
           )
         if (matched.some((p) => /^(npx|npm exec|bun x|bun run)\b/i.test(p)) && !npmNpxSafe(cmd))
           return deny(call, "allowlist: npm/npx unsafe")
+        if (/[;|&\n\r`]|[$][(]/.test(cmd))
+          return deny(call, "allowlist: shell expansion/chaining unsafe")
         return "allow"
       }
       if (isGated(call.name)) return deny(call, "allowlist: gated tool")
@@ -574,6 +576,8 @@ export function createPermissionHandler(
             )
           if (matched.some((p) => /^(npx|npm exec|bun x|bun run)\b/i.test(p)) && !npmNpxSafe(cmd))
             return deny(call, "allowlist: npm/npx unsafe")
+          if (/[;|&\n\r`]|[$][(]/.test(cmd))
+            return deny(call, "allowlist: shell expansion/chaining unsafe")
         }
         return "allow"
       }

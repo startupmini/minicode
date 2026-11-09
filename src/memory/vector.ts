@@ -1472,20 +1472,28 @@ export async function revokeByProvenance(
   if (conditions.length > 0) {
     const db = open(cwd)
     try {
-      const before = db
-        .prepare(`SELECT count(*) as c FROM memory WHERE ${conditions.join(" AND ")}`)
-        .get(...(values as [string | null])) as { c: number } | null
-      const n = before?.c ?? 0
-      if (n > 0) {
-        await withBusyRetry(() =>
-          db
-            .prepare(`DELETE FROM memory WHERE ${conditions.join(" AND ")}`)
-            .run(...(values as [string | null])),
-        )
-        // `changes` DELETE ikut terhitung tulis trigger FTS (bisa jauh lebih
-        // besar dari baris memory yang benar-benar cocok) — jumlah baris yang
-        // dihapus berasal dari penghitungannya SEBELUM delete.
-        vectorDeleted = n
+      const whereClause = conditions.join(" AND ")
+      const matched = db
+        .prepare(`SELECT id, parent FROM memory WHERE ${whereClause}`)
+        .all(...(values as [string | null])) as { id: string; parent: string | null }[]
+      if (matched.length > 0) {
+        const heads = Array.from(new Set(matched.map((r) => r.parent ?? r.id)))
+        const ph = heads.map(() => "?").join(",")
+        const before = db
+          .prepare(`SELECT count(*) as c FROM memory WHERE id IN (${ph}) OR parent IN (${ph})`)
+          .get(...heads, ...heads) as { c: number } | null
+        const n = before?.c ?? 0
+        if (n > 0) {
+          await withBusyRetry(() =>
+            db
+              .prepare(`DELETE FROM memory WHERE id IN (${ph}) OR parent IN (${ph})`)
+              .run(...heads, ...heads),
+          )
+          // `changes` DELETE ikut terhitung tulis trigger FTS (bisa jauh lebih
+          // besar dari baris memory yang benar-benar cocok) — jumlah baris yang
+          // dihapus berasal dari penghitungannya SEBELUM delete.
+          vectorDeleted = n
+        }
       }
     } finally {
       db.close()
@@ -1496,8 +1504,9 @@ export async function revokeByProvenance(
   // FILE_STORE: tags JSON dalam baris → parse dan match terhadap criteria
   let fileDeleted = 0
   try {
-    const { readFile, writeFile } = await import("node:fs/promises")
+    const { readFile } = await import("node:fs/promises")
     const { resolve } = await import("node:path")
+    const { atomicWriteText } = await import("../lib/atomic-write.ts")
     const LOCAL_MEM = ".minicode/MEMORY.md"
     const path = resolve(cwd ?? process.cwd(), LOCAL_MEM)
 
@@ -1556,7 +1565,7 @@ export async function revokeByProvenance(
     }
 
     if (del > 0) {
-      await writeFile(path, kept.join("\n"), "utf8")
+      await atomicWriteText(path, kept.join("\n"))
       fileDeleted = del
     }
   } catch {}

@@ -403,7 +403,6 @@ export class AutonomousExecutionContext {
     if (this.session === null) await this.initialize()
     const session = this.session!
     this.state = "executing"
-    this.emit({ kind: "turn:started", childSessionId: this.childSessionId })
 
     const settle = (r: AutonomousTurnResult): AutonomousTurnResult => {
       this.state = "settled"

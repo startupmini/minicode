@@ -23,15 +23,17 @@ describe("boot screen", () => {
     expect(tty.allErr()).toContain("selesai")
   })
 
-  test("TTY: melukis logo block + status line, lalu clear + show cursor saat stop", async () => {
+  test("TTY: melukis logo block + status line, hold 0.4 dtk lalu clear + show cursor", async () => {
     tty = installFakeTty({ columns: 80, rows: 30 })
     const boot = createBootScreen("Menyiapkan…", { intervalMs: 5 })
-    await sleep(140) // reveal semua baris (18 × 5ms) + beberapa frame spinner
+    await sleep(80) // reveal penuh (6 baris × 5ms) + beberapa frame spinner
     const drawn = tty.allErr()
     expect(drawn).toContain("█")
     expect(drawn).toContain("Menyiapkan…")
     expect(drawn).toContain("\x1b[s") // save-cursor untuk clear blok
     boot.stop()
+    // stop() menahan clear ±400ms (HOLD_MS) agar logo terlihat penuh dulu.
+    await sleep(550)
     const cleared = tty.allErr()
     expect(cleared).toContain("\x1b[J") // clear-below
     expect(cleared).toContain("\x1b[?25h") // show cursor

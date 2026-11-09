@@ -9,6 +9,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ToolCall } from "#minicore"
 import { createPermissionHandler } from "../src/policy/permission.ts"
+import { createWorkModePermissionHandler } from "../src/policy/work-mode.ts"
 
 const call = (name: string, args: Record<string, unknown>): ToolCall =>
   ({ name, args }) as unknown as ToolCall
@@ -54,5 +55,22 @@ describe("unrestricted mode: full access, no guard", () => {
     const h = createPermissionHandler({ mode: "allow-all", root: dir })
     expect(await h.check(call("bash", { cmd: "rm -rf /" }), {} as never)).toBe("deny")
     expect(await h.check(call("write_file", { path: "../outside.txt" }), {} as never)).toBe("deny")
+  })
+
+  test("komposisi WorkMode EXECUTE + unrestricted men-delegasi penuh (jalur produksi)", async () => {
+    dir = await mkdtemp(join(tmpdir(), "minicode-unrestr-"))
+    const base = createPermissionHandler({ mode: "unrestricted", root: dir })
+    const h = createWorkModePermissionHandler({ workMode: "EXECUTE", base, root: dir })
+    // Ceiling EXECUTE tidak menahan; base unrestricted → allow untuk bash destruktif.
+    expect(await h.check(call("bash", { cmd: "rm -rf /" }), {} as never)).toBe("allow")
+  })
+
+  test("WorkMode DISCUSS + unrestricted = tetap read-only (ceiling menang)", async () => {
+    dir = await mkdtemp(join(tmpdir(), "minicode-unrestr-"))
+    const base = createPermissionHandler({ mode: "unrestricted", root: dir })
+    const h = createWorkModePermissionHandler({ workMode: "DISCUSS", base, root: dir })
+    // Walaupun base unrestricted, ceiling DISCUSS menolak tulis.
+    expect(await h.check(call("write_file", { path: "a.txt" }), {} as never)).toBe("deny")
+    expect(await h.check(call("read_file", { path: "a.txt" }), {} as never)).toBe("allow")
   })
 })

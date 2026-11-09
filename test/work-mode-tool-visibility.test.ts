@@ -210,6 +210,38 @@ describe("EXECUTE × permission mode — perilaku lama + keselarasan READONLY_TO
   })
 })
 
+describe("unrestricted × WorkMode — INV-WM1: WorkMode mempersempit, unrestricted hanya penuh di EXECUTE", () => {
+  test("EXECUTE × unrestricted: semua tool bawaan tampil (full akses)", async () => {
+    const { sessionTools } = await setupToolLayer(
+      cfgEmpty,
+      "full",
+      "unrestricted",
+      undefined,
+      undefined,
+      "EXECUTE",
+    )
+    expect(nameOf(sessionTools)).toHaveLength(allTools.length)
+    // Bash + write + gated tool semuanya ikut (short-circuit allow di handler).
+    expect(workModeVisible("bash", "EXECUTE", "unrestricted")).toBe(true)
+    expect(workModeVisible("write_file", "EXECUTE", "unrestricted")).toBe(true)
+    expect(workModeVisible("git_commit", "EXECUTE", "unrestricted")).toBe(true)
+  })
+  test("DISCUSS × unrestricted: tetap 16 read-only (ceiling menang atas unrestricted)", async () => {
+    const { sessionTools } = await setupToolLayer(
+      cfgEmpty,
+      "full",
+      "unrestricted",
+      undefined,
+      undefined,
+      "DISCUSS",
+    )
+    const names = nameOf(sessionTools)
+    expect(names).toHaveLength(16)
+    for (const w of WRITE_TOOLS) expect(names).not.toContain(w)
+    for (const n of names) expect(LOCAL_READONLY_TOOL_NAMES).toContain(n)
+  })
+})
+
 describe("tool MCP mengikuti batasan WorkMode", () => {
   // Tool MCP runtime ber-nama bertitik `<server>.<tool>`. Predikat workModeVisible
   // dipakai filter MCP di setupToolLayer — test ini memverifikasi nama MCP tak

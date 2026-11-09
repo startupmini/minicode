@@ -533,7 +533,10 @@ export async function runTui(ctx: CliSession): Promise<void> {
         return
       }
       mode = modeBeforeUnrestricted ?? "auto"
-      permissions?.setMode(mode as "auto" | "ask" | "unrestricted")
+      // modeBeforeUnrestricted adalah nilai sebelum /unrestric: auto/ask (via /mode)
+      // atau allow-all/allowlist (via flag start). Tidak pernah readonly/plan/
+      // unrestricted — cast jujur ke himpunan yang memang bisa dipegang `mode`.
+      permissions?.setMode(mode as "auto" | "ask" | "allow-all" | "allowlist")
       // Pulihkan juga WorkMode semula (DISCUSS/PLAN) agar ceiling read-only
       // kembali berlaku — tanpa ini toggle-off meninggalkan BUILD (tulis bebas).
       workModeControl?.setWorkMode(workModeBeforeUnrestricted ?? "DISCUSS")

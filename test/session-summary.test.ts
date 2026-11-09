@@ -1,11 +1,7 @@
-// Kop ringkasan sesi (exit): logo kiri + detail sesi kanan, dan format durasi.
+// Kop ringkasan sesi (exit): wordmark "minicode" + detail sesi, dan format durasi.
 
 import { describe, expect, test } from "bun:test"
-import {
-  formatDuration,
-  renderSessionSummary,
-  SESSION_LOGO_ROWS,
-} from "../src/ui/render/session-summary.ts"
+import { formatDuration, renderSessionSummary } from "../src/ui/render/session-summary.ts"
 import { stripAnsi } from "../src/ui/render/theme.ts"
 
 describe("session summary (kop)", () => {
@@ -16,7 +12,7 @@ describe("session summary (kop)", () => {
     expect(formatDuration(0)).toBe("0s")
   })
 
-  test("renderSessionSummary memuat logo + seluruh detail", () => {
+  test("renderSessionSummary memuat wordmark + seluruh detail", () => {
     const out = stripAnsi(
       renderSessionSummary({
         sessionId: "sess_abc123",
@@ -26,12 +22,11 @@ describe("session summary (kop)", () => {
         durationMs: 192_000,
       }),
     )
+    expect(out).toContain("minicode")
     expect(out).toContain("sess_abc123")
     expect(out).toContain("acme::flash")
     expect(out).toContain("12,345 tokens")
     expect(out).toContain("3m 12s")
-    // Logo (3 baris block art) ikut ter-cetak.
-    for (const row of SESSION_LOGO_ROWS) expect(out).toContain(row.trim())
   })
 
   test("tanpa cost: tetap stabil tanpa bagian biaya", () => {

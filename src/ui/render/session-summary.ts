@@ -1,20 +1,43 @@
 // Kop ringkasan sesi — ditampilkan saat interactive exit (/exit atau Ctrl+D).
 //
-// Logo kecil (3 baris) di kiri, detail sesi di kanan. Logo adalah penyederhanaan
-// dari mark minicode (logo_tui.py) yang didownscale; disimpan sebagai array
-// tunggal supaya mudah disesuaikan tanpa menyentuh logika. Warna hormati
-// NO_COLOR/non-TTY lewat palet `c`.
+// Memakai wordmark teks "minicode" (gradien cyan→magenta, warna brand) sebagai
+// pengganti mark block-art: teks tetap rapi & legible di ukuran kecil, tidak
+// hancur seperti block-element yang didownscale. Detail sesi di baris berikutnya,
+// rata kiri. Warna hormati NO_COLOR/non-TTY.
 
 import { formatUsd } from "./money.ts"
 import { c } from "./theme.ts"
 
-export const SESSION_LOGO_ROWS: readonly string[] = [
-  " ▄▄▄▄▖      ▄▄▄▄▄▖",
-  "█▌   ▗▄▟▀▀▜▙▄▖    ▐█",
-  "▀▜▄▄▄▄▟▀▘   ▝▀▜▄▄▟▘",
-]
+const WORDMARK = "minicode"
 
-const LOGO_WIDTH = Math.max(...SESSION_LOGO_ROWS.map((r) => r.length))
+const GRAD_START = [0, 240, 255] // cyan
+const GRAD_END = [255, 80, 220] // magenta
+
+/** Apa warna boleh keluar (mirip aturan theme.ts; target = stdout exit summary). */
+function wordmarkStyle(): { ansi: boolean; truecolor: boolean } {
+  const noColor = process.env.NO_COLOR != null && process.env.NO_COLOR !== "0"
+  const ansi = !noColor && process.stdout.isTTY
+  const truecolor =
+    ansi && (process.env.COLORTERM === "truecolor" || process.env.COLORTERM === "24bit")
+  return { ansi, truecolor }
+}
+
+/** "minicode" dengan gradien horizontal cyan→magenta (+bold), fallback bright-cyan. */
+function paintWordmark(): string {
+  const { ansi, truecolor } = wordmarkStyle()
+  if (!ansi) return WORDMARK
+  if (!truecolor) return `\x1b[1;96m${WORDMARK}\x1b[0m`
+  let out = ""
+  const last = WORDMARK.length - 1
+  for (let i = 0; i < WORDMARK.length; i++) {
+    const t = i / last
+    const r = Math.round(GRAD_START[0]! + (GRAD_END[0]! - GRAD_START[0]!) * t)
+    const g = Math.round(GRAD_START[1]! + (GRAD_END[1]! - GRAD_START[1]!) * t)
+    const b = Math.round(GRAD_START[2]! + (GRAD_END[2]! - GRAD_START[2]!) * t)
+    out += `\x1b[1;38;2;${r};${g};${b}m${WORDMARK[i]}`
+  }
+  return `${out}\x1b[0m`
+}
 
 export interface SessionSummary {
   sessionId: string
@@ -31,22 +54,16 @@ export function formatDuration(ms: number): string {
   return `${total}s`
 }
 
-/** Indent baris logo ke lebar tetap agar kolom detail rata kiri. */
-function logoCell(i: number): string {
-  const row = SESSION_LOGO_ROWS[i] ?? ""
-  return c.white(row) + " ".repeat(LOGO_WIDTH - row.length)
-}
-
-/** Render kop: logo kiri + detail sesi kanan (baris demi baris). */
+/** Render kop: wordmark + detail sesi (baris demi baris). */
 export function renderSessionSummary(s: SessionSummary): string {
-  const label = (t: string): string => c.muted(t.padEnd(8))
-  const cost = s.cost != null ? formatUsd(s.cost) : "N/A"
-  const lines = [
-    `${logoCell(0)}  ${label("Session")} ${c.gray(s.sessionId)}`,
-    `${logoCell(1)}  ${label("Model")} ${c.gray(s.model)}`,
-    `${logoCell(2)}  ${label("Usage")} ${s.totalTokens.toLocaleString()} tokens${
-      s.cost != null ? ` · ${cost}` : ""
+  const label = (t: string): string => c.muted(t.padEnd(7))
+  const cost = s.cost != null ? formatUsd(s.cost) : null
+  return `\n${[
+    paintWordmark(),
+    `${label("Session")} ${c.gray(s.sessionId)}`,
+    `${label("Model")} ${c.gray(s.model)}`,
+    `${label("Usage")} ${s.totalTokens.toLocaleString()} tokens${
+      cost != null ? ` · ${cost}` : ""
     } · ${formatDuration(s.durationMs)}`,
-  ]
-  return `\n${lines.join("\n")}\n`
+  ].join("\n")}\n`
 }

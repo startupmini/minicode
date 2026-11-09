@@ -92,21 +92,22 @@ export function paintWorkMode(workMode?: string, style: ModeLabelStyle = "full")
 }
 
 /** Permission Mode selalu cyan agar terpisah secara visual dari Work Mode.
- * `unrestricted` (full akses, /unrestric) menjadi warna peringatan. */
+ * `unrestricted` (full akses, /unrestric): label disembunyikan — cukup gembok
+ * terbuka 🔓 sebagai indikator satu-satunya (lihat paintBashStrict). */
 export function paintPermissionMode(mode: string, style: ModeLabelStyle = "full"): string {
+  if (mode === "unrestricted") return ""
   const value = titleCaseMode(mode, "Auto")
-  const isFull = mode === "unrestricted"
-  if (style === "value") return isFull ? c.warning(value) : c.info(value)
+  if (style === "value") return c.info(value)
   const prefix = style === "full" ? "Permission Mode: " : "Permission: "
-  return `${c.gray(prefix)}${isFull ? c.warning(value) : c.info(value)}`
+  return `${c.gray(prefix)}${c.info(value)}`
 }
 
 /** Badge pembatas bash allow-list: gembok selalu tampil — terang saat aktif,
  * redup saat nonaktif (lapis kapabilitas, terpisah dari mode persetujuan).
- * Saat `unrestricted` aktif, gembok jadi TERBUKA & gelap (🔓) — sinyal nyata
- * bahwa seluruh kunci dilepas. */
+ * Saat `unrestricted` aktif, gembok jadi TERBUKA (🔓) — satu-satunya penanda,
+ * jadi dirender jelas (bukan redup). */
 export function paintBashStrict(strictBash?: boolean, unrestricted = false): string {
-  if (unrestricted) return c.faint("🔓")
+  if (unrestricted) return c.info("🔓")
   const lock = "🔒"
   return strictBash ? c.yellow(lock) : c.faint(lock)
 }

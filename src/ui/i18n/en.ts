@@ -230,8 +230,7 @@ export const en = {
   "tui.workModeLine": "work mode: {m}",
   "tui.workModeUsage": "usage: /work-mode <DISCUSS|PLAN|BUILD> — current: {m}",
   "tui.workModeUnavailable": "work mode is not available in this session",
-  "tui.unrestrictedOn":
-    "🔓 unrestricted enabled — full access, no jail/bash-guard/sandbox (this session only)",
+  "tui.unrestrictedOn": "🔓 unrestricted mode enabled - full access",
   "tui.unrestrictedOff": "🔓 unrestricted disabled — permission mode restored to {m}",
   "tui.langLine": "lang: {v}",
   "tui.toolCall": "tool call: {v}",

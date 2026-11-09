@@ -1,42 +1,21 @@
 // Kop ringkasan sesi — ditampilkan saat interactive exit (/exit atau Ctrl+D).
 //
-// Memakai wordmark teks "minicode" (gradien cyan→magenta, warna brand) sebagai
-// pengganti mark block-art: teks tetap rapi & legible di ukuran kecil, tidak
-// hancur seperti block-element yang didownscale. Detail sesi di baris berikutnya,
-// rata kiri. Warna hormati NO_COLOR/non-TTY.
+// Memakai wordmark teks "minicode" sebagai pengganti mark block-art: teks tetap
+// rapi & legible di ukuran kecil, tidak hancur seperti block-element yang
+// didownscale. Detail sesi di baris berikutnya, rata kiri.
+//
+// Wordmark tanpa warna custom: gradien truecolor (cyan→magenta) tidak didukung
+// merata di semua terminal dan pernah membuat "minicode" tak tampil. Bold polos
+// via `c` menjamin selalu terlihat + hormati NO_COLOR.
 
 import { formatUsd } from "./money.ts"
 import { c } from "./theme.ts"
 
 const WORDMARK = "minicode"
 
-const GRAD_START = [0, 240, 255] // cyan
-const GRAD_END = [255, 80, 220] // magenta
-
-/** Apa warna boleh keluar (mirip aturan theme.ts; target = stdout exit summary). */
-function wordmarkStyle(): { ansi: boolean; truecolor: boolean } {
-  const noColor = process.env.NO_COLOR != null && process.env.NO_COLOR !== "0"
-  const ansi = !noColor && process.stdout.isTTY
-  const truecolor =
-    ansi && (process.env.COLORTERM === "truecolor" || process.env.COLORTERM === "24bit")
-  return { ansi, truecolor }
-}
-
-/** "minicode" dengan gradien horizontal cyan→magenta (+bold), fallback bright-cyan. */
+/** "minicode" bold — selalu terlihat, hormat NO_COLOR/non-TTY. */
 function paintWordmark(): string {
-  const { ansi, truecolor } = wordmarkStyle()
-  if (!ansi) return WORDMARK
-  if (!truecolor) return `\x1b[1;96m${WORDMARK}\x1b[0m`
-  let out = ""
-  const last = WORDMARK.length - 1
-  for (let i = 0; i < WORDMARK.length; i++) {
-    const t = i / last
-    const r = Math.round(GRAD_START[0]! + (GRAD_END[0]! - GRAD_START[0]!) * t)
-    const g = Math.round(GRAD_START[1]! + (GRAD_END[1]! - GRAD_START[1]!) * t)
-    const b = Math.round(GRAD_START[2]! + (GRAD_END[2]! - GRAD_START[2]!) * t)
-    out += `\x1b[1;38;2;${r};${g};${b}m${WORDMARK[i]}`
-  }
-  return `${out}\x1b[0m`
+  return c.bold(WORDMARK)
 }
 
 export interface SessionSummary {

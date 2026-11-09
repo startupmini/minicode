@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.0] - 2026-11-09
+
+### Added
+- `/unrestric` — mode full-akses tersembunyi (per-sesi): melepas path jail, bash-guard, dan sandbox/allowlist; gerbang = kepercayaan operator. Indikator gembok terbuka 🔓 di footer (tanpa label status).
+- Kop ringkasan sesi saat exit: wordmark `minicode` + Session/Model/Usage (token, biaya, durasi), di-clear supaya tak bertumpuk dengan teks pra-login.
+
+### Changed
+- `/help` ditata ulang: ringkas terkelompok per kategori (Session/Model/Mode/View/Task), `/help full` untuk daftar lengkap berdeskripsi, `/help keys` untuk pintasan. Shortcut Ctrl+C dijelaskan akurat (copy selection / cancel).
+
+### Fixed
+- Router subcommand memakai argv scoped (`args.slice(cmdIndex)`) — flag global di depan (`--cwd X sessions list`) tidak lagi dibaca sebagai sub-aksi atau exit diam.
+- Exit TUI (Ctrl+D) bersih: reset atribut + tampilkan kursor sebelum keluar alternate-screen.
+- Perbaikan regresi gate: i18n netral-locale, `--interactive` over pipes (stdout tetap kosong), dan inventory writer (OAP-008).
+
 ## [0.14.7] - 2026-11-09
 
 ### Improved — akurasi token & manajemen konteks (menghentikan mati prematur)

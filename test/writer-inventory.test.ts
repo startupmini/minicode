@@ -25,7 +25,7 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // a `console.log` per output line (23 writers) and this audit failed it, which
   // is the audit working: the command now collects into an array and emits once.
   // Declared here rather than absorbed, per the rule above.
-  "cli/commands.ts": { max: 30, owner: "human-cmd" },
+  "cli/commands.ts": { max: 31, owner: "human-cmd" },
   // [P1 M15] 25 -> 26 for exactly ONE writer: the warning when `--runtime` is
   // given an unknown value. Silent fail-closed here would be an expectation
   // trap — the operator would believe the runtime is active while the process
@@ -63,7 +63,9 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // [UI-COMPAT-01] 33 -> 34 for the explicit interactive-startup failure
   // diagnostic. Failure is reported on stderr and sets a nonzero exit status;
   // it must never be treated as a successful empty interactive session.
-  "cli/index.ts": { max: 34, owner: "human-cmd" },
+  // [session-summary] 34 -> 35 for the exit kop: one combined write (clear-screen
+  // + "minicode" wordmark + session detail) after a normal interactive exit.
+  "cli/index.ts": { max: 35, owner: "human-cmd" },
   "cli/model-manager.ts": { max: 2, owner: "human-cmd" },
   "cli/provider-manager.ts": { max: 3, owner: "human-cmd" },
   // [P2.1] 26 -> 27 for exactly ONE writer: the canonical identity line

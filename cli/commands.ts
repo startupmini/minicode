@@ -479,6 +479,9 @@ export async function handleBuiltinCommand(
     case "help": {
       // /help keys|tombol = pintasan keyboard; selain itu (termasuk /help full,
       // /help all, atau /help kosong dari non-TTY) = full help terkelompok.
+      // Satu pemanggilan cetak PER BARIS: TUI (runBuiltin) menangkap panggilan
+      // per baris, dan test juga menangkap per panggilan — inventory writer
+      // menghitung literal cetak ini (+1 untuk header grup).
       if (/^(tombol|keys?|keyboard)$/i.test(args.trim())) {
         console.log(`\n${t("help.kHead")}`)
         for (const [key, keyDesc] of KEYBOARD_HELP) {

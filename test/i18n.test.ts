@@ -87,6 +87,8 @@ describe("t()", () => {
       "st.model",
       "st.budget",
       "help.cMore",
+      "help.gModel",
+      "help.gMode",
       "tui.modelSet",
       "tui.thinkingSet",
       "tui.modeLine",

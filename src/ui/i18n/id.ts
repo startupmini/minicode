@@ -143,7 +143,7 @@ export const id: Record<MsgKey, string> = {
   "help.gModel": "Model",
   "help.gMode": "Mode",
   "help.gView": "Tampilan",
-  "help.gTask": "Task",
+  "help.gTask": "Tugas",
   "help.kHead": "Papan tombol:",
   "help.k.submit": "kirim",
   "help.k.cycleMode": "putar work mode",

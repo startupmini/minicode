@@ -600,29 +600,26 @@ if (enterRepl) {
     process.stderr.write(`[error] ${formatError(error)}\n`)
     process.exitCode = 1
   }
-  // Kop ringkasan sesi saat exit (logo + detail). Di stdout karena TUI sudah
-  // tutup dan terminal kembali normal; one-shot tidak sampai ke sini.
-  //
-  // Bersihkan layar + home DULU: keluar dari alternate-screen (?1049l) tak
-  // selalu mengembalikan kursor ke baris bersih di buffer utama (terutama
-  // Windows ConPTY) — tanpa clear, summary menimpa / bertumpuk dengan teks
-  // pra-login (prompt shell + pesan startup).
-  try {
-    if (process.stdout.isTTY) {
-      process.stdout.write("\x1b[2J\x1b[H") // clear screen + home
-    }
-    const u = ctx.usage.getSession(ctx.modelRef.current)
-    const { renderSessionSummary } = await import("../src/ui/render/session-summary.ts")
-    process.stdout.write(
-      renderSessionSummary({
+  // Kop ringkasan sesi saat exit (logo + detail). HANYA untuk sesi interaktif
+  // nyata (stdout TTY): `--interactive` lewat pipe/paksa TUI tanpa terminal
+  // harus TIDAK menulis apa pun ke stdout (dicek test startup-failure).
+  // Clear screen + home digabung SATU write dengan summary (OAP-008: writer
+  // count per berkas dibatasi) — keluar alternate-screen tak selalu kembalikan
+  // kursor ke baris bersih (ConPTY), jadi clear mencegah tumpang-tindih teks.
+  if (process.stdout.isTTY) {
+    try {
+      const u = ctx.usage.getSession(ctx.modelRef.current)
+      const { renderSessionSummary } = await import("../src/ui/render/session-summary.ts")
+      const summary = renderSessionSummary({
         sessionId: ctx.sessionId,
         model: ctx.modelRef.current ?? "default",
         totalTokens: u.totalTokens,
         ...(u.cost != null ? { cost: u.cost } : {}),
         durationMs: Date.now() - replStart,
-      }),
-    )
-  } catch {}
+      })
+      process.stdout.write(`\x1b[2J\x1b[H${summary}`)
+    } catch {}
+  }
 } else {
   // P12 S2.2 (F-DISCUSS-4) + P0.2: one-shot linear memakai `ctx.workMode`
   // efektif (termasuk hasil pulihan `--resume`).

@@ -1,0 +1,24 @@
+name: Sync docs to minilabs
+
+# Saat dokumentasi (`docs/`) berubah di main, beri tahu repo minilabs untuk
+# rebuild halaman dokumentasinya SEKETIKA (bukan menunggu jadwal harian).
+# Butuh secret `MINILABS_DISPATCH_TOKEN` (PAT scope `repo`) di repo ini.
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "docs/**"
+  workflow_dispatch:
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger minilabs docs rebuild
+        run: |
+          curl -sS -X POST \
+            -H "Authorization: token ${{ secrets.MINILABS_DISPATCH_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/startupmini/minilabs/dispatches \
+            -d '{"event_type":"update-docs"}'

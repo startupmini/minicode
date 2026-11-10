@@ -39,7 +39,11 @@ Set terkait: `INTERNAL_WRITE_TOOLS`, `FILE_WRITE_TOOLS`, `GATED_TOOLS` (+ `*.*` 
 | `type %USERPROFILE%\notes.txt` | ditolak; argumen pembaca berpola `%NAMA%` tak bisa dipastikan aman |
 | `for /f %i in (.env) do @echo %i` | ditolak; file set pada loop `for /f` ikut diperiksa |
 
-Allowlist (juga default bila tanpa sandbox): `git status/diff/log/branch/show`, `bun test/run/x tsc`, `npm run/exec`, `npx`, `ls cat head tail wc grep rg find which echo pwd`. Tulis via shell (`mkdir cp mv rm touch`) ditahan — pakai `write_file`/`edit` yang ter-jail. `npm exec`/`npx`/`bun run`/`bun x` tak boleh ada ekspansi shell (`$`, backtick) atau redirection.
+Allowlist (bentuk perintah yang boleh; diperiksa SETELAH bash-guard). Dua daftar:
+- **Narrow** (`--allowlist`, task tak-terpercaya): `git status/diff/log/branch/show`, `bun test/run/x tsc`, `npm run/exec/install/ci/test/start`, `node`, `npx`, `ls dir cat type head tail wc grep rg find which echo pwd`. Tulis via shell (`mkdir cp mv rm touch`) ditahan — pakai `write_file`/`edit` yang ter-jail.
+- **Developer** (fallback tanpa sandbox OS — `restrictBash`; sesi trusted di mesin sendiri): narrow + runtime (`python`/`python3`/`ruby`/`php`/`deno`), package manager (`pip`/`pip3`/`uv`/`pipx`/`yarn`/`pnpm`/`cargo`/`go`/`composer`), dan test/lint/build (`pytest`/`ruff`/`mypy`/`black`/`jest`/`vitest`/`eslint`/`tsc`/`make`/`cmake`/`ninja`/`gcc`…). Verba `publish`/`login` tidak dicantumkan.
+
+`npm exec`/`npx`/`bun run`/`bun x` tak boleh ekspansi shell (`$`, backtick) atau redirection. `node`/`python` hanya menjalankan berkas skrip — eval inline (`-e`/`--eval`/`-c`/`-r`/`--require`) difilter guard lebih dulu. Package manager menjalankan lifecycle script (postinstall/setup.py = kode arbitrer dari registry), jadi kedua daftar berstatus "trusted", bukan pengganti isolasi — isolasi sungguhan tetap `--sandbox docker`.
 
 Ukur, bukan klaim — jalankan sendiri untuk angka terkini:
 
@@ -57,7 +61,7 @@ Fuzz membangkitkan varian dari transformasi yang shell anggap setara (quote-spli
 | Kondisi | Yang terjadi |
 |---|---|
 | bwrap (Linux) / seatbelt (macOS) tersedia | Bash di dalamnya, tanpa flag |
-| Tidak tersedia (termasuk semua Windows) | Default turun ke `allowlist` + alasan dicetak sekali |
+| Tidak tersedia (termasuk semua Windows) | Default turun ke restrictBash (allowlist **developer**, sesi trusted) + alasan dicetak sekali |
 | `--allow-all` / `--ask` / `--plan` / `--allowlist` diberikan | Pilihan dihormati, tanpa peringatan |
 | `--sandbox none` | Opt-out sadar; tanpa downgrade |
 | `--sandbox docker` | Container ephemeral (`--network none`, 512m, 1 CPU, `node:22-alpine`) |

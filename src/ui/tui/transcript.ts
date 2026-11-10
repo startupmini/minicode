@@ -273,6 +273,20 @@ export class Transcript {
     truncated: boolean
     rows: TranscriptRow[]
   } | null = null
+  /**
+   * Fase 1 perf (lanjutan): cache gabungan committed+pending — bagian O(N)
+   * dari `projectAll`. Saat thinking/running kosong (kasus idle ketik/scroll,
+   * mayoritas paint), hasil ini dikembalikan APA ADANYA tanpa salinan, sehingga
+   * `[...committed, ...pending]` tak diulang O(N) tiap keystroke saat transkrip
+   * sudah menumpuk. Di-invalidate oleh sinyal yang sama dengan dua cache di atas.
+   */
+  private projectedBase: {
+    width: number
+    totalAppended: number
+    pendingVersion: number
+    pendingTruncated: boolean
+    rows: TranscriptRow[]
+  } | null = null
   /** Naik setiap `this.pending` berubah (stream/commit/invalidated/clear). */
   private pendingVersion = 0
 
@@ -457,6 +471,7 @@ export class Transcript {
     this.runningMemo = null
     this.committedProjection = null
     this.pendingProjection = null
+    this.projectedBase = null
     this.pendingVersion = 0
     this.presentedTerminals.clear()
     this.presentedVerifications.clear()
@@ -596,6 +611,33 @@ export class Transcript {
 
   private projectAll(width: number): TranscriptRow[] {
     const w = Math.max(10, width)
+    const running = this.runningRows()
+    // Kasus umum (idle ketik/scroll — thinking tau cara running kosong):
+    // kembalikan gabungan committed+pending yang ter-cache TANPA menyalin ulang.
+    // Ini memberantas biaya concat O(N) pada setiap paint (biaya yang TUMBUH
+    // seiring transkrip menumpuk — tepat gejala "mengetik berat saat history penuh").
+    if (!this.thinkingTail && running.length === 0) {
+      if (
+        this.projectedBase &&
+        this.projectedBase.width === w &&
+        this.projectedBase.totalAppended === this.totalAppended &&
+        this.projectedBase.pendingVersion === this.pendingVersion &&
+        this.projectedBase.pendingTruncated === this.pendingTruncated
+      ) {
+        return this.projectedBase.rows
+      }
+      const base: TranscriptRow[] = [...this.committedRows(w), ...this.pendingRows(w)]
+      this.projectedBase = {
+        width: w,
+        totalAppended: this.totalAppended,
+        pendingVersion: this.pendingVersion,
+        pendingTruncated: this.pendingTruncated,
+        rows: base,
+      }
+      return base
+    }
+    // thinking/running aktif: bangun segar (jarang — hanya saat turn berjalan,
+    // dan repaint-nya sudah dicoalesce 30ms, bukan per-keypress).
     const rows: TranscriptRow[] = [...this.committedRows(w), ...this.pendingRows(w)]
     if (this.thinkingTail) {
       for (const chunk of this.thinkingTail.split("\n")) {
@@ -613,7 +655,7 @@ export class Transcript {
         }
       }
     }
-    for (const row of this.runningRows()) {
+    for (const row of running) {
       rows.push({
         text: row,
         sourceId: -1,

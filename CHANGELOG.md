@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.17.0] - 2026-11-10
+
+### Added
+- Allowlist bash diperluas untuk pengembangan: `node *`, `npm install/ci/test/start`, plus daftar **developer** terpisah untuk fallback tanpa sandbox OS (`restrictBash` — sesi trusted di mesin sendiri) yang mencakup runtime (`python`/`python3`/`ruby`/`php`/`deno`), package manager (`pip`/`uv`/`pipx`/`yarn`/`pnpm`/`cargo`/`go`/`composer`), dan test/lint/build (`pytest`/`ruff`/`mypy`/`jest`/`eslint`/`tsc`/`make`/`cmake`/`gcc`…). `--allowlist` (task tak-terpercaya) tetap memakai daftar sempit. Deny-list `bash-guard` tetap zirah di semua mode — inline-eval `-e`/`-c`, baca kredensial, exfiltrasi, dan perintah destruktif tetap ditolak.
+- Timeout interaktif default 1 jam (exec tetap 15 menit).
+- Partial-persist saat turn timeout/crash: kernel commit sampai batas aman (`turn:interrupted` + `safeTurnBoundary`) + host `persistCurrent` ke store, sehingga resume tidak amnesia.
+
+### Improved
+- Perf TUI: `screen.paint` menulis frame secara **inkremental per baris** (diff per baris, `CUP+EL`) — menghapus flicker/latensi `ESC[2J` clear-penuh tiap keystroke; proyeksi gabungan transkrip (`projectAll`) di-cache agar tak menyalin O(N) tiap paint saat history panjang.
+- Guidance system-prompt: checkpoint temuan antar-langkah + audit Map-Reduce (delegate eksplorasi per area).
+- Auto-scroll saat drag seleksi menempel di tepi viewport (bisa menyeleksi teks lebih panjang dari tinggi jendela).
+
+### Changed
+- Ikon status `✓/✗/⊘/○` dihapus — cukup warna + kata.
+
+### Fixed
+- Navigasi history ↑↓ tak lagi tersangkut di entri command (`/model` dkk.): recall tidak membuka dropdown `/` sehingga prompt lama tetap bisa dilewati.
+
 ## [0.16.0] - 2026-11-10
 
 ### Added

@@ -138,6 +138,14 @@ export function openAltScreen(): AltScreen {
   // (closure), bukan global: popup nested (effort di dalam manager) melacak
   // areanya masing-masing.
   let lastRegion: { top: number; height: number } | null = null
+  // [perf] Frame LOGIS tetap penuh (`rows` baris — kontrak I1); yang di-diff
+  // hanyalah PENULISAN FISIK. Tiap keystroke sebelumnya clear `ESC[2J` +
+  // tulis ulang SEMUA baris (flicker/latensi di ConPTY Windows, makin terasa
+  // saat transkrip panjang). Kini hanya baris yang berubah yang ditulis
+  // (CUP+EL). Inisialisasi/resize (jumlah baris berbeda) tetap clear penuh.
+  // Per-handle (closure): screen baru = diff state baru, konsisten dengan
+  // `lastRegion`.
+  let lastFrame: string[] | null = null
   return {
     ok: true,
     // Getter LIVE (bukan snapshot saat open) — resize di tengah modal wajib
@@ -152,9 +160,21 @@ export function openAltScreen(): AltScreen {
     paint(lines: string[], cursor?: { row: number; col: number }): void {
       if (closed) return
       process.stdout.write(SYNC_START)
-      process.stdout.write(HOME)
-      process.stdout.write(CLEAR_ALL)
-      process.stdout.write(lines.join("\r\n"))
+      if (lastFrame && lastFrame.length === lines.length) {
+        // Diff per baris: hanya baris yang berubah → CUP ke baris + EL (hapus
+        // baris) + tulis. Tanpa HOME/ESC[2J → hapus flicker & latensi
+        // clear-penuh tiap keystroke; frame akhir layar tetap IDENTIK (I1).
+        for (let r = 0; r < lines.length; r++) {
+          const line = lines[r]!
+          if (line === lastFrame[r]) continue
+          process.stdout.write(`\x1b[${r + 1};1H\x1b[2K${line}`)
+        }
+      } else {
+        process.stdout.write(HOME)
+        process.stdout.write(CLEAR_ALL)
+        process.stdout.write(lines.join("\r\n"))
+      }
+      lastFrame = lines.slice()
       if (cursor) {
         const row = Math.max(1, Math.floor(cursor.row))
         const col = Math.max(1, Math.floor(cursor.col))

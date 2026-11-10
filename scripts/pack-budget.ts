@@ -45,7 +45,15 @@
 // dokumen kontrak) menaikkan `unpackedSize` ke 3.996.231 B = 3902,6 KiB.
 // `gate:pack` lolos 22/23 cek (hanya ukuran over); tidak ada node_modules/
 // test/artefak basi yang ikut. Re-baseline ke 3.920 KiB memberi ~17 KiB ruang.
-export const PACK_SIZE_BUDGET_KIB = 3920
+//
+// [RE-BASELINE 3,875 MiB — disetujui owner 2026-11-10, rilis v0.17.0]
+// Allowlist developer (node/npm/python/rust/go) + perf TUI (diff paint,
+// cache proyeksi transkrip) + fix navigasi history menaikkan `unpackedSize`
+// ke 3.925 KiB (npm pack --dry-run, worktree dengan perubahan v0.17.0).
+// Pertumbuhan murni kode + komentar "mengapa"; `gate:pack` lolos 22/23 cek
+// (hanya ukuran over); tidak ada node_modules/test/artefak basi yang ikut.
+// Re-baseline ke 3.968 KiB memberi ~43 KiB ruang untuk rilis minor berikut.
+export const PACK_SIZE_BUDGET_KIB = 3968
 
 /**
  * True bila ukuran paket (KiB) masih di dalam budget.

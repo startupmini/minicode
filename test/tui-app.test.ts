@@ -540,6 +540,37 @@ describe("TuiApp", () => {
     await runP
   })
 
+  test("history ↑ melompati entri command tanpa tersangkut (menu tak terbuka saat recall)", async () => {
+    const { app, calls, screenText } = setup()
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
+    const submit = async (text: string) => {
+      await tty!.send(text)
+      await tty!.send(KEY.enter)
+    }
+    await submit("alpha")
+    await submit("/help")
+    await submit("omega")
+    // Ketiganya masuk (perintah juga masuk composer history — komentar app.ts:750).
+    expect(calls).toEqual(["alpha", "/help", "omega"])
+
+    // ↑×3: omega → /help → alpha. Bug awal: recall "/help" membuka menu command
+    // (withLine menyetel menuOpen = line.startsWith("/")), lalu ↑↓ berikutnya
+    // memindah SELEKSI menu, bukan history → user terkunci tak bisa menyeberang.
+    await tty!.send(KEY.up)
+    await tty!.send(KEY.up)
+    await tty!.send(KEY.up)
+
+    // "/help" adalah command, sehingga TIDAK di-echo ke transkrip — satu-satunya
+    // kemunculan "minicode › /help" adalah composer. Absennya berarti navigasi
+    // sukses menyeberangi entri command menuju prompt terlama (bukan tersangkut).
+    expect(screenText()).not.toContain("minicode › /help")
+    await tty!.send(KEY.esc) // kosongkan baris recall agar Ctrl+D (baris kosong) bisa quit
+    await tty!.send(KEY.ctrlD)
+    await runP
+  })
+
   test("drag transcript + Ctrl+C menyalin selection logis", async () => {
     const { app, transcript, copied, screenText } = setup({ rows: 12 })
     const runP = app.run()

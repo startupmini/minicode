@@ -971,6 +971,12 @@ export class TuiApp {
       s = r.state
       if (r.action !== "render" && r.action !== "none") break
     }
+    // Recall (history ↑↓ / Ctrl+R) BUKAN mengetik "/" — menu command hanya
+    // boleh terbuka saat user AKTIF mengetik (via applyEngine). `withLine` di
+    // engine menyetel menuOpen = line.startsWith("/"), jadi recall entri command
+    // (/model) akan membuka menu; tanpa koreksi ini, ↑↓ berikutnya dinavigasi ke
+    // menu (sel), bukan history, dan user terkunci tak bisa melewati entri command.
+    s = { ...s, menuOpen: false, sel: -1 }
     this.state = s
     this.editing = true
     this.paintCurrent()

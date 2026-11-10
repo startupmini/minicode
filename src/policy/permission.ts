@@ -156,6 +156,15 @@ const NO_PROMPT_TOOLS = new Set(["todo_write", "submit_result", "bash_output", "
 // ini memang menahan efek samping. Agent yang butuh menulis file punya
 // `write_file`/`edit` yang ter-jail, bukan shell.
 //
+// Area node/npm (di bawah) merupakan perluasan SADAR demi menjalankan project
+// web npm (keluhan: agent menolak "tidak bisa akses & menjalankan nodejs"):
+// `node *` = menjalankan berkas skrip (REPL `node` polos tak cocok, pola butuh
+// argumen); bentuk eval inline (`-e`/`--eval`/`--require`/`-r`/`--loader`) tetap
+// diblokir bash-guard dulu. `npm install`/`ci` JUGA menjalankan lifecycle
+// script (postinstall = kode arbitrer dari registry) — oleh sebab itu kategori
+// ini tidak lagi murni read-only, melainkan "trusted project". Chain (`;|&`),
+// ekspansi `$()`-backtick, dan redirection tetap ditahan lapisan di bawah.
+//
 // Perhatikan: allowlist diperiksa SETELAH bash-guard, jadi `cat *` di sini
 // tidak berarti `cat .env` lolos — guard menolaknya lebih dulu. Pola di sini
 // soal "bentuk perintah apa yang boleh", bukan "target apa yang boleh".
@@ -171,6 +180,12 @@ const DEFAULT_BASH_ALLOWLIST = [
   "npm run *",
   "npm exec *",
   "npx *",
+  // Project web npm: install dependensi + jalankan script bare (npm test/start
+  // adalah bentuk pendek `npm run test/start` yang TIDAK cocok pola `npm run *`).
+  "npm install*",
+  "npm ci*",
+  "npm test*",
+  "npm start*",
   "echo *",
   "ls*",
   "dir*",
@@ -187,8 +202,98 @@ const DEFAULT_BASH_ALLOWLIST = [
   "rg *",
   "find *",
   "which *",
-  "node --version",
+  // Menjalankan berkas skrip Node (mis. `node server.js`) — bukan REPL polos
+  // (pola `*` butuh argumen) dan bukan eval inline (diblokir bash-guard).
+  // Subsumes `node --version` (versi lama) sehingga entri itu tak lagi khusus.
+  "node *",
   "bun --version",
+]
+
+// [0.16.x] Allowlist "developer" untuk fallback no-sandbox (restrictBash) —
+// sesi TRUSTED pengembang di mesin tanpa isolasi OS (Windows default, atau
+// Linux/mac tanpa bwrap/seatbelt + tanpa `--sandbox docker`). DI SINI user
+// menjalankan KODE SENDIRI, jadi run/test/build/install ekosistem umum boleh.
+// Ini BUKAN pengganti isolasi: untuk repo tak-terpercaya tetap pakai
+// `--sandbox docker` / `--allowlist` (daftar narrow di atas) — daftar ini
+// hanya menghapus gesekan "kenapa node/pip gak bisa jalan" di mesin sendiri.
+//
+// Deny-list bash-guard TETAP zirah di semua mode (berjalan SEBELUM allowlist
+// apa pun): eksekusi kode inline `-e`/`-c` (`python -c`, `node -e`), baca kredensial, exfiltrasi,
+// perintah destruktif, dan tulis di luar workspace tetap ditolak. Verba
+// berbahaya (`* publish`, `* login`) sengaja TIDAK dicantumkan.
+const DEFAULT_DEV_BASH_ALLOWLIST = [
+  ...DEFAULT_BASH_ALLOWLIST, // dasar read + git + node/npm + bun
+  // Runtime — menjalankan berkas skrip (REPL polos tak cocok pola `*`).
+  "python *",
+  "python3 *",
+  "ruby *",
+  "php *",
+  "deno run*",
+  "deno test*",
+  "deno task*",
+  "deno lint*",
+  "deno fmt*",
+  // Package manager.
+  "pip *",
+  "pip3 *",
+  "uv *",
+  "pipx *",
+  "yarn install*",
+  "yarn add*",
+  "yarn remove*",
+  "yarn run*",
+  "yarn test*",
+  "pnpm install*",
+  "pnpm add*",
+  "pnpm remove*",
+  "pnpm run*",
+  "pnpm test*",
+  "bun add*",
+  "bun remove*",
+  "bun install*",
+  // Test / lint / format / typecheck.
+  "pytest*",
+  "ruff*",
+  "mypy*",
+  "black*",
+  "flake8*",
+  "isort*",
+  "jest*",
+  "vitest*",
+  "mocha*",
+  "eslint*",
+  "prettier*",
+  "tsc*",
+  "biome*",
+  // Build.
+  "make*",
+  "cmake*",
+  "ninja*",
+  "gcc*",
+  "g++*",
+  "clang*",
+  "clang++*",
+  // Rust.
+  "cargo build*",
+  "cargo run*",
+  "cargo test*",
+  "cargo check*",
+  "cargo add*",
+  "cargo remove*",
+  "cargo fmt*",
+  "cargo clippy*",
+  // Go.
+  "go build*",
+  "go run*",
+  "go test*",
+  "go vet*",
+  "go fmt*",
+  "go mod *",
+  "go get *",
+  // PHP.
+  "composer install*",
+  "composer require*",
+  "composer update*",
 ]
 
 // 6.4 — npm exec / npx hanya di-allow bila arg "known-good": tak ada
@@ -376,12 +481,17 @@ export function createPermissionHandler(
   const sessionGrants: string[] = []
   // bash allowlist di-cache sekali (bukan baca env tiap panggilan)
   const envRaw = process.env.MINICODE_BASH_ALLOWLIST
-  const bashAllowlist = envRaw
+  const envList = envRaw
     ? envRaw
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean)
-    : DEFAULT_BASH_ALLOWLIST
+    : undefined
+  // Dua daftar: narrow (--allowlist = task tak-terpercaya) vs developer
+  // (restrictBash = fallback no-sandbox pada sesi TRUSTED). Env override
+  // MINICODE_BASH_ALLOWLIST (keputusan operator) menimpa KEDUANYA.
+  const bashAllowlist = envList ?? DEFAULT_BASH_ALLOWLIST
+  const devBashAllowlist = envList ?? DEFAULT_DEV_BASH_ALLOWLIST
 
   async function getAllowlist(): Promise<string[]> {
     if (allowlistCache) return allowlistCache
@@ -581,8 +691,10 @@ export function createPermissionHandler(
         const br = bashDenyReason(cmd)
         if (br) return deny(call, `bash-guard: ${br}`)
         // restrictBash: bash hanya boleh pola allow-list (fallback no-sandbox).
+        // Pakai daftar DEVELOPER (lebih luas) — sesi trusted di mesin sendiri,
+        // bukan task tak-terpercaya (yang memakai daftar narrow via --allowlist).
         if (restrictBash) {
-          const matched = bashAllowlist.filter((pat) => matchBashAllowlist(cmd, pat))
+          const matched = devBashAllowlist.filter((pat) => matchBashAllowlist(cmd, pat))
           if (matched.length === 0)
             return deny(
               call,

@@ -219,7 +219,12 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
 ## Invariant (nomor dipakai di peta proteksi)
 
 1. Satu tampilan interaktif: TUI fullscreen; frame penuh tiap repaint (tepat
-   `rows` baris); scrollback utama tak tersentuh selama sesi.
+   `rows` baris); scrollback utama tak tersentuh selama sesi. Frame LOGIS tetap
+   penuh `rows` baris (hasil layar identik), namun PENULISAN FISIK ke terminal
+   boleh inkremental per baris (CUP+EL, `screen.paint` memakai diff terhadap
+   frame sebelumnya; repaint pertama/resize tetap `ESC[H`+`ESC[2J` clear penuh)
+   — ini murni optimasi menghapus flicker/latensi `ESC[2J` tiap keystroke,
+   bukan perubahan perilaku yang terlihat.
 2. stdout/stderr contract seperti tabel di atas (TTY & non-TTY deterministic).
 3. Satu kepemilikan layar (`App`); popup satu lifecycle (`suspend`/`resume` +
    `paintRegion`).

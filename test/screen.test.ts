@@ -143,6 +143,27 @@ test("paintRegion propagates writer failure and close restores the screen", () =
   expect(altScreenDepth()).toBe(0)
 })
 
+test("paint: frame penuh pertama clear penuh, berikutnya diff per baris (tanpa 2J)", () => {
+  tty = installFakeTty({ columns: 40, rows: 5 })
+  const s = openAltScreen()
+
+  // Paint pertama (belum ada frame) → HOME + 2J + tulis semua baris.
+  s.paint(["baris-a", "baris-b", "footer"])
+  let out = tty.all()
+  expect(out).toContain("\x1b[2J")
+  expect(out).toContain("baris-a")
+
+  tty.clear()
+  // Paint kedua: ukuran sama, hanya baris-2 berubah → diff per baris, TANPA
+  // clear penuh (2J/HOME). Ini yang menghapus flicker/latensi tiap keystroke.
+  s.paint(["baris-a", "baris-B", "footer"])
+  out = tty.all()
+  expect(out).not.toContain("\x1b[2J")
+  expect(out).toContain("\x1b[2;1H\x1b[2Kbaris-B")
+  expect(out).not.toContain("baris-a") // baris-1 tak berubah → tak ditulis ulang
+  s.close()
+})
+
 test("paintRegion: tulis region tanpa clear — konten luar tak tersentuh", () => {
   tty = installFakeTty({ columns: 40, rows: 10 })
   const s = openAltScreen()

@@ -248,6 +248,12 @@ export class TuiApp {
   private scrollBase = 0
   /** Panjang visual terakhir (kunci posisi baca agar stream tak merampasnya). */
   private lastWrapped = 0
+  /** Auto-scroll saat drag seleksi menempel di tepi viewport (feature). */
+  private autoScrollTimer: ReturnType<typeof setInterval> | undefined
+  /** +1 = tepi ATAS (gulir ke konten lama); -1 = tepi BAWAH (ke konten baru). */
+  private autoScrollDir: 1 | -1 = 1
+  /** Kolom x yang ditambatkan fokus seleksi selama auto-scroll. */
+  private autoScrollCol = 0
 
   constructor(
     private readonly transcript: Transcript,
@@ -461,6 +467,7 @@ export class TuiApp {
       this.repaintTimer = undefined
     }
     this.stopActivityClock()
+    this.stopAutoScroll()
     for (const unsubscribe of this.busUnsubs.splice(0)) {
       try {
         unsubscribe()
@@ -988,6 +995,27 @@ export class TuiApp {
   }
 
   /**
+   * Scroll per BARIS (bukan per halaman) — dipakai auto-scroll seleksi agar
+   * gulirnya halus & presisi. `n` = baris terbungkus (+ = ke atas/lama,
+   * - = ke bawah/baru); di-clamp ke [0, wrapped - viewH]. Menjaga basis
+   * `tailSize`/`scrollBase` sama seperti `scrollBy`.
+   */
+  private scrollRows(n: number): void {
+    const cols = process.stdout.columns || 80
+    const rows = process.stdout.rows || 24
+    const viewH = Math.max(1, this.viewportHeight(rows, cols) - 1)
+    const wrapped = this.transcript.wrappedLength(cols)
+    const maxBack = Math.max(0, wrapped - viewH)
+    if (this.scrollBack === 0 && n > 0) this.scrollBase = this.transcript.total()
+    this.scrollBack = Math.max(0, Math.min(this.scrollBack + n, maxBack))
+    if (this.scrollBack === 0) {
+      this.tailSize = this.transcript.total()
+      this.scrollBase = this.tailSize
+    }
+    this.paintCurrent()
+  }
+
+  /**
    * Lompat ke ujung transkrip (temuan audit TUI-002): Home = baris teratas
    * (scrollBack maksimum), End = ekor. `lastWrapped` dinetralkan SEBELUM
    * perhitungan kunci-posisi-baca berikutnya: jendela yang sengaja dipindah
@@ -1254,6 +1282,7 @@ export class TuiApp {
         return
       }
       this.selection = { anchor: point, focus: point, dragging: true }
+      this.updateAutoScroll(layout, key)
       this.paintCurrent()
       return
     }
@@ -1262,6 +1291,7 @@ export class TuiApp {
       const point = this.transcript.pointAt(row, key.x - 1)
       if (!point) return
       this.selection.focus = point
+      this.updateAutoScroll(layout, key)
       this.scheduleSelectionPaint()
       return
     }
@@ -1272,8 +1302,65 @@ export class TuiApp {
         if (point) this.selection.focus = point
       }
       this.selection.dragging = false
+      this.stopAutoScroll()
       this.paintCurrent()
     }
+  }
+
+  // ── Auto-scroll saat drag seleksi menempel di tepi ──
+
+  /** Mulai/teruskan auto-scroll seleksi ke arah `dir` pada kolom `col`. */
+  private startAutoScroll(dir: 1 | -1, col: number): void {
+    if (this.autoScrollTimer !== undefined && this.autoScrollDir === dir) return
+    this.stopAutoScroll()
+    this.autoScrollDir = dir
+    this.autoScrollCol = col
+    this.autoScrollTimer = setInterval(() => {
+      const sel = this.selection
+      if (!sel?.dragging || this.suspended > 0 || this.released) {
+        this.stopAutoScroll()
+        return
+      }
+      const layout = this.lastLayout
+      if (!layout || layout.transcriptRows.length === 0) return
+      // Tautkan fokus ke baris tepi SEBELUM menggulir, supaya tiap tick seleksi
+      // meluas searah scroll; scrollRows() berikutnya menampilkan baris tetangga.
+      const rows = layout.transcriptRows
+      const edgeRow = this.autoScrollDir === 1 ? rows[0] : rows[rows.length - 1]
+      if (edgeRow?.selectable) {
+        const p = this.transcript.pointAt(edgeRow, this.autoScrollCol - 1)
+        if (p) sel.focus = p
+      }
+      // +1 baris/ke atas (konten lama), -1/ke bawah (konten baru).
+      this.scrollRows(this.autoScrollDir)
+    }, 60)
+    try {
+      ;(this.autoScrollTimer as unknown as { unref?: () => void }).unref?.()
+    } catch {}
+  }
+
+  private stopAutoScroll(): void {
+    if (this.autoScrollTimer !== undefined) {
+      clearInterval(this.autoScrollTimer)
+      this.autoScrollTimer = undefined
+    }
+  }
+
+  /** Deteksi tepi viewport dari posisi mouse dan nyalakan/matikan auto-scroll. */
+  private updateAutoScroll(layout: FrameLayout, key: Extract<PromptKey, { type: "mouse" }>): void {
+    if (!this.selection?.dragging) {
+      this.stopAutoScroll()
+      return
+    }
+    const n = layout.transcriptRows.length
+    if (n === 0) {
+      this.stopAutoScroll()
+      return
+    }
+    const rowIndex = key.y - 1 - layout.transcriptTop
+    if (rowIndex <= 0) this.startAutoScroll(1, key.x)
+    else if (rowIndex >= n - 1) this.startAutoScroll(-1, key.x)
+    else this.stopAutoScroll()
   }
 
   private copySelection(): void {

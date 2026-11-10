@@ -73,7 +73,7 @@ Options:
   --allowlist         bash allowlist only (see MINICODE_BASH_ALLOWLIST)
   --max-steps <n>     max tool steps (default 50)
   --context-window <n> context window tokens
-  --timeout <ms>      hard deadline per run (default 900000, 0 = off)
+  --timeout <ms>      hard deadline per run (default 3600000 = 1h, 0 = off)
   --interactive       interactive TUI (default bila tanpa prompt di TTY)
   --verify            auto-verify + self-heal (typecheck/test/tsconfig)
   --sandbox <mode>    bash sandbox: docker (ephemeral, no network)
@@ -254,7 +254,7 @@ if (args.includes("-h") || args.includes("--help")) {
           { flag: "--context-window <n>", desc: "context window tokens" },
           {
             flag: "--timeout <ms>",
-            desc: "hard deadline per run (default 900000 = 15min; 0 = Infinity)",
+            desc: "hard deadline per run (default 3600000 = 60min; 0 = Infinity)",
           },
           { flag: "--allow-all", desc: "allow all tools (privileged access profile)" },
           { flag: "--ask", desc: "ask per tool (human-supervised)" },

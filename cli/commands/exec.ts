@@ -178,12 +178,13 @@ export async function handleExec(
       `[warn] MINICODE_COMPACT_KEEP_TURNS requires an integer >= 1, ignoring "${keepTurnsRaw}"\n`,
     )
   const timeoutRaw = getArg("--timeout")
-  let timeoutMs = timeoutRaw ? Number(timeoutRaw) : undefined
+  // exec (one-shot/CI) default 15 menit — lebih konservatif dari interaktif (1 jam).
+  let timeoutMs = timeoutRaw ? Number(timeoutRaw) : 900_000
   if (timeoutRaw && (!Number.isFinite(timeoutMs) || (timeoutMs as number) < 0)) {
     process.stderr.write(
       `[warn] --timeout requires a non-negative number, ignoring "${timeoutRaw}"\n`,
     )
-    timeoutMs = undefined
+    timeoutMs = 900_000
   }
 
   const ignoredFlags = flagsAfterPromptBoundary(subArgs)

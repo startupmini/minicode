@@ -181,7 +181,7 @@ describe("Transcript", () => {
     t.pushInfo(["satu", "dua"])
     const out = t.view(40, 6, 0).join("\n")
     expect(out).toContain("minicode › tanya")
-    expect(out).toContain("✗ gagal <x>")
+    expect(out).toContain("gagal <x>")
     expect(out).toContain("dua")
     t.clear()
     expect(t.size()).toBe(0)

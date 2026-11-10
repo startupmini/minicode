@@ -12,7 +12,7 @@ Minicode itu apa, kenapa dibangun begitu, dan kenapa beberapa hal sengaja tidak 
 
 ## Loop ReAct
 
-Setiap prompt berjalan sebagai loop `Thought → Action → Observation` sampai jawaban final, batas `--max-steps` (default 50), atau `--timeout` (default 15 menit). Model menerima system prompt berisi `# Environment` (cwd + platform), repo-map ringkas, dan memory yang relevan — lalu memilih tool, melihat hasilnya, dan memilih langkah berikutnya. Tidak ada grafik alur tersembunyi: apa pun yang agent lakukan tampil sebagai ledger di layar.
+Setiap prompt berjalan sebagai loop `Thought → Action → Observation` sampai jawaban final, batas `--max-steps` (default 50), atau `--timeout` (default 1 jam). Model menerima system prompt berisi `# Environment` (cwd + platform), repo-map ringkas, dan memory yang relevan — lalu memilih tool, melihat hasilnya, dan memilih langkah berikutnya. Tidak ada grafik alur tersembunyi: apa pun yang agent lakukan tampil sebagai ledger di layar.
 
 ## Shell-first: non-interaktif polos, interaktif fullscreen
 

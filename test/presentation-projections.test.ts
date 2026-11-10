@@ -95,7 +95,7 @@ describe("P5 transcript projection", () => {
       status: "denied",
     })
     const out = transcript.view(100, 4, 0).join("\n")
-    expect(out).toContain("⊘ read_file a.ts denied")
+    expect(out).toContain("read_file a.ts denied")
   })
 
   test("retry dan grup anak tetap satu baris ledger induk", () => {

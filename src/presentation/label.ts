@@ -135,6 +135,6 @@ export function summarizeResult(name: string, result: unknown): string {
     }
   }
   const first = text.split(/\r?\n/, 1)[0] ?? ""
-  if (r.isError && name === "bash") return clip(`✗ ${first}`, MAX_SUMMARY)
+  if (r.isError && name === "bash") return clip(first || name, MAX_SUMMARY)
   return clip(first || name, MAX_SUMMARY)
 }

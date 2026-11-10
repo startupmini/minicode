@@ -46,7 +46,7 @@ describe("cli/setup: permissionMode & timeout & budget", () => {
       verify: false,
     })
     expect(s.permissionMode).toBe("auto")
-    expect(s.effectiveTimeoutMs).toBe(900_000)
+    expect(s.effectiveTimeoutMs).toBe(3_600_000)
     await s.close()
   })
 

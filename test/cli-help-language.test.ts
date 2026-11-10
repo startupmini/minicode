@@ -184,8 +184,9 @@ describe("glyphs: menghormati dukungan UTF-8", () => {
   // kesalahan yang sama seperti objek warna `c`.
   test("MINICODE_ASCII=1 memaksa fallback ASCII", () => {
     process.env.MINICODE_ASCII = "1"
-    expect(glyphs.check).toBe("[OK]")
-    expect(glyphs.cross).toBe("[FAIL]")
+    // A2: status (✓/✗/⊘/○) tak lagi ber-glyph — cukup warna + kata.
+    expect(glyphs.check).toBe("")
+    expect(glyphs.cross).toBe("")
     expect(glyphs.arrow).toBe(">")
     expect(glyphs.dot).toBe(".")
     expect(glyphs.ellipsis).toBe("...")

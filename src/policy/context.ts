@@ -299,12 +299,16 @@ export async function buildSystemPrompt(
       "- Read first, then act: inspect the file before editing it; locate symbols with glob/grep.",
       "- Prefer the dedicated tools (read_file, edit, apply_patch, git_*) over bash for file and repo access.",
       "- For tasks with 3+ steps, maintain the todo list; keep exactly one item in_progress.",
-      "- Ask the user only when truly blocked on a decision; delegate large independent research to a sub-agent.",
+      "- Ask the user only when truly blocked on a decision; delegate large independent research to a sub-agent (for auditing a large repo/document, fan out one `explore` sub-agent per area and synthesize their findings).",
       "- On a tool error or permission denial, read the message and change approach — do not repeat the same call.",
       // F3.3 kontrak selesai: klaim "done" tanpa bukti adalah pola gagal
       // VERIFY_FAIL di bench (berhenti sendiri tapi verify gagal). Murah:
       // satu baris instruksi + diukur, bukan gate kode yang rapuh.
       "- Verify before claiming done: reproduce or check the result (run the relevant test/command, re-read the edited file) before reporting success. If verification fails, keep working — never declare victory on an unchecked change.",
+      // B1: anti-amnesia — hasil turn dibuang bila timeout/abort (turn transaksional),
+      // jadi untuk task panjang/model berjendela besar, model WAJIB menulis temuan
+      // ke state durable sedini mungkin (bukan merangkum di akhir turn).
+      "- For long or multi-step tasks, persist findings/progress as you go (write to a file or write_memory) so partial work survives a timeout or interruption — don't wait until the very end to summarize.",
       "- Work only inside the workspace. Do not attempt to read or write files outside it, in secret paths, or in .minicode/.",
     ].join("\n"),
   )

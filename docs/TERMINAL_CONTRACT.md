@@ -289,7 +289,7 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      saat turn). Composer memakai tinggi tetap: prompt saat editing, dots saat
      reasoning, atau tool target; satu baris kosong selalu memisahkannya dari
      footer. Proyeksi presentasi: baris running di-pin dari snapshot, elapsed
-     tetap pada ledger tool, status tool final memakai glyph + kata
+     tetap pada ledger tool, status tool final memakai warna + kata
      (`completed`/`failed`/`denied`/`cancelled`/`interrupted`), retry dan grup
      anak mengikuti model, serta ringkasan turn masuk sebagai system entry.
      **Retry provider:** setiap `model.delta`/`reasoning.delta` live membawa
@@ -475,7 +475,7 @@ status bar `✦ 00.00.00 Work Mode: Discuss  model  cwd … context  Permission 
 jam; tanpa bullet separator; permission rata kanan dekat token konteks; label
 dipadatkan pada terminal sempit; `🔒` terang = bash allow-list aktif, redup = tidak)
 + satu spacer sebelum footer · ledger tool
-`  › name target` (hijau) / merah saat error · error `✗ pesan` sekali per
+`  › name target` (hijau) / merah saat error · error `pesan` berwarna merah sekali per
 kegagalan · pesan error TUI = formatter kanonik (`formatError`,
 `src/ui/render/errors.ts`): credential di-redaksi (bearer/key/query), escape
 ANSI dibuang, body provider diringkas + dipotong; `e.message` mentah tak
@@ -484,11 +484,11 @@ belakang + kotak terpusat (form di dalam) + Esc tutup · approval tercatat ·
 `/status`, `/history`, `/help` ringkas & `/expand` mengalir ke transkrip ·
 `/mode` = permission mode · `/work-mode` = WorkMode (intent layer) ·
 `/fold` = lipat aktivitas tool per turn (`MINICODE_MINIMIZE_ACTIVITY`, ON di TUI) —
-baris ledger per-tool dirangkum jadi SATU baris ringkas (`✓ n tools · nama · x ok · y gagal`),
+baris ledger per-tool dirangkum jadi SATU baris ringkas (`n tools · nama · x ok · y gagal`),
 tidak hilang diam-diam; detail dibuka via `/expand` ·
 tabel markdown dirender kotak ber-garis (opencode-like) ber-`wrap` (konten panjang
 tidak kepotong) + margin kiri 1 kolom; teks paragraf ber-margin kiri 1 kolom ·
-Projection V2: `› name target … running`, ledger status ber-glyph/kata,
+Projection V2: `› name target … running`, ledger status ber-warna/kata,
 retry/grup anak (anak ber-identitas run = baris `↳ run_<8>` sendiri; tanpa
 identitas run = hitungan `n child tools`), ringkasan turn, dan marker evict
 sesuai flag ·

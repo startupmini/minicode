@@ -260,6 +260,17 @@ export function createSession(config: SessionConfig): Session {
         state.stepCount = turnState.stepCount;
         events.emit({ type: "turn:completed", result: snapshotTurnResult(result) });
         return result;
+      } catch (error) {
+        // B3 (host seam): on abort/timeout/error, the turn is transactional —
+        // but a long turn that only reads (no mutations) would otherwise lose
+        // all accumulated context on resume. Commit the partUp to a complete
+        // step boundary so a later run/resume can continue instead of amnesia.
+        const safe = safeTurnBoundary(store.messages.length, turnStore.messages);
+        if (safe.length > store.messages.length) {
+          store.replace(0, store.messages.length, safe);
+          events.emit({ type: "turn:interrupted" });
+        }
+        throw error;
       } finally {
         timeout.cancel();
         joined.cleanup();
@@ -337,4 +348,32 @@ function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
       signal.removeEventListener("abort", onAbort);
     }
   });
+}
+
+/**
+ * B3 — batas commit aman untuk turn yang terputus (abort/timeout/error).
+ *
+ * `executeTurn` selalu memulai turnStore dengan prefix committed + SATU pesan
+ * `user` (input), lalu per step menambah assistant(toolCalls) → tool results.
+ * Abort bisa meninggalkan (a) hanya si `user` input, atau (b) `assistant(toolCalls)`
+ * yang hasilnya belum sempat di-append (orphan). Keduanya HARUS dibuang:
+ * (a) karena menyimpannya membuat dua `user` berurutan pada run berikutnya
+ * (invariant role bergantian → HTTP 400), (b) karena pasangan tool-call/result
+ * yang menggantung akan ditolak dilihat resume. Selain itu, commit sejauh
+ * langkah lengkap terakhir.
+ */
+function safeTurnBoundary(committedLen: number, messages: readonly Message[]): readonly Message[] {
+  let end = messages.length
+  while (end > committedLen) {
+    const last = messages[end - 1]
+    if (last && last.role === "assistant" && Array.isArray(last.toolCalls) && last.toolCalls.length > 0) {
+      end-- // orphaned toolCalls tanpa hasil
+    } else {
+      break
+    }
+  }
+  if (end === committedLen + 1 && messages[committedLen]?.role === "user") {
+    end = committedLen // hanya input baru — tidak ada progres untuk dipertahankan
+  }
+  return messages.slice(0, end)
 }

@@ -73,6 +73,34 @@ test("audit: abort saat tool berjalan → history tetap kosong (turn dibuang)", 
   expect(s.state.history.length).toBe(0)
 })
 
+// ── 1b. B3: step LENGKAP dipertahankan saat turn terputus (anti-amnesia) ──
+
+test("audit: abort setelah step lengkap → step itu dipertahankan (bukan dibuang)", async () => {
+  const fast = {
+    name: "cepat",
+    description: "t",
+    parameters: { type: "object", properties: {} },
+    async execute() {
+      return "ok"
+    },
+  }
+  const p = new FakeProvider([
+    { events: [toolCall("cepat", {}), finish("tool_calls")] },
+    // Respon step 2 tak pernah dikonsumsi: abort terjadi tepat setelah step 1.
+    { events: [toolCall("cepat", {}), finish("tool_calls")] },
+  ])
+  const s = createSession({ provider: p, permissions: allowAll, tools: [fast as never] })
+  const c = new AbortController()
+  // Abort deterministik tepat setelah step:completed pertama (step 1 utuh:
+  // user + assistant(toolCalls) + hasil tool), sebelum langkah berikutnya.
+  s.events.on("step:completed", () => c.abort())
+  const run = s.run("mulai", { signal: c.signal })
+  await expect(run).rejects.toMatchObject({ kind: "aborted" })
+  // B3: turnStore di-commit sampai batas aman — step 1 (3 pesan) selamat, bukan
+  // dibuang total. Ini penutup amnesia: resume punya konteks progres sebagian.
+  expect(s.state.history.length).toBe(3)
+})
+
 // ── 2. Compaction shrink → tulis ulang penuh, tanpa pesan basi ──
 
 test("audit: history menyusut → rewrite penuh tanpa sisa pesan lama", async () => {

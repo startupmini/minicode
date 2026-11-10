@@ -858,7 +858,7 @@ describe("label.ts", () => {
 
   test("summarizeResult: string / isError bash / content array", () => {
     expect(summarizeResult("bash", "done")).toBe("done")
-    expect(summarizeResult("bash", { isError: true, content: "exit 1: bad" })).toContain("✗")
+    expect(summarizeResult("bash", { isError: true, content: "exit 1: bad" })).toBe("exit 1: bad")
     expect(
       summarizeResult("grep", { isError: false, content: [{ type: "text", text: "hit" }] }),
     ).toBe("hit")

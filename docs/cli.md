@@ -51,7 +51,7 @@ Subcommand di-route di `cli/router.ts` (`stats`, `sessions`, `mcp`, `config`, `s
 | `--model <name>` | Override model (`providerId::model` paksa provider) |
 | `--provider <id>` | Paksa provider id agnostik |
 | `--resume <id>` | Lanjutkan history yang tersimpan; setelah kompaksi, bagian lama dapat berupa ringkasan + tail |
-| `--timeout <ms>` | Hard deadline per prompt (default 900000; 0 = Infinity). Sesi yang idle tidak menghabiskan deadline prompt berikutnya. |
+| `--timeout <ms>` | Hard deadline per prompt (default 3600000 = 1 jam; `0` = Infinity; jalur `exec` tetap 15 menit). Sesi yang idle tidak menghabiskan deadline prompt berikutnya. |
 | `--cwd <path>` | Workspace root untuk tool file & jail |
 | `--allow-local-config` | Percayai `.minicode/config.json` + allowlist lokal (default: diabaikan) |
 | `--max-steps <n>` | Batas langkah tool (default 50) |

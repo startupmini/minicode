@@ -1118,13 +1118,15 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     }
   }
 
-  // Timeout default: --timeout > MINICODE_TIMEOUT_MS env > 15 min. 0 = Infinity.
+  // Timeout default: --timeout > MINICODE_TIMEOUT_MS env > 1 jam. 0 = Infinity.
+  // Default interaktif 1 jam (audit panjang tak macet di tengah); jalur exec
+  // meneruskan default 15 menit sendiri (lebih konservatif untuk CI).
   const envTimeout = process.env.MINICODE_TIMEOUT_MS
   let effectiveTimeoutMs =
-    timeoutMs ?? (envTimeout != null && envTimeout !== "" ? Number(envTimeout) : 900_000)
+    timeoutMs ?? (envTimeout != null && envTimeout !== "" ? Number(envTimeout) : 3_600_000)
   if (!Number.isFinite(effectiveTimeoutMs) || effectiveTimeoutMs < 0) {
-    process.stderr.write(`[warn] invalid timeout ${effectiveTimeoutMs}, fallback to 900000\n`)
-    effectiveTimeoutMs = 900_000
+    process.stderr.write(`[warn] invalid timeout ${effectiveTimeoutMs}, fallback to 3600000\n`)
+    effectiveTimeoutMs = 3_600_000
   } else if (effectiveTimeoutMs > LIMITS.MAX_TIMER_DELAY_MS) {
     process.stderr.write(
       `[warn] timeout exceeds runtime limit; capped at ${LIMITS.MAX_TIMER_DELAY_MS}ms\n`,
@@ -3012,6 +3014,14 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   const { attachBusDebug } = await import("../src/ui/runtime/bus-debug.ts")
   const detachBusDebug = attachBusDebug(session.events)
   const usage = createUsageCollector(session.events, effectiveInitialModel, resumeUsageSnapshot)
+  // B3 — persist parsial saat turn terputus (timeout/abort/error): kernel sudah
+  // commit turnStore sampai batas aman ke committed store (RAM); di sini kita
+  // flush ke SQLite (durable) supaya `--resume` tak amnesia. Fire-and-forget:
+  // listener bus tak boleh melempar/blocking, dan persist gagal (mis. stale
+  // writer) = best-effort. Penting untuk REPL+resume lintas proses.
+  session.events.on("turn:interrupted", () => {
+    void persistCurrent(usage.getSession()).catch(() => {})
+  })
   // Statusline kaya = opt-in (default mati, shell tetap bersih). Data biaya
   // disuntik sebagai callback agar UI tak perlu impor lapisan policy.
   const richStatus = process.env.MINICODE_STATUSLINE === "rich"

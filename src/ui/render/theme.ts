@@ -297,17 +297,20 @@ export const c = {
 // `cli/commands.ts` pernah membekukannya (V8) sehingga fallback ASCII tidak
 // pernah aktif. Dijaga oleh `test/no-frozen-runtime-value.test.ts`.
 export const glyphs = {
+  // A2 — status disampaikan lewat WARNA + kata, bukan glyph. Ikon sukses/gagal/
+  // ditolak/dibatalkan (✓/✗/⊘/○) dihapus karena bising & tak konsisten antar
+  // terminal; getter tetap "" agar semua pemanggil tak perlu diubah satu-satu.
   get check() {
-    return supportsUtf8() ? "✓" : "[OK]"
+    return ""
   },
   get cross() {
-    return supportsUtf8() ? "✗" : "[FAIL]"
+    return ""
   },
   get denied() {
-    return supportsUtf8() ? "⊘" : "[DENY]"
+    return ""
   },
   get circle() {
-    return supportsUtf8() ? "○" : "[CANCEL]"
+    return ""
   },
   get arrow() {
     return supportsUtf8() ? "›" : ">"

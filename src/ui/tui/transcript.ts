@@ -415,7 +415,7 @@ export class Transcript {
   }
 
   pushError(message: string): void {
-    this.push(c.error(`✗ ${sanitizeAnsiLine(message)}`), { kind: "diagnostic" })
+    this.push(c.error(sanitizeAnsiLine(message)), { kind: "diagnostic" })
   }
 
   pushInfo(lines: string[]): void {

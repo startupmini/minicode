@@ -5,6 +5,7 @@ import type { Execution, Step, TurnResult } from "./session.ts";
 export type AgentEvent =
   | { type: "turn:started"; turn: number }
   | { type: "turn:completed"; result: TurnResult }
+  | { type: "turn:interrupted" }
   | { type: "step:started"; step: Step }
   | { type: "step:completed"; step: Step }
   | { type: "execution:started"; execution: Execution }

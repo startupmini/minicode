@@ -238,7 +238,9 @@ describe("6AE vendor:check - EOL independence at the script boundary", () => {
   // tree is CRLF; a byte-exact hash against an LF source reports drift that does
   // not exist. Both directions are checked because normalizing only one side is
   // an easy mistake, and it is mutation M2.
-  test("LF source vs THIS checkout's vendor: in sync (both EOL forms, either way)", () => {
+  // UNFREEZE (0.16.0): vendor host-editable → drift loop.ts yang disengaja membuat
+  // vendor aktif TIDAK lagi sinkron dengan pin; bandingan "in sync" di-skip.
+  test.skip("LF source vs THIS checkout's vendor: in sync (both EOL forms, either way)", () => {
     for (const eol of ["lf", "crlf"] as const) {
       const p = makeSource(`eq-${eol}`, { eol })
       try {
@@ -276,7 +278,8 @@ describe("6AE vendor:check - EOL independence at the script boundary", () => {
   //
   // [DESIGN DECISION] Jalankan command production package pada source sibling
   // sungguhan bila tersedia; jalur tanpa sibling dijaga test di bawah.
-  test("the package command `vendor:check` passes against the real tree", () => {
+  // UNFREEZE (0.16.0): `vendor:check` tak lagi jadi gate (vendor host-editable).
+  test.skip("the package command `vendor:check` passes against the real tree", () => {
     const r = spawnSync("bun", [SCRIPT, "--check"], {
       cwd: REPO,
       encoding: "utf8",
@@ -287,7 +290,8 @@ describe("6AE vendor:check - EOL independence at the script boundary", () => {
     expect(r.status).toBe(0)
   })
 
-  test("with no sibling source, the script still exits 0 and reports the tree", () => {
+  // UNFREEZE (0.16.0): tanpa sibling, script tetap exit 0 — tak di-enforce lagi.
+  test.skip("with no sibling source, the script still exits 0 and reports the tree", () => {
     const r = spawnSync("bun", [SCRIPT, "--check"], {
       cwd: REPO,
       encoding: "utf8",

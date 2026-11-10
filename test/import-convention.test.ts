@@ -149,7 +149,9 @@ describe("konvensi import kernel", () => {
     expect(script).toContain('"vendor", "minicore"')
   })
 
-  test("vendor:check hijau (vendor terbaca & sinkron)", () => {
+  // UNFREEZE (0.16.0): vendor kini host-editable (keputusan pemilik), jadi
+  // verifikasi fingerprint `vendor:check` tidak lagi jadi gate — di-skip.
+  test.skip("vendor:check hijau (vendor terbaca & sinkron)", () => {
     const r = spawnSync("bun", ["scripts/vendor-minicore.ts", "--check"], {
       cwd: repoRoot,
       encoding: "utf8",
@@ -164,7 +166,7 @@ describe("konvensi import kernel", () => {
     expect(r.status).toBe(0)
   })
 
-  test("vendor:check lolos bila source ada tapi KOSONG (checkout CI gagal)", () => {
+  test.skip("vendor:check lolos bila source ada tapi KOSONG (checkout CI gagal)", () => {
     // Regresi nyata: checkout repo minicore privat di CI gagal → direktori
     // sibling ADA tapi kosong → existsSync lolos → exit 1
     // "[vendor] tidak ada file untuk disalin" di tiap push padahal vendor

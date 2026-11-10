@@ -177,4 +177,16 @@ describe("cleanUntrusted", () => {
       else process.env.NO_COLOR = prev
     }
   })
+
+  test("NO_COLOR=0 sengaja tidak mematikan warna saat TTY (K.5, terdokumentasi)", () => {
+    // Kill-switch terbalik: "0" = jangan matikan (lihat theme.ts noColorEnv).
+    const prev = process.env.NO_COLOR
+    process.env.NO_COLOR = "0"
+    try {
+      expect(cleanUntrusted("\x1b[31mhi", true)).toBe("\x1b[31mhi")
+    } finally {
+      if (prev === undefined) delete process.env.NO_COLOR
+      else process.env.NO_COLOR = prev
+    }
+  })
 })

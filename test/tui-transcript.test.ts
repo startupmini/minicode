@@ -375,3 +375,31 @@ describe("P1 operator diagnostics in TUI", () => {
     expect(t.view(100, 3, 0).join("\n")).toContain("read-only mode")
   })
 })
+
+describe("Transcript.replayHistory (resume)", () => {
+  test("membangun ulang echo user + jawaban model", () => {
+    const { t } = setup()
+    t.replayHistory([
+      { type: "user.message", text: "buat file a.ts", turnId: 1 },
+      { type: "model.completed", text: "Baik, saya buat file-nya.", turnId: 1 },
+    ])
+    const out = t.view(120, 8, 0).join("\n")
+    expect(out).toContain("buat file a.ts")
+    expect(out).toContain("Baik, saya buat file-nya.")
+  })
+
+  test("membangun ulang ledger tool dari snapshot resume", () => {
+    const { t } = setupPresentation({
+      activities: [
+        activity({ toolCallId: "call-1", name: "write_file", target: "a.ts", status: "completed" }),
+      ],
+      turns: [],
+    })
+    t.replayHistory([
+      { type: "tool.completed", seq: 4, turnId: 1, toolCallId: "call-1", status: "completed" },
+    ])
+    const out = t.view(120, 8, 0).join("\n")
+    expect(out).toContain("write_file")
+    expect(out).toContain("a.ts")
+  })
+})

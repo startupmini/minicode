@@ -59,6 +59,7 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | `MINICODE_COMPACT_KEEP_TURNS` | Override keepRecentTurns kompaksi (bilangan ≥1; invalid → default kernel + warn) |
 | `MINICODE_MEMORY_SCOPE` | Scope baca memory: `cwd` (default) \| `global` \| `all` (gabung, tanpa silent shadowing) |
 | `MINICODE_AUTO_MEMORY` | `0` → matikan auto-simpan summary/snippet ke memory (opt-out) |
+| `MINICODE_READ_VOLUME_GUARD` | `1` → aktifkan peringatan sekali per turn saat volume baca (char hasil tool) melewati ambang — penanda "banyak dibaca tanpa kompaksi" (risiko degradasi working-memory, bukan jendela token); default nonaktif |
 | `MINICODE_REPOMAP` | `regex` → paksa repo-map regex (skip LSP) |
 | `TAVILY_API_KEY` | API key untuk Tavily web_search (fallback DuckDuckGo bila kosong) |
 
@@ -76,7 +77,7 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 |---|---|
 | `MINICODE_ASCII` | `1` → paksa glyph ASCII (`[OK]`, `>`, `.`) untuk konsol tanpa UTF-8 |
 | `MINICODE_COMPACT` | `1` → tool call ringkas, `0` → expanded. Default: compact di TUI, expanded di one-shot/exec (juga `/compact`, Ctrl+O) |
-| `MINICODE_JUSTIFY` | `0` → matikan rata kanan-kiri pada keluaran teks model |
+| `MINICODE_JUSTIFY` | `1` → aktifkan rata kanan-kiri (justify) keluaran teks model. Default: mati (opt-in) — justify menyuntik spasi yang mengubah teks asli saat di-copy/–pipe |
 | `MINICODE_DROPDOWN` | `0` → matikan floating dropdown, pakai hint inline (konsol legacy) |
 | `MINICODE_MOUSE_SELECTION` | `0`/`false`/`off`/`no` → matikan mouse tracking TUI; default `1` untuk drag selection + wheel |
 | `MINICODE_MOTION` | `0` → matikan animasi status (pulse spark saat turn berjalan jadi glyph statis) — aksesibilitas/rekaman layar/SSH lambat |

@@ -9,6 +9,8 @@ import {
   composeBoundedSummary,
   createLlmCompaction,
   parseCompactKeepTurns,
+  summaryCharBudgetForWindow,
+  summaryInputCharBudget,
 } from "../src/policy/compaction.ts"
 
 /** ContextStore tiruan: hanya `messages` yang dibaca kompaksi. */
@@ -55,6 +57,33 @@ describe("mechanical compaction keeps tool results (Q1)", () => {
     expect(summary).toContain("Previous context")
     expect(summary).toContain("ISI FILE PENTING")
     expect(summary).not.toContain("<result omitted>")
+  })
+
+  test("tool pembawa fakta (grep) dipertahankan lebih panjang dari tool lain (T5)", () => {
+    // Penanda diletakkan jauh di belakang (posisi ~700) supaya beda head panjang
+    // (800) vs prosa (260) kelihatan: fakta selamat, non-fakta terpotong.
+    const factOut = `${"x".repeat(700)}SELAMAT_FAKTA`
+    const nonFactOut = `${"y".repeat(700)}HILANG_NONFAKTA`
+    const messages: Message[] = [
+      { role: "user", content: "audit" },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          { id: "c1", name: "grep", args: {} },
+          { id: "c2", name: "unknown_tool", args: {} },
+        ],
+      },
+      { role: "tool", toolCallId: "c1", name: "grep", content: factOut },
+      { role: "tool", toolCallId: "c2", name: "unknown_tool", content: nonFactOut },
+      { role: "user", content: "lanjut" },
+      { role: "assistant", content: "selesai" },
+    ]
+    const s = createLlmCompaction({ getContextWindowTokens: () => 16_000 })
+    const out = s.compact(storeOf(messages), { keepRecentTurns: 1 })
+    const summary = String(out[0]!.content as string)
+    expect(summary).toContain("SELAMAT_FAKTA")
+    expect(summary).not.toContain("HILANG_NONFAKTA")
   })
 })
 
@@ -446,5 +475,54 @@ describe("F3.2 parseCompactKeepTurns", () => {
     expect(parseCompactKeepTurns("2.5")).toBeUndefined()
     expect(parseCompactKeepTurns("banyak")).toBeUndefined()
     expect(parseCompactKeepTurns("Infinity")).toBeUndefined()
+  })
+})
+
+describe("R9 summaryCharBudgetForWindow (pagu ringkasan ikut jendela)", () => {
+  test("nilai tak-terdefinisi/negatif → lantai (perilaku lama)", () => {
+    expect(summaryCharBudgetForWindow(undefined)).toBe(LIMITS.COMPACTION_SUMMARY_MAX_CHARS)
+    expect(summaryCharBudgetForWindow(0)).toBe(LIMITS.COMPACTION_SUMMARY_MAX_CHARS)
+    expect(summaryCharBudgetForWindow(-1)).toBe(LIMITS.COMPACTION_SUMMARY_MAX_CHARS)
+    expect(summaryCharBudgetForWindow(Number.NaN)).toBe(LIMITS.COMPACTION_SUMMARY_MAX_CHARS)
+  })
+  test("jendela kecil tetap di lantai, jendela besar naik hingga atap", () => {
+    const min = LIMITS.COMPACTION_SUMMARY_MAX_CHARS
+    const max = LIMITS.COMPACTION_SUMMARY_SCALED_MAX_CHARS
+    // 32K token → 1.280 char → diklem lantai.
+    expect(summaryCharBudgetForWindow(32_000)).toBe(min)
+    // 128K → 5.120 char (naik dari lantai).
+    expect(summaryCharBudgetForWindow(131_072)).toBeGreaterThan(min)
+    // 1M → 40.000 → diklem atap.
+    expect(summaryCharBudgetForWindow(1_000_000)).toBe(max)
+  })
+  test("hasil selalu di dalam [min, max] untuk rentang jendela", () => {
+    const min = LIMITS.COMPACTION_SUMMARY_MAX_CHARS
+    const max = LIMITS.COMPACTION_SUMMARY_SCALED_MAX_CHARS
+    for (const w of [1, 10_000, 32_000, 100_000, 200_000, 1_000_000, 2_000_000]) {
+      const b = summaryCharBudgetForWindow(w)
+      expect(b).toBeGreaterThanOrEqual(min)
+      expect(b).toBeLessThanOrEqual(max)
+    }
+  })
+})
+
+describe("R10 summaryInputCharBudget (input summarizer ikut jendela)", () => {
+  test("nilai tak-terdefinisi/negatif → lantai 6k (perilaku lama)", () => {
+    expect(summaryInputCharBudget(undefined)).toBe(LIMITS.COMPACTION_LLM_INPUT_MIN_CHARS)
+    expect(summaryInputCharBudget(0)).toBe(LIMITS.COMPACTION_LLM_INPUT_MIN_CHARS)
+    expect(summaryInputCharBudget(-1)).toBe(LIMITS.COMPACTION_LLM_INPUT_MIN_CHARS)
+    expect(summaryInputCharBudget(Number.NaN)).toBe(LIMITS.COMPACTION_LLM_INPUT_MIN_CHARS)
+  })
+  test("jendela kecil tetap di lantai, jendela besar naik hingga atap", () => {
+    const min = LIMITS.COMPACTION_LLM_INPUT_MIN_CHARS
+    const max = LIMITS.COMPACTION_LLM_INPUT_SCALED_MAX_CHARS
+    expect(summaryInputCharBudget(32_000)).toBe(min)
+    expect(summaryInputCharBudget(131_072)).toBeGreaterThan(min)
+    expect(summaryInputCharBudget(1_000_000)).toBe(max)
+  })
+  test("input selalu ≥ output (summarizer membaca lebih banyak dari yang diminta)", () => {
+    for (const w of [32_000, 100_000, 131_072, 200_000, 1_000_000, 2_000_000]) {
+      expect(summaryInputCharBudget(w)).toBeGreaterThanOrEqual(summaryCharBudgetForWindow(w))
+    }
   })
 })

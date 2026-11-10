@@ -60,8 +60,9 @@ diselaraskan 0.9.27 saat seam dihilirkan; sebelumnya `budget:<…>`):
   (`SYSTEM_PROMPT_MAX_CHARS` 8000), tool schema TIDAK pernah terkompaksi.
 - *What must be preserved?* — pasangan assistant(toolCalls)→tool results tidak
   pernah dipecah (`compact.ts`); summary LLM terpin verbatim (anti-drift).
-- *What may be removed?* — hasil tool sukses (ditinggal `<result omitted>` di
-  mechanical; LLM menulis ringkasan fakta), reasoning, tail lama.
+- *What may be removed?* — teks di luar head per peran (hasil tool pembawa fakta
+  dipertahankan ~800 char, prosa ~250/180 char; TIDAK lagi `<result omitted>`),
+  reasoning, tail lama.
 - *What if compaction fails?* — LLM gagal/timeout (10s) → fallback sync
   mekanis; async compactor tak pernah bisa crash loop.
 - *Can it retry?* — budget: tidak (flag); recovery: sekali per turn (flag).

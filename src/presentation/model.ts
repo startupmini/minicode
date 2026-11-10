@@ -18,6 +18,10 @@ export type TurnStatus = "running" | "completed" | "failed" | "cancelled" | "int
 export type PlanStatus = "open" | "completed" | "cancelled"
 export type ResultStatus = "completed" | "failed" | "cancelled"
 export type SystemKind = "context_compacted" | "recovery" | "checkpoint" | "notice"
+// Catatan retention (K.7): ini cap REDUCER presentasi (state durable/resume).
+// Berbeda dan sengaja tak sama dengan TRANSCRIPT_CAP=5000 di src/ui/tui/transcript.ts
+// yang membatasi TAMPILAN transkrip — dua lapis retention berbeda untuk substansi
+// berbeda (riwayat yang bisa di-replay vs viewport).
 export const MAX_STATE_ENTRIES = 4096
 
 export interface ActivityEntry {

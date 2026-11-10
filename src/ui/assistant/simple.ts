@@ -15,6 +15,7 @@ import { t } from "../i18n/locale.ts"
 import { renderDiffCard } from "../render/diff.ts"
 import { formatArgsPreview, formatProviderError, formatUsage } from "../render/format.ts"
 import { highlightCode } from "../render/highlight.ts"
+import { paintLedger, runMarker, statusWord } from "../render/ledger.ts"
 import { decorateMarkdown, type FenceMatch, parseFence, renderInline } from "../render/markdown.ts"
 import { MarkdownTableStream } from "../render/markdown-table.ts"
 import {
@@ -206,6 +207,9 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   // /copy tak tersentuh (rememberTurn selalu jalan sebelum sink).
   let answerBuf = ""
   let answerTruncated = false
+  // K.3 (item 12): lacak apakah sudah ada isi jawaban yang tercetak — untuk
+  // menambahkan satu baris kosong pemisah sebelum heading (paritas dengan TUI).
+  let answerHasLine = false
   let activeProviderAttempt: number | null = null
   let attemptCopyText = ""
   let attemptAnswerBuf = ""
@@ -335,10 +339,16 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       // bahasa tidak boleh kehilangan *value* karena dianggap italic).
       const content = fence.lang ? highlightCode(line, fence.lang) : line
       emitAnswer(`  ${content}\n`)
+      answerHasLine = true
       return
     }
-    emitAnswer(formatWrapped(decorateMarkdown(line), w, true))
+    // Heading (K.3 item 12): satu baris kosong pemisah bila sudah ada isi —
+    // paritas dengan decorateMarkdown TUI (spasi vertikal sebelum heading).
+    const isHeading = /^#{1,3}\s/.test(line)
+    if (isHeading && answerHasLine) emitAnswer("\n")
+    emitAnswer(formatWrapped(decorateMarkdown(line), w))
     emitAnswer("\n")
+    answerHasLine = answerHasLine || line.trim() !== ""
   }
   const consumePlainText = (text: string): void => {
     const combined = plainLineBuffer + text
@@ -385,17 +395,9 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     if (!toolCallId) return undefined
     return presentationSnapshot()?.activities.find((activity) => activity.toolCallId === toolCallId)
   }
-  const statusWord = (status: UiPresentationActivity["status"]): string => {
-    if (status === "completed") return t("ts.statusCompleted")
-    if (status === "failed") return t("ts.statusFailed")
-    if (status === "denied") return t("ts.statusDenied")
-    if (status === "cancelled") return t("ts.statusCancelled")
-    if (status === "interrupted") return t("ts.statusInterrupted")
-    return t("ts.statusRunning")
-  }
+  // Bagian suffix dipilih policy kanonik bila di-inject; format tetap di sini.
   const linearSuffix = (activity: UiPresentationActivity | undefined): string => {
     if (!activity) return ""
-    // Bagian suffix dipilih policy kanonik bila di-inject; format tetap di sini.
     const desc = opts.policy ? opts.policy.describeActivity(activity) : undefined
     const status = desc?.status ?? activity.status
     const parts: string[] = [statusWord(status)]
@@ -423,21 +425,6 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     const provenance = desc?.provenance ?? activity.provenance
     if (provenance === "replay" || provenance === "reconstructed") parts.push(provenance)
     return parts.length > 0 ? ` ${c.muted(`[${parts.join(" · ")}]`)}` : ""
-  }
-  const paintTerminal = (status: UiPresentationActivity["status"], line: string): string => {
-    if (status === "failed") return c.error(line)
-    if (status === "denied") return c.warning(line)
-    if (status === "completed") return c.success(line)
-    return c.muted(line)
-  }
-  // F-AGENT-1: label run pendek stabil (`run_<8>` | `sub_<8>`) — identitas anak,
-  // sama dengan TUI, supaya failure tool anak paralel tak saling tertukar.
-  const runMarker = (activity: UiPresentationActivity | undefined): string => {
-    const id = activity?.runId ?? activity?.childSessionId
-    if (!id) return ""
-    const prefix = id.startsWith("run_") ? "run_" : id.startsWith("sub_") ? "sub_" : ""
-    const bare = id.slice(prefix.length).replace(/-/g, "")
-    return prefix + bare.slice(0, 8)
   }
   const writePresentationTerminal = (event: UiPresentationEvent): void => {
     if (!presentationEnabled) return
@@ -560,7 +547,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
     const marker = runMarker(activity)
     const prefix = isChild ? `    ↳ ${marker ? `${marker} ` : ""}` : `  ${glyphs.arrow} `
     const line = `${prefix}${name}${targetText}${linearSuffix(activity)}${detail}`
-    wErr(paintTerminal(status, `${line}\n`))
+    wErr(paintLedger(status, `${line}\n`))
   }
 
   const offs: (() => void)[] = []
@@ -579,6 +566,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       reasoningLine = ""
       answerBuf = ""
       answerTruncated = false
+      answerHasLine = false
       activeProviderAttempt = null
       attemptCopyText = ""
       ui.clearCollapsedSections()

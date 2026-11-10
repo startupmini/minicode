@@ -176,6 +176,47 @@ test("P3.4-7: derivasi murni deterministik (input tak dimutasi)", () => {
   expect(a!.baseSeq).toBeGreaterThan(0)
 })
 
+test("P3.4-7b (T1): ringkasan kernel di messages[0] dipakai ulang, bukan re-fold", () => {
+  // Bila canonical sudah berisi ringkasan kernel (LLM/mechanical, prefix
+  // "Previous context"), produsen TIDAK fold ulang — reuse apa adanya (baseSeq 1)
+  // supaya resume melihat summary yang sama dengan yang dilihat model.
+  const kernelSummary = "Previous context (LLM summarized):\n[Compaction Summary]\nFAKTA PENTING"
+  const msgs = [
+    { role: "user", content: kernelSummary },
+    { role: "assistant", content: "tail 1" },
+    { role: "user", content: "tail 2" },
+  ]
+  const out = deriveSummaryFromCanonical(msgs as never, { keepRecentTurns: 2 })
+  expect(out).not.toBeNull()
+  expect(out!.baseSeq).toBe(1)
+  expect(out!.summaryText).toBe(kernelSummary)
+})
+
+test("P3.4-7c (A): proyeksi mempertahankan isi hasil tool, bukan `<result omitted>`", () => {
+  // Folder kernel (`mechanicalCompaction`) menulis `- tool(…): <result omitted>`
+  // dan membuang fakta. Folder host (`mechanicalKeepResults`) harus menyimpan
+  // isi hasil tool pada proyeksi durable yang dipakai saat resume.
+  const msgs = [
+    { role: "user", content: "baca file" },
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [{ id: "c1", name: "read_file", args: { path: "a.ts" } }],
+    },
+    { role: "tool", toolCallId: "c1", name: "read_file", content: "ISI FILE PENTING abc" },
+    { role: "user", content: "t1 xxxx" },
+    { role: "assistant", content: "a1 yyyy" },
+    { role: "user", content: "t2 xxxx" },
+    { role: "assistant", content: "a2 yyyy" },
+    { role: "user", content: "t3 xxxx" },
+    { role: "assistant", content: "a3 yyyy" },
+  ]
+  const out = deriveSummaryFromCanonical(msgs as never, { keepRecentTurns: 1 })
+  expect(out).not.toBeNull()
+  expect(out!.summaryText).toContain("ISI FILE PENTING")
+  expect(out!.summaryText).not.toContain("<result omitted>")
+})
+
 // ── Freshness / invalidation ─────────────────────────────────────────────────
 
 test("P3.4-8: freshness — proyeksi parsial selalu STALE (cakupan < head+1)", async () => {

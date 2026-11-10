@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.16.0] - 2026-11-10
+
+### Added
+- `MINICODE_READ_VOLUME_GUARD=1` — penjaga volume-baca per turn (opt-in): memperingatkan sekali bila hasil tool terbaca melampaui ambang tanpa kompaksi, penanda risiko degradasi working-memory (bukan jendela token).
+
+### Improved — retensi fakta pada kompaksi & proyeksi
+- Pagu ringkasan kompaksi LLM dan **input summarizer** kini diskala mengikuti jendela model (bukan 4k/6k char konstan) — model berjendela besar tak lagi over-discard fakta lama.
+- Hasil tool **pembawa fakta** (`read_file/grep/glob/bash/code_run/web_fetch/web_search`) dipertahankan lebih panjang (~800 char/baris) saat kompaksi, alih-alih terpotong ~250 char.
+- Proyeksi konteks durable (dipakai saat resume) kini **mempertahankan isi hasil tool** — bukan `<result omitted>` — dan memakai ulang ringkasan kernel bila tersedia.
+- Deteksi drift katalog jendela konteks vs models.dev (>2×) dengan peringatan sekali per model, agar katalog yang basi terlihat (`minicode pricing sync`).
+
+### Improved — TUI & footer
+- Footer: meter konteks kini naik **per step** selama turn (bukan beku sampai turn selesai) lewat seam kernel `context-window`.
+- Marker/status/glyph/warna ledger tool disatukan di satu sumber (`src/ui/render/ledger.ts`) — tak lagi divergen antara TUI dan printer linier.
+- Perf TUI: memo aktivitas berjalan + cache proyeksi baris transkrip (mengurangi kerja paint per ketikan/scroll).
+
+### Changed
+- Konsolidasi selector konteks: satu selector produksi (`selectContext`); `assembleContext` jadi legacy (tetap diekspor + diuji).
+- Sewam aditif `context-window` ditambah langsung di `vendor/minicore/src/core/loop.ts` (vendor tidak lagi ketat "beku"; lihat `VENDOR.md`).
+
+### Fixed
+- Angka ajaib (reserve admission, ambang reklasifikasi 400, rasio ringkasan) diganti konstanta `LIMITS` bernama.
+- Potongan ringkasan menuju memory kini aman-surrogate (tidak meninggalkan lone surrogate).
+
 ## [0.15.0] - 2026-11-09
 
 ### Added

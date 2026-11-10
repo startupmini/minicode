@@ -274,6 +274,16 @@ export async function executeTurn(
     steps.push(step);
     s.state.stepCount = stepIndex + 1;
     s.events.emit({ type: "step:completed", step: snapshotStep(step) });
+    // Live context occupancy (host seam): laporkan ukuran konteks turn-store
+    // SESUDAH hasil tool step ini masuk, sehingga host (footer TUI) dapat
+    // memperbarui meter konteks per step alih-alih menunggu turn selesai.
+    // Nilai ini memakai estimator "satu sumber" yang sama dengan pressure eval
+    // di atas — tanpa duplikasi estimator.
+    s.events.emit({
+      type: "provider:extension",
+      kind: "context-window",
+      data: { usedTokens: contextTokens(s), windowTokens: contextWindowTokens },
+    });
     stepIndex++;
   }
 

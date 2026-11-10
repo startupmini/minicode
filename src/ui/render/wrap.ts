@@ -99,10 +99,12 @@ export function justifyLine(line: string, width: number): string {
 //
 // Baris TERAKHIR paragraf tidak dijustify — menjustifikasinya menghasilkan
 // "sungai" spasi seperti `dengan      lebar      tertentu`, kesalahan tipografi
-// klasik. MINICODE_JUSTIFY=0 mematikan justify sepenuhnya.
-export function formatWrapped(text: string, width: number, justify = true): string {
+// klasik. Justify kini OPT-IN (default OFF, temuan K.2): menjustifikasi
+// menyuntik spasi yang mengubah teks asli model saat di-copy/–pipe, dan membuat
+// output linear berbeda dari TUI (ragged). `MINICODE_JUSTIFY=1` mengaktifkan.
+export function formatWrapped(text: string, width: number, justify = false): string {
   const wrapped = wordWrap(text, width)
-  if (!justify || process.env.MINICODE_JUSTIFY === "0") return wrapped
+  if (!(justify || process.env.MINICODE_JUSTIFY === "1")) return wrapped
   const lines = wrapped.split("\n")
   return lines
     .map((line, i) => {

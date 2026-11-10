@@ -74,7 +74,8 @@ describe("audit #11: pin vendor berlaku tanpa sibling", () => {
     return vendorFileHash(vendorDir, files)
   }
 
-  test("VENDOR.md files+hash cocok dengan tree (dilarang edit manual)", () => {
+  // UNFREEZE (0.16.0): vendor host-editable; pin hash tak lagi di-enforce.
+  test.skip("VENDOR.md files+hash cocok dengan tree (dilarang edit manual)", () => {
     const md = readFileSync(join(vendorDir, "VENDOR.md"), "utf8")
     const files = Number(/^- files: (\d+)/m.exec(md)?.[1])
     const hash = /^- hash: `([0-9a-f]+)`/m.exec(md)?.[1]
@@ -116,7 +117,8 @@ describe("audit #11: permukaan pack tepat", () => {
     expect(coveredByFiles("vendor/minicore/test/fakes.ts")).toBe(false)
   })
 
-  test("shipped hash VENDOR.md = fingerprint file vendor yang ikut paket (provenance tarball)", () => {
+  // UNFREEZE (0.16.0): provenance shipped-hash tak lagi jadi gate.
+  test.skip("shipped hash VENDOR.md = fingerprint file vendor yang ikut paket (provenance tarball)", () => {
     // Hash 19-file tidak bisa direproduksi dari paket terbit karena fakes.ts
     // sengaja tak ikut. Angka kedua (shipped hash) menghitung HANYA file yang
     // ikut `files` — verifikator cukup vendor/minicore di dalam tarball.

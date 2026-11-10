@@ -61,3 +61,33 @@ test("e2e: read_file feeds content back to the model", async () => {
   expect(String((toolMsg as any).content)).toContain("export const x = 42")
   await rm(tmp, { recursive: true, force: true })
 })
+
+test("e2e: kernel emits live context (context-window) per step", async () => {
+  await mkdir(tmp, { recursive: true })
+  const provider = new FakeProvider([
+    {
+      events: [
+        toolCall("write_file", { path: `${tmp}/out.txt`, content: "hi" }),
+        finish("tool_calls"),
+      ],
+    },
+    { events: [text("done"), finish("stop")] },
+  ])
+  const session = createSession({
+    provider,
+    permissions: allowAll,
+    tools: [writeFileTool],
+    cwd: process.cwd(),
+  } as never)
+  const seen: Array<{ usedTokens?: number; windowTokens?: number }> = []
+  const off = session.events.on("provider:extension", (e: any) => {
+    if (e.kind === "context-window") seen.push(e.data as never)
+  })
+  await session.run("write hi")
+  off()
+  // Satu step (tool call) → satu emit context-window SETELAH step selesai.
+  expect(seen.length).toBeGreaterThan(0)
+  expect(seen[0]!.usedTokens).toBeGreaterThan(0)
+  expect(seen[0]!.windowTokens).toBeGreaterThan(0)
+  await rm(tmp, { recursive: true, force: true })
+})

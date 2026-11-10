@@ -77,14 +77,16 @@ function fmtCtx(n: number): string | undefined {
  * F-CTX-1: metrik usage footer (biaya + window %) dari angka NYATA, tanpa
  * perkiraan. Kosong = tak ada data relevan (belum belanja / flag window tak
  * disetel) — footer tak pernah menampilkan persentase/biaya palsu.
+ *
+ * P1.4: persentase footer = OCCUPANCY konteks saat ini (param `used`), bukan
+ * total token yang sudah dibelanjakan sepanjang sesi. Memakai spend membuat
+ * footer mentok 100% setelah beberapa step meski konteks masih jauh di bawah
+ * window. `used` di-inject oleh pemanggil (cache per turn) agar angka
+ * O(history) `session.contextTokens` tak dihitung ulang tiap paint.
  */
-function fmtUsageMetrics(ctx: CliSession): string | undefined {
+function fmtUsageMetrics(ctx: CliSession, used: number): string | undefined {
   const cost: number | undefined = ctx.usage.getSession().cost
   const windowTokens: number | undefined = ctx.getContextWindowTokens?.() ?? ctx.contextWindowTokens
-  // P1.4: persentase footer = OCCUPANCY konteks saat ini, bukan total token
-  // yang sudah dibelanjakan sepanjang sesi. Memakai spend membuat footer
-  // mentok 100% setelah beberapa step meski konteks masih jauh di bawah window.
-  const used: number = ctx.session.contextTokens
   const parts: string[] = []
   if (cost !== undefined && Number.isFinite(cost) && cost > 0) parts.push(formatUsd(cost))
   if (
@@ -180,6 +182,55 @@ export async function runTui(ctx: CliSession): Promise<void> {
   let warned80 = false
   let abort: AbortController | null = null
 
+  // Fase 1 perf (butir 2b): `session.contextTokens` adalah getter O(history)
+  // (estimateMessages mengiterasi SELURUH store + estimator per pesan). Footer
+  // membacanya tiap paint/ketikan — untuk chat panjang ini pengulangan token
+  // estimation penuh per ketikan. Committed store hanya berubah saat turn
+  // selesai (turnCount naik), jadi cache keyed turnCount aman + output-identik.
+  let cachedContext: { turn: number; tokens: number } | null = null
+  // Item 16 (live context): nilai per-step yang di-emit kernel (loop.ts, event
+  // `provider:extension` kind `context-window`). Saat turn berjalan nilainya
+  // O(1) dan terus diperbarui tiap step; direset di batas turn agar idle
+  // kembali ke nilai committed.
+  let liveContextTokens: number | undefined
+  const liveContextUnsubs: (() => void)[] = []
+  const uiBus = session.events as unknown as UiBus
+  try {
+    liveContextUnsubs.push(
+      uiBus.on("provider:extension", (e: { kind?: unknown; data?: unknown }) => {
+        if (e?.kind !== "context-window") return
+        const d = e.data as { usedTokens?: unknown } | undefined
+        if (typeof d?.usedTokens === "number") liveContextTokens = d.usedTokens
+      }),
+    )
+  } catch {}
+  try {
+    liveContextUnsubs.push(
+      uiBus.on("turn:started", () => {
+        liveContextTokens = undefined
+      }),
+    )
+  } catch {}
+  try {
+    liveContextUnsubs.push(
+      uiBus.on("turn:completed", () => {
+        liveContextTokens = undefined
+      }),
+    )
+  } catch {}
+  const getContextTokens = (): number => {
+    // Live (per-step) menang saat turn berjalan; idle → committed (cache).
+    if (liveContextTokens !== undefined) return liveContextTokens
+    // Beberapa fixture test menyediakan `session` parsial (tanpa `state`): tanpa
+    // sinyal turn yang andal, baca langsung seperti perilaku lama.
+    const turn = (session.state as { turnCount?: number } | undefined)?.turnCount
+    if (turn === undefined) return session.contextTokens
+    if (!cachedContext || cachedContext.turn !== turn) {
+      cachedContext = { turn, tokens: session.contextTokens }
+    }
+    return cachedContext.tokens
+  }
+
   // Bahasa UI: state.json (sesi bisa menimpa via /lang). Gagal baca = default.
   const { setConfigLocale } = await import("../src/ui/i18n/locale.ts")
   try {
@@ -202,6 +253,28 @@ export async function runTui(ctx: CliSession): Promise<void> {
       provenanceMark,
     },
   })
+
+  // [resume] Rebuild riwayat transkrip dari event presentasi durable. Hanya sesi
+  // yang BENAR-BENAR di-resume (turnCount > 0) yang punya histori — `--session
+  // <id>` reuse tanpa `--resume` tak boleh menampilkan riwayat lama. Sesi baru
+  // (tanpa event) = no-op. Tak double-render: replay memproses event LAMA,
+  // turn live baru menyusul dengan event baru.
+  try {
+    const turnCount = (session.state as { turnCount?: number } | undefined)?.turnCount ?? 0
+    if (turnCount > 0) {
+      const { loadPresentationEvents } = await import("../src/session/persistence.ts")
+      const { toPresentationEvent } = await import("./setup.ts")
+      const durable = await loadPresentationEvents(sessionId, cwd)
+      if (durable.length > 0) {
+        const events = durable
+          .map((e) => toPresentationEvent(e))
+          .filter((e): e is import("../src/ui/contract.ts").UiPresentationEvent => e !== null)
+        transcript.replayHistory(events)
+      }
+    }
+  } catch {
+    // Replay best-effort: gagal membaca histori bukan alasan membatalkan TUI.
+  }
 
   const commandCtx: CommandContext = {
     cwd,
@@ -691,6 +764,7 @@ export async function runTui(ctx: CliSession): Promise<void> {
   const host: TuiHost = {
     bus: session.events as unknown as TuiHost["bus"],
     getStatus: () => {
+      const busy = abort != null
       const status = {
         footer: {
           // Normalisasi: sumbu persetujuan hanya AUTO/ASK. Profil warisan
@@ -706,13 +780,15 @@ export async function runTui(ctx: CliSession): Promise<void> {
           workMode: workModeControl?.getWorkMode() ?? "DISCUSS",
           model: modelRef.current ?? cfg.providers[0]?.models[0] ?? t("tui.noModel"),
           cwd: cwd ?? process.cwd(),
-          context: fmtCtx(session.contextTokens),
-          metrics: fmtUsageMetrics(ctx),
+          context: fmtCtx(getContextTokens()),
+          metrics: fmtUsageMetrics(ctx, getContextTokens()),
         },
-        busy: abort != null,
+        busy,
       }
+      // Fase 1 perf (butir 2): pinnedActivity hanya ditampilkan saat busy —
+      // jangan memindai seluruh activities pada tiap ketikan idle.
+      if (!busy) return { ...status, pinnedActivity: undefined }
       const activities = getPresentationSnapshot().activities
-
       return {
         ...status,
         pinnedActivity:
@@ -764,6 +840,11 @@ export async function runTui(ctx: CliSession): Promise<void> {
     }
   } finally {
     setApprovalSink(null)
+    for (const unsub of liveContextUnsubs.splice(0)) {
+      try {
+        unsub()
+      } catch {}
+    }
     transcript.dispose()
     await close()
   }

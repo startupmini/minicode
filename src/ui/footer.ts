@@ -107,9 +107,8 @@ export function paintPermissionMode(mode: string, style: ModeLabelStyle = "full"
  * Saat `unrestricted` aktif, gembok jadi TERBUKA (🔓) — satu-satunya penanda,
  * jadi dirender jelas (bukan redup). */
 export function paintBashStrict(strictBash?: boolean, unrestricted = false): string {
-  if (unrestricted) return c.info("🔓")
-  const lock = "🔒"
-  return strictBash ? c.yellow(lock) : c.faint(lock)
+  if (unrestricted) return c.info(glyphs.unlock)
+  return strictBash ? c.yellow(glyphs.lock) : c.faint(glyphs.lock)
 }
 
 /** Spark glyph: redup saat idle, pulse putih↔abu saat busy (frame genap/ganjil). */

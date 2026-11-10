@@ -18,6 +18,30 @@ export function parseCompactKeepTurns(raw: string | undefined): number | undefin
   return Number.isInteger(n) && n >= 1 ? n : undefined
 }
 
+// R9/T5 — tool "pembawa fakta": hasilnya (isi file, match grep, output
+// bash/test, hasil fetch/web) adalah FAKTA yang harus dipertahankan sebaik
+// mungkin saat kompaksi. Prosa dan tool lain tetap dipangkas pendek untuk
+// hemat token. Head fakta jauh lebih panjang (800 char) daripada prosa
+// (~250 char) karena kehilangan satu baris match grep / satu baris output test
+// saja dapat merusak kesimpulan audit model setelah ringkasan dipakai lagi.
+const FACT_TOOLS = new Set([
+  "read_file",
+  "grep",
+  "glob",
+  "bash",
+  "bash_output",
+  "code_run",
+  "web_fetch",
+  "web_search",
+])
+const FACT_HEAD_CHARS = 800
+
+/** Panjang head saat memangkas baris kompaksi per-peran: hasil tool pembawa
+ * fakta dapat head panjang; selain itu pakai `fallback` (prosa pendek). */
+function toolHeadLen(name: string | null | undefined, fallback: number): number {
+  return name != null && FACT_TOOLS.has(name) ? FACT_HEAD_CHARS : fallback
+}
+
 export interface LlmCompactionOptions {
   provider?: ModelProvider
   model?: string // deepseek v4 flash
@@ -90,8 +114,12 @@ function boundedMechanical(
  * omitted>`), memakai `getKeptCount` + `mechanicalLine` yang sama — supaya
  * fallback (saat LLM tak tersedia/thrash) tidak menghapus fakta yang justru
  * dibutuhkan untuk audit. Tetap dibatasi `boundSummary`/`fitSummaryToTokenBudget`.
+ *
+ * Diekspor (R10/A) supaya produsen proyeksi durable (`context-projection.ts`)
+ * memakai folder yang MEMPERTAHANKAN hasil tool — bukan folder kernel
+ * `mechanicalCompaction` yang menulis `<result omitted>` dan membuang fakta.
  */
-function mechanicalKeepResults(
+export function mechanicalKeepResults(
   store: ContextStore,
   keepRecentTurns: number,
 ): readonly import("#minicore/core/types.ts").Message[] {
@@ -156,7 +184,7 @@ function mechanicalLine(message: import("#minicore/core/types.ts").Message): str
   }
   if (message.role === "tool") {
     const result = toolContentText(message.content)
-    return `- tool(${message.name})${message.isError ? " ERROR" : ""}: ${headText(result, 260)}`
+    return `- tool(${message.name})${message.isError ? " ERROR" : ""}: ${headText(result, toolHeadLen(message.name, 260))}`
   }
   return `- ${message.role}: ${headText(contentToText(message.content), 180)}`
 }
@@ -268,7 +296,7 @@ export function createLlmCompaction(opts: LlmCompactionOptions = {}): Compaction
       const limit = opts.getContextWindowTokens?.()
       const target =
         Number.isSafeInteger(limit) && (limit as number) > 0
-          ? Math.floor((limit as number) * 0.5)
+          ? Math.floor((limit as number) * LIMITS.COMPACTION_SUMMARY_TARGET_RATIO)
           : undefined
       return boundedMechanical(store, cOpts.keepRecentTurns, target)
     },
@@ -276,7 +304,7 @@ export function createLlmCompaction(opts: LlmCompactionOptions = {}): Compaction
   const targetTokens = () => {
     const limit = opts.getContextWindowTokens?.()
     return Number.isSafeInteger(limit) && (limit as number) > 0
-      ? Math.floor((limit as number) * 0.5)
+      ? Math.floor((limit as number) * LIMITS.COMPACTION_SUMMARY_TARGET_RATIO)
       : undefined
   }
   // F3.1 anti-thrash (state per strategi = per sesi, karena strategy dibuat
@@ -338,6 +366,8 @@ export function createLlmCompaction(opts: LlmCompactionOptions = {}): Compaction
                 ? Math.min(configured!, target)
                 : target
             })(),
+            maxSummaryChars: summaryCharBudgetForWindow(opts.getContextWindowTokens?.()),
+            maxInputChars: summaryInputCharBudget(opts.getContextWindowTokens?.()),
             ...(opts.onUsage ? { onUsage: opts.onUsage } : {}),
           },
           ac.signal,
@@ -412,6 +442,41 @@ const SUMMARY_ELISION =
   "[older context omitted from the active prompt; ask again for details that are missing]\n"
 
 /**
+ * R9 — pagu ringkasan kompaksi LLM mengikuti ukuran jendela, bukan 4k char
+ * konstan. Model berjendela raksasa (1M token) diberi ruang ringkasan lebih
+ * kaya (hingga `COMPACTION_SUMMARY_SCALED_MAX_CHARS`) supaya fakta lama tak
+ * over-discard; model kecil tetap hemat di lantai `COMPACTION_SUMMARY_MAX_CHARS`.
+ * Formula kasar: ~1 char per 25 token jendela, diklem [min, max]. Nilai non-
+ * positif/tak-terdefinisi → lantai (perilaku lama persis).
+ */
+export function summaryCharBudgetForWindow(windowTokens: number | undefined): number {
+  const min = LIMITS.COMPACTION_SUMMARY_MAX_CHARS
+  const max = LIMITS.COMPACTION_SUMMARY_SCALED_MAX_CHARS
+  if (windowTokens === undefined || !Number.isSafeInteger(windowTokens) || windowTokens <= 0) {
+    return min
+  }
+  const scaled = Math.floor(windowTokens / 25)
+  return Math.min(max, Math.max(min, scaled))
+}
+
+/**
+ * R10/B — pagu INPUT summarizer kompaksi LLM (`scrubbedPrefix`), mengikuti
+ * jendela. Input harus SELALU ≥ output (`summaryCharBudgetForWindow`) agar
+ * summarizer membaca lebih banyak daripada yang diminta dihasilkan. Formula
+ * kasar: ~1 char per 8 token jendela, diklem [6k, 48k]. Nilai non-positif/
+ * tak-terdefinisi → lantai (perilaku lama 6k char persis).
+ */
+export function summaryInputCharBudget(windowTokens: number | undefined): number {
+  const min = LIMITS.COMPACTION_LLM_INPUT_MIN_CHARS
+  const max = LIMITS.COMPACTION_LLM_INPUT_SCALED_MAX_CHARS
+  if (windowTokens === undefined || !Number.isSafeInteger(windowTokens) || windowTokens <= 0) {
+    return min
+  }
+  const scaled = Math.floor(windowTokens / 8)
+  return Math.min(max, Math.max(min, scaled))
+}
+
+/**
  * Pagu keras untuk pesan ringkasan gabungan (P0 long-horizon).
  *
  * Ringkasan hasil kompaksi sebelumnya dibawa verbatim lalu digabung dengan
@@ -439,8 +504,12 @@ const SUMMARY_ELISION =
  * melalui `compactWithLlm` (tiap panggilan melakukan dynamic import sehingga
  * menembus batas 5 dtk per test).
  */
-export function composeBoundedSummary(priorText: string, fresh: string): string {
-  const cap = LIMITS.COMPACTION_SUMMARY_MAX_CHARS
+export function composeBoundedSummary(
+  priorText: string,
+  fresh: string,
+  maxChars: number = LIMITS.COMPACTION_SUMMARY_MAX_CHARS,
+): string {
+  const cap = maxChars > 0 ? Math.floor(maxChars) : LIMITS.COMPACTION_SUMMARY_MAX_CHARS
   // `String.slice` memotong per code unit UTF-16, jadi bisa memelah surrogate
   // pair dan menyisakan surrogate TUNGGAL. Itu bukan sekadar kosmetik: teks
   // summary dikirim ke provider sebagai JSON, dan lone surrogate bisa
@@ -481,6 +550,13 @@ export async function compactWithLlm(
   opts: {
     keepRecentTurns: number
     maxSummaryTokens?: number
+    /** R9 — pagu karakter ringkasan LLM (hasil `summaryCharBudgetForWindow`).
+     * Bila absen, pakai `COMPACTION_SUMMARY_MAX_CHARS` (perilaku lama). */
+    maxSummaryChars?: number
+    /** R10/B — pagu karakter INPUT prefix summarizer (hasil
+     * `summaryInputCharBudget`). Bila absen, pakai lantai 6k char (perilaku
+     * lama). */
+    maxInputChars?: number
     provider?: ModelProvider
     model?: string
     baseUrl?: string
@@ -548,7 +624,9 @@ export async function compactWithLlm(
   // seperlunya — hasil tool SUKSES adalah sumber fakta (isi file, output
   // grep/bash, verifikasi). Do not buang: head 300 chars per hasil.
   const head = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n)}…`)
-  // Tuned 250/300 for 30% cost save vs 400/300 — still factual
+  // Tuned 250/300 for 30% cost save vs 400/300 — still factual. Hasil tool
+  // pembawa fakta (grep/bash/read/test/…) memakai head panjang (toolHeadLen)
+  // agar match/output penting tak terbuang saat ringkasan LLM dibentuk.
   const lineFor = (m: import("#minicore/core/types.ts").Message): string => {
     if (m.role === "user") return `- user: ${head(contentToText(m.content), 250)}`
     if (m.role === "assistant") {
@@ -557,16 +635,22 @@ export async function compactWithLlm(
         .join(", ")
       return `- assistant${calls ? ` [${calls}]` : ""}: ${head(contentToText(m.content), 250)}`
     }
-    if (m.isError) return `- tool(${m.name}) ERROR: ${head(String(m.content), 250)}`
+    if (m.isError)
+      return `- tool(${m.name}) ERROR: ${head(String(m.content), toolHeadLen(m.name, 250))}`
     const raw =
       typeof m.content === "string"
         ? m.content
         : Array.isArray(m.content)
           ? contentToText(m.content)
           : ""
-    return `- tool(${m.name}): ${head(raw, 250)}`
+    return `- tool(${m.name}): ${head(raw, toolHeadLen(m.name, 250))}`
   }
-  const scrubbedPrefix = scrubSecrets(prefix.map(lineFor).join("\n").slice(0, 6000))
+  const scrubbedPrefix = scrubSecrets(
+    prefix
+      .map(lineFor)
+      .join("\n")
+      .slice(0, opts.maxInputChars ?? LIMITS.COMPACTION_LLM_INPUT_MIN_CHARS),
+  )
   // Guard anti-injeksi (temuan audit #02): prefix berisi output tool/web/repo
   // tak-terpercaya yang bisa memuat "abaikan instruksi". Tanpa pagar, payload
   // itu masuk ringkasan lalu bertahan melewati compaction (prompt injection
@@ -577,7 +661,7 @@ export async function compactWithLlm(
   // token terbuang tanpa manfaat. Estimasi kasar 4 char/token (konservatif).
   const summaryBudgetChars = Math.max(
     200,
-    LIMITS.COMPACTION_SUMMARY_MAX_CHARS - SUMMARY_HEADER.length,
+    (opts.maxSummaryChars ?? LIMITS.COMPACTION_SUMMARY_MAX_CHARS) - SUMMARY_HEADER.length,
   )
   const summaryBudgetTokens = Math.min(
     Math.floor(summaryBudgetChars / 4),
@@ -657,7 +741,7 @@ export async function compactWithLlm(
   }
   const lruSummary = {
     role: "user" as const,
-    content: composeBoundedSummary("", summary),
+    content: composeBoundedSummary("", summary, opts.maxSummaryChars),
   }
   // P13 S1 — persist summary ke vector (opt-out via MINICODE_AUTO_MEMORY=0).
   // cwd diteruskan eksplisit: tanpa ini summary mendarat di DB global/sembarang
@@ -665,8 +749,13 @@ export async function compactWithLlm(
   if (process.env.MINICODE_AUTO_MEMORY !== "0") {
     try {
       const { addMemory } = await import("../memory/vector.ts")
-      // fire-and-forget, jangan gagalkan compaction bila embedding gagal
-      void addMemory(summary.slice(0, 1200), { category: "summary", cwd: opts.cwd }).catch(() => {})
+      // fire-and-forget, jangan gagalkan compaction bila embedding gagal.
+      // safeHead (bukan slice) supaya potongan tak meninggalkan lone high
+      // surrogate di ekornya (kalau titik batas memecah pasangan surrogate,
+      // string bisa gagal serialisasi/gagal embedding).
+      void addMemory(safeHead(summary, 1200), { category: "summary", cwd: opts.cwd }).catch(
+        () => {},
+      )
     } catch {}
   }
   // Bila ada prior (summary dari kompaksi sebelumnya), gabungkan isi prior dan
@@ -677,7 +766,7 @@ export async function compactWithLlm(
     const priorText = typeof prior[0]!.content === "string" ? prior[0]!.content : ""
     const combined = {
       role: "user" as const,
-      content: composeBoundedSummary(priorText, summary),
+      content: composeBoundedSummary(priorText, summary, opts.maxSummaryChars),
     }
     return [combined, ...keptTail]
   }

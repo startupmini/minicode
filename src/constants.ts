@@ -32,7 +32,38 @@ export const LIMITS = {
   MEMORY_TRUNCATE_KEEP_BYTES: 150_000,
   AGENTS_MD_MAX_CHARS: 3_000,
   COMPACTION_SUMMARY_MAX_CHARS: 4_000,
+  /** R9 — pagu langit-langit ringkasan kompaksi LLM untuk model berjendela
+   * raksasa. Ringkasan diskala mengikuti jendela lewat
+   * `summaryCharBudgetForWindow` (lantai = COMPACTION_SUMMARY_MAX_CHARS, atap =
+   * nilai ini ≈ 8k token), bukan 4k char konstan yang membuat model 1M
+   * over-discard fakta lama. */
+  COMPACTION_SUMMARY_SCALED_MAX_CHARS: 32_000,
+  /** R10/B — lantai & atap input summarizer kompaksi LLM (`scrubbedPrefix`).
+   * Sebelumnya hard-coded 6000 char = titik sempit nyata: summarizer hanya
+   * melihat ≤6000 char prefix (≈1500 token), sehingga ringkasan tak bisa lebih
+   * kaya dari yang terbaca. Diskala lewat `summaryInputCharBudget`, atap ≈
+   * 12k token input untuk model berjendela raksasa. */
+  COMPACTION_LLM_INPUT_MIN_CHARS: 6_000,
+  COMPACTION_LLM_INPUT_SCALED_MAX_CHARS: 48_000,
+  /** F3.2/R9 — rasio target ringkasan terhadap jendela konteks saat kompaksi
+   * mekanikal/LLM menarget budget token (0.5 = target 50% jendela). Sebelumnya
+   * angka 0.5 tersebar inline di compaction.ts tanpa nama (magic number). */
+  COMPACTION_SUMMARY_TARGET_RATIO: 0.5,
   COMPACTION_LLM_TIMEOUT_MS: 10_000,
+  /** Batas atas cadangan output (framing + respons minimum) saat admission
+   * request provider: `Math.min(reserve, limit/10)` — cadangan tak naik tanpa
+   * batas pada jendela raksasa (1M token tetap cukup 256 untuk framing). */
+  CONTEXT_WINDOW_RESERVE_CAP_TOKENS: 256,
+  /** Ambang ukuran konteks (estimasi chars/token lokal) untuk mengklasifikasi
+   * 400 `invalid_request` generik sebagai `context_length_exceeded` alih-alih
+   * mati fatal. Di bawah ambang ini, 400 dianggap error format sah (bukan
+   * konteks). Proxy monotonik ukuran konteks, bukan hitungan presisi. */
+  CONTEXT_RECLASSIFY_400_MIN_LOCAL_TOKENS: 50_000,
+  /** R11 — ambang volume-baca per turn (char hasil tool terakumulasi) untuk
+   * observer opt-in `MINICODE_READ_VOLUME_GUARD=1`. Di atas ini, peringatkan
+   * sekali per turn: "banyak dibaca tanpa kompaksi" = risiko degradasi
+   * working-memory (bukan jendela token). Default 200k char ≈ 50k token. */
+  TURN_READ_VOLUME_GUARD_CHARS: 200_000,
   /** F3.1 anti-thrash: kompaksi LLM yang mengurangi <10% dihitung tak
    * berprogres (satu output tool raksasa mendominasi jendela); 2× beruntun
    * = thrash → jalur LLM dimatikan sesi-ini (mekanikal saja). */

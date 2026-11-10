@@ -95,7 +95,11 @@ export const minicodeEstimator: TokenEstimator = (text: string) => {
   return Math.ceil(len / cpt + dense * 0.75)
 }
 
-// helper for image content: base64 overhead 4/3 — use when estimating tool image results
+// helper for image content: base64 overhead 4/3 — use when estimating tool image results.
+// CATATAN (R9/T10): ini BATAS BAWAH. Model vision asli menghitung token per-tile
+// (patch), bukan chars/4 atas base64 — akurasi penuh butuh tokenizer gambar
+// per-model. Cukup untuk admission kasus gambar langka; jangan dipakai sebagai
+// angka presisi biaya/kompaksi gambar.
 export function estimateImageTokens(bytes: number): number {
   const b64 = Math.ceil((bytes * 4) / 3)
   return Math.ceil(b64 / DEFAULT_CHARS_PER_TOKEN)
@@ -159,8 +163,12 @@ export function createCalibratedEstimator(opts: { maxFactor?: number } = {}): Ca
 
   // Satu-satunya titik yang menyesuaikan `factor` dari sampel
   // (estimer vs provider aktual). Idempoten dan konservatif: factor tidak
-  // pernah < 1, sehingga estimasi lokal tidak pernah dilemahkan; hanya naik
-  // proporsional saat aktual > estimasi (mencegah under-budget kompaksi).
+  // pernah < 1, sehingga estimasi lokal tidak pernah dilemahkan. Factor
+  // mengikuti ratio observasi TERBARU (reassign, bukan akumulasi max) — jadi
+  // ia BISA turun bila drift mereda (mis. 2.0 → 1.2), sambil tetap di-clamp
+  // ke [1, maxFactor]. Ini sengaja: revisi ke bawah menurunkan inflasi
+  // kompaksi-palsu, sedangkan revisi ke atas mencegah under-budget (mekanisme
+  // yang sama, arah aman masing-masing).
   //
   // [Live Hardening 0.13.x] Gerbang anti-sampel in-flight: selama turn berjalan
   // host-visible `state.history` SENGAJA basi (kernel menulis ke turnStore

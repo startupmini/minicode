@@ -41,9 +41,10 @@ dutinya:
 
 Kompaksi bersifat lossy, termasuk setelah restart. `persistCurrent` mengirim
 history yang sudah dipadatkan ke `shrinkThreadHistory`, yang menghapus lalu
-menulis ulang baris `messages`; model mekanis juga meringkas pesan lama dan
-menghilangkan hasil tool yang sukses. Ringkasan ke vector memory hanya dibuat
-di jalur LLM, dibatasi, opt-out, dan best-effort. Karena itu jangan menganggap
+menulis ulang baris `messages`; fold mekanis meringkas pesan lama sambil
+**mempertahankan** hasil tool (head-terpotong per peran) — bukan membuangnya.
+Ringkasan ke vector memory hanya dibuat di jalur LLM, dibatasi, opt-out, dan
+best-effort. Karena itu jangan menganggap
 semua fakta lama tetap dapat dipulihkan dari sesi atau vector store; state
 penting harus dicatat di task, file, atau artefak verifikasi yang otoritatif.
 
@@ -127,7 +128,7 @@ Enam primitif tampilan (semuanya di dalam TUI fullscreen saat interaktif): trans
 
 - `src/session/verification.ts` + `src/tools/evidence.ts`: identitas invokasi milik aplikasi, intent/receipt yang di-await, observasi eksplisit, idempotency, dan korelasi efek anak — semuanya di jurnal mutasi yang sama.
 
-- `src/ui/render/`: `theme.ts` (getter `c`/`glyphs`), `width.ts` (kolom), `sanitize.ts` (hanya SGR lewat), `markdown.ts`, `markdown-table.ts` (parser pipe-table streaming), `table-grid.ts` (grid budget terminal), `highlight.ts diff.ts table.ts wrap.ts money.ts errors.ts`.
+- `src/ui/render/`: `theme.ts` (getter `c`/`glyphs`), `width.ts` (kolom), `sanitize.ts` (hanya SGR lewat), `ledger.ts` (status word/glyph/paint + run-marker bersama untuk TUI & linear), `markdown.ts`, `markdown-table.ts` (parser pipe-table streaming), `table-grid.ts` (grid budget terminal), `highlight.ts diff.ts table.ts wrap.ts money.ts errors.ts`.
 - `src/presentation/`: `events.ts` mendefinisikan event presentasi dan registry durability; `adapter.ts` memetakan runtime ke `DomainEvent`; `reducer.ts`/`model.ts` membangun state replayable dan ringkasan turunan; `store.ts` menyimpan referensi konten; `projection.ts` membentuk envelope `minicode.output.v1` dan kategori error machine. `src/session/persistence.ts` menyimpan log `presentation_events` dan `messages` dengan fidelity `reasoning`/`is_error`. `cli/setup.ts` memiliki bridge exhaustive `toPresentationEvent()`; renderer TUI/linear/machine memakai keputusan policy via injeksi `PresentationPolicy`.
 - `src/policy/`: `context.ts` (estimator sadar-densitas kode/JSON + kalibrasi usage), `context-window.ts` + `context-window-catalog.ts` (resolve window: config → katalog → models.dev → default 128K alias → 32K), `bpe.ts` + `tokenizer-registry.ts` (tokenizer BPE presisi on-demand dari HuggingFace, cache lokal, fallback densitas), `compaction.ts` (kompaksi LLM + mekanikal, anti-drift/anti-thrash, prefer provider sesi), `usage.ts`/`pricing.ts` (estimas biaya + models.dev).
 - `src/ui/input/`: `askLine`, `prompt-engine` (grapheme `Intl.Segmenter`, streaming decoder, bracket-paste, mouse X10/SGR press/drag/release + wheel dinormalisasi; selection app-level di TUI).

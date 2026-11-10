@@ -124,7 +124,7 @@ describe("wrap: formatWrapped", () => {
   // spasi seperti `dengan      lebar      tertentu`.
   test("baris terakhir paragraf TIDAK dijustify", () => {
     const text = "satu dua tiga empat lima enam tujuh delapan sembilan sepuluh sebelas dua belas"
-    const lines = formatWrapped(text, 30).split("\n")
+    const lines = formatWrapped(text, 30, true).split("\n")
     expect(lines.length).toBeGreaterThan(1)
     const last = lines[lines.length - 1]!
     expect(last).not.toMatch(/\s{2,}/)
@@ -132,29 +132,36 @@ describe("wrap: formatWrapped", () => {
 
   test("baris tengah dijustify sampai lebar penuh", () => {
     const text = "satu dua tiga empat lima enam tujuh delapan sembilan sepuluh sebelas dua belas"
-    const lines = formatWrapped(text, 30).split("\n")
+    const lines = formatWrapped(text, 30, true).split("\n")
     expect(lines[0]!.length).toBe(30)
   })
 
   test("baris sebelum baris kosong dianggap akhir paragraf", () => {
     const text = `${"satu dua tiga empat lima enam tujuh"}\n\nparagraf kedua`
-    const lines = formatWrapped(text, 20).split("\n")
+    const lines = formatWrapped(text, 20, true).split("\n")
     const emptyIdx = lines.findIndex((l) => l.trim() === "")
     expect(emptyIdx).toBeGreaterThan(0)
     expect(lines[emptyIdx - 1]!).not.toMatch(/\s{2,}/)
   })
 
-  test("MINICODE_JUSTIFY=0 mematikan justify", () => {
-    process.env.MINICODE_JUSTIFY = "0"
+  test("default TIDAK justify (opt-in)", () => {
     const text = "satu dua tiga empat lima enam tujuh delapan sembilan sepuluh"
     for (const line of formatWrapped(text, 25).split("\n")) {
       expect(line).not.toMatch(/\s{2,}/)
     }
   })
 
+  test("MINICODE_JUSTIFY=1 mengaktifkan justify", () => {
+    process.env.MINICODE_JUSTIFY = "1"
+    const text = "satu dua tiga empat lima enam tujuh delapan sembilan sepuluh"
+    const lines = formatWrapped(text, 25).split("\n")
+    expect(lines.length).toBeGreaterThan(1)
+    expect(lines[0]!.length).toBe(25)
+  })
+
   test("heading, bullet, code fence tidak dijustify", () => {
     for (const raw of ["# Judul yang cukup panjang", "- butir daftar di sini", "```ts"]) {
-      expect(formatWrapped(raw, 60)).toBe(raw)
+      expect(formatWrapped(raw, 60, true)).toBe(raw)
     }
   })
 

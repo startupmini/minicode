@@ -124,6 +124,12 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // WorkMode PLAN instead of being silently reinterpreted. Declared.
   // [timeout/retry hardening] 44 -> 45 for exactly ONE writer: a clamp notice
   // explains when the JS maximum timer shortens the requested timeout.
+  // [R9/T8 + T7] net 45 (45 -> 46 -> 45): (a) +1 drift warning — the
+  // catalog-vs-models.dev drift warning (built-in catalog may be stale vs the
+  // synced overlay); silent drift would let a stale catalog under-provision the
+  // model window. (b) −1 removed — the P2.8 `[context sid=…]` context-assembly
+  // diagnostic, now redundant with the P3.3 `[select sid=…]` provenance line
+  // (T7 selector consolidation). Declared, not absorbed.
   "cli/setup.ts": { max: 45, owner: "diagnostic" },
   "cli/tui.ts": { max: 9, owner: "screen" },
   // [P2.2] 3 -> 4 for exactly ONE writer: the stale-writer durability

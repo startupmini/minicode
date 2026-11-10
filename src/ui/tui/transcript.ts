@@ -16,6 +16,7 @@ import type {
   UiToolStatus,
 } from "../contract.ts"
 import { t } from "../i18n/locale.ts"
+import { paintLedger, runMarker, statusGlyph, statusWord } from "../render/ledger.ts"
 import { parseFence, renderInline } from "../render/markdown.ts"
 import { type MarkdownTable, parseMarkdownBlocks } from "../render/markdown-table.ts"
 import { sanitizeAnsi, sanitizeAnsiLine, stripSgr } from "../render/sanitize.ts"
@@ -25,6 +26,10 @@ import { displayWidth, truncateToWidth, wrapByWidth } from "../render/width.ts"
 import { defaultUiState, type UiSessionState } from "../session-state.ts"
 
 /** Cap memori: baris logis tertua dibuang diam-diam (kontrak I12). */
+// Catatan retention (K.7): ini cap TAMPILAN transkrip. Berbeda dan sengaja tak
+// sama dengan MAX_STATE_ENTRIES=4096 di presentation/model.ts yang membatasi
+// reducer presentasi (state durable/resume) — dua lapis retention berbeda untuk
+// substansi berbeda (viewport vs riwayat yang bisa di-replay).
 export const TRANSCRIPT_CAP = 5000
 export const TRANSCRIPT_TEXT_MAX_CHARS = 1_000_000
 const TRANSCRIPT_TRUNCATION_MARKER = "… [transcript truncated: turn cap exceeded]"
@@ -239,6 +244,37 @@ export class Transcript {
    * di-buffer untuk /expand. */
   private activityFold: { name: string; status: string; line: string }[] = []
   private unsubs: (() => void)[] = []
+  /**
+   * Fase 1 perf (butir 2): memo daftar activity "running". Snapshot presentasi
+   * kini stabil antar-event (cache di composition root), jadi filter
+   * `status === "running"` tak perlu diulang tiap paint — cukup sekali per
+   * snapshot. Key = identitas objek snapshot.
+   */
+  private runningMemo: {
+    snapshot: UiPresentationSnapshot
+    running: UiPresentationActivity[]
+  } | null = null
+  /**
+   * Fase 1 perf (butir 3): cache proyeksi baris. Proyeksi sudah punya
+   * `rowCache` per baris logis, tetapi `projectAll` tetap membangun ulang array
+   * seluruh baris visual + parseFence + parse markdown `pending` pada tiap
+   * paint (ketikan/scroll), meski isinya tak berubah. Cache di bawah menghindari
+   * kerja itu: baris ter-commit di-cache per (width, totalAppended), pending
+   * per (width, pendingVersion, truncated).
+   */
+  private committedProjection: {
+    width: number
+    totalAppended: number
+    rows: TranscriptRow[]
+  } | null = null
+  private pendingProjection: {
+    width: number
+    version: number
+    truncated: boolean
+    rows: TranscriptRow[]
+  } | null = null
+  /** Naik setiap `this.pending` berubah (stream/commit/invalidated/clear). */
+  private pendingVersion = 0
 
   constructor(bus: UiBus, opts: TranscriptOptions = {}) {
     this.getSnapshot = opts.getSnapshot
@@ -282,12 +318,14 @@ export class Transcript {
     }
     if (text.length <= remaining) {
       this.pending += text
+      this.pendingVersion++
       return
     }
     let keep = text.slice(0, remaining)
     const last = keep.charCodeAt(keep.length - 1)
     if (last >= 0xd800 && last <= 0xdbff) keep = keep.slice(0, -1)
     this.pending += keep
+    this.pendingVersion++
     this.pendingTruncated = true
   }
 
@@ -311,6 +349,7 @@ export class Transcript {
         if (this.activeProviderAttempt?.id === id) this.activeProviderAttempt = null
       } else if (data?.phase === "invalidated" && this.activeProviderAttempt?.id === id) {
         this.pending = this.pending.slice(0, this.activeProviderAttempt.pendingLength)
+        this.pendingVersion++
         this.pendingTruncated = this.activeProviderAttempt.pendingTruncated
         this.activeProviderAttempt = null
         // Reasoning dari attempt yang gagal tidak boleh tertinggal sebagai
@@ -415,6 +454,10 @@ export class Transcript {
     this.thinkingTail = ""
     this.evicted = 0
     this.hasEvictMarker = false
+    this.runningMemo = null
+    this.committedProjection = null
+    this.pendingProjection = null
+    this.pendingVersion = 0
     this.presentedTerminals.clear()
     this.presentedVerifications.clear()
     this.summarizedTurns.clear()
@@ -553,6 +596,49 @@ export class Transcript {
 
   private projectAll(width: number): TranscriptRow[] {
     const w = Math.max(10, width)
+    const rows: TranscriptRow[] = [...this.committedRows(w), ...this.pendingRows(w)]
+    if (this.thinkingTail) {
+      for (const chunk of this.thinkingTail.split("\n")) {
+        const chunkRows = chunk === "" ? [""] : wrapByWidth(chunk, w)
+        for (const row of chunkRows) {
+          rows.push({
+            text: c.thinking(row),
+            sourceId: -1,
+            sourceStart: 0,
+            sourceEnd: 0,
+            displayStart: 0,
+            displayEnd: displayWidth(row),
+            selectable: false,
+          })
+        }
+      }
+    }
+    for (const row of this.runningRows()) {
+      rows.push({
+        text: row,
+        sourceId: -1,
+        sourceStart: 0,
+        sourceEnd: 0,
+        displayStart: 0,
+        displayEnd: displayWidth(row),
+        selectable: false,
+      })
+    }
+    return rows
+  }
+
+  /** Proyeksi baris ter-commit (Fase 1 perf butir 3). Di-cache per (width,
+   * totalAppended): totalAppended monotonik dan hanya naik saat baris baru
+   * masuk/evict, jadi paint idle (ketik/scroll) tidak mengulang iterasi 5000
+   * baris + parseFence. Cache disamakan objeknya, hasil dipakai read-only. */
+  private committedRows(w: number): TranscriptRow[] {
+    if (
+      this.committedProjection &&
+      this.committedProjection.width === w &&
+      this.committedProjection.totalAppended === this.totalAppended
+    ) {
+      return this.committedProjection.rows
+    }
     const rows: TranscriptRow[] = []
     const committedFence = this.fenceTracker()
     for (let i = 0; i < this.lines.length; i++) {
@@ -594,20 +680,38 @@ export class Transcript {
       })
       rows.push(...produced)
     }
-    if (this.pending) {
-      const pendingFence = this.fenceTracker()
-      const pending = normalizeAssistantOutput(sanitizeAnsi(this.pending))
-      if (pending) {
-        for (const block of parseMarkdownBlocks(pending)) {
-          if (block.type === "table") rows.push(...this.projectTable(block.table, -1, w))
-          else
-            for (const line of block.text.split("\n")) {
-              const clean = stripSgr(sanitizeAnsi(line))
-              rows.push(
-                ...this.projectText(line, clean, -1, w, false, "", true, pendingFence(line)),
-              )
-            }
-        }
+    this.committedProjection = { width: w, totalAppended: this.totalAppended, rows }
+    return rows
+  }
+
+  /** Proyeksi `pending` (jawaban streaming) + marker truncasi. Di-cache per
+   * (width, pendingVersion, truncated): tanpa ini `parseMarkdownBlocks(pending)`
+   * + `normalizeAssistantOutput` diulang penuh tiap paint saat jawaban panjang
+   * mengalir (O(pending) per frame). pendingVersion naik di stream/commit/clear. */
+  private pendingRows(w: number): TranscriptRow[] {
+    if (!this.pending) {
+      this.pendingProjection = null
+      return []
+    }
+    if (
+      this.pendingProjection &&
+      this.pendingProjection.width === w &&
+      this.pendingProjection.version === this.pendingVersion &&
+      this.pendingProjection.truncated === this.pendingTruncated
+    ) {
+      return this.pendingProjection.rows
+    }
+    const rows: TranscriptRow[] = []
+    const pendingFence = this.fenceTracker()
+    const pending = normalizeAssistantOutput(sanitizeAnsi(this.pending))
+    if (pending) {
+      for (const block of parseMarkdownBlocks(pending)) {
+        if (block.type === "table") rows.push(...this.projectTable(block.table, -1, w))
+        else
+          for (const line of block.text.split("\n")) {
+            const clean = stripSgr(sanitizeAnsi(line))
+            rows.push(...this.projectText(line, clean, -1, w, false, "", true, pendingFence(line)))
+          }
       }
     }
     if (this.pendingTruncated) {
@@ -621,32 +725,11 @@ export class Transcript {
         selectable: false,
       })
     }
-    if (this.thinkingTail) {
-      for (const chunk of this.thinkingTail.split("\n")) {
-        const chunkRows = chunk === "" ? [""] : wrapByWidth(chunk, w)
-        for (const row of chunkRows) {
-          rows.push({
-            text: c.thinking(row),
-            sourceId: -1,
-            sourceStart: 0,
-            sourceEnd: 0,
-            displayStart: 0,
-            displayEnd: displayWidth(row),
-            selectable: false,
-          })
-        }
-      }
-    }
-    for (const row of this.runningRows()) {
-      rows.push({
-        text: row,
-        sourceId: -1,
-        sourceStart: 0,
-        sourceEnd: 0,
-        displayStart: 0,
-        displayEnd: displayWidth(row),
-        selectable: false,
-      })
+    this.pendingProjection = {
+      width: w,
+      version: this.pendingVersion,
+      truncated: this.pendingTruncated,
+      rows,
     }
     return rows
   }
@@ -756,8 +839,14 @@ export class Transcript {
       ? `${this.pending}\n${TRANSCRIPT_TRUNCATION_MARKER}`
       : this.pending
     this.pending = ""
+    this.pendingVersion++
     this.pendingTruncated = false
-    const text = normalizeAssistantOutput(rawText)
+    this.appendAssistantText(rawText)
+  }
+
+  /** Render jawaban asisten (markdown) menjadi baris logis kind "assistant". */
+  private appendAssistantText(raw: string): void {
+    const text = normalizeAssistantOutput(raw)
     if (!text) return
     // Pisahkan jawaban dari thinking/diagnostik tepat di atasnya dengan satu
     // baris kosong — supaya "berpikir" tidak nempel ke jawaban.
@@ -767,6 +856,30 @@ export class Transcript {
       else {
         for (const row of block.text.split("\n")) this.append(row, { kind: "assistant" })
       }
+    }
+  }
+
+  /**
+   * Rebuild riwayat transkrip dari event presentasi durable (jalur resume).
+   * Dipanggil SEKALI sebelum turn live berikutnya, jadi tak ada double-render.
+   * `user.message` → echo prompt; `model.completed` → jawaban model; sisanya
+   * (turn.*, tool.*, task.status, …) melewati jalur `presentationEvent` yang
+   * sama seperti live — snapshot presentasi sudah di-rebuild saat resume,
+   * sehingga ledger/provenance mengacu data yang benar.
+   */
+  replayHistory(events: readonly UiPresentationEvent[]): void {
+    for (const event of events) {
+      if (event.type === "user.message") {
+        if (event.text) this.pushUser(event.text)
+        continue
+      }
+      if (event.type === "model.completed") {
+        if (event.text) this.appendAssistantText(event.text)
+        continue
+      }
+      // reasoning/plan/finding/result/diagnostic/approval/… tak punya baris
+      // transkrip di jalur live; presentationEvent men-drop-nya (no-op aman).
+      this.presentationEvent(event)
     }
   }
 
@@ -842,29 +955,6 @@ export class Transcript {
     return this.presentationSnapshot()?.activities.find((a) => a.toolCallId === toolCallId)
   }
 
-  private statusWord(status: UiToolStatus): string {
-    if (status === "completed") return t("ts.statusCompleted")
-    if (status === "failed") return t("ts.statusFailed")
-    if (status === "denied") return t("ts.statusDenied")
-    if (status === "cancelled") return t("ts.statusCancelled")
-    if (status === "interrupted") return t("ts.statusInterrupted")
-    return t("ts.statusRunning")
-  }
-
-  private statusGlyph(status: UiToolStatus): string {
-    if (status === "completed") return glyphs.check
-    if (status === "failed") return glyphs.cross
-    if (status === "denied") return glyphs.denied
-    return glyphs.circle
-  }
-
-  private statusPaint(status: UiToolStatus, line: string): string {
-    if (status === "completed") return c.success(line)
-    if (status === "failed") return c.error(line)
-    if (status === "denied") return c.warning(line)
-    return c.muted(line)
-  }
-
   private presentationLedger(event: UiPresentationEvent): void {
     // Observasi verifikasi punya baris ledger sendiri (dedup per invocation):
     // terminal tool sudah tampil duluan, dan transcript append-only tak bisa
@@ -938,7 +1028,7 @@ export class Transcript {
       : denyReason
         ? `: ${truncateToWidth(sanitizeAnsi(denyReason), 200, "…").split("\n")[0] ?? ""}`
         : ""
-    const line = `  ${this.statusGlyph(status)} ${name}${targetText} ${this.statusWord(status)}${retry}${child}${verificationMark}${provenanceMark}${message}`
+    const line = `  ${statusGlyph(status)} ${name}${targetText} ${statusWord(status)}${retry}${child}${verificationMark}${provenanceMark}${message}`
     // Lipat aktivitas (opencode-like): saat minimizeActivity aktif, baris ledger
     // per-tool TIDAK boleh menghilang diam-diam — ditahan lalu dirangkum jadi
     // SATU baris saat turn selesai (detail via /expand).
@@ -946,7 +1036,7 @@ export class Transcript {
       this.activityFold.push({ name, status, line })
       return
     }
-    this.append(this.statusPaint(status, line), {
+    this.append(paintLedger(status, line), {
       kind: "activity",
       ...(event.seq !== undefined ? { seq: event.seq } : {}),
       ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
@@ -956,23 +1046,13 @@ export class Transcript {
     })
   }
 
-  /** F-AGENT-1: label run pendek stabil (`run_<8>` | `sub_<8>`) — identitas anak. */
-  private runMarker(activity: UiPresentationActivity): string {
-    const id = activity.runId ?? activity.childSessionId
-    if (!id) return ""
-    const prefix = id.startsWith("run_") ? "run_" : id.startsWith("sub_") ? "sub_" : ""
-    const bare = id.slice(prefix.length).replace(/-/g, "")
-    return prefix + bare.slice(0, 8)
-  }
-
-  /**
-   * F-AGENT-1: baris terminal tool anak — identitas run + tool + status.
+  /** F-AGENT-1: baris terminal tool anak — identitas run + tool + status.
    * Paralel dipisah via runMarker (data aktual runId/childSessionId), bukan
    * hitungan "n tool anak" yang menyatukan run berbeda.
    */
   private childLedger(event: UiPresentationEvent, activity: UiPresentationActivity): void {
     this.commit()
-    const marker = this.runMarker(activity)
+    const marker = runMarker(activity)
     const name = sanitizeAnsiLine(activity.name ?? event.name ?? "tool")
     const target = activity.target ?? event.target
     const targetText = target ? ` ${truncateToWidth(sanitizeAnsiLine(target), 120, "")}` : ""
@@ -982,8 +1062,8 @@ export class Transcript {
         ? `: ${truncateToWidth(sanitizeAnsi(String(event.message)), 200, "…").split("\n")[0] ?? ""}`
         : ""
     const markerText = marker ? `${marker} ` : ""
-    const line = `    ↳ ${markerText}${name}${targetText} ${this.statusWord(status)}${message}`
-    this.append(this.statusPaint(status, line), {
+    const line = `    ↳ ${markerText}${name}${targetText} ${statusWord(status)}${message}`
+    this.append(paintLedger(status, line), {
       kind: "activity",
       ...(event.seq !== undefined ? { seq: event.seq } : {}),
       ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
@@ -1005,10 +1085,10 @@ export class Transcript {
     const targetText = target ? ` ${truncateToWidth(sanitizeAnsiLine(target), 120, "")}` : ""
     const line =
       verification.verdict === "present"
-        ? `  ${this.statusGlyph("completed")} ${name}${targetText} verified`
+        ? `  ${statusGlyph("completed")} ${name}${targetText} verified`
         : `  ? ${name}${targetText} unverified (${verification.verdict})`
     this.append(
-      verification.verdict === "present" ? this.statusPaint("completed", line) : c.muted(line),
+      verification.verdict === "present" ? paintLedger("completed", line) : c.muted(line),
       {
         kind: "activity",
         ...(event.seq !== undefined ? { seq: event.seq } : {}),
@@ -1192,10 +1272,20 @@ export class Transcript {
     this.append(line, { kind: "activity" })
   }
 
+  /** Fase 1 perf (butir 2): daftar activity running per snapshot (memoized). */
+  private runningActivities(snapshot: UiPresentationSnapshot): UiPresentationActivity[] {
+    if (this.runningMemo && this.runningMemo.snapshot === snapshot) {
+      return this.runningMemo.running
+    }
+    const running = snapshot.activities.filter((a) => a.status === "running")
+    this.runningMemo = { snapshot, running }
+    return running
+  }
+
   private runningRows(): string[] {
     const snapshot = this.presentationSnapshot()
     if (!snapshot) return []
-    const running = snapshot.activities.filter((a) => a.status === "running")
+    const running = this.runningActivities(snapshot)
     const roots = running.filter((a) => !a.parentToolCallId)
     const row = (activity: (typeof running)[number], child: boolean, marker: string): string => {
       const name = sanitizeAnsiLine(activity.name)
@@ -1219,7 +1309,7 @@ export class Transcript {
     for (const activity of roots) {
       out.push(row(activity, false, ""))
       for (const child of running.filter((a) => a.parentToolCallId === activity.toolCallId))
-        out.push(row(child, true, this.runMarker(child)))
+        out.push(row(child, true, runMarker(child)))
     }
     // Anak yatim (parent tak lagi running/root): tetap tampil, jangan hilang.
     for (const activity of running) {
@@ -1228,7 +1318,7 @@ export class Transcript {
         roots.some((r) => r.toolCallId === activity.parentToolCallId)
       )
         continue
-      out.push(row(activity, true, this.runMarker(activity)))
+      out.push(row(activity, true, runMarker(activity)))
     }
     return out
   }

@@ -114,11 +114,7 @@ import {
   type RuntimeContextMetadata,
   runtimeMetadataFromSelection,
 } from "../src/session/context-adapter.ts"
-import {
-  assembleContext,
-  type ContextOnlyArtifact,
-  stripContextOnly,
-} from "../src/session/context-assembly.ts"
+import { type ContextOnlyArtifact, stripContextOnly } from "../src/session/context-assembly.ts"
 import {
   countDurableCompactions,
   deriveFrontierFromDurable,
@@ -1217,6 +1213,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   }
   const effectiveDefaultModel = () => modelRef.current ?? cfg.providers[0]?.models[0]
   const warnedContextModels = new Set<string>()
+  const warnedCatalogDrift = new Set<string>()
   const routedContextModel = (model?: string) =>
     router.contextModelIdentity(model ?? effectiveDefaultModel()) ?? model ?? "default"
   const contextModelId = (requested?: string): string => {
@@ -1232,6 +1229,19 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         warnedContextModels.add(key)
         process.stderr.write(
           `${c.yellow(`[context] no configured window for ${sanitizeAnsi(key)}; using fallback ${resolved.tokens} tokens. Set provider.contextWindows or --context-window for the exact limit.\n`)}`,
+        )
+      }
+    }
+    // R9/T8 — katalog vs models.dev beda >2×: katalog mungkin basi. Peringatkan
+    // sekali per model agar user tahu harus `pricing sync`/set contextWindows.
+    if (resolved.drift) {
+      const key = resolved.providerId
+        ? `${resolved.providerId}::${resolved.model ?? "default"}`
+        : (resolved.model ?? "default")
+      if (!warnedCatalogDrift.has(key)) {
+        warnedCatalogDrift.add(key)
+        process.stderr.write(
+          `${c.yellow(`[context] catalog window ${resolved.drift.catalogTokens} for ${sanitizeAnsi(key)} differs >2x from models.dev (${resolved.drift.overlayTokens}); catalog may be stale — run \`minicode pricing sync\` or set provider.contextWindows.\n`)}`,
         )
       }
     }
@@ -1324,12 +1334,6 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         resumeUsageSnapshot = loadSessionUsageSummary(sessionId, cwd)
       }
       if (prev?.messages.length) {
-        // P2.8 — perakitan konteks (baca-saja, turunan, RAM): pakai ringkasan
-        // proyeksi HANYA bila CURRENT; state lain/absen → fallback histori
-        // kanonik utuh (identik replay sebelum P2.8). Tak pernah menulis apa pun.
-        // `view` tetap dipakai untuk diagnostik + kompatibilitas P2.8.
-        const view = assembleContext(sessionId, defaultThread.thread_id, cwd)
-
         // [Fase 4 / LOOP-13, LOOP-INV-16] Kumpulkan snapshot state operasional
         // deterministik dari sumber durable (TaskStore + usage historis) agar
         // header [RUNTIME_STATE_HEADER] ikut ke konteks resume — tak hilang
@@ -1370,18 +1374,13 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         const rowsForSelector = loadThreadHistoryWithSeq(sessionId, defaultThread.thread_id, cwd)
         // P3.4: proyeksi kanonik durable adalah sumber UTAMA untuk selector
         // (cakupan-valid: CURRENT atau STALE berjangkar utuh, P3.0 §8 D6),
-        // sehingga `summary-plus-tail` menjadi perilaku produksi nyata. P2.8
-        // `assembleContext` (CURRENT-only) tetap jadi fallback kompatibel.
+        // sehingga `summary-plus-tail` menjadi perilaku produksi nyata.
         const durableProjection = readConsumableSummaryProjection(
           sessionId,
           cwd,
           defaultThread.thread_id,
         )
-        const projectionSummary =
-          durableProjection ??
-          (view.source === "projection" && view.summary
-            ? { baseSeq: view.coveredSeq, summaryText: view.summary }
-            : undefined)
+        const projectionSummary = durableProjection
         const selectedWindow = getContextWindowTokens()
         const messageBudget = selectedWindow
         // N1: turunkan frontier kanonis dari baris yang BARU DIBACA (sumber
@@ -1428,14 +1427,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         console.error(
           c.dim(
             // "(N messages)" dipertahankan VERBATIM (kontrak diagnostik yang
-            // sudah dipakai test/CLI); detail perakitan P2.8 menyusul sebagai
-            // segmen terpisah agar tak mengubah string yang sudah diam.
+            // sudah dipakai test/CLI).
             `[resumed session ${sessionId} (${prev.messages.length} messages)]\n`,
-          ),
-        )
-        console.error(
-          c.dim(
-            `[context sid=${sessionId} source=${view.source} status=${view.status} covered=${view.coveredSeq}]\n`,
           ),
         )
         // P3.3 — jejak provenance seleksi (baca-saja; tak mengubah perilaku).
@@ -1627,8 +1620,30 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     orphanEvidence: shadowDiag?.orphanEvidence ?? 0,
     unsupportedProjection,
   })
+  // Fase 1 perf (butir 1): cache snapshot presentasi. Snapshot dibangun ulang
+  // penuh pada tiap panggil — padahal panggil terjadi tiap paint (ketikan/scroll),
+  // dan nilai yang dibangun tidak berubah di antara event. Reducer immutable:
+  // shadowState hanya bermutasi via reduce(event); reduce menaikkan `state.seq`
+  // HANYA pada event durable, dan semata field yang dipetakan ke snapshot pun
+  // hanya diubah oleh event durable (model.delta/tool.progress/context.window
+  // kembali awal / hanya menulis `progress` yang tak masuk snapshot). Karena itu
+  // cache ber-key (objek state, seq) aman: seq berubah ⟺ snapshot berubah.
+  let snapshotCache: {
+    state: PresentationState
+    seq: number
+    value: UiPresentationSnapshot
+  } | null = null
   const getPresentationSnapshot = (): UiPresentationSnapshot => {
     if (!shadowState) return { activities: [], turns: [] }
+    // Objek `shadowState` identik + seq identik = konten tak berubah (lihat
+    // alasan di atas); reuse tanpa membangun ulang ratusan objek per paint.
+    if (
+      snapshotCache &&
+      snapshotCache.state === shadowState &&
+      snapshotCache.seq === shadowState.seq
+    ) {
+      return snapshotCache.value
+    }
     const activities: UiPresentationActivity[] = [...shadowState.activities.values()].map((a) => ({
       seq: a.seq,
       turnId: a.turnId,
@@ -1752,7 +1767,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       ...(entry.cause ? { cause: entry.cause } : {}),
       ...(entry.action ? { action: entry.action } : {}),
     }))
-    return {
+    const snapshot: UiPresentationSnapshot = {
       activities,
       turns,
       conversation,
@@ -1763,6 +1778,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       results,
       diagnostics,
     }
+    snapshotCache = { state: shadowState, seq: shadowState.seq, value: snapshot }
+    return snapshot
   }
   const onPresentationEvent = (handler: (event: UiPresentationEvent) => void): (() => void) => {
     presentationSubscribers.add(handler)

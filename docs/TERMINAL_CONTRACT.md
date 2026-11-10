@@ -1,4 +1,14 @@
-# Kontrak Terminal MiniCode (TUI fullscreen — v7.11, 2026-11-09)
+# Kontrak Terminal MiniCode (TUI fullscreen — v7.12, 2026-11-10)
+
+Perubahan v7.12: footer `context` & `metrics` (window %) kini **live per step**
+selama turn berjalan — kernel meng-emit estimasi konteks turn-store via event
+`provider:extension` kind `context-window` SETELAH `step:completed`, dan footer
+membacanya alih-alih terpaku pada `session.contextTokens` (committed store yang
+hanya berubah saat `turn:completed`). Saat idle, footer kembali ke nilai
+committed. Estimator sama sekali tidak berubah/berduplikasi — tetap satu sumber
+(`estimateSessionContext`), hanya nilai yang dibaca saat turn aktif memakai
+turn-store (yang tumbuh), bukan committed store (beku). Sumber: `vendor/minicore/
+src/core/loop.ts` (emit) + `cli/tui.ts` (wiring footer).
 
 Perubahan v7.11: thinking & jawaban di TUI dan renderer linear kini membungkus di
 batas kata (`wrapByWidth`) — tidak memotong di tengah kata — dan baris diff ikut
@@ -233,6 +243,12 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
 
 13. Status bar: 1 baris dasar (`✦ 00.00.00 Work Mode: Discuss  model  cwd …
      context  Permission Mode: Auto`) dari sumber yang sama dengan angka sesi.
+     Nilai `context` (dan `metrics` window %) saat turn AKTIF memakai occupancy
+     LIVE turn-store yang di-emit kernel per step (event `provider:extension`
+     kind `context-window`, setelah `step:completed`); saat idle kembali ke
+     `session.contextTokens` (committed store). Estimator tetap satu sumber —
+     hanya store yang dibaca berganti antara turn-store (tumbuh) vs committed
+     (beku), tak ada duplikasi angka sumber (v7.12).
      Ikon gembok `🔒` mengikuti Permission Mode di ujung kanan: terang bila
      bash allow-list aktif (restrictBash + mode `Auto`), redup bila tidak.
      Work Mode berada di kiri; Permission Mode cyan berada di kanan dekat
@@ -578,6 +594,9 @@ panjang).
 - `test/approval-tui.test.ts` — I23 (blok + keputusan tercatat, deny;
   stdout-pipe tanpa sink = deny).
 - `test/footer-render.test.ts` — I13 (label title case, Work Mode kiri dan Permission Mode cyan rata kanan dekat konteks, posisi kolom stabil, fallback terminal sempit, ikon gembok 🔒 terang/redup).
+- `test/e2e.test.ts` — I13 v7.12 (kernel meng-emit `provider:extension`
+  kind `context-window` berisi `usedTokens`/`windowTokens` setelah
+  `step:completed` — sumber live-occupancy footer; nilai > 0 terbukti).
 - `test/work-mode-runtime.test.ts` — I35 (WorkMode runtime: ceiling permission
   dievaluasi per pemanggilan tool; transisi BUILD/EXECUTE↔DISCUSS↔PLAN pada sesi
   yang sama; daftar tool yang dilihat kernel ikut berubah; hooks mengikuti

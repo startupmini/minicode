@@ -5,7 +5,15 @@ import { contextWindowsCachePath } from "./pricing.ts"
 
 /** App fallback for providers that do not publish model metadata.
  * Operators can set an exact `ProviderEntry.contextWindows` value or use the
- * explicit `--context-window` override when a gateway exposes aliases. */
+ * explicit `--context-window` override when a gateway exposes aliases.
+ *
+ * SENGAJA beda dari `DEFAULT_ALIAS_CONTEXT_WINDOW_TOKENS` (128K): ini adalah
+ * batas-bawah aman untuk model yang BENAR-BENAR tak dikenal (nilai minimal yang
+ * didukung hampir semua model), sedangkan default alias router memilih 128K
+ * karena model aslinya pasti model besar — hanya identitasnya yang disembunyikan
+ * oleh alias `auto`/`best`. Menyatukan keduanya ke satu nilai akan membuat
+ * salah satu sisi salah arah: 32K → alias dikompaksi prematur; 128K → model
+ * belum-tentu-mendukung melampaui jendela. */
 export const DEFAULT_FALLBACK_CONTEXT_WINDOW_TOKENS = 32_000
 
 // Alias router (`auto`/`best`/...) model aslinya tak diketahui dari config.
@@ -26,6 +34,11 @@ export interface ContextWindowResolution {
     | "safe-default"
   readonly model?: string
   readonly providerId?: string
+  /** R9/T8 — hadir bila katalog built-in dan overlay models.dev saling beda
+   * >2× (katalog mungkin ketinggalan zaman). Murni diagnostik: pemanggil boleh
+   * memperingatkan user; resolusi TETAP pakai katalog (over-estimate ditoleransi
+   * lewat jalur recovery). */
+  readonly drift?: { catalogTokens: number; overlayTokens: number }
 }
 
 function validWindow(value: unknown): value is number {
@@ -149,11 +162,21 @@ export function resolveContextWindow(
   if (modelId) {
     const catalogTokens = findContextWindowFromCatalog(modelId)
     if (validWindow(catalogTokens)) {
+      // R9/T8 — katalog diutamakan (kurasi manual) tapi bisa basi. Bila overlay
+      // models.dev (cache dari `pricing sync`) punya nilai > 2× beda, tandai
+      // drift supaya setup memperingatkan user — resolusi tetap katalog (aman:
+      // over-estimate turun anggun via compact-and-retry).
+      const overlayTokens = findContextWindowFromOverlay(modelId)
+      const drift =
+        validWindow(overlayTokens) && catalogTokens > 0
+          ? Math.max(overlayTokens / catalogTokens, catalogTokens / overlayTokens)
+          : 0
       return {
         tokens: catalogTokens,
         source: "catalog",
         ...(modelId ? { model: modelId } : {}),
         ...(providerId ? { providerId } : {}),
+        ...(drift > 2 ? { drift: { catalogTokens, overlayTokens: overlayTokens as number } } : {}),
       }
     }
   }

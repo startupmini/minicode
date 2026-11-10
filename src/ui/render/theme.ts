@@ -31,6 +31,11 @@ export function supportsUtf8(): boolean {
 // Dievaluasi LAZY (bukan saat import) supaya perubahan NO_COLOR/COLORTERM di
 // runtime dan pengujian tetap berpengaruh; hasilnya murah karena hanya baca env.
 function noColorEnv(): boolean {
+  // NO_COLOR="0" SENGAJA dianggap "warna nyala" (kill-switch terbalik) — berbeda
+  // dari no-color.org yang menyatakan kehadiran apa pun = mati. Keputusan product:
+  // "0" adalah nilai eksplisit "jangan matikan" yang dipakai sebagian tooling;
+  // nilai lain (termasuk kosong) mematikan warna. Didokumentasikan juga di
+  // docs/environment.md. Jangan "perbaiki" jadi === null tanpa keputusan owner.
   return process.env.NO_COLOR != null && process.env.NO_COLOR !== "0"
 }
 function hasTruecolorEnv(): boolean {
@@ -330,6 +335,14 @@ export const glyphs = {
     // monokrom, jadi warna ANSI (putih ↔ abu di turn-status) terlihat.
     // Fallback * untuk terminal tanpa UTF-8.
     return supportsUtf8() ? "✦" : "*"
+  },
+  // Gembok bash allow-list (footer): fallback teks agar status kapabilitas
+  // tetap terbaca di terminal tanpa emoji (MINICODE_ASCII/legacy Windows).
+  get lock() {
+    return supportsUtf8() ? "🔒" : "[LOCK]"
+  },
+  get unlock() {
+    return supportsUtf8() ? "🔓" : "[OPEN]"
   },
 }
 

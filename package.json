@@ -1,6 +1,6 @@
 {
   "name": "minicode-ai",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "Open-source terminal coding agent on a frozen zero-dependency MiniCore kernel — layered permissions, path jail, sandboxing, MCP/LSP, and durable shadow-git checkpoints",
   "type": "module",
   "private": false,

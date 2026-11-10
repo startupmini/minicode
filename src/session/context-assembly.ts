@@ -180,6 +180,13 @@ function assembleViewMessages(
  *
  * Fallback = histori kanonik utuh, tanpa filter/urutan/transformasi — identik
  * dengan replay `loadSession` hari ini.
+ *
+ * LEGACY (T7): tidak lagi di-wire ke jalur produksi — `selectContext`
+ * (context-selector.ts) adalah satu-satunya selector produksi (superset:
+ * CURRENT + STALE-rule-8 + budget-tail + fallback-unknown). Fungsi ini dan
+ * primitif di bawahnya (`boundaryIsSafe`, `syntheticSummaryMessage`, …) TETAP
+ * diekspor karena dipakai sebagai primitif bersama oleh selector P3.3 dan
+ * diuji langsung oleh `context-assembly.test.ts`.
  */
 export function assembleContext(
   sessionId: string,

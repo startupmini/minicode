@@ -13,9 +13,10 @@
 //   - TULIS = HANYA `history_projections` (derived). NEVER `messages`/head/run.
 //   - Bukan otoritas: proyeksi tetap cache; `saveSession` tetap satu-satunya
 //     penulis kanonik.
-//   - Ringkasan = render fold kernel yang SUDAH ADA (`mechanicalCompaction`) atas
-//     PREFIX kanonik [0, baseSeq); ekor [baseSeq, head] tetap verbatim. BUKAN
-//     algoritma A+C lanjutan (P3.7), bukan LLM/embedding/network.
+//   - Ringkasan = render fold HOST yang SUDAH ADA (`mechanicalKeepResults` —
+//     mempertahankan hasil tool) atas PREFIX kanonik [0, baseSeq); ekor
+//     [baseSeq, head] tetap verbatim. BUKAN algoritma A+C lanjutan (P3.7),
+//     bukan LLM/embedding/network.
 //   - Deterministik: urutan kanonik, tanpa Date.now/random di jalur derivasi
 //     (built_at diisi primitif P2.7, bukan klaim cakupan).
 //
@@ -27,9 +28,13 @@
 //
 // Runtime adapter / revision bridge ke runtime = P3.5 (di luar modul ini).
 
-import { ContextStore, mechanicalCompaction } from "#minicore"
+import { ContextStore } from "#minicore"
 import type { Message } from "#minicore/core/types.ts"
 import { LIMITS } from "../constants.ts"
+// R10/A — pakai folder HOST (mempertahankan hasil tool) alih-alih folder kernel
+// (`mechanicalCompaction`) yang menulis `<result omitted>`; proyeksi durable
+// yang dipakai saat resume tidak boleh membuang fakta hasil tool.
+import { mechanicalKeepResults } from "../policy/compaction.ts"
 import { renderFullHistoryFold } from "./full-history-fold.ts"
 import {
   buildProjection,
@@ -53,9 +58,9 @@ export interface ProjectionProducePolicy {
   readonly keepRecentTurns: number
   /**
    * P3.7 — strategi fold. `"mechanical"` (default) = perilaku P3.4 yang sudah
-   * ada (prefix parsial via kernel). `"full-history"` = renderer P3.7
-   * (cakupan penuh [0, N), CURRENT-capable). Default eksplisit menjaga perilaku
-   * lama bila field absen.
+   * ada (prefix parsial via folder host yang mempertahankan hasil tool).
+   * `"full-history"` = renderer P3.7 (cakupan penuh [0, N), CURRENT-capable).
+   * Default eksplisit menjaga perilaku lama bila field absen.
    */
   readonly fold?: "mechanical" | "full-history"
 }
@@ -74,8 +79,9 @@ export interface ProjectionProduceResult {
 
 /**
  * Derivasi DETERMINISTIK {summaryText, baseSeq} dari baris kanonik memakai render
- * fold kernel yang SUDAH ADA (`mechanicalCompaction`). MURNI (tak menyentuh DB,
- * tak memutasi input). Mengembalikan null bila tak ada prefix untuk diringkas.
+ * fold HOST yang SUDAH ADA (`mechanicalKeepResults`, mempertahankan hasil tool).
+ * MURNI (tak menyentuh DB, tak memutasi input). Mengembalikan null bila tak ada
+ * prefix untuk diringkas.
  *
  * base_seq = jumlah baris prefix yang diringkas = total - |ekor verbatim|.
  */
@@ -84,13 +90,27 @@ export function deriveSummaryFromCanonical(
   policy: ProjectionProducePolicy,
 ): { summaryText: string; baseSeq: number } | null {
   if (messages.length === 0) return null
+  // R10/T1 — bila messages[0] SUDAH merupakan ringkasan kernel (LLM/mechanical,
+  // ber-prefix "Previous context"), JANGAN re-fold mekanikal (itu menurunkan
+  // fidelitas: ringkasan LLM yang kaya berubah jadi head per-baris yang kasar).
+  // Reuse apa adanya sehingga resume melihat ringkasan yang SAMA dengan yang
+  // dilihat model saat kompaksi. baseSeq=1: ringkasan mewakili baris indeks 0,
+  // ekor [1, N) verbatim.
+  const first = messages[0] as { role?: unknown; content?: unknown } | undefined
+  if (
+    first?.role === "user" &&
+    typeof first.content === "string" &&
+    first.content.startsWith("Previous context")
+  ) {
+    return { summaryText: first.content, baseSeq: 1 }
+  }
   const keep =
     Number.isInteger(policy.keepRecentTurns) && policy.keepRecentTurns >= 1
       ? policy.keepRecentTurns
       : 1
   const store = new ContextStore()
   store.appendAll(messages)
-  const folded = mechanicalCompaction.compact(store, { keepRecentTurns: keep })
+  const folded = mechanicalKeepResults(store, keep)
   // Tak ada fold (prefix kosong) → tak ada cakupan untuk proyeksi.
   if (folded.length >= messages.length) return null
   const kept = folded.length - 1
@@ -102,7 +122,12 @@ export function deriveSummaryFromCanonical(
 }
 
 function boundProjectionSummary(text: string): string {
-  const cap = LIMITS.COMPACTION_SUMMARY_MAX_CHARS
+  // R10/T1 — proyeksi boleh membawa ringkasan kernel yang lebih kaya (hasil
+  // `summaryCharBudgetForWindow`, hingga jendela besar). Atapnya dinaikkan dari
+  // 4k char ke `COMPACTION_SUMMARY_SCALED_MAX_CHARS` supaya ringkasan LLM untuk
+  // model 1M tidak terpotong di batas proyeksi. Storage hard-cap (512KB) tetap
+  // dijaga lapisan persistence.
+  const cap = LIMITS.COMPACTION_SUMMARY_SCALED_MAX_CHARS
   if (text.length <= cap) return text
   const marker = "\n[projection summary truncated; older details may be missing]"
   let head = text.slice(0, Math.max(0, cap - marker.length))

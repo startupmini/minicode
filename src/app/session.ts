@@ -598,7 +598,10 @@ export async function createMinicodeSession(
       }
       // Sisakan ruang framing dan respons minimum. Tanpa reserve, request yang
       // tepat menyentuh batas provider tetap ditolak setelah biaya dibakar.
-      let reserve = Math.min(256, Math.floor(limit / 10))
+      // Reserve ini HANYA headroom framing + respons minimum (skema tool sudah
+      // termasuk di `inputTokens` via estimateTools), jadi cap 256 cukup —
+      // tidak perlu diskala dengan ukuran skema tool.
+      let reserve = Math.min(LIMITS.CONTEXT_WINDOW_RESERVE_CAP_TOKENS, Math.floor(limit / 10))
       let outputAllowance = Math.max(0, limit - inputTokens - reserve)
       let outputTokens = 0
       const streamedText = createIncrementalTokenCounter()
@@ -662,7 +665,7 @@ export async function createMinicodeSession(
                   estimateSystem(system, estimator) +
                   estimateTools(tools, estimator),
               )
-              reserve = Math.min(256, Math.floor(limit / 10))
+              reserve = Math.min(LIMITS.CONTEXT_WINDOW_RESERVE_CAP_TOKENS, Math.floor(limit / 10))
               outputAllowance = Math.max(0, limit - inputTokens - reserve)
             }
           }
@@ -674,7 +677,7 @@ export async function createMinicodeSession(
                 estimateSystem(system, estimator) +
                 estimateTools(tools, estimator),
             )
-            reserve = Math.min(256, Math.floor(limit / 10))
+            reserve = Math.min(LIMITS.CONTEXT_WINDOW_RESERVE_CAP_TOKENS, Math.floor(limit / 10))
             outputAllowance = Math.max(0, limit - inputTokens - reserve)
           }
           admittedFactor = currentFactor
@@ -703,13 +706,14 @@ export async function createMinicodeSession(
         // sebenarnya konteks kepanjangan meski teksnya tak menyebut "context".
         // Reklasifikasi sebagai context_length_exceeded supaya kernel menempuh
         // compact-and-retry (bounded + no-op-safe) alih-alih mati fatal. Ambang
-        // `localInputTokens >= 50_000` = proxy monotonik ukuran konteks berbasis
-        // chars/4 (toleran terhadap under-count estimator); sesi kecil dengan
-        // 400 format-argumen yang sah tidak akan salah diklasifikasi.
+        // `localInputTokens >= CONTEXT_RECLASSIFY_400_MIN_LOCAL_TOKENS` = proxy
+        // monotonik ukuran konteks berbasis chars/token estimator (toleran
+        // terhadap under-count); sesi kecil dengan 400 format-argumen yang sah
+        // tidak akan salah diklasifikasi.
         if (
           error instanceof ProviderError &&
           (error.category === "invalid_request" || error.category === "unknown") &&
-          localInputTokens >= 50_000
+          localInputTokens >= LIMITS.CONTEXT_RECLASSIFY_400_MIN_LOCAL_TOKENS
         ) {
           throw overflow(inputTokens, outputTokens)
         }
@@ -817,6 +821,35 @@ export async function createMinicodeSession(
     })
     core.events.on("turn:completed", () => {
       detector.noteAssistantResponse()
+    })
+  }
+  // R11/T3 (opt-in, default off) — anggaran volume-baca per turn. Guard token
+  // hanya peka tekanan TOKEN, bukan tekanan working-memory: model berjendela
+  // raksasa (1M) bisa membaca ribuan baris tanpa memicu kompaksi, lalu
+  // kualitas nalarnya menurun diam-diam (lih. evidence dogfooding: audit UI
+  // berhenti minta-konfirmasi setelah membaca ~5k baris tanpa kompaksi).
+  // Observer ini MENGHITUNG total char hasil tool per turn dan memperingatkan
+  // sekali bila melewati ambang — membantu operator mengenali kasus "penuh
+  // karena perhatian, bukan jendela". Opt-in lewat MINICODE_READ_VOLUME_GUARD=1
+  // supaya perilaku default TIDAK berubah.
+  if (process.env.MINICODE_READ_VOLUME_GUARD === "1") {
+    let turnReadChars = 0
+    let warnedThisTurn = false
+    core.events.on("execution:completed", (e) => {
+      if ((e as { forwardedChild?: unknown }).forwardedChild != null) return
+      const result = e.execution?.result as { content?: unknown } | undefined
+      const text = typeof result?.content === "string" ? result.content : ""
+      turnReadChars += text.length
+      if (!warnedThisTurn && turnReadChars > LIMITS.TURN_READ_VOLUME_GUARD_CHARS) {
+        warnedThisTurn = true
+        process.stderr.write(
+          `[context] read-volume tinggi turn ini (${turnReadChars} chars ≈ ${Math.round(turnReadChars / 4)} token) tanpa kompaksi — bila task panjang, minta model menulis progres ke file/memory agar fakta tak hilang.\n`,
+        )
+      }
+    })
+    core.events.on("turn:completed", () => {
+      turnReadChars = 0
+      warnedThisTurn = false
     })
   }
   if (safeMaxTurns !== undefined) {

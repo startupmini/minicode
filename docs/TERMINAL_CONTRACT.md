@@ -342,7 +342,11 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      berikutnya = auto-batal (cancel), total semantik 90 dtk lama; SATU
      ketikan apa pun me-reset kedua timer.
 22. Thinking terlihat SECARA DEFAULT (expanded): composer memakai dots clock;
-     transkrip expanded = alir thinking ber-warna terbaca (`c.thinking`,
+     dengan panel aktivitas ON (default TUI; `/fold`), transkrip menampilkan
+     AREA thinking = blok live maks 10 baris visual terakhir (header
+     `+ thinking`, penanda `… N baris lagi`), lalu saat fase berakhir diringkas
+     SATU baris (`+ thinking · N baris`) dengan detail penuh tetap tersedia di
+     `/expand`; dengan panel OFF, perilaku legacy = alir thinking ber-warna terbaca (`c.thinking`,
      abu-kebiruan) dan ber-indentasi 2 kolom, dipisah SATU baris kosong dari
      jawaban/ledger — bukan `dim`; minimized (`/thinking`, `MINICODE_SHOW_THINKING=0`)
      = bersih tanpa marker (`… thinking`); isi tetap tersedia di `/expand`;
@@ -379,14 +383,22 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     dan `approval.*` terstruktur plus teks delta. Exit code, pipe safety, dan
     determinisme non-TTY tetap sama.
 
-27. Painter transient stderr (spinner setup/cek-update, garis status turn)
-     DITAHAN selama layar interaktif memegang terminal: `beginInteractiveScreen`
+27. Painter transient stderr (spinner setup/cek-update, bar loading startup,
+     garis status turn) DITAHAN selama layar interaktif memegang terminal: `beginInteractiveScreen`
      (`src/ui/runtime/statusline.ts`) membisukan `paintWrite` (nol byte + baris
      painter dibersihkan sekali saat layar mengambil alih), nested dihitung,
      release idempoten. Pemegang: `askLine`/`askSecret`/`runPicker` (raw-mode)
      dan `openAltScreen` (alt-screen, release di `close()`). Tanpa ini tick
      `\r\x1b[2K` spinner menghapus baris prompt wizard (laporan "macet di
-     Menyiapkan sesi…").
+     Menyiapkan sesi…"). Bar loading (`src/ui/runtime/loading-bar.ts`) adalah
+     painter transient jenis kedua: single-line blok `▓░` + persen + label,
+     digambar ulang HANYA saat `update(label, percent)` dipanggil (bukan
+     interval), TTY-only (non-TTY = no-op nol byte), label disanitasi, kursor
+     direstore di `exit`. Fase startup (update check/install/restart, provider,
+     RAG, tool, kernel, resume) memanggil `update`; diagnostik startup
+     (resume/recovery/context/dll) DITUNDA saat REPL dan di-flush ke transcript
+     TUI (`ctx.startupNotices`), sedangkan non-interaktif tetap mencetak langsung.
+     Output npm saat auto-update disembunyikan (`stdio: pipe` dibuang).
 28. Kontrak exit code: **0** sukses/help, **1** gagal runtime/lookup, **2**
      salah pakai (argumen hilang/malformed, subcommand asing). Flag sebagai
      positional id = salah pakai (exit 2). `exec --json` yang gagal di fase
@@ -566,6 +578,7 @@ panjang).
 - `test/tui-transcript.test.ts` — projection source-mapped: wrap, CJK/ANSI, user prefix, tabel TSV, selection text, cap buffer live, dan render markdown inline jawaban model (heading/bold/code; delimiter fence disembunyikan, isi fence dan gema user tetap literal).
 - `test/screen-buffer.test.ts` — parser frame harness (unit).
 - `test/tui-transcript.test.ts` — I7/I12/I17/I22 (ledger satu baris per tool, cap 5000 + marker evict, `total()` monotonik kebal evict, viewport, thinking minimized/expanded).
+- `test/thinking-area.test.ts` — I22 area thinking: blok live maks 10 baris (header/`… N baris lagi`), ringkasan 1 baris + detail `/expand` saat turn selesai, tanpa duplikasi, dan fallback legacy saat panel OFF.
 - `test/presentation-projections.test.ts` — I12/I17/I32 (projection
   snapshot, running/elapsed, status terminal, retry/child grouping, summary,
   marker evict + `total()` monotonik, dan parity flag OFF) + F-AGENT-1
@@ -653,6 +666,9 @@ panjang).
   final, sementara sink linear memberi marker dan usage tetap tercatat.
 - `test/transient-arbitration.test.ts` — I3/I9/I27 (hold layar interaktif:
   picker/askLine, nesting, delayMs).
+- `test/loading-bar.test.ts` — I27/I6 (bar loading: non-TTY no-op nol byte,
+  delay pertama, progres blok+persen+label, sanitasi label, stop idempoten,
+  restore kursor, mutual exclusion transient, ditahan layar interaktif).
 - `test/statusline-bun-guard.test.ts` — I4 (painter Bun/Windows: painter
   dinonaktifkan sendiri, write asli dipulihkan).
 - `test/turn-status.test.ts` — garis status turn lifecycle deterministik

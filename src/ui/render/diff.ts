@@ -24,6 +24,13 @@ export interface DiffLine {
 export function computeLineDiff(oldText: string, newText: string): DiffLine[] {
   const oldLines = oldText.split("\n")
   const newLines = newText.split("\n")
+  // Pop SATU elemen kosong di ekor tiap sisi. Elemen itu artefak newline
+  // penutup (`"a\n".split("\n")` → `["a",""]`), bukan baris nyata — tanpa
+  // ini `computeLineDiff("", "baru")` dan `"a\n"` vs `"a"` memancarkan
+  // delete/context baris kosong spurious. Baris kosong nyata di tengah tetap
+  // dipertahankan; hanya ekor artifisial yang dibuang.
+  if (oldLines[oldLines.length - 1] === "") oldLines.pop()
+  if (newLines[newLines.length - 1] === "") newLines.pop()
   const result: DiffLine[] = []
   let i = 0,
     j = 0,

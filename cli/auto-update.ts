@@ -45,7 +45,14 @@ export function waitChildExit(child: ChildProcess): Promise<number | null> {
 export async function maybeAutoUpdate(
   version: string,
   signal?: AbortSignal,
-  opts?: { onLongOp?: () => void; getInstalledVersion?: () => string },
+  opts?: {
+    onLongOp?: () => void
+    getInstalledVersion?: () => string
+    /** Fase progres untuk bar loading: "check" | "install" | "restart". */
+    onPhase?: (phase: "check" | "install" | "restart") => void
+    /** Sink pesan proses (deferred ke transcript saat bar aktif). */
+    onNotice?: (line: string) => void
+  },
 ): Promise<void> {
   let decision: ReturnType<typeof shouldAutoUpdate>
   try {
@@ -58,6 +65,7 @@ export async function maybeAutoUpdate(
   }
   if (!decision.run) return
   if (signal?.aborted) return
+  opts?.onPhase?.("check")
   let latest: string | null
   try {
     latest = await checkForUpdateFresh(version, signal)
@@ -66,16 +74,16 @@ export async function maybeAutoUpdate(
   }
   if (signal?.aborted) return
   if (!latest) return
-  // Fase panjang dimulai (install + restart): minta pemanggil mematikan
-  // spinner transient-nya DULU. Tanpa ini interval induk (80ms di
-  // cli/index.ts) terus menulis `\r\x1b[2K` ke stderr yang sama dengan anak
-  // (`stdio: inherit`) selama SELURUH sesi anak — output hancur/flicker dan
-  // terlihat hang di Windows Terminal.
+  // Fase panjang dimulai (install + restart): minta pemanggil menghentikan
+  // bar transient-nya DULU. Output anak (npm/respawn) kini dipipe dan
+  // disembunyikan (stdio: "pipe") sehingga tidak mengotori bar — pewarisan
+  // `inherit` lama membuat output npm mentah menimpa spinner/bar.
   try {
     opts?.onLongOp?.()
   } catch {}
-  process.stderr.write(`\n${c.yellow(formatUpdateMessage(version, latest))}\n`)
-  process.stderr.write(c.dim("Menginstall pembaruan otomatis…\n"))
+  opts?.onPhase?.("install")
+  opts?.onNotice?.(`${c.yellow(formatUpdateMessage(version, latest))}\n`)
+  opts?.onNotice?.(c.dim("Menginstall pembaruan otomatis…\n"))
   let ok = false
   try {
     ok = installUpdate(latest)
@@ -83,7 +91,7 @@ export async function maybeAutoUpdate(
     ok = false
   }
   if (!ok) {
-    process.stderr.write(
+    opts?.onNotice?.(
       c.yellow(
         `Auto-update gagal — lanjut versi ${version}. Update manual: npm update -g minicode-ai\n`,
       ),
@@ -95,7 +103,7 @@ export async function maybeAutoUpdate(
     return verifyInstalledVersion(expected, opts.getInstalledVersion)
   }
   if (!installedMatches(latest)) {
-    process.stderr.write(
+    opts?.onNotice?.(
       c.yellow(
         `Versi terpasang tidak cocok dengan target ${latest}; mencoba memulihkan ${version}…\n`,
       ),
@@ -107,11 +115,11 @@ export async function maybeAutoUpdate(
       restored = false
     }
     if (restored) {
-      process.stderr.write(
-        c.yellow(`Auto-update dibatalkan; versi ${version} berhasil dipulihkan.\n`),
-      )
+      opts?.onNotice?.(c.yellow(`Auto-update dibatalkan; versi ${version} berhasil dipulihkan.\n`))
       return
     }
+    // Gagal tidak dapat dipulihkan: fatal — tetap cetak + keluar (tidak
+    // didefer; proses akan mati).
     process.stderr.write(
       c.error(
         `Auto-update tidak dapat memverifikasi atau memulihkan instalasi. Keluar; pulihkan dengan: npm install -g minicode-ai@${version}\n`,
@@ -121,8 +129,9 @@ export async function maybeAutoUpdate(
   }
   // Restart ke kode baru dengan argv identik; guard env cegah loop bila
   // versi ter-install ternyata masih dilaporkan lebih tua.
-  process.stderr.write(c.dim(`Restart ke versi ${latest}…\n`))
-  // Pastikan spinner induk mati sebelum anak hidup (idempoten — onLongOp
+  opts?.onPhase?.("restart")
+  opts?.onNotice?.(c.dim(`Restart ke versi ${latest}…\n`))
+  // Pastikan bar induk mati sebelum anak hidup (idempoten — onLongOp
   // sudah dipanggil sebelum install, tapi install bisa gagal-skip jalur ini
   // bila dipanggil ulang di masa depan).
   try {

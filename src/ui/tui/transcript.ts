@@ -16,6 +16,7 @@ import type {
   UiToolStatus,
 } from "../contract.ts"
 import { t } from "../i18n/locale.ts"
+import { renderActivityPanel } from "../render/activity-panel.ts"
 import { paintLedger, runMarker, statusGlyph, statusWord } from "../render/ledger.ts"
 import { parseFence, renderInline } from "../render/markdown.ts"
 import { type MarkdownTable, parseMarkdownBlocks } from "../render/markdown-table.ts"
@@ -32,6 +33,8 @@ import { defaultUiState, type UiSessionState } from "../session-state.ts"
 // substansi berbeda (viewport vs riwayat yang bisa di-replay).
 export const TRANSCRIPT_CAP = 5000
 export const TRANSCRIPT_TEXT_MAX_CHARS = 1_000_000
+/** Baris thinking yang terlihat di area live (Fase 3). */
+const MAX_THINKING_ROWS = 10
 const TRANSCRIPT_TRUNCATION_MARKER = "… [transcript truncated: turn cap exceeded]"
 /**
  * Sink approval TUI: pemilik layar (cli/tui.ts) mendaftarkan transkrip +
@@ -228,6 +231,9 @@ export class Transcript {
    * expanded: mengalir redup seperti teks. */
   private thinkingBuf = ""
   private thinkingTail = ""
+  /** Baris thinking turn berjalan (mode AREA, Fase 3): dirender sebagai blok
+   * live maks 10 baris, bukan di-commit per baris. Diringkas saat turn selesai. */
+  private thinkingArea: string[] = []
   private meta: TranscriptMeta[] = []
   private evicted = 0
   private hasEvictMarker = false
@@ -371,6 +377,7 @@ export class Transcript {
         // diberi marker append-only di bawah.
         this.thinkingBuf = ""
         this.thinkingTail = ""
+        this.thinkingArea = []
         if (data.hadVisibleOutput === true) {
           this.push(c.warning(t("ts.providerAttemptDiscarded", { attempt: id })), {
             kind: "diagnostic",
@@ -384,28 +391,69 @@ export class Transcript {
     if (!text) return
     const clean = sanitizeAnsi(text)
     if (this.uiState.reasoningVisible) {
-      // Expanded: alir per baris dengan indentasi 2 kolom (line-buffered, ekor
-      // hidup) — membedakan thinking dari jawaban model yang mulai di kolom 0.
-      this.thinkingTail += clean
-      const parts = this.thinkingTail.split("\n")
-      for (let i = 0; i < parts.length - 1; i++)
-        this.append(c.thinking(`  ${parts[i] ?? ""}`), { kind: "diagnostic" })
+      if (this.thinkingAreaMode()) {
+        // Mode AREA (Fase 3): tahan baris di buffer, dirender sebagai blok live
+        // terbatas (projectAll). JANGAN di-commit per baris — area yang
+        // menggantikannya + ringkasan saat turn selesai.
+        this.thinkingTail += clean
+        const parts = this.thinkingTail.split("\n")
+        for (let i = 0; i < parts.length - 1; i++) this.thinkingArea.push(parts[i] ?? "")
+        // Batasi memori; detail penuh sudah dipangkas per turn saat ringkasan.
+        if (this.thinkingArea.length > 2000)
+          this.thinkingArea.splice(0, this.thinkingArea.length - 2000)
+        this.thinkingTail = parts[parts.length - 1] ?? ""
+      } else {
+        // Legacy (panel off): alir per baris dengan indentasi 2 kolom
+        // (line-buffered, ekor hidup) — membedakan thinking dari jawaban model.
+        this.thinkingTail += clean
+        const parts = this.thinkingTail.split("\n")
+        for (let i = 0; i < parts.length - 1; i++)
+          this.append(c.thinking(`  ${parts[i] ?? ""}`), { kind: "diagnostic" })
 
-      this.thinkingTail = parts[parts.length - 1] ?? ""
+        this.thinkingTail = parts[parts.length - 1] ?? ""
+      }
     } else {
       // Minimized: penanda hidup; isi disimpan di collapsed view linear.
       this.thinkingBuf = (this.thinkingBuf + clean).slice(-20000)
     }
   }
 
-  /** Selesaikan fase thinking: minimized → penanda hilang; expanded → flush
-   * ekor (berindentasi sama dengan baris thinking). */
+  /** Mode area thinking aktif? Panel aktivitas ON + reasoning terlihat.
+   * Panel off = perilaku legacy (stream per baris) agar `/fold` benar-benar
+   * mengembalikan tampilan mentah. */
+  private thinkingAreaMode(): boolean {
+    return this.uiState.reasoningVisible && this.uiState.activityPanel
+  }
+
+  /** Selesaikan fase thinking.
+   * - Mode area: ringkas jadi SATU baris (detail penuh di `/expand`).
+   * - Legacy: flush ekor berindentasi.
+   * - Minimized: penanda hilang. */
   private commitThinking(): void {
+    if (this.thinkingAreaMode()) {
+      const lines = [...this.thinkingArea]
+      if (this.thinkingTail) {
+        lines.push(this.thinkingTail)
+        this.thinkingTail = ""
+      }
+      this.thinkingArea = []
+      this.thinkingBuf = ""
+      if (lines.length > 0) {
+        // Detail penuh tidak hilang: masuk buffer `/expand`.
+        this.uiState.rememberCollapsedSection("thinking", lines.join("\n"))
+        this.append(
+          c.thinking(`  + ${t("panel.thinking")} · ${t("panel.lines", { n: lines.length })}`),
+          { kind: "diagnostic" },
+        )
+      }
+      return
+    }
     if (this.thinkingTail) {
       this.append(c.thinking(`  ${this.thinkingTail}`), { kind: "diagnostic" })
       this.thinkingTail = ""
     }
     this.thinkingBuf = ""
+    this.thinkingArea = []
   }
 
   /** Dorong baris logis (sudah final, mis. gema prompt user). */
@@ -466,6 +514,7 @@ export class Transcript {
     this.activeProviderAttempt = null
     this.thinkingBuf = ""
     this.thinkingTail = ""
+    this.thinkingArea = []
     this.evicted = 0
     this.hasEvictMarker = false
     this.runningMemo = null
@@ -609,14 +658,77 @@ export class Transcript {
     }
   }
 
+  /** Baris live area thinking (mode area): header `+ berpikir` + maks 10 baris
+   * visual terakhir dari turn berjalan. Baris panjang dibungkus (bukan
+   * dipotong). Kosong bila mode area off / belum ada thinking. */
+  private thinkingRows(w: number): TranscriptRow[] {
+    if (!this.thinkingAreaMode()) return []
+    const logical = [...this.thinkingArea]
+    if (this.thinkingTail) logical.push(this.thinkingTail)
+    if (logical.length === 0) return []
+    const visual: string[] = []
+    for (const line of logical) {
+      if (line === "") visual.push("")
+      else visual.push(...wrapByWidth(line, w))
+    }
+    const shown = visual.slice(-MAX_THINKING_ROWS)
+    const hidden = visual.length - shown.length
+    const out: TranscriptRow[] = []
+    const push = (raw: string) => {
+      out.push({
+        text: c.thinking(raw),
+        sourceId: -1,
+        sourceStart: 0,
+        sourceEnd: 0,
+        displayStart: 0,
+        displayEnd: displayWidth(raw),
+        selectable: false,
+      })
+    }
+    push(
+      hidden > 0
+        ? `  + ${t("panel.thinking")} · ${t("panel.moreLines", { n: hidden })}`
+        : `  + ${t("panel.thinking")}`,
+    )
+    for (const row of shown) push(`  ${row}`)
+    return out
+  }
+
+  /** Proyeksi panel aktivitas (Fase 2): baris grup dari tool TURN BERJALAN.
+   * Sumber = `activityFold` (dikumpulkan per turn oleh event tool), BUKAN
+   * snapshot sesi — snapshot bersifat kumulatif sampai cap, jadi akan
+   * menampilkan tool dari turn lama. Kosong bila panel off / belum ada tool. */
+  private panelRows(): TranscriptRow[] {
+    if (!this.uiState.activityPanel) return []
+    if (this.activityFold.length === 0) return []
+    const activities = this.activityFold.map((e) => ({
+      toolCallId: "",
+      name: e.name,
+      status: e.status as UiToolStatus,
+      tsStart: 0,
+    }))
+    const lines = renderActivityPanel(activities, { maxRows: 10 })
+    return lines.map((line) => ({
+      text: line,
+      sourceId: -1,
+      sourceStart: 0,
+      sourceEnd: 0,
+      displayStart: 0,
+      displayEnd: displayWidth(line),
+      selectable: false,
+    }))
+  }
+
   private projectAll(width: number): TranscriptRow[] {
     const w = Math.max(10, width)
+    const thinking = this.thinkingRows(w)
     const running = this.runningRows()
+    const panel = this.panelRows()
     // Kasus umum (idle ketik/scroll — thinking tau cara running kosong):
     // kembalikan gabungan committed+pending yang ter-cache TANPA menyalin ulang.
     // Ini memberantas biaya concat O(N) pada setiap paint (biaya yang TUMBUH
     // seiring transkrip menumpuk — tepat gejala "mengetik berat saat history penuh").
-    if (!this.thinkingTail && running.length === 0) {
+    if (!this.thinkingTail && thinking.length === 0 && running.length === 0 && panel.length === 0) {
       if (
         this.projectedBase &&
         this.projectedBase.width === w &&
@@ -639,7 +751,7 @@ export class Transcript {
     // thinking/running aktif: bangun segar (jarang — hanya saat turn berjalan,
     // dan repaint-nya sudah dicoalesce 30ms, bukan per-keypress).
     const rows: TranscriptRow[] = [...this.committedRows(w), ...this.pendingRows(w)]
-    if (this.thinkingTail) {
+    if (!this.thinkingAreaMode() && this.thinkingTail) {
       for (const chunk of this.thinkingTail.split("\n")) {
         const chunkRows = chunk === "" ? [""] : wrapByWidth(chunk, w)
         for (const row of chunkRows) {
@@ -655,6 +767,12 @@ export class Transcript {
         }
       }
     }
+    // Area thinking (Fase 3): blok live maks 10 baris terakhir (mode area).
+    // Mode legacy sudah menaruh thinking-nya di atas (stream per baris).
+    rows.push(...thinking)
+    // Baris tool yang SEDANG berjalan (dari snapshot). Panel aktivitas hanya
+    // memuat tool TERMINAL (fold), jadi running tetap punya barisnya sendiri —
+    // tak ada duplikasi, dan tool yang belum selesai tidak pernah hilang.
     for (const row of running) {
       rows.push({
         text: row,
@@ -666,6 +784,9 @@ export class Transcript {
         selectable: false,
       })
     }
+    // Panel aktivitas (Fase 2): baris grup tool terminal — tampil di bawah
+    // running, di atas transkrip. Hanya saat ada activity.
+    rows.push(...panel)
     return rows
   }
 
@@ -975,9 +1096,11 @@ export class Transcript {
     if (event.type === "turn.completed") {
       this.commit()
       this.commitThinking()
-      // minimizeActivity ON → fold meringkas sendiri (nama tool + ok/gagal);
-      // turnSummary (turn · files · durasi) dilewati agar tidak ada dua ringkasan.
-      if (!this.uiState.minimizeActivity) this.turnSummary(event.summary, event)
+      // minimizeActivity ON / activityPanel ON → fold meringkas sendiri (nama
+      // tool + ok/gagal); turnSummary (turn · files · durasi) dilewati agar
+      // tidak ada dua ringkasan.
+      if (!this.uiState.minimizeActivity && !this.uiState.activityPanel)
+        this.turnSummary(event.summary, event)
       this.flushActivityFold()
       return
     }
@@ -1098,10 +1221,11 @@ export class Transcript {
         ? `: ${truncateToWidth(sanitizeAnsi(denyReason), 200, "…").split("\n")[0] ?? ""}`
         : ""
     const line = `  ${statusGlyph(status)} ${name}${targetText} ${statusWord(status)}${retry}${child}${verificationMark}${provenanceMark}${message}`
-    // Lipat aktivitas (opencode-like): saat minimizeActivity aktif, baris ledger
-    // per-tool TIDAK boleh menghilang diam-diam — ditahan lalu dirangkum jadi
-    // SATU baris saat turn selesai (detail via /expand).
-    if (this.uiState.minimizeActivity) {
+    // Lipat aktivitas (opencode-like): saat minimizeActivity ATAU panel
+    // aktivitas aktif, baris ledger per-tool TIDAK boleh menghilang diam-diam
+    // — ditahan lalu dirangkum saat turn selesai (panel: per keluarga tool;
+    // minimize: satu baris nama+hitungan). Detail via /expand.
+    if (this.uiState.minimizeActivity || this.uiState.activityPanel) {
       this.activityFold.push({ name, status, line })
       return
     }
@@ -1314,11 +1438,29 @@ export class Transcript {
 
   /** Flush lipatan aktivitas (minimizeActivity) menjadi SATU baris ringkas
    * (opencode-like) + buffer detail untuk /expand. Tidak menghilangkan isi
-   * diam-diam: nama tool + hitung ok/gagal tetap terlihat. */
+   * diam-diam: nama tool + hitung ok/gagal tetap terlihat.
+   *
+   * Saat activityPanel ON, ringkasan memakai KELUARGA tool (satu baris per
+   * grup — `+ explore · 3 tools · 2 ok`) alih-alih daftar nama rata.
+   * Detail penuh tetap masuk /expand. */
   private flushActivityFold(): void {
     const fold = this.activityFold
     this.activityFold = []
     if (fold.length === 0) return
+    // Panel ON: render per-grup (sumber: event tool yang sudah dikumpulkan).
+    if (this.uiState.activityPanel) {
+      const activities = fold.map((e) => ({
+        toolCallId: "",
+        name: e.name,
+        status: e.status as UiToolStatus,
+        tsStart: 0,
+      }))
+      const lines = renderActivityPanel(activities, { maxRows: 10 })
+      if (lines.length === 0) return
+      this.uiState.rememberCollapsedSection("activity", fold.map((e) => e.line).join("\n"))
+      for (const line of lines) this.append(line, { kind: "activity" })
+      return
+    }
     const count = (status: string) => fold.reduce((n, e) => n + (e.status === status ? 1 : 0), 0)
     const ok = count("completed")
     const failed = count("failed")

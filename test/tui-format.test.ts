@@ -209,6 +209,17 @@ describe("markdown: fence & inline", () => {
     expect(stripAnsi(out)).toContain("const x = 1")
   })
 
+  test("fence ber-info-string tetap dikenali (isi kode tidak didekorasi)", () => {
+    // Audit render: regex lama menolak ` ```ts title="demo" `, sehingga blok
+    // kode jatuh ke renderInline dan `*a*` diubah jadi italic.
+    const src = '```ts title="demo"\nconst x = *a*\n```'
+    const out = decorateMarkdown(src)
+    expect(stripAnsi(out)).toContain("const x = *a*")
+    expect(out).not.toContain("const x = a")
+    // Bahasa tetap diekstrak (highlight tetap jalan).
+    expect(out).not.toBe(stripAnsi(out)) // ada warna syntax
+  })
+
   test("fence tak tertutup tidak menghilangkan isi", () => {
     const out = stripAnsi(decorateMarkdown("teks\n```ts\nconst x = 1"))
     expect(out).toContain("const x = 1")

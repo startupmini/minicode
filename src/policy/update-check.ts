@@ -208,14 +208,16 @@ export function installUpdate(version: string, runner?: InstallRunner): boolean 
     const run: InstallRunner =
       runner ??
       ((cmd, args, opts) => {
-        // Windows: npm adalah .cmd → butuh shell; stdio inherit agar user
-        // melihat progres install (interaktif, bukan CI).
+        // Windows: npm adalah .cmd → butuh shell. Output npm dipipe dan
+        // dibuang — auto-update kini berjalan di belakang bar loading, jadi
+        // progres raw npm malah mengotori baris bar (sebelumnya stdio
+        // inherit menimpa spinner).
         // Timeout 120 dtk: tanpa ini spawnSync memblokir event-loop selamanya
         // saat npm lambat (AV/UAC di Windows 15–60 dtk) — timer abort 1.8 dtk
-        // dan spinner ikut beku sehingga terlihat hang. Timeout = gagal jujur
+        // dan bar ikut beku sehingga terlihat hang. Timeout = gagal jujur
         // lalu lanjut versi lama, bukan gantung.
         const r = spawnSync(cmd, args, {
-          stdio: "inherit",
+          stdio: ["ignore", "pipe", "pipe"],
           shell: process.platform === "win32",
           ...(opts?.cwd ? { cwd: opts.cwd } : {}),
           timeout: 120_000,

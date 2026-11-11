@@ -40,19 +40,25 @@ function isSgr(seq: string): boolean {
   return true
 }
 
-/** Urutan serialisasi kanonik — hasil sama apa pun urutan SGR masukannya. */
-const SGR_ORDER = [
+/** Urutan serialisasi kanonik — hasil sama apa pun urutan SGR masukannya.
+ * Termasuk atribut yang jarang dipakai: 21 double-underline (u2), 53
+ * overline (ov), 58 underline-color (uc) — sebelumnya jatuh ke `raw:*` dan
+ * hilang saat serialisasi (audit render #1). */
+const SGR_ORDER: readonly string[] = [
   "bold",
   "dim",
   "italic",
   "underline",
+  "u2",
+  "ov",
   "blink",
   "inverse",
   "conceal",
   "strike",
   "fg",
   "bg",
-] as const
+  "uc",
+]
 
 interface SgrState {
   values: Map<string, string>
@@ -69,6 +75,12 @@ function serializeSgr(state: SgrState): string {
   for (const group of SGR_ORDER) {
     const value = state.values.get(group)
     if (value !== undefined) parts.push(value)
+  }
+  // Parameter tak dikenal (`raw:<token>`: 21, 53, 58, dst.) ikut
+  // diserialisasi — jangan dibuang (audit render #1). Urutan stabil
+  // (insertion order Map) supaya serialize idempoten.
+  for (const [group, value] of state.values) {
+    if (!SGR_ORDER.includes(group)) parts.push(value)
   }
   return `\x1b[${parts.join(";")}m`
 }
@@ -109,8 +121,9 @@ function applySgrTo(state: SgrState, seq: string): void {
     const colon = token.indexOf(":")
     if (colon >= 0) {
       const head = token.slice(0, colon)
-      if (head === "38" || head === "58") setGroup(state, "fg", token)
+      if (head === "38") setGroup(state, "fg", token)
       else if (head === "48") setGroup(state, "bg", token)
+      else if (head === "58") setGroup(state, "uc", token)
       else setGroup(state, `raw:${head}`, token)
       continue
     }
@@ -123,13 +136,14 @@ function applySgrTo(state: SgrState, seq: string): void {
       state.values.clear()
       continue
     }
-    if (n === 38 || n === 48) {
+    if (n === 38 || n === 48 || n === 58) {
       const extended = readExtended(tokens, i, n)
       if (!extended) {
         setGroup(state, `raw:${n}`, token)
         continue
       }
-      setGroup(state, n === 38 ? "fg" : "bg", extended.value)
+      if (n === 58) setGroup(state, "uc", extended.value)
+      else setGroup(state, n === 38 ? "fg" : "bg", extended.value)
       i = extended.next
       continue
     }
@@ -153,8 +167,21 @@ function applySgrTo(state: SgrState, seq: string): void {
       case 4:
         setGroup(state, "underline", "4")
         break
+      case 21:
+        setGroup(state, "u2", "21")
+        break
       case 24:
         setGroup(state, "underline", null)
+        setGroup(state, "u2", null)
+        break
+      case 53:
+        setGroup(state, "ov", "53")
+        break
+      case 54:
+        setGroup(state, "ov", null)
+        break
+      case 59:
+        setGroup(state, "uc", null)
         break
       case 5:
       case 6:

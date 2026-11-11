@@ -41,6 +41,7 @@ export interface UiSessionStateOptions {
   compact?: boolean
   reasoningVisible?: boolean
   minimizeActivity?: boolean
+  activityPanel?: boolean
 }
 
 /**
@@ -56,6 +57,7 @@ export class UiSessionState {
   #compact: boolean
   #reasoningVisible: boolean
   #minimizeActivity: boolean
+  #activityPanel: boolean
   #views: CollapsedSectionView[] = []
 
   // Buffer /copy + error tertunda (logger linier). Berlifecycle per sesi:
@@ -78,6 +80,9 @@ export class UiSessionState {
     // ditahan, diganti satu ringkasan turn. Opt-in (`MINICODE_MINIMIZE_ACTIVITY=1`),
     // default transparan sesuai filosofi "agentic Unix shell".
     this.#minimizeActivity = opts.minimizeActivity ?? process.env.MINICODE_MINIMIZE_ACTIVITY === "1"
+    // Panel aktivitas (Fase 2): default OFF — opt-in. TUI (cli/tui.ts)
+    // menyalakannya secara eksplisit; env bisa meng-override bootstrap.
+    this.#activityPanel = opts.activityPanel ?? process.env.MINICODE_ACTIVITY_PANEL === "1"
   }
 
   // ── Collapse ────────────────────────────────────────────────────────────
@@ -194,6 +199,23 @@ export class UiSessionState {
   setMinimizeActivity(next?: boolean): boolean {
     const nextVal = next ?? !this.#minimizeActivity
     this.#minimizeActivity = nextVal
+    return nextVal
+  }
+
+  // ── Panel aktivitas (Fase 2: thinking + grup tool) ──────────────────────
+
+  get activityPanel(): boolean {
+    return this.#activityPanel
+  }
+
+  set activityPanel(v: boolean) {
+    this.#activityPanel = v
+  }
+
+  /** Set eksplisit (on/off) atau toggle bila `next` tidak diberikan. */
+  setActivityPanel(next?: boolean): boolean {
+    const nextVal = next ?? !this.#activityPanel
+    this.#activityPanel = nextVal
     return nextVal
   }
 

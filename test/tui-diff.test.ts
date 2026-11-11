@@ -108,6 +108,23 @@ test("diff: reorder ambigu dahulukan add (lebih sedikit op)", () => {
   expect(diff[0]).toMatchObject({ type: "add", content: "b" })
 })
 
+test("diff: string kosong tidak memancarkan delete baris kosong spurious", () => {
+  // Audit render: oldText="" dulu split jadi [""] sehingga diff berisi
+  // add("baru") + delete("") — dua op untuk menambah satu baris. Ekor
+  // artefak newline dibuang, jadi cukup satu add.
+  const diff = computeLineDiff("", "baru")
+  expect(diff).toEqual([{ type: "add", newLine: 1, content: "baru" }])
+})
+
+test("diff: trailing newline tidak memancarkan baris kosong spurious", () => {
+  // "a\n" vs "a": tanpa pop ekor, perbedaan ini memancarkan delete("")
+  // spurious (baris kosong yang tak pernah ada). Dengan pop, diff hanya
+  // menghasilkan context "a" — tidak ada add/delete kosong.
+  const diff = computeLineDiff("a\n", "a")
+  expect(diff).toEqual([{ type: "context", content: "a" }])
+  expect(diff.some((d) => d.type !== "context" && d.content === "")).toBe(false)
+})
+
 test("diff: kata berubah ditandai, bukan sebaris penuh", () => {
   const { oldMask, newMask } = markChangedWords("const a = 1", "const a = 2")
   // Token: const|sp|a|sp|=|sp|1 — hanya token terakhir beda.

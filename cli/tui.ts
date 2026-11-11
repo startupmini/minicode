@@ -171,6 +171,13 @@ export async function runTui(ctx: CliSession): Promise<void> {
       ? ctx.getPresentationSnapshot()
       : { activities: [], turns: [] }
 
+  // [Fase 2] Panel aktivitas default ON di TUI (thinking + grup tool).
+  // Env MINICODE_ACTIVITY_PANEL=0 (opt-out eksplisit) / /fold mematikannya.
+  // Guard `ctx.uiState`: produksi SELALU mengoper state sesi (cli/setup.ts);
+  // fixture tes tanpa uiState memakai singleton `defaultUiState` — jangan
+  // dimutasi dari sini (bocor antar berkas tes).
+  if (ctx.uiState && process.env.MINICODE_ACTIVITY_PANEL !== "0") ui.setActivityPanel(true)
+
   let mode: string = permissions?.getMode() ?? permissionMode ?? "auto"
   // Mode permission sebelum /unrestric diaktifkan — dipakai untuk memulihkan
   // saat operator menonaktifkannya kembali (toggle, per-sesi).
@@ -264,6 +271,12 @@ export async function runTui(ctx: CliSession): Promise<void> {
   // <id>` reuse tanpa `--resume` tak boleh menampilkan riwayat lama. Sesi baru
   // (tanpa event) = no-op. Tak double-render: replay memproses event LAMA,
   // turn live baru menyusul dengan event baru.
+  // Baris diagnostik startup yang didefer (resume/recovery/context/dll)
+  // di-flush ke transcript SEBELUM replay agar urutan kronologisnya benar
+  // (diagnostik dulu, lalu riwayat sesi).
+  if (ctx.startupNotices?.length) {
+    transcript.pushInfo(ctx.startupNotices)
+  }
   try {
     const turnCount = (session.state as { turnCount?: number } | undefined)?.turnCount ?? 0
     if (turnCount > 0) {
@@ -663,8 +676,11 @@ export async function runTui(ctx: CliSession): Promise<void> {
       return
     }
     if (name === "fold") {
+      // [Fase 2] /fold = toggle PANEL AKTIVITAS (thinking + grup tool).
+      // Perilaku lama (minimizeActivity) tetap hidup saat panel off; `/fold`
+      // sekarang mengontrol panel. i18n key sama (folded/expanded).
       const next = args === "" ? undefined : args === "on" || args === "1"
-      const on = ui.setMinimizeActivity(next)
+      const on = ui.setActivityPanel(next)
       transcript.pushInfo([c.muted(t("tui.activityFold", { v: on ? "folded" : "expanded" }))])
       return
     }
@@ -848,7 +864,11 @@ export async function runTui(ctx: CliSession): Promise<void> {
     if (!res.started) {
       // Kegagalan startup adalah diagnostik, bukan keluaran program. App
       // sudah menolak membuka layar dan tidak ada fallback linear yang sah.
-      process.stderr.write(`${t("tui.noTty")}\n`)
+      // Notices startup yang sempat didefer WAJIB tetap terlihat di jalur
+      // gagal ini (transcript tak pernah hidup) — digabung ke SATU write
+      // dengan pesan noTty agar inventaris writer tidak bertambah.
+      const deferred = ctx.startupNotices?.length ? ctx.startupNotices.join("") : ""
+      process.stderr.write(`${deferred}${t("tui.noTty")}\n`)
       process.exitCode = 1
       return
     }

@@ -12,6 +12,7 @@ import type {
   UiStep,
 } from "../contract.ts"
 import { t } from "../i18n/locale.ts"
+import { renderActivityPanel } from "../render/activity-panel.ts"
 import { renderDiffCard } from "../render/diff.ts"
 import { formatArgsPreview, formatProviderError, formatUsage } from "../render/format.ts"
 import { highlightCode } from "../render/highlight.ts"
@@ -605,6 +606,19 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
       bashSan.flush()
       flushThinking()
       finalizeAnswer()
+      // [Fase 2] Panel aktivitas di jalur linear: satu blok ringkas per
+      // keluarga tool saat turn selesai (append-only — detail per-tool tetap
+      // lewat /expand). Opt-in via MINICODE_ACTIVITY_PANEL=1 / ui.activityPanel.
+      if (ui.activityPanel && opts.getSnapshot) {
+        const snap = presentationSnapshot()
+        if (snap) {
+          const lines = renderActivityPanel(snap.activities, { maxRows: 10 })
+          if (lines.length > 0) {
+            wErr(c.muted(`${t("panel.header")}\n`))
+            for (const line of lines) wErr(c.muted(`${line}\n`))
+          }
+        }
+      }
       if (opts.verbose) wErr(c.muted(t("one.done")))
     }),
   )

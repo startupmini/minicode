@@ -25,7 +25,12 @@ export interface FenceMatch {
  * sehingga fence berbahasa kehilangan highlight dan state desync.
  */
 export function parseFence(line: string): FenceMatch | null {
-  const m = /^\s*(```+|~~~+)([A-Za-z0-9_+.-]*)\s*$/.exec(line)
+  // Info-string setelah bahasa diperbolehkan (````ts title="demo"` atau
+  // ` ```js #tag `). Hanya token pertama (non-spasi) yang dibaca sebagai
+  // bahasa — sisanya adalah metadata yang tak memengaruhi highlight. Regex
+  // lama menolak seluruh baris ber-info-string sehingga kode jatuh ke dekorasi
+  // inline (`const x = *a*` jadi `const x = a`).
+  const m = /^\s*(```+|~~~+)([A-Za-z0-9_+.-]*)(?:\s+[^\r\n]*)?\s*$/.exec(line)
   if (!m) return null
   return { char: m[1]![0]!, len: m[1]!.length, lang: m[2] ?? "" }
 }

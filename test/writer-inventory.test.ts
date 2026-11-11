@@ -65,7 +65,10 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // it must never be treated as a successful empty interactive session.
   // [session-summary] 34 -> 35 for the exit kop: one combined write (clear-screen
   // + "minicode" wordmark + session detail) after a normal interactive exit.
-  "cli/index.ts": { max: 35, owner: "human-cmd" },
+  // [loading-bar] 35 -> 36 for exactly ONE writer: the auto-update notice sink
+  // (onNotice) — during install/restart the loading bar is stopped, so update
+  // progress lines are still emitted to stderr (append-only, not dropped).
+  "cli/index.ts": { max: 36, owner: "human-cmd" },
   "cli/model-manager.ts": { max: 2, owner: "human-cmd" },
   "cli/provider-manager.ts": { max: 3, owner: "human-cmd" },
   // [P2.1] 26 -> 27 for exactly ONE writer: the canonical identity line
@@ -209,6 +212,7 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   "src/ui/runtime/screen.ts": { max: 19, owner: "screen" },
   "src/ui/runtime/spinner.ts": { max: 4, owner: "diagnostic" },
   "src/ui/runtime/statusline.ts": { max: 13, owner: "diagnostic" },
+  "src/ui/runtime/loading-bar.ts": { max: 1, owner: "diagnostic" },
   "src/ui/screens/dialog.ts": { max: 0, owner: "screen" },
   "src/ui/screens/form.ts": { max: 1, owner: "screen" },
   "src/ui/screens/model-manager.ts": { max: 6, owner: "screen" },

@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.21.0] - 2026-11-11
+
+### Added
+- **Panel aktivitas (TUI + jalur linear).** Thinking dan tool kini diringkas per
+  keluarga (`explore`/`edit`/`execute`/`feed`/`other`) menjadi satu baris grup
+  (`+ explore · 3 tools · 2 ok · 1 running`) alih-alih deretan ledger mentah.
+  Panel aktif secara default di TUI dan bisa dimatikan dengan `/fold` atau
+  `MINICODE_ACTIVITY_PANEL=0`; detail penuh tetap tersedia di `/expand`.
+  Modul murni baru: `src/ui/render/activity-group.ts` + `activity-panel.ts`.
+- **Area thinking.** Saat panel aktif, reasoning dirender sebagai blok live
+  maksimal 10 baris terakhir (`+ thinking`, penanda `… N baris lagi`); saat
+  turn selesai diringkas satu baris (`+ thinking · N baris`) dan detail penuh
+  disimpan untuk `/expand`. Panel off = perilaku lama (alir per baris).
+- **Bar loading startup satu baris.** Progres startup (cek update → install →
+  restart; provider → RAG → tool → kernel → finalize) tampil sebagai satu baris
+  `▓▓▓░░ 42% label` di stderr, redraw hanya saat fase berubah (tanpa flicker),
+  TTY-only (`0 byte` di non-TTY), `paintWrite`-aware, dan menghormati
+  `MINICODE_MOTION=0`. Diagnostik startup didefer ke transcript TUI (tidak
+  hilang); non-TTY tetap mencetak langsung.
+
+### Fixed
+- **Tokenizer sel SGR** (`cells.ts`): atribut jarang `21` (double underline),
+  `53`/`54` (overline), `58`/`59` (underline color) tidak lagi hilang; grup di
+  luar urutan kanonik tetap diserialisasi (tidak ada atribut yang dibuang).
+- **Fence Markdown** (`markdown.ts`): info-string setelah token bahasa
+  (``` ```ts title="x" ```) tidak lagi membuat seluruh fence dianggap teks biasa.
+- **Ringkasan sesi** (`session-summary.ts`): id sesi/model dari input
+  tak-terpercaya men-strip SEMUA ANSI (termasuk SGR) sebelum diberi warna.
+- **Diff baris** (`diff.ts`): artefak baris kosong ekor dari newline final tidak
+  lagi menghasilkan baris tambah/hapus palsu.
+
+### Changed
+- Budget paket di-rebaseline 3968 → 4096 KiB untuk modul panel/loading baru
+  (disetujui pemilik), dengan `gate:pack` tetap hijau.
+
 ## [0.20.0] - 2026-11-11
 
 ### Added

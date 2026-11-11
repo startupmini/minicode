@@ -76,6 +76,29 @@ describe("diffCellLine", () => {
     expect(truecolor[0]!.style).toBe("\x1b[38;2;72;72;72m")
   })
 
+  test("state SGR: atribut jarang dipakai tidak hilang (21/53/58)", () => {
+    // Audit render #1: sebelumnya 21 (double-underline), 53 (overline), dan
+    // 58 (underline-color) kolaps ke reset — grup raw tidak diserialisasi.
+    const dbl = parseCells("\x1b[21mX")
+    expect(dbl[0]!.style).toBe("\x1b[21m")
+    const ov = parseCells("\x1b[53mX")
+    expect(ov[0]!.style).toBe("\x1b[53m")
+    const uc = parseCells("\x1b[58;5;196mX")
+    expect(uc[0]!.style).toBe("\x1b[58;5;196m")
+    // 58 diikuti 5;196 — 5 tidak boleh terbaca sebagai blink.
+    expect(uc[0]!.style).not.toContain("\x1b[5m")
+  })
+
+  test("state SGR: idempoten di parse ulang (untuk atribut jarang)", () => {
+    // serialize → parse → serialize harus stabil: tanpa ini frame yang
+    // di-repaint berkali-kali akan terus melebar (string SGR memanjang).
+    for (const src of ["\x1b[21;53mX", "\x1b[58;5;196;21mX", "\x1b[1;4;53;58;2;1;2;3mX"]) {
+      const once = parseCells(src)[0]!.style
+      const twice = parseCells(`${once}X`)[0]!.style
+      expect(twice).toBe(once)
+    }
+  })
+
   test("perubahan atribut pada sel yang sama tetap ditulis", () => {
     const prev = ["abc"]
     const next = ["a\x1b[7mbc\x1b[27m"]

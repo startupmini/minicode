@@ -369,6 +369,12 @@ export interface CliSessionOptions {
    * prefiks prompt. Dicetak di sini (setelah provider layer lolos) supaya
    * invokasi yang mati sebelumnya tetap senyap. */
   sandboxNotice?: string
+  /**
+   * Hook fase startup (bar loading). Dipanggil saat fase panjang mulai:
+   * "provider-layer", "rag-layer", "tool-layer", "kernel-session", "resume".
+   * Optional — absen = tanpa progres (perilaku lama).
+   */
+  onPhase?: (phase: string) => void
 }
 
 export interface CliSession {
@@ -515,6 +521,12 @@ export interface CliSession {
    * membaca ulang pesan stderr.
    */
   adoption: AdoptionResult | null
+  /**
+   * Baris diagnostik startup yang didefer (hanya terisi saat enterRepl —
+   * bar loading menggantikan teks proses). Di-flush ke transcript TUI oleh
+   * cli/tui.ts. Absen/undefined = tidak ada deferral (perilaku lama).
+   */
+  startupNotices?: string[]
 }
 
 function mapPresentationEvent(event: DomainEvent): UiPresentationEvent | null {
@@ -910,6 +922,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     timeoutMs,
     rateLimiter,
     sandboxNotice,
+    onPhase,
   } = opts
   // [Area A · PROMPT 06] State UI milik SESI ini. Dibuat SEKALI per sesi dan
   // dipakai bersama oleh TUI (Transcript) + printer linier sesi yang sama.
@@ -917,6 +930,25 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // sendiri sehingga tak saling menimpa collapse/compact/reasoning.
   const uiState = new UiSessionState()
   const modelRef = { current: modelOverride }
+  // Collector diagnostik startup. Saat REPL + stderr TTY, bar loading
+  // menggantikan teks proses verbose — baris diagnostik (resume/recovery/
+  // context/dll) DITUNDA dan di-flush ke transcript TUI setelah sesi siap
+  // (lihat cli/tui.ts). Non-interaktif ATAU non-TTY (pipe/CI) tetap
+  // mencetak langsung seperti sebelumnya — tidak ada diagnostik yang bisa
+  // hilang di jalur yang tak punya transcript.
+  const deferStartup = enterRepl && process.stderr.isTTY === true
+  const startupNotices: string[] = []
+  const startupWrite = (s: string): void => {
+    if (deferStartup) startupNotices.push(s)
+    else process.stderr.write(s)
+  }
+  // `console.error` dipertahankan pada jalur non-interaktif (spy test
+  // menangkap baris provenance resume lewat console.error), tapi didefer
+  // saat REPL agar bar loading tetap satu-baris.
+  const startupConsoleError = (s: string): void => {
+    if (deferStartup) startupNotices.push(s)
+    else console.error(s)
+  }
   // P2.1 — SATU-SATUNYA keputusan identitas sesi. Sesudah baris ini,
   // `sessionId` adalah identitas kanonik durable; id volatil hanya `bootId`
   // (diagnostik). Tak ada jalur persistensi khusus alias: semua turunan
@@ -931,7 +963,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   })
   const sessionId = identity.sid
   const bootId = identity.bootId
-  process.stderr.write(`${c.dim(formatSessionIdentityLine(identity))}\n`)
+  startupWrite(`${c.dim(formatSessionIdentityLine(identity))}\n`)
 
   // P2.2 — admission penulis tunggal. Lease = admission; pagar mutasi =
   // writer_epoch (CAS di transaksi tulis). Komposisi ini MEMEGANG lease
@@ -948,12 +980,12 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     if (!writerStale) {
       writerStale = true
       writerStaleNote = note
-      process.stderr.write(
+      startupWrite(
         `${c.yellow(`[writer] STALE sid=${sessionId} boot=${bootId} epoch=${expectedEpoch}: ${note} — history NOT durable; resume/restart to re-acquire\n`)}`,
       )
     }
   }
-  process.stderr.write(
+  startupWrite(
     `${c.dim(`[writer] admitted sid=${sessionId} boot=${bootId} epoch=${expectedEpoch}${admission.admission.tookOver ? " (takeover)" : ""}${admission.admission.fresh ? " (fresh)" : ""}\n`)}`,
   )
   // [P14] Adopsi eksplisit berjalan SETELAH admission target (token target
@@ -975,7 +1007,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       throw new AdoptionRefusedError(adoption)
     }
     const moved = adoption.task
-    process.stderr.write(
+    startupWrite(
       `${c.dim(`[adopt] ADOPTED ${adoptTask.taskId} ${adoptTask.sourceSessionId} -> ${sessionId} revision=${moved?.revision ?? "?"} status=${moved?.status ?? "?"} exec=${adoption.transfer?.execGeneration ?? "?"}${adoption.fencedFormerOwner ? " (former owner fenced)" : ""}\n`)}`,
     )
   }
@@ -988,9 +1020,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   const planAsWorkMode =
     plan && !workModeExplicit && workMode === "DISCUSS" ? ("PLAN" as const) : workMode
   if (plan && !workModeExplicit && workMode === "DISCUSS") {
-    process.stderr.write(
-      `${c.dim("[deprecated] --plan is now WorkMode PLAN; use --work-mode PLAN\n")}`,
-    )
+    startupWrite(`${c.dim("[deprecated] --plan is now WorkMode PLAN; use --work-mode PLAN\n")}`)
   }
   const effectiveWorkMode: "DISCUSS" | "PLAN" | "EXECUTE" =
     identity.resumed && !workModeExplicit && !plan
@@ -1013,7 +1043,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   try {
     const orphans = tombstoneOrphanChildRuns(sessionId, cwd, { expectedEpoch })
     if (orphans.length > 0) {
-      process.stderr.write(
+      startupWrite(
         `${c.yellow(`[child] ${orphans.length} orphaned sub-agent run(s) tombstoned (INTERRUPTED/UNKNOWN)\n`)}`,
       )
     }
@@ -1028,7 +1058,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     const out = renewSessionWriter(sessionId, writerToken, cwd)
     if (out === "AUTHORITY_LOST" && !renewWarned) {
       renewWarned = true
-      process.stderr.write(
+      startupWrite(
         `${c.yellow(`[writer] lease lost sid=${sessionId} boot=${bootId} — another writer took over; next mutation will be refused unless re-acquired\n`)}`,
       )
       try {
@@ -1052,7 +1082,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       const re = acquireSessionWriter({ sessionId, cwd, bootId, token: writerToken })
       if (re.ok) {
         if (re.admission.epoch !== expectedEpoch) {
-          process.stderr.write(
+          startupWrite(
             `${c.dim(`[writer] re-acquired sid=${sessionId} boot=${bootId} epoch=${re.admission.epoch}\n`)}`,
           )
         }
@@ -1110,11 +1140,12 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // fase session-setup ke stderr (`[startup] rag 8432ms`). Tanpa env = diam.
   const startupPhase = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
     const s = Date.now()
+    onPhase?.(name)
     try {
       return await fn()
     } finally {
       if (process.env.MINICODE_DEBUG_STARTUP === "1")
-        process.stderr.write(`[startup] ${name} ${Date.now() - s}ms\n`)
+        startupWrite(`[startup] ${name} ${Date.now() - s}ms\n`)
     }
   }
 
@@ -1125,12 +1156,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   let effectiveTimeoutMs =
     timeoutMs ?? (envTimeout != null && envTimeout !== "" ? Number(envTimeout) : 3_600_000)
   if (!Number.isFinite(effectiveTimeoutMs) || effectiveTimeoutMs < 0) {
-    process.stderr.write(`[warn] invalid timeout ${effectiveTimeoutMs}, fallback to 3600000\n`)
+    startupWrite(`[warn] invalid timeout ${effectiveTimeoutMs}, fallback to 3600000\n`)
     effectiveTimeoutMs = 3_600_000
   } else if (effectiveTimeoutMs > LIMITS.MAX_TIMER_DELAY_MS) {
-    process.stderr.write(
-      `[warn] timeout exceeds runtime limit; capped at ${LIMITS.MAX_TIMER_DELAY_MS}ms\n`,
-    )
+    startupWrite(`[warn] timeout exceeds runtime limit; capped at ${LIMITS.MAX_TIMER_DELAY_MS}ms\n`)
     effectiveTimeoutMs = LIMITS.MAX_TIMER_DELAY_MS
   }
   // `--timeout` adalah deadline satu pemanggilan prompt. Jangan menyalakan
@@ -1164,7 +1193,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     const home = homeDir()
     const cur = resolvePath(cwd ?? process.cwd())
     if (resolvePath(home) === cur) {
-      process.stderr.write(
+      startupWrite(
         c.yellow(
           `[warn] workspace is home directory — consider --cwd <project> to avoid scanning the entire home\n`,
         ),
@@ -1181,7 +1210,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     )
     const stale = checkStaleTurn(cwd, sessionId)
     if (stale) {
-      process.stderr.write(`${c.yellow(formatStaleNotice(stale))}\n`)
+      startupWrite(`${c.yellow(formatStaleNotice(stale))}\n`)
       clearStaleTurn(cwd, sessionId)
     }
   } catch {}
@@ -1202,9 +1231,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   // ada, jadi tak ada noise pada alur normal.
   try {
     const notice = localConfigNotice(cwd ?? process.cwd(), allowLocalConfig === true)
-    if (notice) process.stderr.write(`${c.dim(notice)}\n`)
+    if (notice) startupWrite(`${c.dim(notice)}\n`)
   } catch {}
-  if (sandboxNotice && !plan) process.stderr.write(`${sandboxNotice}\n`)
+  if (sandboxNotice && !plan) startupWrite(`${sandboxNotice}\n`)
   // Default model = terakhir dipakai (global), bila tanpa --model dan masih
   // ada di config. Flag selalu menang; tak ada simpanan = provider pertama.
   if (!modelRef.current) {
@@ -1229,7 +1258,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         : (resolved.model ?? "default")
       if (!warnedContextModels.has(key)) {
         warnedContextModels.add(key)
-        process.stderr.write(
+        startupWrite(
           `${c.yellow(`[context] no configured window for ${sanitizeAnsi(key)}; using fallback ${resolved.tokens} tokens. Set provider.contextWindows or --context-window for the exact limit.\n`)}`,
         )
       }
@@ -1242,7 +1271,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         : (resolved.model ?? "default")
       if (!warnedCatalogDrift.has(key)) {
         warnedCatalogDrift.add(key)
-        process.stderr.write(
+        startupWrite(
           `${c.yellow(`[context] catalog window ${resolved.drift.catalogTokens} for ${sanitizeAnsi(key)} differs >2x from models.dev (${resolved.drift.overlayTokens}); catalog may be stale — run \`minicode pricing sync\` or set provider.contextWindows.\n`)}`,
         )
       }
@@ -1319,7 +1348,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       : persistedWorkMode !== undefined && persistedWorkMode !== effectiveWorkMode
         ? `[resume] WorkMode ${effectiveWorkMode === "EXECUTE" ? "BUILD" : effectiveWorkMode} (overriding saved ${persistedWorkMode === "EXECUTE" ? "BUILD" : persistedWorkMode})\n`
         : ""
-    if (resumeNotice) process.stderr.write(resumeNotice)
+    if (resumeNotice) startupWrite(resumeNotice)
     // P2.4: aktivasi default Thread SEBELUM seed kernel — backfill aditif
     // berpagar (konten/seq tak tersentuh). Basi di sini = gagal loud
     // (dunia bergerak pasca-admission); warn-swallow di bawah tak berlaku.
@@ -1327,7 +1356,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     // idempoten) agar SEMUA baris durable beridentitas stabil.
     const defaultThread = ensureDefaultThread(sessionId, cwd, { expectedEpoch })
     const backfilled = backfillHistoryEventIds(sessionId, cwd, { expectedEpoch })
-    process.stderr.write(
+    startupWrite(
       `${c.dim(`[thread sid=${sessionId} tid=${defaultThread.thread_id} head=${defaultThread.head_seq}${backfilled > 0 ? ` backfilled=${backfilled}` : ""}]\n`)}`,
     )
     try {
@@ -1426,7 +1455,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           contextCanonicalBaseline = prev.messages
         }
         resumeTurnCount = prev.turnCount
-        console.error(
+        startupConsoleError(
           c.dim(
             // "(N messages)" dipertahankan VERBATIM (kontrak diagnostik yang
             // sudah dipakai test/CLI).
@@ -1434,7 +1463,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           ),
         )
         // P3.3 — jejak provenance seleksi (baca-saja; tak mengubah perilaku).
-        console.error(
+        startupConsoleError(
           c.dim(
             `[select sid=${sessionId} basis=${selection.selectionBasis} freshness=${selection.freshness} head=${selection.frontier?.headSeq ?? "-"}]\n`,
           ),
@@ -1444,7 +1473,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         // /undo tersedia bila perlu kembali. Best-effort, tak menggagalkan resume.
         const div = await validateResumeWorkspace(cwd ?? ".", sessionId).catch(() => null)
         if (div && div.diverged > 0) {
-          console.error(
+          startupConsoleError(
             c.yellow(
               `[resume] workspace berubah sejak checkpoint terakhir (${div.diverged} file) — /undo tersedia bila perlu kembali\n`,
             ),
@@ -1452,13 +1481,13 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         }
       } else {
         // Defensif (tak terjangkau normal: resolver menjamin baris ada).
-        console.error(c.yellow(`[resume] session ${sessionId} has no messages yet\n`))
+        startupConsoleError(c.yellow(`[resume] session ${sessionId} has no messages yet\n`))
       }
     } catch (e) {
       // P2.2/P2.4: pagar basi TIDAK boleh jadi warning — lempar ulang agar
       // startup gagal loud (dunia bergerak pasca-admission).
       if (e instanceof StaleWriterError || e instanceof ThreadArchivedError) throw e
-      process.stderr.write(`[warn] resume failed: ${(e as Error).message}\n`)
+      startupWrite(`[warn] resume failed: ${(e as Error).message}\n`)
     }
   }
 
@@ -1469,22 +1498,22 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   try {
     const persistedTurns = listPersistedTurns(sessionId, cwd)
     const rec = await planRecoveryForSession(sessionId, cwd, { persistedTurns })
-    for (const w of rec.warnings) process.stderr.write(c.yellow(`[recovery] ${w}\n`))
+    for (const w of rec.warnings) startupWrite(c.yellow(`[recovery] ${w}\n`))
     if (rec.directive) {
-      process.stderr.write(
+      startupWrite(
         c.yellow(`[recovery] unfinished mutations need verification — see system note\n`),
       )
       recoveryAppendix = `\n\n# Recovery note (interrupted session — verify before re-executing)\n${rec.directive}`
     }
   } catch (e) {
-    process.stderr.write(`[warn] recovery plan failed: ${(e as Error).message}\n`)
+    startupWrite(`[warn] recovery plan failed: ${(e as Error).message}\n`)
   }
 
   let durablePresentationEvents: DomainEvent[] = []
   try {
     durablePresentationEvents = loadPresentationEvents(sessionId, cwd)
   } catch (e) {
-    process.stderr.write(`[warn] presentation replay load failed: ${(e as Error).message}\n`)
+    startupWrite(`[warn] presentation replay load failed: ${(e as Error).message}\n`)
   }
   let rebuiltPresentation: ReturnType<typeof rebuildFromDurable> | null = null
   try {
@@ -1494,7 +1523,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       sessionId,
     )
   } catch (e) {
-    process.stderr.write(`[warn] presentation replay failed: ${(e as Error).message}\n`)
+    startupWrite(`[warn] presentation replay failed: ${(e as Error).message}\n`)
   }
   // P2.11 — replay watershed: state.seq sesaat setelah rebuild. Baris snapshot
   // pada/di bawah ini = replay/reconstructed; di atasnya = live (provenance
@@ -1515,7 +1544,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   try {
     await reconcileUndoRedoPointer(sessionId, cwd)
   } catch (e) {
-    process.stderr.write(`[warn] checkpoint reconcile failed: ${(e as Error).message}\n`)
+    startupWrite(`[warn] checkpoint reconcile failed: ${(e as Error).message}\n`)
   }
 
   // Kontrak control-plane (Phase 6, E5): usage kompaksi LLM dikirim ke bus
@@ -3684,6 +3713,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     productionScheduler,
     schedulerObservability,
     adoption,
+    startupNotices: deferStartup ? startupNotices : undefined,
     // [P1 M14] Same rule as the Scheduler handle above: one session owns one
     // runtime, reachable only through the session, never through a registry.
     productionRuntime,

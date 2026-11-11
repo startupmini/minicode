@@ -53,7 +53,18 @@
 // Pertumbuhan murni kode + komentar "mengapa"; `gate:pack` lolos 22/23 cek
 // (hanya ukuran over); tidak ada node_modules/test/artefak basi yang ikut.
 // Re-baseline ke 3.968 KiB memberi ~43 KiB ruang untuk rilis minor berikut.
-export const PACK_SIZE_BUDGET_KIB = 3968
+//
+// [RE-BASELINE 4,0 MiB — disetujui owner 2026-11-11]
+// Fitur baru yang sah: bar loading startup (`src/ui/runtime/loading-bar.ts`
+// + wiring cli/setup/index/auto-update/tui) dan panel aktivitas TUI
+// (`src/ui/render/activity-group.ts`, `activity-panel.ts` + wiring). Aktual
+// `unpackedSize` terukur pada worktree fitur = 3.988 KiB (npm pack --dry-run,
+// 309 file); kontribusi bar loading ≈12 KB, panel aktivitas ≈11 KB. Budget
+// lama 3.968 KiB terlampaui 20 KiB. Bukti: `gate:pack` 22/23 lolos (hanya
+// ukuran), tidak ada `node_modules`/`test`/artefak basi terbawa. Budget baru
+// 4.096 KiB (4,0 MiB) memberi ~108 KiB ruang di atas aktual. Tetap alarm
+// regresi, bukan target ukuran.
+export const PACK_SIZE_BUDGET_KIB = 4096
 
 /**
  * True bila ukuran paket (KiB) masih di dalam budget.

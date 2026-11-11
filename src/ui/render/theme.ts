@@ -345,6 +345,14 @@ export const glyphs = {
   get spinnerFrames() {
     return supportsUtf8() ? ["·", "··", "···"] : [".", "..", "..."]
   },
+  // Blok progress bar loading (baris tunggal). Fallback ASCII untuk terminal
+  // tanpa UTF-8 (MINICODE_ASCII / konsol Windows legacy).
+  get blockFilled() {
+    return supportsUtf8() ? "▓" : "#"
+  },
+  get blockEmpty() {
+    return supportsUtf8() ? "░" : "-"
+  },
   get thinkingIcon() {
     // Sparkle ✦ (bintang) — indikator thinking yang "kelip-kelip": glyph
     // monokrom, jadi warna ANSI (putih ↔ abu di turn-status) terlihat.

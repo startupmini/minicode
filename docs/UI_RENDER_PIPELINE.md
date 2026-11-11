@@ -82,7 +82,10 @@ Tahap H — primitif render `src/ui/render/`: `sanitize.ts` (hanya SGR lolos),
 per baris → aman resize), `theme.ts` (getter warna/glyph, jangan di-`const`),
 `errors.ts` (pesan actionable + redact), `collapse.ts` (buffer `/expand`
 200KB/entry, 500KB total), `markdown-table.ts`/`table-grid.ts` (pipe-table
-model), `diff.ts`/`table.ts`/`money.ts`/`format.ts`.
+model), `diff.ts`/`table.ts`/`money.ts`/`format.ts`,
+`activity-group.ts`/`activity-panel.ts` (panel aktivitas: klasifikasi tool →
+keluarga `explore|edit|execute|feed|other` + satu baris ringkas per keluarga,
+maks 10 baris; murni, dipakai TUI + linear).
 
 Tahap H2 — tabel Markdown model: `src/ui/render/markdown-table.ts` memvalidasi
 header/delimiter, escaped pipe, code span, alignment, dan fence; stream block
@@ -104,8 +107,8 @@ I = bisa diinterupsi, L = bisa tiba setelah completion.
 |---|---|---|---|---|---|---|---|
 | assistant text | provider stream | stdout wrap + fence 2-spasi; pipe-table-aligned di TTY, source sanitized di non-TTY | ya | tidak (E1) | tidak | ya (abort) | tidak (detach flush 1x, E6) |
 | tool call | model → kernel | `› nama target` muted (compact: diam) | tidak | tidak | tidak | ya | tidak |
-| tool result | tool → executor | ledger hijau/merah; minimize → `+ label` + buffer | tidak | tidak | tidak | ya | tidak |
-| reasoning | provider extension | TUI composer: dots clock tanpa marker transcript; expanded transcript/linear tetap live per baris; minimized tetap buffer untuk `/expand` | ya | tidak | tidak | ya | tidak |
+| tool result | tool → executor | ledger hijau/merah; minimize → `+ label` + buffer; panel aktivitas ON → baris grup per keluarga tool (`+ explore · N tools · N ok`) | tidak | tidak | tidak | ya | tidak |
+| reasoning | provider extension | TUI composer: dots clock; panel aktivitas ON → AREA thinking live maks 10 baris (`+ thinking`, ringkas 1 baris saat turn selesai, detail di `/expand`); panel OFF → alir per baris; minimized → buffer `/expand` | ya | tidak | tidak | ya | tidak |
 | thinking effort | picker `/model` | badge + level per model | tidak | tidak | tidak | tidak | tidak |
 | usage | provider extension | verbose saja; masuk budget watcher | ya | tidak | ya (tail pasca-finish) | ya | ya (diabaikan aman) |
 | compaction | kernel loop | `── compacted: <reason>` kuning, reason verbatim | tidak | tidak | tidak | tidak | tidak |

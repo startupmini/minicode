@@ -19,8 +19,10 @@ import { GATE_ENABLED, resolveSchedulerGate } from "../src/task/production-sched
 import { writeTrace } from "../src/telemetry/trace.ts"
 import { setSubAgentSessionFactory } from "../src/tools/task.ts"
 import { formatError } from "../src/ui/assistant/simple.ts"
+import { type MsgKey, t } from "../src/ui/i18n/locale.ts"
 import { formatUsd } from "../src/ui/render/money.ts"
 import { c, glyphs } from "../src/ui/render/theme.ts"
+import { motionReduced } from "../src/ui/runtime/motion.ts"
 import {
   allowLocalConfig,
   displayWorkMode,
@@ -471,26 +473,38 @@ const enterRepl = interactive || (!prompt && process.stdin.isTTY)
 // di-commit sebagai baris permanen, dan frame spinner tak menghapus baris layar
 // interaktif saat wizard setup pertama aktif (statusline.beginInteractiveScreen
 // menahan paintWrite).
-const { createSpinner } = await import("../src/ui/runtime/spinner.ts")
+const { createLoadingBar } = await import("../src/ui/runtime/loading-bar.ts")
+type LoadingBar = NonNullable<ReturnType<typeof createLoadingBar>>
+let startupBar: LoadingBar | null = null
 if (enterRepl) {
+  startupBar = createLoadingBar("", { delayMs: 120 })
   const ctrl = new AbortController()
   const to = setTimeout(() => ctrl.abort(), 1800)
-  // Delay 120ms: cek update sering selesai <200ms — tanpa delay, spinner
-  // berkedip lalu hilang. Pola frame 80ms sesuai kontrak startup.
-  const spin = createSpinner("Checking for updates…", { delayMs: 120, intervalMs: 80 })
+  // Fase update: 0–12% (cek) → 35% (install) → 95% (restart). Tidak pernah
+  // menembus target fase — 100% hanya ketika REPL benar-benar siap.
   try {
     const { maybeAutoUpdate } = await import("./auto-update.ts")
-    // Dipanggil auto-update SEBELUM fase panjang (install npm + respawn anak):
-    // matikan spinner agar tak menulis ke stderr yang sama dengan anak selama
-    // berjam-jam (stdio inherit) — itu yang terlihat sebagai hang/flicker.
-    // Idempoten: aman dipanggil dua kali (sebelum install, sebelum restart).
     await maybeAutoUpdate(readVersion(), ctrl.signal, {
-      onLongOp: () => spin.stop(),
+      onLongOp: () => startupBar?.stop(),
       getInstalledVersion: readVersion,
+      onPhase: (phase) => {
+        if (phase === "check") startupBar?.update(t("loading.checking"), 6)
+        else if (phase === "install") startupBar?.update(t("loading.installing"), 35)
+        else if (phase === "restart") startupBar?.update(t("loading.restarting"), 95)
+      },
+      onNotice: (line) => {
+        // Bar sedang dihentikan selama install/restart — pesan proses tetap
+        // dikirim ke stderr (append-only, tersembunyi di balik bar).
+        process.stderr.write(line)
+      },
     })
   } catch {}
   clearTimeout(to)
-  spin.stop()
+  // Jalur tanpa update (kasus paling umum): hentikan bar update agar tidak
+  // bertabrakan dengan bar setup di bawah (satu painter transient pada satu
+  // waktu — kind sama, tanpa warning, tapi dua klaim hidup bersamaan).
+  startupBar?.stop()
+  startupBar = null
 }
 if (!prompt && !enterRepl) {
   process.stderr.write('usage: minicode "prompt"  |  minicode (interactive mode)\n')
@@ -516,18 +530,27 @@ try {
 
 // -- build session --
 // Session setup (provider/RAG/MCP/session) bisa makan detik (network + spawn)
-// TANPA output — user melihat kursor mati. Spinner transient TTY-only selama
-// setup, dibersihkan sebelum banner REPL agar tak ada jejak.
-// Spinner ini berjalan di atas createCliSession — termasuk saat wizard setup
-// pertama (picker gateway + prompt API key) memegang terminal. Lewat
-// createSpinner, tick-nya otomatis BERHENTI selama layar interaktif aktif
+// TANPA output — user melihat kursor mati. Bar loading transient TTY-only
+// selama setup, dibersihkan sebelum TUI agar tak ada jejak.
+// Bar berjalan di atas createCliSession — termasuk saat wizard setup pertama
+// (picker gateway + prompt API key) memegang terminal. Lewat paintWrite,
+// lukisannya otomatis BERHENTI selama layar interaktif aktif
 // (statusline.beginInteractiveScreen di openAltScreen): dulu tulis mentah
 // `\r\x1b[2K` menghapus baris prompt wizard, sehingga user baru hanya melihat
 // "Menyiapkan sesi…" tanpa cara menyelesaikan setup (laporan: minicode dari
 // home selalu macet).
-const setupSpin = enterRepl ? createSpinner("Menyiapkan sesi…") : undefined
+let setupBar: LoadingBar | null = null
+const setupBarPhases: Record<string, { pct: number; label: MsgKey }> = {
+  "provider-layer": { pct: 55, label: "loading.provider" },
+  "rag-layer": { pct: 75, label: "loading.rag" },
+  "tool-layer": { pct: 90, label: "loading.session" },
+  "kernel-session": { pct: 98, label: "loading.session" },
+}
+if (enterRepl) {
+  setupBar = createLoadingBar(t("loading.session"), { delayMs: 120 })
+}
 // finally: createCliSession yang melempar (provider/MCP gagal) tak boleh
-// membocorkan interval — tanpa ini spinner menulis ke stderr selamanya dan
+// membocorkan painter — tanpa ini bar menulis ke stderr selamanya dan
 // proses tak pernah exit (terlihat hang).
 let ctx: Awaited<ReturnType<typeof createCliSession>>
 try {
@@ -565,6 +588,11 @@ try {
     timeoutMs,
     rateLimiter,
     sandboxNotice: requestedSandbox ? sandbox.notice : undefined,
+    onPhase: (name) => {
+      if (!enterRepl) return
+      const phase = setupBarPhases[name]
+      if (phase !== undefined) setupBar?.update(t(phase.label), phase.pct)
+    },
   })
 } catch (e) {
   // Tanpa provider = setup gagal sebelum sesi ada. Pesan + exit(1) sama
@@ -586,12 +614,23 @@ try {
   }
   throw e
 } finally {
-  setupSpin?.stop()
+  setupBar?.stop()
 }
 
 if (enterRepl) {
   // Satu-satunya tampilan interaktif = TUI fullscreen (REPL linier dihapus).
   // One-shot/exec tak tersentuh (cabang else di bawah).
+  if (setupBar) {
+    setupBar.update(t("loading.finalize"), 100)
+    // Beri jeda satu frame agar cap 100% benar-benar terlihat sebelum baris
+    // dibersihkan; tanpa ini update+stop di tick yang sama membuat bar tak
+    // pernah tampak mencapai 100%. Dilewati pada non-TTY/motion-reduced.
+    if (process.stderr.isTTY && !motionReduced()) {
+      await new Promise((r) => setTimeout(r, 80))
+    }
+    setupBar.stop()
+    setupBar = null
+  }
   const { runTui } = await import("./tui.ts")
   const replStart = Date.now()
   try {

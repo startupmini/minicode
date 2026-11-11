@@ -75,9 +75,9 @@ describe("release: metadata paket", () => {
     expect(pkg.engines?.bun ?? "").toMatch(/bun|>=/)
   })
 
-  test("repository/homepage/bugs menunjuk startupmini", () => {
+  test("repository/homepage/bugs menunjuk minilabs-id", () => {
     const raw = read("package.json")
-    expect(raw).toContain("startupmini/minicode")
+    expect(raw).toContain("minilabs-id/minicode")
     expect(raw).not.toContain("ngodingsendiri")
   })
 })

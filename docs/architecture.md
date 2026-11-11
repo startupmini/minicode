@@ -12,7 +12,7 @@ L2 src/ non-ui      → agen: tools, agents, hooks, policy, providers, mcp, lsp,
 L3 vendor/minicore  → kernel STATE/MODEL/ACTION/LOOP (freeze, zero-dep, via #minicore)
 ```
 
-Pin source kernel ada di [catatan vendor MiniCore](https://github.com/startupmini/minicode/blob/main/vendor/minicore/VENDOR.md):
+Pin source kernel ada di [catatan vendor MiniCore](https://github.com/minilabs-id/minicode/blob/main/vendor/minicore/VENDOR.md):
 `0d33571`. Impor kernel aplikasi hanya melalui `#minicore`.
 
 Patch host yang diperlukan runtime tersimpan di `scripts/vendor-overlays/` dan

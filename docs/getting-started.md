@@ -35,7 +35,7 @@ Kenapa butuh keduanya? `npm` = toko distribusi, `Bun` = mesin yang menjalankan. 
 Untuk kontributor (kerja dari source):
 
 ```bash
-git clone https://github.com/startupmini/minicode && cd minicode
+git clone https://github.com/minilabs-id/minicode && cd minicode
 bun install && bun link
 ```
 

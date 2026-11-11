@@ -87,7 +87,7 @@ Kejujuran yang disengaja: crash ambiguity TETAP MUNGKIN (filesystem dan database
 
 ## Security Contact
 
-Belum ada kontak keamanan privat. Laporkan masalah via [GitHub Issues](https://github.com/startupmini/minicode/issues) **tanpa menyertakan kredensial, token, atau data sensitif** — cukup langkah reproduksi minimal + output `minicode doctor`.
+Belum ada kontak keamanan privat. Laporkan masalah via [GitHub Issues](https://github.com/minilabs-id/minicode/issues) **tanpa menyertakan kredensial, token, atau data sensitif** — cukup langkah reproduksi minimal + output `minicode doctor`.
 
 ## Lanjut
 

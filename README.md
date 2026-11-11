@@ -16,7 +16,7 @@ minicode
 To run from a clone:
 
 ```bash
-git clone https://github.com/startupmini/minicode.git
+git clone https://github.com/minilabs-id/minicode.git
 cd minicode
 bun install
 bun run dev
@@ -43,7 +43,7 @@ The full manual lives in [`docs/`](docs/) and is rendered at [minilabs.id/projec
 - [Configuration and providers](docs/config.md) · [Environment variables](docs/environment.md) · [Tools](docs/tools.md)
 - [Security model](docs/security-model.md) · [Policy and sandbox](docs/policy-sandbox.md)
 - [Architecture and repository map](docs/architecture.md)
-- [Contributing](docs/contributing.md) · [Release history](https://github.com/startupmini/minicode/releases)
+- [Contributing](docs/contributing.md) · [Release history](https://github.com/minilabs-id/minicode/releases)
 
 ## Development checks
 

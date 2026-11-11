@@ -27,10 +27,10 @@
   "homepage": "https://minilabs.id/projects/minicode/",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/startupmini/minicode.git"
+    "url": "git+https://github.com/minilabs-id/minicode.git"
   },
   "bugs": {
-    "url": "https://github.com/startupmini/minicode/issues"
+    "url": "https://github.com/minilabs-id/minicode/issues"
   },
   "bin": {
     "minicode": "cli/minicode.js"

@@ -5,7 +5,7 @@ Lisensi **MIT** (lihat `LICENSE`). Kontribusi publik diterima. Praktik aktif: **
 ## Setup dev
 
 ```bash
-git clone https://github.com/startupmini/minicode && cd minicode
+git clone https://github.com/minilabs-id/minicode && cd minicode
 bun install
 bun test              # offline/hermetic; live & docker di-skip otomatis
 bun x tsc --noEmit

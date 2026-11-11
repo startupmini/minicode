@@ -63,7 +63,7 @@ const EMOJI_PRESENTATION = /\p{Emoji_Presentation}/u
 const EXTENDED_PICTOGRAPHIC = /\p{Extended_Pictographic}/u
 let widthSegmenter: Intl.Segmenter | undefined
 
-function segmentGraphemes(text: string): string[] {
+export function segmentGraphemes(text: string): string[] {
   try {
     widthSegmenter ??= new Intl.Segmenter("und", { granularity: "grapheme" })
     return Array.from(widthSegmenter.segment(text), (part) => part.segment)
@@ -74,7 +74,7 @@ function segmentGraphemes(text: string): string[] {
   }
 }
 
-function graphemeWidth(grapheme: string): number {
+export function graphemeWidth(grapheme: string): number {
   const points = Array.from(grapheme, (part) => part.codePointAt(0)!)
   const has = (from: number, to: number): boolean => points.some((cp) => cp >= from && cp <= to)
   const containsEmoji = points.some((cp) => EMOJI.test(String.fromCodePoint(cp)))

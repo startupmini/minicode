@@ -9,7 +9,12 @@
 //   try { ... screen.paint(frame) ... } finally { screen.close() }
 // Refcount menutup modal nested (effort-picker di dalam manager): tulis
 // enter/exit fisik hanya di lapis terluar; handle dalam = no-op paint-through.
-import { __resetTransientForTest, beginInteractiveScreen } from "./statusline.ts"
+import { type Cell, diffCellLine, parseCells } from "../render/cells.ts"
+import {
+  __resetTransientForTest,
+  beginInteractiveScreen,
+  consumeScreenDrift,
+} from "./statusline.ts"
 
 const ENTER = "\x1b[?1049h"
 const EXIT = "\x1b[?1049l"
@@ -70,6 +75,12 @@ export interface AltScreen {
   /** Lukis frame penuh; exception writer dipropagasikan agar owner menutup sesi. */
   paint(lines: string[], cursor?: { row: number; col: number }): void
   /**
+   * Pindahkan kursor SAJA, tanpa menyentuh isi frame. Dipakai fast path
+   * panah/Home/End: pergerakan kursor tak mengubah satu sel pun, jadi
+   * merakit ulang frame penuh hanya membuang kerja.
+   */
+  moveCursor(row: number, col: number): void
+  /**
    * Lukis REGION TANPA clear: popup di atas konten pemilik layar (App TUI).
    * Tiap baris ditulis di `topRow+i` (1-based) setelah hapus-baris; baris di
    * luar region TAK tersentuh sehingga transkrip di belakang tetap tampil.
@@ -97,6 +108,7 @@ function nullScreen(): AltScreen {
     cols: process.stdout.columns || NULL_COLS,
     rows: process.stdout.rows || NULL_ROWS,
     paint: () => {},
+    moveCursor: () => {},
     paintRegion: () => {},
     clearRegion: () => {},
     close: () => {},
@@ -139,13 +151,16 @@ export function openAltScreen(): AltScreen {
   // areanya masing-masing.
   let lastRegion: { top: number; height: number } | null = null
   // [perf] Frame LOGIS tetap penuh (`rows` baris — kontrak I1); yang di-diff
-  // hanyalah PENULISAN FISIK. Tiap keystroke sebelumnya clear `ESC[2J` +
-  // tulis ulang SEMUA baris (flicker/latensi di ConPTY Windows, makin terasa
-  // saat transkrip panjang). Kini hanya baris yang berubah yang ditulis
-  // (CUP+EL). Inisialisasi/resize (jumlah baris berbeda) tetap clear penuh.
+  // hanyalah PENULISAN FISIK. Diff dilakukan per SEL (bukan per baris): prefix
+  // yang identik dilewati, lalu ekor dari kolom berbeda pertama ditulis ulang
+  // setelah EL (lihat diffCellLine). Satu huruf berubah di prompt panjang hanya
+  // menulis ekornya, bukan seluruh baris. Inisialisasi/resize (jumlah
+  // baris/kolom berubah) tetap clear penuh.
   // Per-handle (closure): screen baru = diff state baru, konsisten dengan
   // `lastRegion`.
   let lastFrame: string[] | null = null
+  let lastCells: Cell[][] | null = null
+  let lastCols = 0
   return {
     ok: true,
     // Getter LIVE (bukan snapshot saat open) — resize di tengah modal wajib
@@ -159,28 +174,60 @@ export function openAltScreen(): AltScreen {
     },
     paint(lines: string[], cursor?: { row: number; col: number }): void {
       if (closed) return
-      process.stdout.write(SYNC_START)
-      if (lastFrame && lastFrame.length === lines.length) {
-        // Diff per baris: hanya baris yang berubah → CUP ke baris + EL (hapus
-        // baris) + tulis. Tanpa HOME/ESC[2J → hapus flicker & latensi
-        // clear-penuh tiap keystroke; frame akhir layar tetap IDENTIK (I1).
+      // SATU string per frame = SATU `write` ke pipe ConPTY. Sebelumnya frame
+      // dipecah 4–5 write (sync-start, tiap baris, kursor, sync-end); di
+      // Windows tiap write menyeberangi ConPTY dan biayanya jauh lebih mahal
+      // daripada merakit string di JS.
+      let out = SYNC_START
+      const cols = process.stdout.columns || NULL_COLS
+      // Tulis asing ke stderr (diagnostik/hooks) mengotori buffer di balik
+      // pelacakan diff; paksa repaint penuh sekali agar tak ada fragmen asing
+      // yang menempel di baris yang kebetulan tak berubah.
+      const drifted = consumeScreenDrift()
+      if (
+        !drifted &&
+        lastFrame &&
+        lastCells &&
+        lastFrame.length === lines.length &&
+        lastCols === cols
+      ) {
+        // Diff per sel. Bandingkan string baris dulu (murah); hanya baris yang
+        // berubah yang di-parse menjadi sel dan di-diff. Baris tak berubah =
+        // nol byte, bukan CUP+EL+seluruh baris.
         for (let r = 0; r < lines.length; r++) {
           const line = lines[r]!
           if (line === lastFrame[r]) continue
-          process.stdout.write(`\x1b[${r + 1};1H\x1b[2K${line}`)
+          const nextCells = parseCells(line)
+          out += diffCellLine(lastCells[r] ?? [], nextCells, r + 1)
+          lastCells[r] = nextCells
+          lastFrame[r] = line
         }
       } else {
-        process.stdout.write(HOME)
-        process.stdout.write(CLEAR_ALL)
-        process.stdout.write(lines.join("\r\n"))
+        out += HOME + CLEAR_ALL + lines.join("\r\n")
+        lastFrame = lines.slice()
+        lastCells = lines.map((line) => parseCells(line))
+        lastCols = cols
       }
-      lastFrame = lines.slice()
+      // Reset atribut sebelum kursor: run diff bisa berakhir dengan warna
+      // aktif, dan kursor yang ditampilkan mewarisi atribut itu.
+      out += RESET_ATTRS
       if (cursor) {
         const row = Math.max(1, Math.floor(cursor.row))
         const col = Math.max(1, Math.floor(cursor.col))
-        process.stdout.write(`\x1b[?25l\x1b[${row};${col}H\x1b[?25h`)
+        out += `\x1b[?25l\x1b[${row};${col}H\x1b[?25h`
       }
-      process.stdout.write(SYNC_END)
+      out += SYNC_END
+      process.stdout.write(out)
+    },
+    moveCursor(row: number, col: number): void {
+      if (closed) return
+      const r = Math.max(1, Math.floor(row))
+      const c = Math.max(1, Math.floor(col))
+      // Sync block + reset atribut: kursor tak boleh mewarisi warna run
+      // sebelumnya, dan perpindahan kursor tak perlu menyentuh satu sel pun.
+      process.stdout.write(
+        `${SYNC_START}${RESET_ATTRS}\x1b[?25l\x1b[${r};${c}H\x1b[?25h${SYNC_END}`,
+      )
     },
     paintRegion(lines: string[], topRow: number): void {
       if (closed) return
@@ -209,6 +256,11 @@ export function openAltScreen(): AltScreen {
       out += SYNC_END
       process.stdout.write(out)
       lastRegion = h > 0 ? { top, height: h } : null
+      // Region menimpa isi frame di luar pelacakan diff; paksa paint berikutnya
+      // clear penuh agar sisa popup tidak tertinggal sebagai baris hantu.
+      lastFrame = null
+      lastCells = null
+      lastCols = 0
     },
     clearRegion(): void {
       if (closed) return
@@ -222,6 +274,11 @@ export function openAltScreen(): AltScreen {
         process.stdout.write(out)
       } catch {}
       lastRegion = null
+      // Area popup sudah dihapus, tetapi isi frame di bawahnya tidak lagi
+      // tercermin di `lastCells`; paint berikutnya harus penuh.
+      lastFrame = null
+      lastCells = null
+      lastCols = 0
     },
     close(): void {
       if (closed) return

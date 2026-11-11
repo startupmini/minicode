@@ -854,16 +854,43 @@ export class Transcript {
       const to = Math.max(start.offset, end.offset)
       return source.slice(from, to)
     }
+    // `ids` terurut menaik menurut `order` (monotonik saat append + eviction
+    // dari depan), jadi lompati sumber SEBELUM awal seleksi dengan pencarian
+    // biner — bukan memindai seluruh transkrip (bisa 5.000 entri) tiap salin.
     const parts: string[] = []
-    for (const id of this.ids) {
+    for (let i = this.orderLowerBound(first.order); i < this.ids.length; i++) {
+      const id = this.ids[i]!
       const order = this.sourceOrders.get(id)
-      if (order === undefined || order < first.order || order > last.order) continue
+      if (order === undefined) continue
+      if (order > last.order) break
       const source = this.sourceTexts.get(id) ?? ""
       if (order === first.order) parts.push(source.slice(first.point.offset))
       else if (order === last.order) parts.push(source.slice(0, last.point.offset))
       else parts.push(source)
     }
     return parts.join("\n")
+  }
+
+  /** Seleksi kosong (anchor == focus pada sumber yang sama) tanpa menyusun teks. */
+  selectionIsEmpty(start: TranscriptPoint, end: TranscriptPoint): boolean {
+    const startOrder = this.sourceOrders.get(start.id)
+    const endOrder = this.sourceOrders.get(end.id)
+    if (startOrder === undefined || endOrder === undefined) return true
+    if (start.id === end.id) return start.offset === end.offset
+    return false
+  }
+
+  /** Indeks pertama di `ids` dengan order >= `order` (ids terurut menaik). */
+  private orderLowerBound(order: number): number {
+    let lo = 0
+    let hi = this.ids.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      const o = this.sourceOrders.get(this.ids[mid]!) ?? -1
+      if (o < order) lo = mid + 1
+      else hi = mid
+    }
+    return lo
   }
 
   dispose(): void {

@@ -233,6 +233,7 @@ export const id: Record<MsgKey, string> = {
     "tersalin {turns} turn ({n} chars · OSC 52 — izinkan akses clipboard di terminal bila kosong)",
   "tui.copyInvalid": "jumlah turn tidak valid: {n} (gunakan 1–{max})",
   "tui.copyNeedTty": "(clipboard butuh terminal TTY)",
+  "tui.copyTooLarge": "payload salin terlalu besar ({n} byte, maks {max})",
   "tui.unknownMode": "mode tidak dikenal: {a} — pilihan: {modes}",
   "tui.modeLine": "mode: {m}",
   "tui.workModeUnknown": "work mode tidak dikenal: {a} — pilihan: {modes}",

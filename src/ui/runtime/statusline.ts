@@ -23,6 +23,12 @@ let ourWrite: ((chunk: string | Uint8Array, ...rest: never[]) => boolean) | null
 /** Write asli sebelum wrapper dipasang — untuk restore saat self-disable. */
 let origWrite: typeof process.stderr.write | null = null
 const warnedOverlap = new Set<string>()
+// Penulis ASING ke stderr selama alt-screen hidup mengotori buffer terminal di
+// luar kendali layar (mis. `[hooks] skipped …`, warning provider). Karena layar
+// kini menulis inkremental (diff), baris yang tak berubah TIDAK ditulis ulang —
+// tanpa sinyal ini, sampah asing menempel permanen. Layar mengonsumsi sinyal
+// ini dan memaksa repaint penuh pada paint berikutnya.
+let screenDrift = false
 
 // Bun Windows (1.4.x): `stderr.write` yang dilepas dari method (bound/detached)
 // melempar `TypeError: undefined is not an object (evaluating
@@ -73,6 +79,17 @@ export function __resetTransientForTest(): void {
   transientBroken = false
   warnedOverlap.clear()
   screenDepth = 0
+  screenDrift = false
+}
+
+/**
+ * Konsumsi sinyal "terminal dikotori tulis asing". Mengembalikan true sekali
+ * lalu membersihkan; layar memakainya untuk memaksa repaint penuh.
+ */
+export function consumeScreenDrift(): boolean {
+  const drift = screenDrift
+  screenDrift = false
+  return drift
 }
 
 // Pasang wrapper stderr HANYA bila owner transient pertama muncul. Wrapper
@@ -102,6 +119,10 @@ function ensureWrap(): void {
   const target = process.stderr.write.bind(process.stderr) as RawWrite
   bound = target
   ourWrite = ((chunk: string | Uint8Array, ...rest: never[]) => {
+    // Tulis asing (bukan dari painter internal) saat layar alt memegang
+    // terminal: tandai kotor. `paintWrite` menyetel `ownerWriting` sehingga
+    // jalur internal tak pernah menandai dirinya sendiri.
+    if (!ownerWriting && screenDepth > 0) screenDrift = true
     if (ownerWriting || !owner) {
       try {
         return target(chunk, ...rest)
@@ -177,6 +198,11 @@ let screenDepth = 0
  * subcommand TTY, dan suspend yang sudah dihapus bersama driver linier.
  */
 export function beginInteractiveScreen(): () => void {
+  // Pasang wrapper stderr saat alt-screen pertama mengambil alih: tanpa owner
+  // transient (mode TUI tak selalu punya), wrapper inert tidak terpasang, dan
+  // tulis asing ke stderr tak terdeteksi — padahal justru itu yang mengotori
+  // buffer di balik diff layar.
+  if (screenDepth === 0) ensureWrap()
   // Baris painter terakhir dibersihkan SEKARANG (kursor masih persis di sana),
   // sebelum layar menulis byte pertamanya — dan SEBELUM depth naik, karena
   // paintWrite menolak menulis saat layar sudah aktif. Tanpa ini teks spinner

@@ -26,7 +26,12 @@ import {
 } from "../src/presentation/projection.ts"
 import { redoLastCheckpoint, undoLastCheckpoint } from "../src/session/checkpoint.ts"
 import { renderSkill } from "../src/skills/loader.ts"
-import { MAX_COPY_TURNS, writeClipboardOsc52 } from "../src/ui/assistant/simple.ts"
+import {
+  clipboardByteLength,
+  MAX_CLIPBOARD_BYTES,
+  MAX_COPY_TURNS,
+  writeClipboardOsc52,
+} from "../src/ui/assistant/simple.ts"
 import type { UiBus } from "../src/ui/contract.ts"
 import { t } from "../src/ui/i18n/locale.ts"
 import { loadHistory } from "../src/ui/input/input.ts"
@@ -514,6 +519,15 @@ export async function runTui(ctx: CliSession): Promise<void> {
     const txt = turns.join("\n\n").trim()
     if (!txt) {
       transcript.pushInfo([c.muted(t("tui.copyNone"))])
+      return
+    }
+    // Guard byte SEBELUM base64: 10 turn panjang bisa melewati batas OSC 52;
+    // memberi pesan spesifik lebih baik daripada gagal "butuh TTY" yang keliru.
+    const bytes = clipboardByteLength(txt)
+    if (bytes > MAX_CLIPBOARD_BYTES) {
+      transcript.pushInfo([
+        c.warning(t("tui.copyTooLarge", { n: bytes, max: MAX_CLIPBOARD_BYTES })),
+      ])
       return
     }
     if (writeClipboardOsc52(txt)) {

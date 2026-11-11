@@ -82,6 +82,15 @@ export interface FakeTty {
    */
   waitForOutput(pred: (out: string) => boolean, timeoutMs?: number): Promise<string>
   /**
+   * Tunggu sampai GRID layar (hasil parse byte VT) cocok predikat.
+   *
+   * Sejak diff per sel, teks yang tidak berubah tidak ditulis ulang — menunggu
+   * substring di byte mentah (`waitForOutput`) salah kalau yang dimaksud
+   * adalah "teks ini terlihat di layar". `waitForScreen` menegaskan kontrak
+   * yang benar: frame logis, bukan urutan byte fisik.
+   */
+  waitForScreen(pred: (screen: string[]) => boolean, timeoutMs?: number): Promise<string[]>
+  /**
    * Jawab prompt berurutan.
    *
    * Setiap kali komponen memasang listener stdin baru, jawaban berikutnya
@@ -399,6 +408,19 @@ export function installFakeTty(opts: FakeTtyOptions = {}): FakeTty {
         if (pred(out)) return out
         if (Date.now() > deadline) {
           throw new Error("fake tty: output yang ditunggu tidak muncul dalam batas waktu")
+        }
+        await new Promise((r) => setTimeout(r, 5))
+      }
+    },
+    async waitForScreen(pred, timeoutMs = 2000) {
+      const deadline = Date.now() + timeoutMs
+      for (;;) {
+        const frame = parseScreenBuffer(chunks.join(""), columns, rows)
+        if (pred(frame)) return frame
+        if (Date.now() > deadline) {
+          throw new Error(
+            `fake tty: isi layar yang ditunggu tidak muncul dalam batas waktu\n--- layar ---\n${frame.join("\n")}\n--------------`,
+          )
         }
         await new Promise((r) => setTimeout(r, 5))
       }

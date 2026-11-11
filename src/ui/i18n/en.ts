@@ -232,6 +232,7 @@ export const en = {
     "copied {turns} turns ({n} chars · OSC 52 — allow clipboard access in terminal if empty)",
   "tui.copyInvalid": "invalid turn count: {n} (use 1–{max})",
   "tui.copyNeedTty": "(clipboard needs a TTY terminal)",
+  "tui.copyTooLarge": "copy payload too large ({n} bytes, max {max})",
   "tui.unknownMode": "unknown mode: {a} — choices: {modes}",
   "tui.modeLine": "mode: {m}",
   "tui.workModeUnknown": "unknown work mode: {a} — choices: {modes}",

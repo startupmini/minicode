@@ -204,3 +204,40 @@ nyata di audit ini. Chaos kombinasi (stream+resize+abort serentak di TTY)
 dan soak 100+ turn multitool belum dijalankan. Sub-agent tanpa view khusus:
 indukan dibedakan hanya dari nama tool (cukup untuk 1 level, belum diuji
 visual untuk delegasi bertingkat — yang memang dilarang: tanpa nesting).
+
+## 6. Optimasi latensi ketik & biaya salin (fase 1–4, pasca-audit)
+
+Ringkasan: TUI tetap penuh `rows` baris secara LOGIS; yang diperkecil hanyalah
+byte FISIK yang ditulis. Kontrak perilaku user-visible tidak berubah, jadi
+`TERMINAL_CONTRACT.md` I1 adalah sumber kebenaran.
+
+- **Fase 1 — satu `write` per frame.** `screen.paint` merakit seluruh frame
+  (masuk blok sinkronis `ESC[?2026h`/`ESC[?2026l`) menjadi SATU string lalu
+  menulisnya sekali ke `process.stdout`. Menghapus sejumlah `write` kecil per
+  frame yang membuat ConPTY membangun ulang potongan.
+- **Fase 2 — diff per sel.** `src/ui/render/cells.ts` memecah baris menjadi sel
+  (grapheme + STATE SGR ternormalisasi) dan menghasilkan byte minimal:
+  prefix identik dilewati (nol byte), lalu dari kolom berbeda PERTAMA sampai
+  akhir baris ditulis ulang setelah EL `ESC[0K`. Start mundur ke sel pembawa
+  glyph agar EL tidak membelah glyph lebar; kolom lanjutan ditandai `cont`.
+  Frame pertama / resize / perubahan jumlah kolom tetap `ESC[H`+`ESC[2J`.
+- **Fase 2b — invalidasi drift.** Tulis asing ke stderr selama alt-screen hidup
+  (mis. `[hooks] skipped …`, warning provider) mengotori buffer di balik
+  pelacakan diff; `statusline` menandainya (`consumeScreenDrift`) dan layar
+  memaksa repaint penuh sekali. `beginInteractiveScreen` memasang wrapper
+  stderr saat depth 0→1 supaya sinyal ini terpasang bahkan tanpa owner transient.
+  Tanpa ini baris yang kebetulan tak berubah akan mempertahankan fragmen asing.
+- **Fase 3 — hot path editor.** `screen.moveCursor` untuk fast-path kursor-saja
+  (tanpa merakit ulang frame); `prompt-engine.ts` memakai memo grapheme 1-entri
+  + fast path ASCII; `composer-wrap.ts` melakukan wrap inkremental saat append/
+  backspace di ujung, jatuh ke `chunkByWidth` penuh bila pola tak didukung.
+- **Fase 4 — biaya salin.** `transcript.selectionText` memakai binary search
+  (`orderLowerBound`) + `selectionIsEmpty` murah; guard OSC 52 berbasis byte
+  (`MAX_CLIPBOARD_BYTES`/`MAX_SELECTION_BYTES` = 256 KiB) di `simple.ts` dan
+  `app.ts`; `/copy` dibatasi total byte dan melaporkan `tui.copyTooLarge`.
+
+Penjaga: `test/cells.test.ts` (paritas diff vs tulis-penuh + minimalitas),
+`test/composer-wrap.test.ts` (paritas wrap inkremental), `test/screen.test.ts`
+(satu `write`/frame, repaint penuh pada drift/frame pertama, diff setara),
+plus `test/pty.test.ts` / `test/screen-buffer.test.ts` untuk verifikasi buffer
+nyata. Angka hasil historis (laporan sebelumnya) tetap berstatus historical.

@@ -54,6 +54,14 @@ nested + release idempoten). Pemegangnya: `askLine`/`askSecret`/`runPicker`
 tick `\r\x1b[2K` spinner menghapus baris prompt wizard (laporan "macet di
 Menyiapkan sesi…").
 
+Karena `screen.paint` kini mendiff secara inkremental, tulis ASING ke stderr
+selama alt-screen hidup (mis. `[hooks] skipped …`, warning provider) juga
+menandai terminal "kotor" — `statusline.consumeScreenDrift()` yang dikonsumsi
+layar untuk memaksa repaint penuh sekali pada paint berikutnya. `beginInteractiveScreen`
+memasang wrapper stderr pada depth 0→1 supaya sinyal ini aktif bahkan tanpa
+owner transient. Tanpa ini fragmen asing tetap menempel di baris yang kebetulan
+tak berubah.
+
 ## Invariant I1–I35
 
 Peta lengkap 35 invariant + test proteksinya (mis. `tui-app`, `screen-buffer`,

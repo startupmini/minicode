@@ -102,7 +102,9 @@ test("paint propagates writer failure so owner can clean up", () => {
   const originalWrite = output.write
   let failPaint = true
   output.write = (chunk) => {
-    if (failPaint && String(chunk) === "\x1b[?2026h") {
+    // Frame kini dirakit sebagai SATU string; kegagalan dideteksi dari
+    // pembuka sync-update, bukan kecocokan chunk utuh.
+    if (failPaint && String(chunk).includes("\x1b[?2026h")) {
       failPaint = false
       throw new Error("paint write gagal")
     }
@@ -143,7 +145,7 @@ test("paintRegion propagates writer failure and close restores the screen", () =
   expect(altScreenDepth()).toBe(0)
 })
 
-test("paint: frame penuh pertama clear penuh, berikutnya diff per baris (tanpa 2J)", () => {
+test("paint: frame penuh pertama clear penuh, berikutnya diff per sel (tanpa 2J)", () => {
   tty = installFakeTty({ columns: 40, rows: 5 })
   const s = openAltScreen()
 
@@ -154,13 +156,25 @@ test("paint: frame penuh pertama clear penuh, berikutnya diff per baris (tanpa 2
   expect(out).toContain("baris-a")
 
   tty.clear()
-  // Paint kedua: ukuran sama, hanya baris-2 berubah → diff per baris, TANPA
-  // clear penuh (2J/HOME). Ini yang menghapus flicker/latensi tiap keystroke.
+  // Paint kedua: ukuran sama, hanya huruf terakhir baris-2 berubah. Diff per
+  // sel harus menulis SATU kolom (kolom 7), bukan seluruh baris.
   s.paint(["baris-a", "baris-B", "footer"])
   out = tty.all()
   expect(out).not.toContain("\x1b[2J")
-  expect(out).toContain("\x1b[2;1H\x1b[2Kbaris-B")
-  expect(out).not.toContain("baris-a") // baris-1 tak berubah → tak ditulis ulang
+  expect(out).toContain("\x1b[2;7H")
+  expect(out).not.toContain("baris-B") // bukan tulis-ulang seluruh baris
+  expect(out).not.toContain("baris-a") // baris-1 tak berubah → nol byte
+  s.close()
+})
+
+test("paint: satu chunk stdout per frame (ConPTY menagih tiap write)", () => {
+  tty = installFakeTty({ columns: 40, rows: 5 })
+  const s = openAltScreen()
+  s.paint(["baris-a", "baris-b"])
+  tty.clear()
+  s.paint(["baris-a", "baris-B"])
+  // Seluruh frame (sync-start + diff + kursor + sync-end) = satu write.
+  expect(tty.chunks()).toHaveLength(1)
   s.close()
 })
 

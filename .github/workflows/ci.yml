@@ -39,12 +39,11 @@ jobs:
         working-directory: minicode
         run: bun install
 
-      # Gate distribusi: vendor tidak boleh tertinggal dari ../minicore.
-      # Bila checkout minicore gagal (repo privat), script lolos dengan pesan.
-      - name: Vendor sync check
-        working-directory: minicode
-        run: bun run vendor:check
-
+      # CATATAN: `vendor:check` sengaja TIDAK lagi jadi gate sejak vendor
+      # di-unfreeze di v0.16.0 (lihat vendor/minicore/VENDOR.md). Host kini boleh
+      # mengedit vendor langsung, jadi hash pin hanya referensi historis — bukan
+      # invarian yang harus gagal di CI. Provenance tetap bisa diperiksa manual
+      # lewat `bun run vendor:check` saat sibling ../minicore tersedia.
       - name: Typecheck
         working-directory: minicode
         run: bun x tsc --noEmit

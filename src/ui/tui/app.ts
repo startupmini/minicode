@@ -20,8 +20,10 @@ import {
   type KeyStreamPump,
   type PromptKey,
   type PromptState,
+  pointLength,
   toGraphemes,
 } from "../input/prompt-engine.ts"
+import { appendWrapped, shaveWrapped } from "../render/composer-wrap.ts"
 import { formatError } from "../render/errors.ts"
 import { sanitizeAnsi, sanitizeAnsiLine, stripSgr } from "../render/sanitize.ts"
 import { c } from "../render/theme.ts"
@@ -82,6 +84,25 @@ const MOUSE_DRAG_ON = "\x1b[?1002h\x1b[?1006h"
 const MOUSE_WHEEL_ON = "\x1b[?1000h\x1b[?1006h"
 const MOUSE_OFF = "\x1b[?1006l\x1b[?1002l\x1b[?1000l"
 const MAX_SELECTION_CHARS = 200_000
+/** Batas byte UTF-8 payload salin (selaras `MAX_CLIPBOARD_BYTES` OSC 52 di
+ * `assistant/simple.ts`): 200k char CJK bisa 600 KB byte, jadi cek char saja
+ * tidak cukup sebelum menulis OSC 52. */
+const MAX_SELECTION_BYTES = 256 * 1024
+
+/** Panjang UTF-8 (byte) tanpa alokasi — untuk guard ukuran payload salin. */
+function utf8ByteLength(text: string): number {
+  let bytes = 0
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
+    if (code < 0x80) bytes += 1
+    else if (code < 0x800) bytes += 2
+    else if (code >= 0xd800 && code <= 0xdbff) {
+      bytes += 4
+      i++
+    } else bytes += 3
+  }
+  return bytes
+}
 type MouseMode = "off" | "wheel" | "drag"
 
 function mouseSelectionEnabled(): boolean {
@@ -762,7 +783,19 @@ export class TuiApp {
   private applyEngine(key: PromptKey): void {
     if (["char", "backspace", "delete", "enter", "ctrl-j"].includes(key.type)) this.selection = null
     const hints = (line: string) => (line.startsWith("/") ? this.host.listCommands(line) : [])
+    // Fast path kursor: panah/Home/End hanya memindahkan kursor — isi frame
+    // (transkrip, menu, footer) tak berubah satu sel pun. Menyusun ulang frame
+    // penuh + diff per sel hanya untuk menggeser kursor membuang kerja O(frame).
+    // Tangkap visIdx SEBELUM key supaya posisi baris kursor baru bisa dihitung
+    // dari layout lama tanpa buildLayout.
+    const cursorOnly =
+      key.type === "left" || key.type === "right" || key.type === "home" || key.type === "end"
+    const prevVisIdx =
+      cursorOnly && this.editing && this.currentScreen?.ok
+        ? this.composerLayout(Math.max(10, this.currentScreen.cols)).visIdx
+        : -1
     const { state, action } = applyKey(this.state, key, hints)
+    const lineUnchanged = state.line === this.state.line
     this.state = state
     if (action === "submit") {
       void this.doSubmit(state.line)
@@ -770,6 +803,16 @@ export class TuiApp {
       // Engine cancel (ctrl-c/ctrl-d) sudah ditangani di atas; tak terjangkau.
     } else if (action === "render" || action === "none") {
       if (action === "render" && key.type === "char") this.editing = true
+      if (
+        cursorOnly &&
+        action === "render" &&
+        lineUnchanged &&
+        prevVisIdx >= 0 &&
+        this.canCursorPaint()
+      ) {
+        this.paintCursorOnly(prevVisIdx)
+        return
+      }
       // Ketikan baru = kembali ke ekor (I18); stream turn TIDAK me-reset
       // (user yang sedang membaca ke atas tak dirampas).
       if (key.type === "char" || key.type === "backspace" || key.type === "delete") {
@@ -777,6 +820,45 @@ export class TuiApp {
       }
       this.paintCurrent()
     }
+  }
+
+  /** Siap melukis kursor-saja? Butuh layout terakhir + layar sehat. */
+  private canCursorPaint(): boolean {
+    return (
+      !this.quitRequested &&
+      !this.released &&
+      this.suspended === 0 &&
+      this.paintBatchDepth === 0 &&
+      !this.tooSmall() &&
+      this.editing &&
+      this.lastLayout !== null
+    )
+  }
+
+  /**
+   * Geser KURSOR saja memakai layout lama. `prevVisIdx` = visIdx composer
+   * sebelum key; delta baris kursor = delta visIdx (geometri atas tak berubah).
+   */
+  private paintCursorOnly(prevVisIdx: number): void {
+    const layout = this.lastLayout
+    const screen = this.currentScreen
+    if (!layout || !screen?.ok) {
+      this.paintCurrent()
+      return
+    }
+    const composer = this.composerLayout(Math.max(10, screen.cols))
+    const row = Math.max(1, layout.cursor.row + (composer.visIdx - prevVisIdx))
+    const col = Math.max(1, composer.col)
+    try {
+      screen.moveCursor(row, col)
+    } catch (error) {
+      this.stopAfterRuntimeError(error)
+      return
+    }
+    // Simpan posisi kursor baru supaya paint berikutnya tak mengira kursor
+    // masih di tempat lama (mis. mouse-hit-test memakai lastLayout).
+    this.lastLayout = { ...layout, cursor: { row, col } }
+    this.frames++
   }
 
   private async doSubmit(rawLine: string): Promise<void> {
@@ -1214,9 +1296,50 @@ export class TuiApp {
     if (cached?.editing && cached.cols === w && cached.cursor === cursor && cached.line === line) {
       return cached.layout
     }
-    const layout = this.layoutComposer(line, cursor, w)
+    const layout =
+      this.incrementalComposerLayout(cached, line, cursor, w) ??
+      this.layoutComposer(line, cursor, w)
     this.composerCache = { line, cursor, cols: w, editing: true, layout }
     return layout
+  }
+
+  /**
+   * Coba wrap inkremental untuk ketikan/silang di UJUNG baris. `null` =
+   * pemanggil membungkus ulang penuh (`layoutComposer`). Aman: hanya menerima
+   * state yang benar-benar perubahan-ujung; bentuk lain jatuh balik.
+   */
+  private incrementalComposerLayout(
+    cached: {
+      line: string
+      cursor: number
+      cols: number
+      editing: boolean
+      layout: ComposerLayout
+    } | null,
+    line: string,
+    cursor: number,
+    w: number,
+  ): ComposerLayout | null {
+    if (!cached?.editing || cached.cols !== w || !line) return null
+    const prevLine = cached.line
+    if (prevLine === line) return null
+    const prevRows = cached.layout.rows
+    if (!prevRows.length) return null
+    // Kedua sisi harus ber-kursor di ujung: itulah syarat baris sebelumnya
+    // sudah jenuh sehingga hanya baris terakhir yang berubah.
+    if (cursor !== pointLength(line) || cached.cursor !== pointLength(prevLine)) return null
+    let rows: string[] | null
+    if (line.startsWith(prevLine)) {
+      rows = appendWrapped(prevRows, line.slice(prevLine.length), w)
+    } else if (prevLine.startsWith(line)) {
+      rows = shaveWrapped(prevRows, prevLine.slice(line.length), w)
+    } else {
+      return null
+    }
+    if (!rows) return null
+    if (rows.length === 0) return null
+    const lastRow = rows[rows.length - 1] ?? ""
+    return { rows, visIdx: rows.length - 1, col: displayWidth(lastRow) + 1 }
   }
 
   /**
@@ -1475,7 +1598,7 @@ export class TuiApp {
       this.paintCurrent()
       return
     }
-    if (text.length > MAX_SELECTION_CHARS) {
+    if (text.length > MAX_SELECTION_CHARS || utf8ByteLength(text) > MAX_SELECTION_BYTES) {
       this.transcript.pushInfo([c.warning(t("tui.selectionTooLarge"))])
       this.paintCurrent()
       return
@@ -1534,7 +1657,7 @@ export class TuiApp {
       (!this.transcript.hasSource(this.selection.anchor.id) ||
         !this.transcript.hasSource(this.selection.focus.id) ||
         (!this.selection.dragging &&
-          !this.transcript.selectionText(this.selection.anchor, this.selection.focus)))
+          this.transcript.selectionIsEmpty(this.selection.anchor, this.selection.focus)))
     ) {
       this.selection = null
     }

@@ -221,10 +221,21 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
 1. Satu tampilan interaktif: TUI fullscreen; frame penuh tiap repaint (tepat
    `rows` baris); scrollback utama tak tersentuh selama sesi. Frame LOGIS tetap
    penuh `rows` baris (hasil layar identik), namun PENULISAN FISIK ke terminal
-   boleh inkremental per baris (CUP+EL, `screen.paint` memakai diff terhadap
-   frame sebelumnya; repaint pertama/resize tetap `ESC[H`+`ESC[2J` clear penuh)
+   boleh inkremental per SEL dan dikirim sebagai SATU `write` per frame
+   (`screen.paint` memakai diff sel terhadap frame sebelumnya; repaint
+   pertama/resize/perubahan jumlah kolom tetap `ESC[H`+`ESC[2J` clear penuh)
    — ini murni optimasi menghapus flicker/latensi `ESC[2J` tiap keystroke,
-   bukan perubahan perilaku yang terlihat.
+   bukan perubahan perilaku yang terlihat. Diff per sel menyimpan gaya sebagai
+   STATE SGR ternormalisasi (urutan kanonik, bukan riwayat sekuens), sehingga
+   sel yang identik secara visual tidak pernah ditulis ulang; glyph lebar
+   (CJK/emoji) dilindungi sel lanjutan (`cont`) agar diff tidak memotong glyph.
+   Penulisan per baris berubah: dari kolom berbeda PERTAMA sampai akhir baris
+   (prefix identik dilewati), didahului EL (`ESC[0K`) — ekor dihapus-lalu-ditulis
+   ulang supaya sisa glyph lebar / ekor baris lama tidak menempel. Tulis asing ke
+   stderr selama alt-screen hidup (mis. `[hooks] skipped …`, warning provider)
+   menandai terminal "kotor" (`statusline.consumeScreenDrift`) dan memaksa
+   repaint penuh pada paint berikutnya; tanpa ini baris yang kebetulan tak
+   berubah akan mempertahankan fragmen asing di atas diff inkremental.
 2. stdout/stderr contract seperti tabel di atas (TTY & non-TTY deterministic).
 3. Satu kepemilikan layar (`App`); popup satu lifecycle (`suspend`/`resume` +
    `paintRegion`).
@@ -664,7 +675,19 @@ panjang).
   `test/info-window.test.ts` — DIHAPUS bersama REPL/chrome/jendela.
 - `test/cli-commands.test.ts` — /status cetak, /sessions popup.
 - `test/screen.test.ts` — I16 (pairing + paintRegion; open/paint writer failure
-  mencoba memulihkan alt-screen dan reset region).
+  mencoba memulihkan alt-screen dan reset region) + I1 (satu `write` per frame;
+  repaint penuh saat frame pertama / drift stderr / perubahan kolom, dan diff
+  inkremental per sel pada paint berikutnya yang setara — bukan clear `ESC[2J`
+  tiap keystroke).
+- `test/cells.test.ts` — I1 (tokenizer sel grapheme + diff "tulis-ulang ekor":
+  prefix identik nol byte, dari kolom berbeda pertama sampai akhir baris ditulis
+  ulang setelah EL `ESC[0K`; start mundur ke sel pembawa glyph agar EL tak
+  membelah glyph lebar; state SGR ternormalisasi urutan kanonik — `ESC[39m`
+  membatalkan bukan menumpuk, `38;5;n`/`38;2;r;g;b` utuh, glyph lebar dilindungi
+  `cont`; fuzz 500 kasus paritas output vs referensi).
+- `test/composer-wrap.test.ts` — I1 (wrap composer inkremental paritas dengan
+  `chunkByWidth` penuh untuk append/backspace di ujung, CJK lebar, multiline;
+  pola tak didukung → fallback).
 - `test/screen-buffer.test.ts` — parser grid ANSI/CUP dengan pengukuran grapheme
   yang sama dengan renderer (termasuk emoji ZWJ dua kolom).
 - `test/tui-startup-failure.test.ts` — UI-COMPAT-01 (CLI subprocess non-TTY:

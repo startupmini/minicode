@@ -100,16 +100,31 @@ const rememberTurn = (ui: UiSessionState, s: string) => {
 }
 
 /**
+ * Batas byte payload OSC 52. Terminal tak menegosiasikan ukuran OSC 52; payload
+ * raksasa bisa memblokir/menggantung TTY atau dibuang diam-diam. 256 KB jauh di
+ * atas kebutuhan salin normal, tapi cukup kecil untuk aman di semua terminal.
+ */
+export const MAX_CLIPBOARD_BYTES = 256 * 1024
+
+/** Panjang UTF-8 (byte) teks — dasar guard OSC 52 sebelum base64. */
+export function clipboardByteLength(text: string): number {
+  return Buffer.byteLength(text, "utf8")
+}
+
+/**
  * Tulis teks ke clipboard terminal via OSC 52 (`ESC ] 52 ; c ; base64 BEL`).
  *
  * Sekuens ini SENGAJA dikecualikan dari sanitizeAnsi: sanitizer menjaga teks
  * TAK TERPERCAYA (model/tool), sedangkan payload di sini dibuat sendiri dari
  * buffer yang sudah sanitize + base64 murni — tidak ada byte kontrol asing
  * yang bisa lolos. Banyak terminal memblokir OSC 52 default; pemanggil wajib
- * menyampaikan fallback-nya ke user. Return false bila bukan TTY.
+ * menyampaikan fallback-nya ke user. Return false bila bukan TTY ATAU payload
+ * melewati `MAX_CLIPBOARD_BYTES` (guard byte — pemanggil disarankan mengecek
+ * `clipboardByteLength` lebih dulu agar bisa memberi pesan spesifik).
  */
 export function writeClipboardOsc52(text: string): boolean {
   if (!process.stdout.isTTY) return false
+  if (clipboardByteLength(text) > MAX_CLIPBOARD_BYTES) return false
   const b64 = Buffer.from(text, "utf8").toString("base64")
   process.stdout.write(`\x1b]52;c;${b64}\x07`)
   return true

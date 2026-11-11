@@ -35,8 +35,8 @@ jobs:
           registry-url: https://registry.npmjs.org
       - name: Install
         run: bun install --frozen-lockfile
-      - name: Vendor check
-        run: bun run vendor:check
+      # `vendor:check` bukan gate sejak vendor di-unfreeze di v0.16.0
+      # (vendor/minicore/VENDOR.md); jangan blokir rilis karenanya.
       - name: Typecheck
         run: bun x tsc --noEmit
       - name: Lint

@@ -5,7 +5,8 @@
 // Catatan timing: repaint App sinkron di dalam handler key, jadi setelah
 // `await tty.send(...)` frame SUDAH final dan `tty.screen()` menegaskan
 // state — bukan race. Hanya paint awal & submit async yang butuh
-// waitForOutput.
+// waitForOutput/waitForScreen. Sejak diff per sel, teks yang tak berubah tidak
+// ditulis ulang, jadi tunggu ISI LAYAR (waitForScreen), bukan byte mentah.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import type { UiPresentationActivity } from "../src/ui/contract.ts"
 import { resetLocaleState, setSessionLocale } from "../src/ui/i18n/locale.ts"
@@ -116,6 +117,21 @@ function setup(
     },
   }
 }
+/**
+ * Tunggu host menerima submit. Sejak diff per sel, perintah slash tidak punya
+ * jejak byte "› /slow" (composer hanya menulis sel yang berubah lalu dibersihkan
+ * saat submit); yang benar-benar dibuktikan test adalah turn mulai di host.
+ */
+async function waitForCall(calls: string[], text: string, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!calls.includes(text)) {
+    if (Date.now() > deadline) {
+      throw new Error(`fake tty: submit "${text}" tidak diterima host dalam batas waktu`)
+    }
+    await new Promise((r) => setTimeout(r, 5))
+  }
+}
+
 describe("TuiApp", () => {
   test("boot: frame penuh tepat rows + enter/exit berpasangan (I17)", async () => {
     const { app } = setup()
@@ -172,7 +188,8 @@ describe("TuiApp", () => {
     const originalWrite = output.write
     let failOnce = true
     output.write = (chunk) => {
-      if (failOnce && String(chunk) === "\x1b[?2026h") {
+      // Frame kini satu string; pembuka sync-update ada di dalamnya.
+      if (failOnce && String(chunk).includes("\x1b[?2026h")) {
         failOnce = false
         throw new Error("stdout putus saat frame")
       }
@@ -281,7 +298,7 @@ describe("TuiApp", () => {
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("halo")
     await tty!.send(KEY.enter)
-    await tty!.waitForOutput((o) => o.includes("› halo"))
+    await tty!.waitForScreen((frame) => frame.some((line) => line.includes("› halo")))
     expect(calls).toEqual(["halo"])
     expect(screenText()).toContain("› halo")
     await new Promise((r) => setTimeout(r, 20))
@@ -310,7 +327,7 @@ describe("TuiApp", () => {
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/boom")
     await tty!.send(KEY.enter)
-    await tty!.waitForOutput((o) => o.includes("gagal disengaja"))
+    await tty!.waitForScreen((frame) => frame.some((line) => line.includes("gagal disengaja")))
     expect(calls).toEqual(["/boom"])
     await tty!.send(KEY.ctrlD)
     await tty!.send(KEY.backspace)
@@ -324,14 +341,16 @@ describe("TuiApp", () => {
   test("[P0] error memuat credential → TUI tak menampilkan tokennya", async () => {
     // Jalur TUI NYATA (App.doSubmit → host.submit melempar). Kode lama
     // pushing `e.message` mentah → bearer token tampil utuh di layar.
-    const { app, calls } = setup()
+    const { app, calls, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/leak")
     await tty!.send(KEY.enter)
-    await tty!.waitForOutput((o) => o.includes("proxy menolak"))
-    const shown = tty!.all()
+    await tty!.waitForScreen((frame) => frame.some((line) => line.includes("proxy menolak")))
+    // Yang diuji adalah APA YANG TERLIHAT, bukan byte mentah: diff per sel
+    // boleh memecah teks menjadi beberapa run CUP tanpa mengubah layar.
+    const shown = screenText()
     expect(shown).not.toContain(SENTINEL_BEARER)
     expect(shown).toContain("[redacted]")
     // Bagian yang aman tetap tampil — pesan error tak jadi generik.
@@ -368,16 +387,18 @@ describe("TuiApp", () => {
     expect(tty!.all()).toContain("\x1b[?1049l")
   })
   test("timer idle redup dan timer turn putih", async () => {
-    const { app, releaseSlow } = setup()
+    const { app, calls, releaseSlow } = setup()
     const runP = app.run()
     await tty!.ready()
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     expect(tty!.all()).toContain("\x1b[38;2;72;72;72m00.00.00")
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
-    await tty!.waitForOutput((o) => o.includes("› /slow"))
-    expect(tty!.all()).toContain("\x1b[37m00\x1b[39m")
-    expect(tty!.all()).toContain("\x1b[38;2;72;72;72m00\x1b[39m")
+    await waitForCall(calls, "/slow")
+    // Gaya putih kini datang dari run diff (`ESC[0m ESC[37m 00`), jadi
+    // pasangan tutup 39 tidak lagi berurutan — cukup buktikan style-nya.
+    expect(tty!.all()).toContain("\x1b[37m00")
+    expect(tty!.all()).toContain("\x1b[38;2;72;72;72m00")
     await releaseSlow()
     await tty!.send(KEY.ctrlD)
     await runP
@@ -401,13 +422,13 @@ describe("TuiApp", () => {
     await runP
   })
   test("busy tanpa event: timer fixed-format tanpa dots sebelum reasoning", async () => {
-    const { app, releaseSlow, screenText } = setup()
+    const { app, calls, releaseSlow, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
-    await tty!.waitForOutput((o) => o.includes("› /slow"))
+    await waitForCall(calls, "/slow")
     const footer = () => tty!.screen().find((line) => /\d{2}\.\d{2}\.\d{2}/.test(line)) ?? ""
     expect(footer()).not.toMatch(/\.{1,3}\s+00.00.00/)
     expect(screenText()).not.toMatch(/\b(Working|Thinking|Running)\b/)
@@ -438,13 +459,13 @@ describe("TuiApp", () => {
     const previous = process.env.MINICODE_MOTION
     process.env.MINICODE_MOTION = "0"
     try {
-      const { app, bus, releaseSlow, screenText } = setup()
+      const { app, bus, calls, releaseSlow, screenText } = setup()
       const runP = app.run()
       await tty!.ready()
       await tty!.waitForOutput((o) => o.includes("00.00.00"))
       await tty!.send("/slow")
       await tty!.send(KEY.enter)
-      await tty!.waitForOutput((o) => o.includes("› /slow"))
+      await waitForCall(calls, "/slow")
       bus.emit("provider:extension", { kind: "reasoning", data: { text: "hmm" } })
       await new Promise((r) => setTimeout(r, 40))
       const composer = () => tty!.screen().find((line) => line.trim().startsWith(".")) ?? ""
@@ -463,13 +484,13 @@ describe("TuiApp", () => {
     }
   })
   test("reasoning dan text: hanya dots yang berubah, label tidak pernah tampil", async () => {
-    const { app, bus, releaseSlow, screenText } = setup()
+    const { app, bus, calls, releaseSlow, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
-    await tty!.waitForOutput((o) => o.includes("› /slow"))
+    await waitForCall(calls, "/slow")
     bus.emit("provider:extension", { kind: "reasoning", data: { text: "hmm" } })
     await new Promise((r) => setTimeout(r, 40))
     expect(tty!.screen().some((line) => /^\s*\.{1,3}\s*$/.test(line))).toBe(true)
@@ -477,7 +498,9 @@ describe("TuiApp", () => {
     expect(screenText()).not.toMatch(/\b(Working|Thinking|Running)\b/)
     tty!.clear()
     bus.emit("provider:text", { text: "jawaban" })
-    await tty!.waitForOutput((o) => o.includes("00"))
+    // Diff per sel hanya menulis ulang sel yang berubah, jadi footer "00" yang
+    // sudah ada di layar tidak muncul lagi di byte baru. Tunggu konten barunya.
+    await tty!.waitForScreen((frame) => frame.some((line) => line.includes("jawaban")))
     expect(tty!.screen().some((line) => /^\s*\.{1,3}\s*$/.test(line))).toBe(false)
     expect(screenText()).not.toMatch(/\b(Working|Thinking|Running)\b/)
     await releaseSlow()
@@ -485,13 +508,13 @@ describe("TuiApp", () => {
     await runP
   })
   test("activity snapshot tampil sebagai status tool tanpa label atau elapsed", async () => {
-    const { app, releaseSlow, screenText, setPinnedActivity } = setup()
+    const { app, calls, releaseSlow, screenText, setPinnedActivity } = setup()
     const runP = app.run()
     await tty!.ready()
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
-    await tty!.waitForOutput((o) => o.includes("› /slow"))
+    await waitForCall(calls, "/slow")
     setPinnedActivity({
       toolCallId: "call-1",
       name: "read_file",
@@ -516,7 +539,7 @@ describe("TuiApp", () => {
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     transcript.pushInfo(Array.from({ length: 30 }, (_, i) => `baris-${i}`))
     await tty!.send("x")
-    await tty!.waitForOutput((o) => o.includes("baris-29"))
+    await tty!.waitForScreen((frame) => frame.some((line) => line.includes("baris-29")))
     expect(screenText()).not.toContain("baris-0")
     // Satu halaman ke atas: ekor hilang, baris tengah tampil.
     await tty!.send(KEY.pgUp)
@@ -544,7 +567,7 @@ describe("TuiApp", () => {
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     transcript.pushInfo(Array.from({ length: 30 }, (_, i) => `baris-${i}`))
     await tty!.send("x")
-    await tty!.waitForOutput((o) => o.includes("baris-29"))
+    await tty!.waitForScreen((frame) => frame.some((line) => line.includes("baris-29")))
     await tty!.send(KEY.mouseWheelUpSgr)
     expect(screenText()).not.toContain("baris-29")
     expect(screenText()).toContain("minicode › x")
@@ -593,7 +616,7 @@ describe("TuiApp", () => {
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     transcript.pushInfo(Array.from({ length: 30 }, (_, i) => `baris-${i}`))
     await tty!.send("x")
-    await tty!.waitForOutput((o) => o.includes("baris-29"))
+    await tty!.waitForScreen((frame) => frame.some((line) => line.includes("baris-29")))
     const screen = tty!.screen()
     const visible = screen
       .map((line, index) => ({ line, row: index + 1 }))
@@ -615,14 +638,14 @@ describe("TuiApp", () => {
   })
 
   test("drag selection tetap bisa dipakai saat turn busy", async () => {
-    const { app, transcript, copied, releaseSlow } = setup({ rows: 12 })
+    const { app, transcript, calls, copied, releaseSlow } = setup({ rows: 12 })
     const runP = app.run()
     await tty!.ready()
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     transcript.pushInfo(Array.from({ length: 20 }, (_, i) => `busy-${i}`))
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
-    await tty!.waitForOutput((o) => o.includes("› /slow"))
+    await waitForCall(calls, "/slow")
     const visible = tty!
       .screen()
       .map((line, index) => ({ line, row: index + 1 }))
@@ -664,7 +687,7 @@ describe("TuiApp", () => {
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("satu")
     await tty!.send(KEY.enter)
-    await tty!.waitForOutput((o) => o.includes("› satu"))
+    await tty!.waitForScreen((frame) => frame.some((line) => line.includes("› satu")))
     expect(calls).toEqual(["satu"])
     await tty!.send(KEY.up)
     await tty!.send(KEY.enter)
@@ -702,7 +725,7 @@ describe("TuiApp", () => {
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
-    await tty!.waitForOutput((o) => o.includes("› /slow"))
+    await waitForCall(calls, "/slow")
     // Ketikan + Enter saat busy = sunyi total (paritas REPL: stdin busy hanya
     // abort). Penolakan terjadi SEBELUM host.submit (tak antre diam-diam).
     await tty!.send("kedua")
@@ -791,13 +814,13 @@ describe("TuiApp", () => {
     await runP
   })
   test("busy: semua input diabaikan kecuali abort + scroll", async () => {
-    const { app, releaseSlow, screenText } = setup()
+    const { app, calls, releaseSlow, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
-    await tty!.waitForOutput((o) => o.includes("› /slow"))
+    await waitForCall(calls, "/slow")
     // Ketikan + Enter + Tab saat busy: semua sunyi (bukan antre, bukan quit,
     // bukan pindah mode). Hanya Esc (abort) + wheel/PgUp/PgDn + Ctrl+D kosong.
     await tty!.send("zzz")
@@ -820,7 +843,7 @@ describe("TuiApp", () => {
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
-    await tty!.waitForOutput((o) => o.includes("› /slow"))
+    await waitForCall(calls, "/slow")
     expect(calls).toEqual(["/slow"])
     await tty!.send(KEY.ctrlD)
     const res = await runP
@@ -829,13 +852,13 @@ describe("TuiApp", () => {
     void app
   })
   test("busy + Esc ganda = abort lalu quit; tunggal = abort saja", async () => {
-    const { app, screenText } = setup()
+    const { app, calls, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
-    await tty!.waitForOutput((o) => o.includes("› /slow"))
+    await waitForCall(calls, "/slow")
     // Esc pertama: abort, tetap hidup (tanpa EXIT).
     await tty!.send(KEY.esc, 90)
     await new Promise((r) => setTimeout(r, 100))
@@ -848,13 +871,13 @@ describe("TuiApp", () => {
     expect(tty!.all()).toContain("\x1b[?1049l")
   })
   test("busy + Ctrl+C diabaikan; Esc yang abort", async () => {
-    const { app, screenText } = setup()
+    const { app, calls, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
-    await tty!.waitForOutput((o) => o.includes("› /slow"))
+    await waitForCall(calls, "/slow")
     await tty!.send(KEY.ctrlC, 90)
     expect(screenText()).not.toContain("abort sent")
     await tty!.send(KEY.esc, 90)
@@ -884,13 +907,13 @@ describe("TuiApp", () => {
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
     transcript.pushInfo(Array.from({ length: 20 }, (_, i) => `lama-${i}`))
     await tty!.send("x")
-    await tty!.waitForOutput((o) => o.includes("lama-19"))
+    await tty!.waitForScreen((frame) => frame.some((line) => line.includes("lama-19")))
     await tty!.send(KEY.backspace)
     await tty!.send(KEY.pgUp)
     expect(screenText()).not.toContain("lama-19")
     bus.emit("provider:text", { text: "baru-0" })
     bus.emit("turn:completed", {})
-    await tty!.waitForOutput((o) => o.includes("below"))
+    await tty!.waitForScreen((frame) => frame.some((line) => line.includes("below")))
     expect(screenText()).toContain("PgDn")
     // Ketikan baru kembali ke ekor + indikator hilang.
     await tty!.send("y")

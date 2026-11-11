@@ -171,7 +171,11 @@ describe("TUI-005: hint abort pertama saat busy", () => {
     const { runP } = await boot()
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
-    await tty!.waitForOutput((o) => o.includes("› /slow"))
+    // Sinkronisasi: submit dimulai = composer dikosongkan App. Dulu disinkronkan
+    // lewat byte mentah `› /slow`, tetapi diff per-sel sengaja TIDAK menulis
+    // ulang prefix prompt yang tak berubah (dan `/slow` tak masuk transkrip),
+    // jadi sinyal yang benar adalah ISI LAYAR, bukan byte.
+    await tty!.waitForScreen((f) => f.every((l) => !l.includes("/slow")))
     // Esc pertama: abort + hint muncul di layar.
     await tty!.send(KEY.esc, 90)
     await new Promise((r) => setTimeout(r, 80))

@@ -80,13 +80,39 @@ export type PromptAction = "none" | "render" | "submit" | "cancel"
 // batas grapheme sungguhan (Node 16+ / Bun tersedia); fallback ke code point
 // di runtime tanpa dukungan.
 let segmenter: Intl.Segmenter | undefined
-export function toGraphemes(s: string): string[] {
+/**
+ * Pisah string menjadi grapheme. ASCII murni dilewati cepat (satu char = satu
+ * grapheme) dan hasilnya di-memo satu entri: satu paint memanggil ini berkali-
+ * kali untuk baris yang SAMA (layout, posisi kursor, dsb.), dan `Intl.Segmenter`
+ * adalah biaya terbesar di jalur ketik. Pemanggil MENGUBAH array hasil
+ * (splice), jadi cache selalu disalin keluar — bukan dikembalikan langsung.
+ */
+function segmentInto(s: string): string[] {
+  let ascii = true
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) > 0x7f) {
+      ascii = false
+      break
+    }
+  }
+  if (ascii) return s.split("")
   try {
     segmenter ??= new Intl.Segmenter("und", { granularity: "grapheme" })
     return [...segmenter.segment(s)].map((seg) => seg.segment)
   } catch {
     return Array.from(s)
   }
+}
+
+let memoInput: string | null = null
+let memoOutput: string[] | null = null
+
+export function toGraphemes(s: string): string[] {
+  if (memoInput === s && memoOutput !== null) return memoOutput.slice()
+  const out = segmentInto(s)
+  memoInput = s
+  memoOutput = out
+  return out.slice()
 }
 
 /** Panjang dalam satuan grapheme (bukan code point / UTF-16 unit). */

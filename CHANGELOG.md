@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.20.0] - 2026-11-11
+
+### Added
+- Modul render inti dipisah agar bisa diuji mandiri: `src/ui/render/cells.ts` (tokenizer sel grapheme + STATE SGR ternormalisasi + diff "tulis-ulang ekor") dan `src/ui/render/composer-wrap.ts` (wrap composer inkremental append/shave). Keduanya punya penjaga paritas penuh (`test/cells.test.ts`, `test/composer-wrap.test.ts`).
+- Guard byte payload salin: `/copy` dan seleksi menolak payload OSC 52 yang melewati 256 KiB dengan pesan `tui.copyTooLarge` — 10 turn panjang atau seleksi CJK/emoji bisa melewati batas OSC 52 yang tak dinegosiasikan terminal (dan tadinya hanya gagal dengan pesan "butuh TTY" yang keliru).
+
+### Improved
+- **Latensi ketik & byte per frame (fase 1–4).** `screen.paint` merakit frame sebagai SATU `write` (bukan banyak `write` kecil yang membuat ConPTY menyusun ulang potongan) dan mendiff **per sel** terhadap frame sebelumnya: prefix identik dilewati (nol byte), lalu dari kolom berbeda PERTAMA sampai akhir baris ditulis ulang setelah EL `ESC[0K`. Diff mundur ke sel pembawa glyph agar EL tak membelah glyph lebar (CJK/emoji), dan gaya disimpan sebagai STATE SGR ternormalisasi (urutan kanonik) sehingga sel yang identik secara visual tak pernah ditulis ulang. Frame pertama / resize / perubahan jumlah kolom tetap `ESC[H`+`ESC[2J` clear penuh.
+- Hot path editor: panah/Home/End hanya menggeser kursor (`screen.moveCursor`, tanpa merakit ulang frame); `prompt-engine` memakai memo grapheme 1-entri + fast path ASCII; composer memakai wrap inkremental saat ketik/backspace di ujung (fallback ke wrap penuh untuk pola lain).
+- Biaya salin: `transcript.selectionText` memakai binary search (`orderLowerBound`) + cek kosong murah (`selectionIsEmpty`), jadi tak memindai seluruh transkrip tiap salin.
+
+### Fixed
+- Fragmen asing (mis. `[hooks] skipped …`, warning provider) yang ditulis ke stderr selama alt-screen hidup tak lagi menempel permanen di baris yang kebetulan tak berubah: `statusline` menandai terminal "kotor" (`consumeScreenDrift`) dan layar memaksa repaint penuh sekali pada paint berikutnya. Wrapper stderr dipasang saat alt-screen pertama mengambil alih (depth 0→1) supaya sinyal ini aktif bahkan tanpa owner transient.
+- Regresi PTY/ConPTY pada diff per-sel dibereskan (grapheme ZWJ/emoji/combining; `test/pty.test.ts` hijau).
+
+### Changed
+- Rilis: langkah `vendor:check` dihapus dari `ci.yml` dan `publish.yml` — vendor sudah di-unfreeze di v0.16.0 (`vendor/minicore/VENDOR.md`), jadi hash pin bukan lagi gate. Ini memulihkan pipa rilis: v0.16.0 dan v0.17.0 gagal tepat di langkah ini, sehingga npm tertinggal di 0.15.0.
+
 ## [0.17.0] - 2026-11-10
 
 ### Added

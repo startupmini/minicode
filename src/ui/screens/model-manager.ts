@@ -365,7 +365,7 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
     }
 
     // Picker effort dipakai alur Enter — HANYA bila modelnya mendukung
-    // (lihat getEffortOptions): model tanpa thinking langsung select tanpa
+    // (lihat callback `opts.getEfforts`): model tanpa thinking langsung select tanpa
     // picker dan tanpa menyentuh effort tersimpan. Dipanggil saat manager
     // di-suspend, sehingga raw mode/lisener milik picker, bukan manager.
     const pickEffort = (

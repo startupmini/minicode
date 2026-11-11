@@ -151,7 +151,7 @@ export function admitChild(
     return { admitted: false, reason: `capability: ${attenuated.denied}` }
 
   // 4. Deadline: ≤ sisa parent; tak diketahui = ceiling backend existing.
-  // Evidence ceiling: SUB_AGENT_TIMEOUT_MS (task.ts:259 factory timeout).
+  // Evidence ceiling: SUB_AGENT_TIMEOUT_MS (dipakai di `src/tools/task.ts`).
   const backendCeiling = LIMITS.SUB_AGENT_TIMEOUT_MS
   let effectiveDeadlineMs: number | null
   if (spec.parentRemainingDeadlineMs !== undefined) {

@@ -177,8 +177,9 @@ penolakan menamai id yang belum diadopsi. Id task tidak pernah direnumber.
 ## ③ Melanjutkan: `/scheduler run` (manual, tersupervisi)
 
 Adopsi tidak menyalakan scheduler. Lanjutan tetap lewat trigger manual yang
-sudah ada (`/scheduler run` di sesi TUJUAN; butuh `--enable-scheduler` atau
-`--runtime owned` saat memulai sesi). Reconcilasi menilai task in-flight hasil
+sudah ada (`/scheduler run` di sesi TUJUAN; butuh `--enable-scheduler` saat
+memulai sesi CLI, sedangkan sesi daemon hosted mendapatkannya via
+`--runtime owned`). Reconcilasi menilai task in-flight hasil
 adopsi lewat **continuity gate P13.3** — kontraknya tidak berubah:
 
 - `SAFE_TO_RETRY` (bukti resume + admission + **seluruh** scope tool otonom

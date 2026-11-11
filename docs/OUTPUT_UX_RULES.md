@@ -38,8 +38,8 @@ RESULT
 Tidak semua task membutuhkan semua section. Short task boleh:
 
 ```text
-✓ Updated src/router.ts
-✓ Tests passed
+Updated src/router.ts
+Tests passed
 
 Done.
 ```
@@ -66,13 +66,13 @@ AUDIT
 ### Activity
 
 ```text
-✓ Analyzed 18 files
+Analyzed 18 files
 ```
 
 ### Active operation
 
 ```text
-◌ Analyzing source files…
+› Analyzing source files…
 ```
 
 ### Warning
@@ -85,7 +85,7 @@ AUDIT
 ### Error
 
 ```text
-✕ Build failed
+Build failed
   TypeScript compilation failed in src/app.ts.
   → Fix the reported errors and retry.
 ```
@@ -113,20 +113,26 @@ Plan hanya future work. “Read file”, “run grep”, dan “think” adalah 
 ### Completion
 
 ```text
-✓ Audit complete · 18 files · 42s
+Audit complete · 18 files · 42s
 ```
 
 ## 3. Status vocabulary
 
+Sejak v0.17.0 ikon status (`✓`/`✗`/`⊘`/`◌`) DIHAPUS — `glyphs.check/cross/denied/circle`
+mengembalikan `""` (`src/ui/render/theme.ts`) karena bising dan tak konsisten antar
+terminal. Status kini disampaikan lewat WARNA + kata; operasi aktif memakai chevron
+`›` (lihat `TERMINAL_CONTRACT.md` invariant #1). Contoh di dokumen ini sudah mengikuti
+format tanpa ikon status.
+
 | Status | Glyph | Teks default | Arti |
 |---|---|---|---|
-| active | `◌` / `›` | `running` atau `active` | operasi masih berjalan |
-| completed | `✓` | `completed` | sukses terminal |
+| active | `›` | `running` atau `active` | operasi masih berjalan |
+| completed | — | `completed` | sukses terminal |
 | warning | `⚠` | `warning` | perlu perhatian, belum terminal failure |
-| failed | `✗` | `failed` | operasi/turn gagal |
-| denied | `⊘` | `denied` | policy/permission menolak |
-| cancelled | `⊘` | `cancelled` | dibatalkan user/system |
-| interrupted | `!` | `interrupted` | proses berhenti sebelum terminal |
+| failed | — | `failed` | operasi/turn gagal |
+| denied | — | `denied` | policy/permission menolak |
+| cancelled | — | `cancelled` | dibatalkan user/system |
+| interrupted | — | `interrupted` | proses berhenti sebelum terminal |
 | retrying | `↻` | `retrying` | recovery sedang berjalan |
 | transition | `→` | `next` | tindakan berikutnya |
 | info | `ℹ` | `info` | informasi non-actionable |
@@ -196,27 +202,27 @@ Satu baris ledger default:
 Completion:
 
 ```text
-✓ read_file src/config.ts
+read_file src/config.ts · completed
 ```
 
 Failure:
 
 ```text
-✗ read_file src/config.ts
+read_file src/config.ts · failed
   File does not exist.
 ```
 
 Denial:
 
 ```text
-⊘ bash
+bash · denied
   Permission denied by mode=plan.
 ```
 
 Receipt:
 
 ```text
-✓ write_file src/router.ts · 1 file · 34ms
+write_file src/router.ts · 1 file · 34ms
 ```
 
 ### Parallel
@@ -224,20 +230,20 @@ Receipt:
 Jangan interleave raw output. Kelompokkan:
 
 ```text
-◌ Analyzing 11 source files…
+› Analyzing 11 source files…
 
-  ✓ app.ts
-  ✓ config.ts
-  ✓ index.ts
-  ✓ router.ts
+  app.ts
+  config.ts
+  index.ts
+  router.ts
   …
-✓ Source analysis complete · 11 files
+Source analysis complete · 11 files
 ```
 
 Untuk batch besar:
 
 ```text
-✓ Analyzed 11 files
+Analyzed 11 files
 ```
 
 ### Retry
@@ -264,15 +270,15 @@ Processing…
 Dihindari. Gunakan:
 
 ```text
-◌ Reading 18 files…
-◌ Running tests…
-◌ Applying migration…
+› Reading 18 files…
+› Running tests…
+› Applying migration…
 ```
 
 Untuk long-running tool:
 
 ```text
-◌ Running integration tests… (2m 14s)
+› Running integration tests… (2m 14s)
 ```
 
 Progress yang tidak berubah setelah stall dapat menjadi warning/timeout sesuai policy;
@@ -284,7 +290,7 @@ linear memakai transient heartbeat, dan machine memakai duration/status field.
 Activity:
 
 ```text
-✓ Read src/app.ts
+Read src/app.ts · completed
 ```
 
 Finding:
@@ -332,7 +338,7 @@ Kategori minimum:
 Error example:
 
 ```text
-✕ Provider request failed
+Provider request failed
   Rate limit reached while running the model.
   → Retry after the provider cooldown, or choose another provider.
 ```
@@ -347,13 +353,13 @@ Cancellation harus punya state, bukan hanya hilang:
 ```text
 ↻ Cancelling…
 
-✓ Task cancelled
+Task cancelled
 ```
 
 Timeout:
 
 ```text
-✕ Operation timed out after 15m
+Operation timed out after 15m
   → Retry with a smaller scope or increase the timeout.
 ```
 
@@ -368,7 +374,7 @@ Recovery:
 
 ```text
 ↻ Provider unavailable; retrying with fallback…
-✓ Recovered using fallback provider.
+Recovered using fallback provider.
 ```
 
 TUI harus mencegah live stream/foreign painter menimpa state terminal. Linear harus

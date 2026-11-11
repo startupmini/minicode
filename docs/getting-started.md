@@ -82,7 +82,7 @@ One-shot, `exec`, pipe, dan CI hanya menampilkan notifikasi (tanpa install).
 ```bash
 npm install -g minicode-ai@<versi> # manual, gunakan versi yang sudah ditinjau
 minicode sync          # refresh model baru dari semua provider
-minicode pricing sync  # refresh cache harga (3.162 model, ~213 KB)
+minicode pricing sync  # refresh cache harga dari models.dev
 ```
 
 Opt-out: `NO_UPDATE_CHECK=1` atau `MINICODE_AUTO_UPDATE=0`.

@@ -1,8 +1,8 @@
 // Satu sumber state "level detail tool call": expanded vs compact.
 //
 // Posisi Minicode = agentic Unix shell: tool call transparan di aliran output.
-// Default tergantung konteks: one-shot/exec = expanded; REPL interaktif
-// mengaktifkan compact saat start (lihat runRepl) kecuali env diset eksplisit.
+// Default tergantung konteks: one-shot/exec = expanded; TUI interaktif
+// mengaktifkan compact saat start (`cli/tui.ts`) kecuali env diset eksplisit.
 // `MINICODE_COMPACT=1`/`0` atau `/compact` selalu menang.
 //
 // [F-ENV-1] State module-local di-bootstrap SATU KALI dari env saat import; setter

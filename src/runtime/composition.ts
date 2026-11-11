@@ -17,7 +17,7 @@
 //   mutable di module scope: dua komposisi (session/workspace berbeda) tidak
 //   mungkin saling melihat event, jurnal, atau dispatch satu sama lain.
 // - Journal path EKSPLISIT dari caller. Tidak ada default global dan tidak ada
-//   penoran dari acak: resume berarti caller memberikan path yang SAMA.
+//   pengambilan dari acak: resume berarti caller memberikan path yang SAMA.
 // - Journal wajib secara default (fail-closed): open gagal = konstruksi gagal.
 //   "Tak ada jurnal" hanya boleh terjadi bila mode non-durable diminta eksplisit.
 //
@@ -34,15 +34,15 @@
 // - host.shutdown() = latch admitting/run + hook onShutdown milik PEMILIK. Hook
 //   itu adalah tempat owner menghentikan produsen event; karena itu hook berjalan
 //   SEBELUM drain/flush, bukan sesudah.
-// - Execution drain = menunggu kerja in-flight yang DIDAFTARKAN runtime (track())
-//   (track()). Executions non-terminal yang TIDAK dilacak TIDAK ditulis ulang:
+// - Execution drain = menunggu kerja in-flight yang DIDAFTARKAN runtime (track()).
+//   Executions non-terminal yang TIDAK dilacak TIDAK ditulis ulang:
 //   shutdown tak pernah mengarang COMPLETED; ia melapor, dan M12 yang menafsirkan.
 // - Event delivery drain: M10 emit() sepenuhnya sinkron (tak ada antrean), jadi
 //   satu-satunya pengiriman async adalah append M11. Drain menunggu append yang
 //   masih jalan, termasuk yang muncul selama drain itu sendiri.
 // - journal.flush() setelah drain: inilah batas durability. Setelah flush, hook
 //   berhenti append (barrier) — sehingga tak ada append SETELAH flush, dan
-//   Pastinya tak ada reopen yang diam-diam.
+//   pastinya tak ada reopen yang diam-diam.
 // - journal.close() sesudah flush: bukti durable sudah dicatat; gagalnya close
 //   tak boleh membatalkan bukti itu.
 // - host.close() TERAKHIR: host tak memegang jurnal, jadi menutupnya lebih dulu
@@ -505,7 +505,7 @@ export function createRuntimeComposition(opts: RuntimeCompositionOptions): Runti
   // admitted ⇔ kernel punya record ADMITTED. Gagal = reason jujur ke M13 supaya
   // state dispatch-nya benar (BLOCKED/REJECTED), bukan "sukses".
   // Latch diperiksa LEBIH DALAM dari hostState: jeda antara latch composition dan
-  // host.shutdown() itu async, jadi satu-satunya cara Deterministik menutup
+  // host.shutdown() itu async, jadi satu-satunya cara deterministik untuk menutup
   // admission adalah memeriksa latch itu sendiri.
   const bridge = createDispatchBridge({
     admission: {

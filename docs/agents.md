@@ -18,7 +18,7 @@ Restriksi anak yang **selalu** berlaku: `delegate_task`, `git_commit`, memory/to
 
 ## Kenapa dibatasi
 
-Sub-agent menjalankan task tanpa Anda di depan layar. Karena itu kemampuan commit dan capability MCP tidak diteruskan; mode `explore` dan WorkMode ketat hanya memberi tool eksplorasi. Mode `plan` di bawah `BUILD` tetap dapat mengubah file atau menjalankan tool dasar, sehingga hasilnya harus ditinjau parent.
+Sub-agent menjalankan task tanpa Anda di depan layar. Karena itu kemampuan commit dan tool dinamis MCP tidak diteruskan; mode `explore` dan WorkMode ketat hanya memberi tool eksplorasi (tool MCP built-in pun tersaring). Mode `plan` di bawah `BUILD` tetap dapat mengubah file, menjalankan tool dasar, dan memakai tool MCP built-in bila diotorisasi, sehingga hasilnya harus ditinjau parent.
 
 ## Recovery
 

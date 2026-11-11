@@ -58,7 +58,7 @@
 
 ## Spesifikasi internal (FROZEN — untuk kontributor)
 
-* [Terminal Contract — 35 invariant, v7.11](TERMINAL_CONTRACT.md)
+* [Terminal Contract - 35 invariant, v7.12](TERMINAL_CONTRACT.md)
 * [Output Event Model](OUTPUT_EVENT_MODEL.md)
 * [Output Protocol Spec](OUTPUT_PROTOCOL_SPEC.md)
 * [Output Rendering Spec](OUTPUT_RENDERING_SPEC.md)

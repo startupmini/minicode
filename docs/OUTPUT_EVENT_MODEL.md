@@ -2,7 +2,8 @@
 
 **Status:** Phase 2 core state/replay contract landed; renderer/wire protocol masih target
 **Tanggal:** 2026-09-25
-**Kontrak aktif:** implementasi dan producer event di `src/presentation/events.ts`.
+**Kontrak aktif:** definisi tipe + registry durability di `src/presentation/events.ts`;
+producer event di `src/presentation/adapter.ts` (events.ts tidak mem-`publish`).
 
 ## Status implementasi
 
@@ -133,8 +134,8 @@ mengarang final message.
 | `diagnostic.raised` | adapter/policy | diagnostic actionable | ya |
 
 Tool `completed` harus membawa `summary`, `durationMs`, `expandRef`, dan bila ada
-`receipt`. Tool `failed` harus membawa `cause`, `message`, `hint`, dan `expandRef`.
-Tool `denied` harus membawa `reason`; `denied` tidak boleh berubah menjadi generic
+`receipt`. Tool `failed` harus membawa `cause` dan `message` (`hint` dan `expandRef`
+opsional). Tool `denied` harus membawa `reason`; `denied` tidak boleh berubah menjadi generic
 `failed` hanya karena satu renderer tidak tahu policy.
 
 ### Error, recovery, dan lifecycle

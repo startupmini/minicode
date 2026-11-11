@@ -3,7 +3,7 @@
 // Kenapa berkas ini ada: runtime (MiniCore) meng-emit 9 event miskin tanpa
 // lifecycle gagal/batal/deny dan tanpa identitas yang selamat sampai UI
 // (vendor/minicore/src/core/events.ts, executor.ts:44-73 return tanpa emit,
-// session.ts:248 hanya sukses). Dua sink UI menafsir event mentah
+// session.ts:261 jalur sukses; `turn:interrupted` pada abort/timeout). Dua sink UI menafsir event mentah
 // sendiri-sendiri dan divergen. Berkas ini mendefinisikan SATU bahasa yang
 // dipakai adaptor → reducer → proyeksi, sehingga TUI/linear/ACP kelak berbagi
 // makna yang sama tanpa masing-masing merekonstruksi semantik runtime.
@@ -614,7 +614,7 @@ export const DURABILITY: Record<DomainEventType, { durable: boolean; replayable:
 
 /**
  * Bus sumber yang dibaca adaptor — struktural seperti UiBus (handler `any`
- * disengaja karena `on` kernel generik-kondisional; lihat contract.ts:46-55).
+ * disengaja karena `on` kernel generik-kondisional; lihat contract.ts:62-71).
  */
 export interface EventBusLike {
   on(type: string, handler: (event: any) => void): () => void

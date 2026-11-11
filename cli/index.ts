@@ -76,7 +76,7 @@ Options:
   --timeout <ms>      hard deadline per run (default 3600000 = 1h, 0 = off)
   --interactive       interactive TUI (default bila tanpa prompt di TTY)
   --verify            auto-verify + self-heal (typecheck/test/tsconfig)
-  --sandbox <mode>    bash sandbox: docker (ephemeral, no network)
+  --sandbox <mode>    bash sandbox: docker (ephemeral, no network) | os (bwrap/seatbelt)
   --ratelimit <rpm>   LLM requests per minute
   --budget <usd>      session cost limit
   --budget-strict     unknown cost + spend counts as over budget (fail-closed default)

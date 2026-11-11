@@ -40,9 +40,9 @@ export interface CommandContext {
   workMode?: string
   permissionMode?: string
   setModelOverride: (model: string) => void
-  /** Dipanggil sebelum spawn anak stdio-inherit — composition root (tui.ts)
-   * mengisinya (saat ini no-op; DECSTBM tak pernah dipakai lagi). Tanpa
-   * injeksi tetap jalan. */
+  /** Dipanggil sebelum spawn anak stdio-inherit — composition root (cli/tui.ts)
+   * mengisinya untuk melepas terminal alt-screen + raw mode. Tanpa injeksi
+   * tetap jalan (no-op). */
   onBeforeSpawn?: () => void
   /** Kontrak control-plane (Phase 6): angka konteks SAAT INI dari sumber
    * kebenaran kernel (estimateSessionContext) — bukan usage kumulatif.
@@ -205,8 +205,8 @@ function pad(text: string, width: number): string {
 }
 
 /**
- * Isi readout /status sebagai data (tanpa dekorasi cetak) — dipakai Jendela
- * info transient dan jalur cetak (non-TTY/pin) yang formatnya harus identik.
+ * Isi readout /status sebagai data (tanpa dekorasi cetak) — dipakai jalur cetak
+ * (non-TTY) via `printStatus` yang formatnya harus identik dengan TUI.
  */
 function statusLines(ctx: CommandContext): string[] {
   // Kumulatif sesi, bukan turn terakhir — judulnya menjanjikan "biaya sesi".
@@ -244,7 +244,7 @@ function statusLines(ctx: CommandContext): string[] {
   ]
 }
 
-/** Cetak /status seperti dulu (jalur non-TTY + pin jendela). Struktur panggilan
+/** Cetak /status (jalur non-TTY + TUI). Struktur panggilan
  * dipertahankan (satu console.log per baris): helper test captureOutput
  * mencatat per panggilan, bukan per baris newline. */
 function printStatus(ctx: CommandContext): void {

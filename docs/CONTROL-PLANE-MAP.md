@@ -59,10 +59,12 @@ diselaraskan 0.9.27 saat seam dihilirkan; sebelumnya `budget:<…>`):
 - *What is eligible?* — hanya messages; system prompt di-cap di hulu
   (`SYSTEM_PROMPT_MAX_CHARS` 8000), tool schema TIDAK pernah terkompaksi.
 - *What must be preserved?* — pasangan assistant(toolCalls)→tool results tidak
-  pernah dipecah (`compact.ts`); summary LLM terpin verbatim (anti-drift).
-- *What may be removed?* — teks di luar head per peran (hasil tool pembawa fakta
-  dipertahankan ~800 char, prosa ~250/180 char; TIDAK lagi `<result omitted>`),
-  reasoning, tail lama.
+  pernah dipecah (folder mekanis kernel `vendor/minicore/src/core/compact.ts`);
+  summary LLM terpin verbatim (anti-drift).
+- *What may be removed?* — teks di luar head per peran: jalur host
+  (`src/policy/compaction.ts`) mempertahankan hasil tool pembawa fakta ~800 char
+  dan prosa ~250/180 char (TIDAK lagi `<result omitted>` seperti folder mekanis
+  kernel), plus reasoning dan tail lama.
 - *What if compaction fails?* — LLM gagal/timeout (10s) → fallback sync
   mekanis; async compactor tak pernah bisa crash loop.
 - *Can it retry?* — budget: tidak (flag); recovery: sekali per turn (flag).
@@ -141,6 +143,5 @@ Operator harus bisa membedakan (tanpa ambigu):
 - `test/control-plane.test.ts` — compaction budget≠recovery (F-10), anti-loop,
   contextTokens getter + konsistensi estimator, termination reason.
 - `test/cli-help-language.test.ts` — /status membedakan Context/Usage/Budget.
-- `test/repl-linear.test.ts` — footer membaca kernel contextTokens.
 - `test/usage-session.test.ts` / `budget-unknown.test.ts` — budget contract.
 - `test/pack-integrity.test.ts` — vendor hash + VENDOR.md sinkron.

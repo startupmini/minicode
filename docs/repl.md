@@ -1,12 +1,12 @@
 # TUI — Slash & Keyboard (satu tampilan fullscreen)
 
-Ketik `/` di prompt → dropdown berbingkai (max 8 + `… N more`). `↑`/`↓`
+Ketik `/` di prompt → dropdown polos (tanpa bingkai; `max 8` baris, daftar panjang dipotong tanpa baris `… N more` — baris itu hanya ada di `askLine`/dialog linear). `↑`/`↓`
 navigasi, `Enter` lengkapi + submit, `Esc` tutup. Semua permukaan interaktif
 hidup di dalam TUI fullscreen; terminal tanpa ANSI/alt-screen = pesan satu
 baris + keluar (interaktif butuh TTY ≥10 baris).
 
-Bahasa UI: `MINICODE_LANG=en|id` > `/lang` (disimpan state.json) > locale OS >
-en. `/lang` tanpa argumen = tampilkan aktif. Semua string lewat kamus i18n
+Bahasa UI: `/lang` (sesi, tersimpan state.json) > `MINICODE_LANG` > state.json `lang` >
+locale OS > en. `/lang` tanpa argumen = tampilkan aktif. Semua string lewat kamus i18n
 (`src/ui/i18n/`); literal Indonesia hardcode di luar kamus dilarang test.
 
 ## Slash commands
@@ -62,8 +62,8 @@ Did-you-mean: typo `/sessoons` → `Did you mean /sessions?` (jarak ≤ 2).
 | `ctrl+o` | Putar tool call compact/expanded (juga `/compact`) |
 | `ctrl+t` | Toggle tampilan thinking expanded/minimized (juga `/thinking`) |
 | `esc` | Tutup dropdown/picker; dua-tahap di form (tekan-1 bersihkan field, tekan-2 batal); busy = batalkan turn |
-| `ctrl+c` | Batalkan input/prompt; pada turn TUI gunakan `Esc` untuk abort |
-| `ctrl+d` | Keluar saat baris kosong; busy = abaikan |
+| `ctrl+c` | Salin selection (TUI); tanpa selection = no-op. Abort turn pakai `Esc` (`Esc` dua kali dalam 1,5 dtk, atau `Ctrl+D` baris-kosong, saat abort macet) |
+| `ctrl+d` | Keluar saat baris kosong; saat busy baris-kosong = abort turn lalu keluar |
 
 ## Aturan konsistensi (kontrak I25)
 

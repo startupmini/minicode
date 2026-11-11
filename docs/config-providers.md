@@ -39,7 +39,7 @@ minicode auth logout qwen
 
 Token di `~/.minicode/auth.json` (chmod 600), bukan `config.json`. Refresh otomatis margin 60 dtk. Provider OAuth yang belum login dibuang dari daftar dengan peringatan, bukan dikirim dengan header kosong.
 
-> Kejujuran: device flow teruji lengkap ke server OAuth lokal (18 test: pending/slow_down/denied/expired/clamp), tapi endpoint/clientId provider belum semua terkonfirmasi live. `auth login chatgpt` fail-fast di non-TTY. Jangan baca token aplikasi desktop orang lain — itu pencurian kredensial.
+> Kejujuran: device flow teruji lengkap ke server OAuth lokal (pending/slow_down/denied/expired/clamp), tapi endpoint/clientId provider belum semua terkonfirmasi live. `auth login chatgpt` fail-fast di non-TTY. Jangan baca token aplikasi desktop orang lain — itu pencurian kredensial.
 
 ## Keyring OS (ganti plaintext config)
 
@@ -58,7 +58,7 @@ Enter           → pilih model (+ picker effort bila modelnya mendukung)
 Esc             → batal total
 ```
 
-Effort tersimpan di `ProviderEntry.reasoningEffort`, berlaku sesi berikutnya, tampil badge `[low|medium|high]`. **Default universal = omit** (tanpa param thinking): default bawaan tiap model sudah di-tune vendornya. Knob hanya dikirim ke keluarga terbukti, dalam bahasa native-nya: OpenAI reasoning (`o*`, `gpt-5/6` → `reasoning_effort`, level tervalidasi per model — pro = high saja); Claude ≤4.5 → budget `1024/2048/4096`; Claude ≥4.6/5 → adaptive + `output_config.effort`. **Selain itu tak pernah dikirimi param thinking** (DeepSeek, Gemini, Groq, Ollama, free-tier, custom). Bila model menolak param (400/500), request diulang sekali tanpa param + diingat per sesi + dicatat `[thinking]` di stderr. Picker effort hanya muncul untuk model yang mendukung; sisanya select langsung tanpa menyentuh effort tersimpan. `detectAndSave`/`auth login` mempertahankan effort (tidak reset diam-diam). Mutasi ditulis ke file scope asal (bukan hasil merge) agar tidak duplikat/shadowing.
+Effort tersimpan di `ProviderEntry.reasoningEffort`, berlaku sesi berikutnya, tampil badge `[low|medium|high]`. **Default universal = omit** (tanpa param thinking): default bawaan tiap model sudah di-tune vendornya. Knob hanya dikirim ke keluarga terbukti, dalam bahasa native-nya: OpenAI reasoning (`o1`/`o3`/`o4`, `gpt-5`/`gpt-6` → `reasoning_effort`, level tervalidasi per model — pro = high saja); Claude ≤4.5 → budget `1024/2048/4096`; Claude ≥4.6/5 → adaptive + `output_config.effort`. **Selain itu tak pernah dikirimi param thinking** (DeepSeek, Gemini, Groq, Ollama, free-tier, custom). Bila model menolak param (400/500), request diulang sekali tanpa param + diingat per sesi + dicatat `[thinking]` di stderr. Picker effort hanya muncul untuk model yang mendukung; sisanya select langsung tanpa menyentuh effort tersimpan. `detectAndSave`/`auth login` mempertahankan effort (tidak reset diam-diam). Mutasi ditulis ke file scope asal (bukan hasil merge) agar tidak duplikat/shadowing.
 
 Model override sekali jalan:
 

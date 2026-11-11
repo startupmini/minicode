@@ -17,7 +17,7 @@
 //   Mutasi hasil inspect TAK PERNAH menyentuh internal.
 // - Retensi terkontestasi (BUKAN arbitrasi — FINAL QA P2): bila dua observasi
 //   terminal BERBEDA tiba untuk satu id, registry TIDAK TAHU mana yang commit
-//   duluan (otoritas serialisasi = Kernel M8, belum ada). Yang disimpan adalah
+//   duluan (otoritas serialisasi = Kernel M8, `src/runtime/execution-kernel.ts`). Yang disimpan adalah
 //   observasi pertama (retensi deterministik anti-flap) + flag `contested:true`
 //   yang menyatakan "butuh kernel truth untuk resolve — JANGAN baca snapshot
 //   ini sebagai keputusan lifecycle". Observasi non-terminal sesudah terminal

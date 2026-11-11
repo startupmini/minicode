@@ -39,11 +39,11 @@
 // HISTORY EKSEKUSI (intent dispatch + event kernel), bukan syarat kerja:
 // mode non-durable (`journalRequired: false`, dipakai mode runtime
 // `constructed`) secara resmi berjalan tanpa jurnal — jadi menjadikannya
-// syarat akan dustyakan gerbang untuk konfigurasi yang sah. Yang TIDAK boleh
+// syarat akan menutup gerbang untuk konfigurasi yang sah. Yang TIDAK boleh
 // hilang adalah otoritas task (TaskStore) dan pemiliknya (scheduler).
 //
 // SEMUA BUTIR HANYA YANG BISA DIBUKTI DARI KODE. Tidak ada kapabilitas yang
-// diANGGAP lebih tinggi dari yang marched by real code path.
+// diANGGAP lebih tinggi dari yang dilalui jalur kode nyata.
 
 import {
   createRequirementMap,

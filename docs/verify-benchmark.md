@@ -67,8 +67,5 @@ SWE-bench Lite: `bench/swebench.ts` + `bench/swebench_lite_20.jsonl` (20 instanc
 Eksperimen adversarial (terpisah dari gate default):
 
 ```bash
-bun run extreme:fuzz        # fuzz bash-guard (--seed N reproduksi)
-bun run extreme:git         # stress shadow-git (--files N --sessions N)
-bun run extreme:mcp         # server MCP jahat (hang, flood, redirect, SSRF)
 bun experiments/bash-bypass-probe.ts  # postur denylist (0 bypass = lulus)
 ```

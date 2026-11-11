@@ -22,7 +22,7 @@ Review this diff: {{args}}
 Perilaku penting:
 
 - Skill **bukan tool** — ia memanjangkan prompt pertama, jadi tetap tunduk pada permission mode yang sama.
-- Tab di dropdown hanya menawarkan perintah builtin + `/compact`; skill tetap bisa diketik manual dan ter-lookup grouped saat keduanya match.
+- Dropdown `/` menawarkan perintah builtin, driver command (`/compact`/`/thinking`/`/expand`/…), dan skill terpasang. `Tab` BUKAN autocomplete — ia memutar WorkMode (`Shift+Tab` memutar PermissionMode).
 
 ## AGENTS.md: instruksi proyek
 
@@ -39,7 +39,7 @@ Hooks mati secara default; nyalakan dengan `MINICODE_HOOKS=1`.
 | Konteks | Env `MINICODE_HOOK_CTX` (JSON run) |
 | Sanitasi | Env hook disanitasi tanpa secret; hook dilewati bila sesi dibatalkan |
 
-Hooks global + lokal di-merge dari allowlist secara atomik (chmod 600). Karena hook adalah kode arbitrer, hanya allowlist yang terdaftar yang jalan — repo clone-an tidak bisa menyuntik hook sendiri tanpa Anda percayai (sama dengan aturan config lokal; lihat [Keamanan](security.md)).
+Hooks global + lokal di-merge (bukan lewat allowlist). Karena hook adalah kode arbitrer di luar permission system, ia hanya jalan bila `MINICODE_HOOKS=1` dan WorkMode `EXECUTE` (tidak di `DISCUSS`/`PLAN`); setiap hook dikenai timeout 5 dtk dan env-nya disanitasi. Repo clone-an bisa menyuntik `.minicode/hooks/*.js` — perlakukan seperti config lokal yang tak tepercaya (lihat [Keamanan](security.md)).
 
 ## Lanjut
 

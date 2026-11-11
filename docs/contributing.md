@@ -39,24 +39,22 @@ Coverage naik → naikkan minimum di `scripts/coverage-gate.ts` (per 2026-10-25:
 
 ```bash
 bun run gate:fast   # tsc + lint + test + coverage + pack + bash + bench:smoke + audit:harness (per-commit/CI)
-bun run gate:slow   # extreme fuzz + shadow-git stress + MCP adversarial (nightly slow.yml + manual)
 ```
 
-Lambat/stokastik (fuzz multi-seed, stress, docker) tinggal di `slow.yml` — kegagalannya sinyal investigasi, bukan penolakan PR. CI per-commit (`ci.yml`) hanya menjalankan yang deterministik.
+Gerbang lambat/stokastik (docker sandbox) tinggal di `slow.yml` — kegagalannya sinyal investigasi, bukan penolakan PR. CI per-commit (`ci.yml`) hanya menjalankan yang deterministik.
 
-### Budget ukuran paket (3.920 KiB)
+### Budget ukuran paket (3.968 KiB)
 
-`bun run gate:pack` mengukur ukuran tarball (`npm pack --dry-run`, KiB) dan menolak bila **melebihi 3.920 KiB (3,83 MiB)**. Angka tunggalnya ada di `scripts/pack-budget.ts` — satu sumber untuk gate dan tes, jadi keduanya tak bisa menyimpang. Batas ini **alarm regresi** (menangkap `node_modules`/`test` ikut terbawa), bukan target ukuran yang perlu dikejar.
+`bun run gate:pack` mengukur ukuran tarball (`npm pack --dry-run`, KiB) dan menolak bila **melebihi 3.968 KiB (3,875 MiB)**. Angka tunggalnya ada di `scripts/pack-budget.ts` — satu sumber untuk gate dan tes, jadi keduanya tak bisa menyimpang. Batas ini **alarm regresi** (menangkap `node_modules`/`test` ikut terbawa), bukan target ukuran yang perlu dikejar.
 
-Batas 3.920 KiB disetujui pemilik pada 2026-11-05 untuk rilis v0.14.0. Jangan menaikkan anggaran tanpa bukti baru dan persetujuan pemilik; ukur dulu runtime serta berkas non-runtime yang dapat dipangkas.
+Batas 3.968 KiB disetujui pemilik pada 2026-11-10 untuk rilis v0.17.0. Jangan menaikkan anggaran tanpa bukti baru dan persetujuan pemilik; ukur dulu runtime serta berkas non-runtime yang dapat dipangkas.
 
 Gerbang lain:
 
 ```bash
 bun run gate:bash      # 62 pola serangan + 24 perintah sah → 0 bypass / 0 over-block
-bun run extreme        # fuzz + shadow-git + MCP jahat
 bun run bench:smoke    # fake, CI-safe
-bun run vendor:check   # source MiniCore + overlay host cocok dengan vendor
+bun run vendor:check   # provenance MiniCore (soft; vendor host-editable sejak v0.16.0)
 ```
 
 ## Batas lapisan (dijaga `test/ui-boundary.test.ts`)
@@ -65,7 +63,7 @@ bun run vendor:check   # source MiniCore + overlay host cocok dengan vendor
 - Lintas-lapisan via DI dari composition root (`cli/index.ts`, `cli/setup.ts`): `ask`, `setupWhenEmpty`, `setSubAgentSessionFactory`. Tanpa injeksi default selalu deny / fail-closed.
 - `providers → config` satu arah (provisioning di `src/providers/provision.ts`, `src/config.ts` murni IO).
 - Layar `src/ui/screens/` = view murni (props + callback), controller di `cli/`.
-- Jalur non-interaktif shell-first (append-only scrollback); sesi interaktif SELALU TUI alternate-screen (kontrak I16, tanpa opsi linear).
+- Jalur non-interaktif shell-first (append-only scrollback); sesi interaktif SELALU TUI alternate-screen (invariant terminal #1, tanpa opsi linear).
 - Ubah struktur/dependensi antarlapisan → wajib update `docs/architecture.md`.
 
 ## Aturan kode

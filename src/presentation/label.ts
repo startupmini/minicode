@@ -2,8 +2,8 @@
 // tool. Murni, tanpa IO/clock.
 //
 // Kenapa di sini: 4 labeler lama + 3 angka cap berbeda; reducer (summary) dan
-// proyeksi (label) harus berbagi satu sumber. Fase 3: fungsi siap pakai +
-// unit test; Fase 6: simple.ts/toolStatus delegasi ke sini, Fase 7 hapus lama.
+// proyeksi (label) harus berbagi satu sumber. Labeler linear
+// (`src/ui/render/ledger.ts`) tetap terpisah karena hidup di lapisan UI.
 //
 // Batas lapisan: src/presentation TIDAK boleh impor src/ui (ui-boundary) —
 // sanitasi tampilan tetap di renderer (sanitizeAnsi defense-in-depth). Label

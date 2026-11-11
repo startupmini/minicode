@@ -104,7 +104,7 @@ function fmtUsageMetrics(ctx: CliSession, used: number): string | undefined {
 /**
  * Tangkap console.log/error selama `fn` → baris teks (tanpa warna liar:
  * caller yang mewarnai). Dipakai membungkus handleBuiltinCommand supaya
- * readout warisan (/help, pin jendela, pesan undo) mendarat di transkrip,
+ * readout warisan (/help, pesan status/undo) mendarat di transkrip,
  * bukan menimpa frame alt-screen. View modal menulis via stdout.write
  * langsung (bukan console) sehingga tak ikut tertangkap — layarnya tetap
  * tampil normal (nested refcount screen.ts). Baris yang sudah tercetak

@@ -1,7 +1,7 @@
 // Adaptor semantik lama → DomainEvent V2.1 (Fase 1).
 //
 // Kenapa berkas ini ada: kernel meng-emit event miskin (deny/unknown/validate
-// tanpa event — executor.ts:44-73; abort/timeout diam — session.ts:240-248;
+// tanpa event — executor.ts:44-73; abort/timeout kini `turn:interrupted` — session.ts);
 // finalText dibuang UI; approval hanya callback). Berkas ini merekonstruksi
 // lifecycle yang hilang TANPA mengubah kernel: deny dari step.results,
 // turn-settle dari driver (noteRunSettled), approval dari hook permission.

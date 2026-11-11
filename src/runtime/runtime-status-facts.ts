@@ -22,7 +22,7 @@ import type { FailureClassification } from "./supervisor.ts"
 /**
  * Bentuk hasil drain jurnal runtime.
  *
- * PADA: bentuk "drain selesai + berapa append yangnyelesai" — BUKAN probe
+ * PADA: bentuk "drain selesai + berapa append yang selesai" — BUKAN probe
  * readiness. Keberadaan drain yang berhasil tak berarti persistence-nya utuh
  * saat ini (dan sebaliknya, drain yang belum jalan tak berarti persistence-nya
  * rusak) — dua hal yang beda, jadi bentuknya dipisah dari bukti readiness.

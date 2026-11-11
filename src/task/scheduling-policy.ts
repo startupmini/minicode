@@ -158,7 +158,8 @@ export const SELECTION_IS_STARVATION_FREE = true
  * [PHASE 6T] The conditional fairness rule, stated now and NOT implemented.
  *
  * Exported so the dependency is machine-visible: when a requeueing authority
- * appears, this is the property that must hold, and `policy6t.test.ts` asserts
+ * appears, this is the property that must hold, and
+ * `test/phase6t-trigger-policy-lifecycle.test.ts` asserts
  * the current model satisfies the *unconditional* form.
  */
 export const ANTISTARVATION_REQUIREMENT =

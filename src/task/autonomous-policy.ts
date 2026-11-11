@@ -187,7 +187,7 @@ export const TOOL_CAPABILITIES: readonly ToolClassification[] = [
     capability: "PRIVILEGED",
     autonomous: false,
     evidence:
-      "VERIFIED: writes history and identity. The existing sub-agent layer strips it for the same reason (src/tools/task.ts:189-199).",
+      "VERIFIED: writes history and identity. The existing sub-agent layer strips it for the same reason (src/tools/task.ts:309-321).",
   },
 
   // ── memory (session state) ──
@@ -222,7 +222,7 @@ export const TOOL_CAPABILITIES: readonly ToolClassification[] = [
     capability: "MUTATING",
     autonomous: false,
     evidence:
-      "VERIFIED as a task-ownership hazard, not merely a write: todo_write can author TaskStatus, and under 6P `IN_PROGRESS` is a Scheduler-owned execution state. Letting an autonomous model write it would let a model fabricate a claim the lineage would then treat as real. The existing sub-agent layer strips it for the same reason (src/tools/task.ts:189-199).",
+      "VERIFIED as a task-ownership hazard, not merely a write: todo_write can author TaskStatus, and under 6P `IN_PROGRESS` is a Scheduler-owned execution state. Letting an autonomous model write it would let a model fabricate a claim the lineage would then treat as real. The existing sub-agent layer strips it for the same reason (src/tools/task.ts:309-321).",
   },
   {
     name: "submit_result",
@@ -235,7 +235,7 @@ export const TOOL_CAPABILITIES: readonly ToolClassification[] = [
     capability: "PRIVILEGED",
     autonomous: false,
     evidence:
-      "Escalation vector: it creates a child with its OWN permission mode (src/tools/task.ts:257), so a restricted parent could in principle produce a less-restricted child. Stripped from sub-agents for exactly this reason. Autonomous context has no sessionFactory for delegation at all (6R), so nesting is NOT IMPLEMENTED and cannot occur.",
+      "Escalation vector: it creates a child with its OWN permission mode (src/tools/task.ts:274-276), so a restricted parent could in principle produce a less-restricted child. Stripped from sub-agents for exactly this reason. Autonomous context has no sessionFactory for delegation at all (6R), so nesting is NOT IMPLEMENTED and cannot occur.",
   },
 
   // ── network / external ──

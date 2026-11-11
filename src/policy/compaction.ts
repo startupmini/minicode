@@ -334,7 +334,7 @@ export function createLlmCompaction(opts: LlmCompactionOptions = {}): Compaction
       // Jalur LLM sudah dinyatakan thrash sesi-ini: lempar agar loop memakai
       // mekanikal sinkron (bukan diam, bukan retry LLM).
       if (llmDisabled) throw new Error("llm compaction disabled after thrash")
-      // cap 15s — jangan biarkan LLM summary memblokir loop terlalu lama;
+      // cap 10s — jangan biarkan LLM summary memblokir loop terlalu lama;
       // kalau gagal/timeout, loop otomatis fallback ke compact() sinkron.
       const ac = new AbortController()
       const timer = setTimeout(
@@ -622,9 +622,10 @@ export async function compactWithLlm(
 
   // use safe head like mechanical: content truncated, tool results included
   // seperlunya — hasil tool SUKSES adalah sumber fakta (isi file, output
-  // grep/bash, verifikasi). Do not buang: head 300 chars per hasil.
+  // grep/bash, verifikasi). Do not buang: head 800 chars untuk tool pembawa
+  // fakta, 250 untuk sisanya (lihat FACT_HEAD_CHARS/toolHeadLen).
   const head = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n)}…`)
-  // Tuned 250/300 for 30% cost save vs 400/300 — still factual. Hasil tool
+  // Tuned 250 (prosa/sisanya) / 800 (tool pembawa fakta) vs 400 — still factual. Hasil tool
   // pembawa fakta (grep/bash/read/test/…) memakai head panjang (toolHeadLen)
   // agar match/output penting tak terbuang saat ringkasan LLM dibentuk.
   const lineFor = (m: import("#minicore/core/types.ts").Message): string => {

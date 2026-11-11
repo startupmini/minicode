@@ -2,8 +2,8 @@
 
 ## Prinsip
 
-1. **Fail-closed di jalur tak pasti**: tool tanpa backend tersedia menolak (`code_run`), sandbox yang diminta tapi tidak tersedia tidak pura-pura aman (warn + `allowlist`), provider OAuth yang belum login dibuang dari daftar, auth non-TTY fail-fast.
-2. **Ukur, bukan klaim**: bash-guard divalidasi korpus manual pola serangan + perintah sah dan fuzz kombinatorial ber-seed — jalankan `bun run gate:bash` dan `bun run extreme:fuzz` untuk angka terkini (exit 0 = 0 bypass / 0 over-block).
+1. **Fail-closed di jalur tak pasti**: tool tanpa backend tersedia menolak (`code_run`), sandbox yang diminta tapi tidak tersedia ditolak (fail-closed; fallback host hanya via `MINICODE_SANDBOX_ALLOW_FALLBACK=1`), provider OAuth yang belum login dibuang dari daftar, auth non-TTY fail-fast.
+2. **Ukur, bukan klaim**: bash-guard divalidasi korpus manual pola serangan + perintah sah — jalankan `bun run gate:bash` untuk angka terkini (exit 0 = 0 bypass / 0 over-block).
 3. **Teks eksternal = tidak terpercaya**: output tool, MCP, web, bahkan output verify dibungkus fence; `sanitizeAnsi` menyaring escape ANSI dari teks model/tool sebelum render.
 4. **Permission mengontrol pemanggilan, bukan capability**: di ASK, satu approval hanya mencakup pasangan server+tool+args (MCP); capability di balik server tak bisa diketahui statis.
 
@@ -13,12 +13,12 @@ Kontrol mode punya tiga sumbu: **WorkMode** (`DISCUSS`/`PLAN`/`BUILD`) membatasi
 
 ## Lapisan perlindungan bash
 
-1. **Bash-guard ternormalisasi** (`src/policy/bash-guard.ts`) menormalisasi command sebelum aturan diterapkan. Tabel bypass termasuk redirect, ekspansi env Windows, hardlink, escape caret, dan pembaca `for /f` ada di [Policy & Sandbox](policy-sandbox.md), satu sumber contoh. `bun run gate:bash` dan `bun run extreme:fuzz` mengukur regresi.
+1. **Bash-guard ternormalisasi** (`src/policy/bash-guard.ts`) menormalisasi command sebelum aturan diterapkan. Tabel bypass termasuk redirect, ekspansi env Windows, hardlink, escape caret, dan pembaca `for /f` ada di [Policy & Sandbox](policy-sandbox.md), satu sumber contoh. `bun run gate:bash` mengukur regresi.
 
 2. **Allowlist** — bentuk perintah yang boleh; diperiksa SETELAH bash-guard. Dua daftar: **narrow** (`--allowlist`, task tak-terpercaya): `git status/diff/log/branch/show`, `bun test/run/x tsc`, `npm run/exec/install/ci/test/start`, `node`, `npx`, `ls dir cat type head tail wc grep rg find which echo pwd` — tulis via shell ditahan (pakai `write_file`/`edit`). **Developer** (fallback tanpa sandbox OS, `restrictBash` — sesi trusted di mesin sendiri): narrow + runtime `python`/`python3`/`ruby`/`php`/`deno`, package manager `pip`/`uv`/`yarn`/`pnpm`/`cargo`/`go`/`composer`, dan test/lint/build `pytest`/`ruff`/`jest`/`eslint`/`tsc`/`make`/`cmake`/`gcc`…; verba `publish`/`login` tak dicantumkan. `npm exec`/`npx`/`bun run`/`bun x` tak boleh ekspansi shell/redirection. `node`/`python` hanya menjalankan berkas skrip — eval inline (`-e`/`--eval`/`--require`/`-r`/`--loader`) tetap ditolak guard. Package manager menjalankan lifecycle script (postinstall/setup.py = kode arbitrer dari registry), jadi keduanya "trusted project", bukan pengganti isolasi — isolasi sungguhan tetap `--sandbox docker`. `git --no-index/--exec-path/--upload-pack/--receive-pack`, transport `ext::`, dan `GIT_EXTERNAL_DIFF`/`GIT_CONFIG_*` inline ditolak guard (git sebagai pelarian jail).
 3. **Path jail** realpath-based + symlink check; pembaca membuka target canonical, memakai `O_NOFOLLOW` pada POSIX, lalu mencocokkan `dev+ino` antara stat sebelum open dan handle setelah open (termasuk Windows). `.env`/`.git/config`/`node_modules`/hive Windows (`system32\config\sam|system|security|software`, `ntds.dit`) deny; berlaku bahkan `--allow-all`.
 4. **Env scrub** `sanitizeSpawnEnv`: strip kata-kunci kredensial dari merge final. `GITHUB_WORKSPACE`/`GITHUB_REF`/`GOOGLE_CHROME_PATH`/`REDIS_HOST`/`AWS_REGION` **tetap ada** (pernah terhapus dan memecahkan build CI), sementara `GITHUB_TOKEN`/`AWS_SECRET_ACCESS_KEY`/`DATABASE_URL` di-strip. Bila non-rahasia ikut hilang, itu bug — laporkan nama variabelnya.
-5. **web_fetch/web_search**: redirect manual ≤5 hop + DNS pinning 30 dtk + body cap 2 MB. Host privat ditolak (sama untuk MCP HTTP).
+5. **web_fetch/web_search**: redirect manual ≤5 hop + resolve DNS tanpa cache per hop (anti-rebinding) + body cap 2 MB. Host privat ditolak (sama untuk MCP HTTP).
 
 `grep` memakai ripgrep bila tersedia. Biner di-resolve dari PATH absolut yang
 tepercaya, environment child disanitasi, dan config eksternal dinonaktifkan
@@ -31,7 +31,7 @@ tidak mewarisi konfigurasi tersebut.
 - Output verify dibungkus fence agar instruksi di error build tidak diikuti model.
 - `mcp_read`/`mcp_prompt` di-gate meski read-only — konten pihak ketiga langsung ke konteks = jalur injection; "read-only ≠ aman".
 - Secret scrubber meredaksi `sk-`, `ghp_`, `AKIA`, PEM, JWT, Bearer, `api_key=...` sebelum teks ke LLM (read_file/bash/grep), tanpa whitelist kata.
-- Bypass korpus + fuzz: `bun run gate:bash`, `bun run extreme:fuzz` (`--seed` untuk reproduksi). Batas jujur: analisis statis atas bahasa Turing-complete; `$(curl …)` dinamis perlu sandbox OS/docker.
+- Bypass korpus: `bun run gate:bash`. Batas jujur: analisis statis atas bahasa Turing-complete; `$(curl …)` dinamis perlu sandbox OS/docker.
 
 ## Batas kepercayaan file lokal (trust model)
 
@@ -53,8 +53,9 @@ provider model pihak ketiga.
 - State milik runtime (`.minicode/` — DB, todos, plans, checkpoints, jurnal,
   traces, allowlist, config, + file APAPUN lain di bawahnya): tulis via file
   tools ditolak fail-closed (pengecualian: restore `.minicode/.trash/` →
-  workspace dan skrip hooks `.minicode/hooks/` — eksekusi hook tetap butuh
-  registrasi allowlist yang terkunci); baca tetap boleh (observability). Tulis
+  workspace dan skrip hooks `.minicode/hooks/` — hook adalah kode arbitrer di
+  luar permission system, aktif hanya via opt-in `MINICODE_HOOKS=1` dan
+  dilarang di WorkMode non-`EXECUTE`); baca tetap boleh (observability). Tulis
   catatan sendiri ke workspace, bukan ke `.minicode/`.
 
 ## Config lokal & supply chain

@@ -6,8 +6,8 @@
 25 harga bawaan tersedia offline. Untuk cakupan luas, tarik sendiri — **tidak ada fetch otomatis** di jalur run (jalur run hanya baca cache lokal agar tidak menambah latensi/bocor pola pemakaian):
 
 ```bash
-minicode pricing sync                 # 3.162 model dari models.dev (~213 KB cache)
-minicode pricing status               # sumber aktif + umur cache + tanda (stale) >30 hari
+minicode pricing sync                 # tarik katalog + harga dari models.dev
+minicode pricing status               # sumber aktif + umur cache + tanda (stale) bila cache lebih tua dari 1 hari
 minicode pricing show claude-sonnet-4-5
 minicode pricing clear                # kembali ke bawaan
 ```
@@ -27,7 +27,7 @@ minicode --budget 0.05 --budget-strict "task ketat"
 
 - Peringatan kuning 80%.
 - Lewat budget: one-shot `exit(1)`, TUI `break` loop, `exec` menegakkan sama seperti one-shot (pernah ada bug `exec` mengabaikan `--budget`, sudah diperbaiki).
-- Pagu juga diputus MID-TURN: watcher biaya live (`watchBudgetLimit` di `cli/setup.ts`) menggugurkan turn yang sedang berjalan begitu lewat — dulu tool loop / siklus self-heal bisa belanja tanpa batas dalam satu turn. Abort budget membawa identitas kind `budget_exceeded` (bukan `aborted` generik) agar terbedakan dari Ctrl+C user.
+- Pagu juga diputus MID-TURN: watcher biaya live (`watchBudgetLimit` di `src/policy/usage.ts`, dipasang di `cli/setup.ts`) menggugurkan turn yang sedang berjalan begitu lewat — dulu tool loop / siklus self-heal bisa belanja tanpa batas dalam satu turn. Abort budget membawa identitas kind `budget_exceeded` (bukan `aborted` generik) agar terbedakan dari Ctrl+C user.
 - Cost tak dikenal (model tanpa harga) + ADA pemakaian = fail-closed secara DEFAULT: dianggap over budget, bukan diabaikan (dulu hanya di `--budget-strict`; perilaku lama membuat `--budget` diam-diam mati untuk model baru). Nol token (belum belanja, mis. pre-check prompt baru) tetap lolos.
 - `--budget-strict` / `MINICODE_BUDGET_STRICT=1` = penegasan eksplisit perilaku fail-closed di atas (back-compat; perilaku sama dengan default).
 - Harga negatif/NaN/Infinity dari overlay lokal ditolak saat ekstraksi (bukan biaya negatif yang mengurangi total).

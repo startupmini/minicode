@@ -49,7 +49,6 @@ Ukur, bukan klaim — jalankan sendiri untuk angka terkini:
 
 ```bash
 bun run gate:bash        # korpus manual pola serangan + perintah sah (0 bypass / 0 over-block = lulus)
-bun run extreme:fuzz     # mutasi kombinatorial ber-seed
 ```
 
 Fuzz membangkitkan varian dari transformasi yang shell anggap setara (quote-split, indirection, wrapper, flag panjang, chaining); temuan terkunci sebagai regression test.
@@ -61,7 +60,7 @@ Fuzz membangkitkan varian dari transformasi yang shell anggap setara (quote-spli
 | Kondisi | Yang terjadi |
 |---|---|
 | bwrap (Linux) / seatbelt (macOS) tersedia | Bash di dalamnya, tanpa flag |
-| Tidak tersedia (termasuk semua Windows) | Default turun ke restrictBash (allowlist **developer**, sesi trusted) + alasan dicetak sekali |
+| Tidak tersedia (termasuk semua Windows) | Default turun ke restrictBash (allowlist **developer**, sesi trusted); tanpa pesan `[sandbox]` — pesan itu hanya muncul untuk request `--sandbox` eksplisit |
 | `--allow-all` / `--ask` / `--plan` / `--allowlist` diberikan | Pilihan dihormati, tanpa peringatan |
 | `--sandbox none` | Opt-out sadar; tanpa downgrade |
 | `--sandbox docker` | Container ephemeral (`--network none`, 512m, 1 CPU, `node:22-alpine`) |
@@ -79,6 +78,6 @@ workspace yang sudah terjadi sebelum container dihentikan.
 
 - **Path jail** realpath-based + symlink `realpath` di permission layer; `.env`/`.git/config`/`node_modules`/hive Windows deny; `.minicode/` terkunci penuh untuk tool tulis berdasarkan target NYATA (realpath best-effort `isOwnedStateReal` — junction/symlink internal ke `.minicode/` ikut ditahan; kecuali restore `.trash/` + skrip `hooks/`); bash-guard menahan PEMBUATAN link yang operannya sensitif/owned-state. Untuk pembacaan, `safeOpenRead` memeriksa boundary ulang setelah stat dan mencocokkan `dev+ino` dari handle yang terbuka; `O_NOFOLLOW` juga dipakai pada POSIX. Stress test symlink tetap skip bila host tidak memberi privilege membuat symlink.
 - **Env scrub** `sanitizeSpawnEnv`: strip kata-kunci kredensial dari merge final; `GITHUB_WORKSPACE`/`GITHUB_REF`/`GOOGLE_CHROME_PATH`/`REDIS_HOST`/`AWS_REGION` tetap ada, `GITHUB_TOKEN`/`AWS_SECRET_ACCESS_KEY`/`DATABASE_URL` tetap di-strip.
-- **web_fetch/web_search**: redirect manual 5 hop + DNS pinning 30 dtk + body 2 MB.
+- **web_fetch/web_search**: redirect manual 5 hop + resolve DNS tanpa cache per hop (anti-rebinding) + body 2 MB.
 - **Secret scrubber**: `sk-`, `ghp_`, `AKIA`, PEM, JWT, Bearer, `api_key=...` di-redact sebelum ke LLM (read_file/bash/grep) — tanpa whitelist kata.
 - **Config/allowlist**: atomic randomUUID tmp+rename + chmod 600. MCP serve curated tools + permission aktif.

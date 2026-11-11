@@ -26,9 +26,9 @@ Setelah terdaftar, `mcp_list` menampilkan **tools, resources, prompts** sekaligu
 
 Tool dinamis `serverId.toolName` otomatis muncul. `resources`/`prompts` opsional di spec: server "Method not found" tetap terhubung dengan tool utuh.
 
-Keamanan HTTP: host privat ditolak kecuali `--allow-private` (penjaga sama dengan `web_fetch`: DNS pinning). Redirect tidak diikuti. Ukuran dibatasi. Balasan dicocokkan per request id. Header `Authorization` tidak masuk log.
+Keamanan HTTP: host privat ditolak kecuali `--allow-private` (penjaga sama dengan `web_fetch`: resolve DNS tanpa cache + tolak host privat). Redirect tidak diikuti. Ukuran dibatasi. Balasan dicocokkan per request id. Header `Authorization` tidak masuk log.
 
-Izin: semua MCP bertitik selalu di-gate — `auto` minta konfirmasi sekali per tool (`[a] Always` persist ke allowlist); `readonly`/`plan`/`allowlist` menolak. Tanpa wildcard auto-allow (proteksi supply-chain).
+Izin: semua MCP bertitik selalu di-gate. Di `ASK`, pemanggilan minta konfirmasi sekali per pasangan server+tool+args (`[a] Always` persist ke allowlist); di `AUTO`, tool yang terdaftar/diotorisasi jalan tanpa prompt sedangkan yang tak dikenal di-*deny* (bukan di-prompt). `readonly`/`plan`/`allowlist` menolak. Tanpa wildcard auto-allow (proteksi supply-chain).
 
 Model kepercayaan: permission hanya kontrol *pemanggilan*. Capability di balik server (filesystem, network, proses, API) tak bisa diketahui statis — anggap setiap `mcp_call` external capability arbitrer. Pembatalan menghentikan penungguan lokal, tetapi tidak membuktikan bahwa server berhenti atau membatalkan efek yang sudah diterima. Jika koneksi terputus setelah request dikirim, tool mengembalikan error `outcome unknown`; periksa state remote sebelum mencoba lagi.
 

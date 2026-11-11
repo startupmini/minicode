@@ -1,6 +1,6 @@
 // TOOL-02 — Fast deterministic bash-guard fuzz subset for CI/hourly runs.
 //
-// Subset representatif dari korpus serangan berat di eksperiments/bash-bypass-probe.ts.
+// Subset representatif dari korpus serangan berat di experiments/bash-bypass-probe.ts.
 // Setiap pattern harus ditolak/diblokir oleh createPermissionHandler().
 //
 // Invariant:

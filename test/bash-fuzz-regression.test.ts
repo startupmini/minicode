@@ -1,4 +1,4 @@
-// Regresi untuk bypass yang ditemukan experiments/extreme-bash-fuzz.ts.
+// Regresi untuk bypass yang ditemukan fuzz bash-guard.
 //
 // Fuzz membangkitkan varian secara kombinatorial, jadi temuannya tidak otomatis
 // terkunci. File ini memindahkan tiap temuan menjadi test permanen agar

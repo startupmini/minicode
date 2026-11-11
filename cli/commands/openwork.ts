@@ -19,7 +19,7 @@
 //     kebijakan (termasuk kegagalan tulis ekspor) · 2 salah pakai.
 //
 // Teks tak-terpercaya (judul task, ringkasan intent, evidence operator, id
-// sesi dari DB) tidak pernah dicetak mentah di luar tabel: renderList
+// sesi dari DB) tidak pernah dicetak mentah di luar tabel: renderListHuman
 // menyani tiap sel, dan baris bebas (ringkasan merge, refusal, ekspor MD)
 // lewat sanitizeAnsi eksplisit.
 //

@@ -64,10 +64,10 @@ export type PromptKey =
   | { type: "ctrl-w" } // delete previous word
   | { type: "ctrl-o" } // expand detail (TUI)
   | { type: "ctrl-r" } // reverse-i-search history
-  | { type: "ctrl-t" } // toggle expand/minimize reasoning di REPL
+  | { type: "ctrl-t" } // toggle expand/minimize reasoning (TUI)
   | { type: "ctrl-n" } // tambah (model-manager: Ctrl+N = add model)
   | { type: "ctrl-j" } // sisipkan newline (multiline opt-in; Enter=\r tetap submit)
-  | { type: "shift-tab" } // cycle mode (REPL linier) — ESC[Z didekode decodeKey
+  | { type: "shift-tab" } // toggle permission mode (TUI) — ESC[Z didekode decodeKey
   | { type: "ignore" } // sekuens yang sengaja dibuang (mis. byte mouse)
 
 // Terapkan satu keypress -> state baru + render spec + action (submit/cancel).
@@ -198,8 +198,8 @@ export function applyKey(
       // Paste bisa memuat newline/tab/kontrol. Dulu "\n" digepeng jadi spasi
       // agar tidak melebihi tinggi terminal, tapi itu membuat copas code
       // multilines cuma baris pertama (keluhan nyata). Sekarang "\n" dipertahankan
-      // sebagai baris baru — renderer `scrollableMultiline` sudah memperhitungkan
-      // tinggi (`nInGuess`, `maxVisible - footerReserveRows`) sehingga tidak
+      // sebagai baris baru — renderer `buildRenderSpec` sudah memperhitungkan
+      // tinggi (`maxVisible`) sehingga tidak
       // menabrak footer. Tab jadi spasi; kontrol lain dibuang.
       const ins = key.ch
         .replace(/\r\n|\r/g, "\n")
@@ -277,11 +277,11 @@ export function applyKey(
     case "ctrl-c":
     case "ctrl-d":
       return { state, action: "cancel" }
-    case "ctrl-o": // toggle compact — ditangani REPL lewat onKey askLine
+    case "ctrl-o": // toggle compact — ditangani host TUI (app.ts)
     case "ctrl-r": // reverse-i-search — ditangani askLine (input.ts) sebelum applyKey
-    case "ctrl-t": // toggle expand/minimize reasoning di REPL (onKey)
+    case "ctrl-t": // toggle expand/minimize reasoning — ditangani host TUI (app.ts)
     case "ctrl-n": // tambah model — ditangani view yang membutuhkan (model-manager); di prompt teks diabaikan
-    case "shift-tab": // cycle mode — ditangani REPL lewat onKey askLine
+    case "shift-tab": // toggle permission mode — ditangani host TUI (app.ts)
     case "ignore":
       return { state, action: "none" }
     case "ctrl-u": {
@@ -604,7 +604,7 @@ export function flushLoneEsc(state: DecoderState): DecodedKey[] {
 // panah split secara sinkron). Pompa ini membungkus pola yang dipakai SEMUA
 // konsumen interaktif (askLine/askSecret/picker/manager): decode chunk →
 // teruskan key sinkron → bila pending Esc tunggal, tunggu ~50ms (pola
-// lone-ESC yang sama saat busy di cli/repl.ts); byte lanjutan membatalkan
+// lone-ESC yang sama saat busy di TUI, `src/ui/tui/app.ts`); byte lanjutan membatalkan
 // timer dan melengkapi sekuens, sunyi berarti Esc asli → flush sebagai esc.
 //
 // Tanpa pompa tiap konsumen harus menulis timer sendiri (duplikasi 5× dan
@@ -786,7 +786,7 @@ export function decodeKey(s: string, i: number): DecodedKey | null {
         }
         // selain itu (ESC[5;34R, ESC[5x, …) → catch-all esc di bawah
       }
-      // Shift+Tab (backtab) ESC [ Z — dipakai REPL linier untuk cycle mode.
+      // Shift+Tab (backtab) ESC [ Z — dipakai TUI untuk toggle permission mode.
       // Tanpa cabang eksplisit ini ia jatuh ke catch-all "esc" di bawah,
       // sehingga tipe "shift-tab" tidak pernah dihasilkan decodeKeys.
       if (kind === "Z") return { key: { type: "shift-tab" }, width: 3 }

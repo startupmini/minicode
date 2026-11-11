@@ -34,10 +34,10 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | `MINICODE_LANG` | `en`/`id` → bahasa UI (prioritas lengkap di kontrak terminal §i18n: `/lang` > env ini > state.json > locale OS > en) |
 | `MINICODE_DEBUG_BUS` | `1` → cetak satu baris diagnosis event bus per turn ke stderr (`src/ui/runtime/bus-debug.ts`; diagnostik saja, bukan perilaku) |
 | `MINICODE_DEBUG_STARTUP` | `1` → cetak durasi tiap tahap setup sesi ke stderr (diagnosis startup lambat; diagnostik saja, bukan perilaku) |
-| `MINICODE_MINIMIZE_ANSWER` | set (nilai apa pun) → JANGAN auto-minimize section jawaban model (nilai unset = minimize default) |
+| `MINICODE_MINIMIZE_ANSWER` | `1` → minimize section jawaban model (default: tidak minimize). Hanya berefek di TTY dan bila bukan `--verbose` |
 | `MINICODE_KEYSTORE_DISABLE` | `1` → matikan keystore OS seluruhnya (jatuh ke penyimpanan file; untuk CI/headless yang tak punya keychain/DPAPI) |
 | `MINICODE_KEYSTORE_FORCE_DPAPI` | `1`/`true` → paksa jalur DPAPI/Windows walau di non-Windows (khusus test portabilitas; bukan konfigurasi produksi) |
-| `MINICODE_MINIMIZE_TOOL` | set (nilai apa pun) → JANGAN auto-minimize section tool di TUI (nilai unset = minimize default) |
+| `MINICODE_MINIMIZE_TOOL` | Di TUI section tool minimize default (setara `1`); set ke nilai selain `1` (mis. `0`) → tampilkan penuh |
 
 ## Sandbox
 
@@ -86,7 +86,7 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | `MINICODE_A11Y` | `1` → live-region approval untuk screen reader (baris polos tanpa ANSI) |
 | `MINICODE_SHOW_THINKING` | reasoning model terlihat SECARA DEFAULT; `0` → minimized (hanya penanda), `1` → paksa terlihat |
 | `MINICODE_MINIMIZE_ACTIVITY` | ON secara default di TUI; `0` → transparan (baris per-tool). Lipat aktivitas tool per turn jadi satu ringkasan (detail via `/expand`) |
-| `MINICODE_THINKING` | `off` → kirim `enable_thinking:false` ke OpenAI-compat (DeepSeek) |
+| `MINICORE_THINKING` | `off` → kirim `enable_thinking:false` ke OpenAI-compat (DeepSeek). Alias lama `MINICODE_THINKING` masih dihormati |
 | `NO_COLOR` | Set apa pun selain `0` → matikan seluruh warna |
 
 ## API key fallback

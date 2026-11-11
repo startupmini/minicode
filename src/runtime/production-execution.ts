@@ -5,7 +5,7 @@
 // composition root, sub-agen, dan scheduler, sehingga lifecycle turn tidak punya
 // authority yang jelas dan tidak pernah masuk jurnal durable M11. M15 tidak
 // menulis lifecycle semantics baru: ia MEMINDAHKAN pencatatan lifecycle turn ke
-// Kernel yang sudah ada (M8) melalui admission M13, sementaraSI eksekusi fisiknya
+// Kernel yang sudah ada (M8) melalui admission M13, sementara eksekusi fisiknya
 // tetap milik lapisan yang sudah terbukti benar (vendor MiniCore + tool executor).
 //
 // Aturan yang dikunci (jangan dilonggarkan tanpa ADR baru):
@@ -19,8 +19,8 @@
 // - Mode `off` = tak ada runtime; jalur legacy persis seperti sebelum M15.
 // - Pemetaan hasil (COMPLETED/FAILED/CANCELLED/TIMED_OUT/BUDGET_EXCEEDED) memakai
 //   taksonomi yang SUDAH ADA (AgentError.kind). Tidak ada taksonomi baru; error
-//   asli selalu dilempar ulang apa adanya sehinggaatribusi error tak berubah.
-// - Setiap pekerjaan yang runtime pedati didaftarkan ke `track()` sehingga
+//   asli selalu dilempar ulang apa adanya sehingga atribusi error tak berubah.
+// - Setiap pekerjaan yang runtime ini daftarkan masuk ke `track()` sehingga
 //   drain M14 benar-benar menutup eksekusi milik runtime (utang M14 resolved).
 // - Tanpa efek samping di modul ini: tidak ada spawn, tidak ada network, tidak
 //   ada akses langsung ke TaskStore/scheduler/UI/CLI.

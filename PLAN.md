@@ -46,9 +46,7 @@ bun x tsc --noEmit        # harapan: tanpa keluaran
 bun run lint              # harapan: exit 0 (warning boleh ada)
 bun run gate:coverage     # harapan: melewati min 87 funcs / 86 lines
 bun run gate:pack         # harapan: 23 pemeriksaan lulus
-bun run extreme           # harapan: 0 bypass, semua pass
 bun run gate:fast         # gabungan per-commit/CI: tsc+lint+test+coverage+pack+bash+bench smoke+audit harness
-bun run gate:slow         # extreme fuzz+shadow-git+MCP adversarial (nightly/manual, workflow slow.yml)
 ```
 
 Kondisi yang sudah dicapai dan **tidak boleh mundur**:

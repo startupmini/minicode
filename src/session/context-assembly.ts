@@ -16,7 +16,7 @@
 //   - Tanpa state durable: ContextView hidup hanya di RAM per proses.
 //
 // Bentuk ringkasan sintetis mengikuti konvensi vendor yang sudah ada
-// (vendor/minicore/src/core/compact.ts:44 — {role:"user", content:"Previous
+// (vendor/minicore/src/core/compact.ts:48-51 — {role:"user", content:"Previous
 // context:\n..."}): pesan user biasa, TANPA field persistence-only (event_id,
 // seq, run_id, thread_id, migrated, …) dan tidak pernah ditulis balik ke histori.
 

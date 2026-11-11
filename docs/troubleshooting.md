@@ -11,8 +11,8 @@ minicode doctor [--json]   # runtime, provider, pricing, memory, sandbox, config
 ## FAQ
 
 - **LSP tidak jalan:** `minicode config lsp add .ts --command typescript-language-server --args --stdio`. Pastikan server terinstall.
-- **Docker sandbox:** `docker pull node:22-alpine`. Daemon mati → turun ke `allowlist`, bukan tanpa isolasi.
-- **Perintah aman ditolak?** Kemungkinan default `allowlist` karena tanpa OS sandbox. Pesan `[sandbox]` di awal run menjelaskannya. Pilih `--allow-all`/`--ask`, atau `bun experiments/bash-bypass-probe.ts` untuk lihat yang dianggap sah.
+- **Docker sandbox:** `docker pull node:22-alpine`. Daemon mati saat `--sandbox docker` → run **DITOLAK** (fail-closed), bukan turun diam-diam; set `MINICODE_SANDBOX_ALLOW_FALLBACK=1` untuk fallback host yang sadar.
+- **Perintah aman ditolak?** Kemungkinan default `allowlist` karena tanpa OS sandbox. Pesan `[sandbox]` hanya dicetak untuk request `--sandbox` eksplisit — fallback implicit senyap. Pilih `--allow-all`/`--ask`, atau `bun experiments/bash-bypass-probe.ts` untuk lihat yang dianggap sah.
 - **`--sandbox os` tak berefek:** bwrap/seatbelt tidak ada di Windows. Pakai `--sandbox docker`.
 - **Env hilang di subprocess:** hanya kata-kunci kredensial di-strip. `GITHUB_WORKSPACE`/`REDIS_HOST`/`AWS_REGION` tetap ada; `GITHUB_TOKEN`/`AWS_SECRET_ACCESS_KEY`/`DATABASE_URL` di-strip. Bila non-rahasia ikut hilang, itu bug — laporkan nama variabelnya.
 - **`grep` lambat:** install `rg`. Bandingkan dengan `MINICODE_GREP_ENGINE=js`.
@@ -21,7 +21,7 @@ minicode doctor [--json]   # runtime, provider, pricing, memory, sandbox, config
 - **MCP "redirect tidak diikuti":** perbaiki URL; redirect sengaja tidak diikuti.
 - **`auth login` gagal:** error server ditampilkan apa adanya. Cek `minicode auth list`.
 - **Provider OAuth hilang:** belum login / refresh gagal. `minicode auth status` → `auth login <id>`.
-- **`git_commit` ditolak:** di-gate; non-TTY selalu tolak. Itu perilaku yang diinginkan.
+- **`git_commit` ditolak:** di-gate. Ditolak di non-TTY pada `ASK`/`readonly`/`plan`/`allowlist`; di `AUTO` yang terotorisasi ia jalan tanpa prompt, dan di `ASK`+TTY ia minta izin sekali. Itu perilaku yang diinginkan.
 - **Biaya N/A:** `minicode pricing sync` → `pricing show <model>`.
 - **File besar tak terbaca:** pakai `offset`/`limit` (`read_file` >2 MB memang menolak tanpa itu).
 - **Background job tak jalan:** `background:true` ditolak saat `--sandbox` aktif.

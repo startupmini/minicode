@@ -394,7 +394,7 @@ describe("MCP http: helper parsing", () => {
   })
 
   test("readJsonResponse dengan expectId menolak id yang tidak cocok", async () => {
-    // Regresi dari experiments/extreme-mcp-adversarial.ts: tanpa cek id,
+    // Regresi dari harness MCP adversarial: tanpa cek id,
     // balasan untuk request lain diterima sebagai hasil dan `result: undefined`
     // menjalar ke pemanggil sebagai "sukses".
     const wrongId = new Response(JSON.stringify({ jsonrpc: "2.0", id: 999, result: {} }))

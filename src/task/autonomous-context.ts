@@ -45,7 +45,7 @@ import type { TaskStore } from "./store.ts"
  *
  * [DESIGN DECISION] The shape is deliberately one an INTERACTIVE session id can
  * never have. Production session ids are 8 hex characters
- * (`cli/commands/acp.ts:334` -> `randomUUID().slice(0, 8)`); this contains a
+ * (`src/session/identity.ts` -> `randomUUID().slice(0, 8)`); this contains a
  * `~` and a `#` and is far longer, so an autonomous context can never be
  * confused with — or collide with — a user's session. `isAutonomousSessionId`
  * is the recogniser, and `assertNotAutonomousSessionId` is used on every
@@ -105,7 +105,7 @@ export interface AutonomousSession {
     opts: { signal: AbortSignal; model?: string },
   ): Promise<{ finalText?: string; usage: { steps: number } }>
   abort(): void
-  /** Present on the kernel Session (`vendor/minicore/.../session.ts:278`). */
+  /** Hook opsional yang dipanggil composition root saat sesi dibersihkan. */
   cleanup?(): void
 }
 

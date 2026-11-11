@@ -23,7 +23,7 @@ bun -e "import {allTools} from './src/tools/index.ts'; console.log(allTools.map(
 | `apply_patch` | Blok SEARCH/REPLACE multi-hunk ala Aider | Satu call banyak patch |
 | `move_file` | Pindah/rename atomik | Dest yang ada dibackup ke trash dulu (catat path). Dijail di permission layer juga |
 | `delete_file` | Soft-delete ke `.minicode/.trash/` | Undo via `move_file`. Cap 100 terbaru, gitignored. Shared helper `src/lib/trash.ts` |
-| `read_image` | Gambar → konteks model | Base64 utuh + lapor `(bytes mime, tokens)` via `estimateImageTokens`. Cap file-size 2 MB. Pembukaan memeriksa target canonical, boundary ulang, identitas handle `dev+ino`, dan hardlink (`safeOpenRead`) |
+| `read_image` | Gambar → konteks model | Base64 utuh + lapor `(bytes mime, tokens)` via `estimateImageTokens`. Pembukaan memeriksa target canonical, boundary ulang, identitas handle `dev+ino`, dan hardlink (`safeOpenRead`). Guard file-size 2 MB, tetapi batas efektif lebih ketat: b64 dibatasi anggaran truncate kernel (`toolResultMaxTokens` 4096×4−200 ≈ 16 KB) agar gambar tak terpotong korup |
 
 Contoh paging:
 
@@ -47,7 +47,7 @@ read_file({ path: "src/big.ts", offset: 500, limit: 50 })
 | `bash` | Shell 30 dtk SIGTERM→SIGKILL | Tanpa `MINICODE_SANDBOX`: jalan di HOST (network tidak diisolasi, teraudit di step-traces). cwd jail (= cwd eksekusi, bukan process.cwd), env kredensial di-strip (`sanitizeSpawnEnv`), progres streaming, `background:true` + `bash_output`/`bash_kill`, sandbox docker/os optional. Request sandbox eksplisit tanpa backend = TOLAK (fail-closed); fallback host hanya via `MINICODE_SANDBOX_ALLOW_FALLBACK=1`. `background:true` ditolak saat `--sandbox` aktif dan di sub-agen |
 | `bash_output` | Output BARU job sejak baca terakhir | + exit status |
 | `bash_kill` | Stop job | SIGTERM lalu SIGKILL; tree-kill (`taskkill /T /F` di Windows, process-group di POSIX) |
-| `code_run` | Snippet python/node tanpa shell | Spawn langsung argv (tanpa shell agar `$(...)` tidak dieksekusi shell dulu). Wajib sandbox `os|docker`, network-isolated, cwd = session root. Fail-closed bila backend tak tersedia. Image default `node:22-alpine` hanya bawa node — python butuh `MINICODE_SANDBOX_IMAGE` yang menyediakannya |
+| `code_run` | Snippet python/node tanpa shell | Spawn langsung argv (tanpa shell agar `$(...)` tidak dieksekusi shell dulu). Wajib sandbox `os|docker` (alias `bwrap`/`seatbelt`), network-isolated, cwd = session root. Fail-closed bila backend tak tersedia. Image default `node:22-alpine` hanya bawa node — python butuh `MINICODE_SANDBOX_IMAGE` yang menyediakannya |
 
 Background:
 
@@ -73,7 +73,7 @@ Batas `BASH_BACKGROUND_MAX_JOBS`; semua job mati saat CLI keluar.
 | Tool | Fungsi | Catatan |
 |---|---|---|
 | `web_fetch` | GET URL publik, 10 dtk, max 50k char | SSRF guard + DNS pinning, redirect manual ≤5 hop, body hard-cap 2 MB |
-| `web_search` | Search via DuckDuckGo/Tavily | Butuh `TAVILY_API_KEY` untuk Tavily; fallback DDG bila kosong |
+| `web_search` | Search via Tavily/Brave/DuckDuckGo | Urutan: `TAVILY_API_KEY` → `BRAVE_API_KEY` → DDG html lite (tanpa key) |
 
 ## Memory & plan
 
@@ -90,7 +90,7 @@ Batas `BASH_BACKGROUND_MAX_JOBS`; semua job mati saat CLI keluar.
 
 | Tool | Fungsi | Catatan |
 |---|---|---|
-| `delegate_task` | Sub-agen isolasi `explore`/`plan` | Pool 3, context/memory/signal/budget terpisah, abort-aware. Di ASK, TTY meminta persetujuan dan non-TTY menolak; AUTO berjalan tanpa prompt bila authorized. Parent PermissionMode `ASK`/`plan`/`readonly` memaksa `explore`; WorkMode `DISCUSS`/`PLAN` membatasi tool anak ke subset eksplorasi. Anak tidak mendapat MCP, commit, memory/todo writes, nesting, atau job background. Satu approval mencakup satu delegasi; turn gagal setelah anak committed → warning `[recovery]` |
+| `delegate_task` | Sub-agen isolasi `explore`/`plan` | Pool 3, context/memory/signal/budget terpisah, abort-aware. Di ASK, TTY meminta persetujuan dan non-TTY menolak; AUTO berjalan tanpa prompt bila authorized. Parent PermissionMode `ASK`/`plan`/`readonly` memaksa `explore`; WorkMode `DISCUSS`/`PLAN` membatasi tool anak ke subset eksplorasi. Anak tidak mendapat commit, memory/todo writes, nesting, atau job background; tool MCP built-in (`mcp_call`/`mcp_read`/`mcp_prompt`) hanya ikut pada mode anak `plan` di bawah `BUILD`. Satu approval mencakup satu delegasi; turn gagal setelah anak committed → warning `[recovery]` |
 
 ## MCP
 

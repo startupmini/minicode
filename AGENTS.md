@@ -10,7 +10,8 @@ update dokumen + test peta proteksinya.
 
 Roadmap arsitektur adalah milik pemilik repo. `ROADMAP.md` tidak tersedia di
 checkout ini, jadi status Big Phase maupun next action belum dapat dinyatakan.
-`PLAN.md` adalah ledger legacy, bukan roadmap aktif; file itu juga tidak ada.
+`PLAN.md` ada di checkout ini tetapi hanyalah ledger legacy, bukan roadmap
+aktif; `ROADMAP.md` tidak ada.
 Jangan merekonstruksi status dari changelog, kode, atau artefak histori. Jangan
 menulis ulang master roadmap sebagai agent. Label Big Phase (`P1`–`P14`),
 sub-milestone (`P2.x`), Quality Remediation (`Stage 1`–`10`), dan hotfix
@@ -18,7 +19,7 @@ sub-milestone (`P2.x`), Quality Remediation (`Stage 1`–`10`), dan hotfix
 
 ## Status checkout
 
-`CHANGELOG.md` dan `package.json` saat ini mencatat v0.16.0. `PLAN.md` adalah
+`CHANGELOG.md` dan `package.json` saat ini mencatat v0.17.0. `PLAN.md` adalah
 ledger milestone legacy, bukan roadmap aktif. `ROADMAP.md`,
 `docs/ARCHITECTURE.html`, dan `docs/audit/` tidak ada; status roadmap belum
 tersedia. Gate repository dapat dijalankan, tetapi checkout tidak boleh
@@ -68,7 +69,7 @@ persetujuan pemilik.
   `src/providers/provision.ts`, `src/config.ts` murni IO).
 - Layar `src/ui/screens/` = view murni (props + callback), controller di `cli/`.
 - Jalur non-interaktif shell-first (append-only ke scrollback); sesi
-  interaktif SELALU TUI alternate-screen (kontrak I16, tanpa opsi linear).
+  interaktif SELALU TUI alternate-screen (invariant terminal #1, tanpa opsi linear).
 - Ubah struktur/dependensi antarlapisan → wajib update `docs/architecture.md`.
 
 ## Jebakan (semua pernah jadi bug nyata)

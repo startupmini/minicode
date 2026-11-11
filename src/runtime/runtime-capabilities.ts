@@ -7,7 +7,7 @@
 //
 // BEDA dari M6 (`src/runtime/capability.ts`): M6 adalah izin EKSEKUSI per
 // eksekusi (request → grant → approval, anak ⊆ parent). Yang di sini adalah
-// pernyataan KETERSEDIAAN runtime — "apakah lapisan ini bisa doingkat SEKARANG",
+// pernyataan KETERSEDIAAN runtime — "apakah lapisan ini bisa dipakai SEKARANG",
 // bukan "apakah operasi ini diizinkan". Mencampur keduanya menghasilkan
 // "runtime punya kapabilitas" yang sebenarnya "eksekusi ini diizinkan".
 //

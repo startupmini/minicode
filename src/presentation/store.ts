@@ -5,7 +5,7 @@
 // yang adil untuk sesi panjang. Reducer TIDAK PERNAH membaca store untuk
 // keputusan (I-A04) — store hanya dilayani expand/proyeksi.
 //
-// Basar angka = collapse.ts:24-25 (200K per-entry / 500K total) — dipertahankan
+// Besar angka = `src/ui/session-state.ts` (200K per-entry / 500K total) — dipertahankan
 // sebagai awal, bukan angka magis baru. Evict = FIFO tertua + tandai dead
 // (bukan hapus diam-diam): proyeksi menampilkan penanda retensi, bukan string
 // kosong yang menyesatkan.
@@ -16,7 +16,7 @@
 //
 // Pola potong (surrogate-safe + splitTrailingEscape) DIUlang di sini (bukan
 // impor src/ui — boundary src/** non-ui dilarang impor src/ui). Pola sama
-// dengan collapse.ts:66-71; trigonometri escape disederhanakan untuk kasus
+// dengan `src/ui/session-state.ts`; trigonometri escape disederhanakan untuk kasus
 // tail yang mungkin terpotong.
 
 import type { ContentRef } from "./events.ts"

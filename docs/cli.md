@@ -24,7 +24,7 @@ Semua cara menjalankan Minicode: interaktif, sekali jalan, pipe, dan otomasi CI 
 | `minicode skills list` | Daftar skill terpasang |
 | `minicode sessions list` | Riwayat sesi |
 | `minicode memory status [--json]` | Statistik vector RAG (rows, size, hit-rate) |
-| `minicode memory reconcile [--json] [--cwd PATH]` | Samakan `vector.db` ↔ `.minicode/MEMORY.md` (adopsi entri vector-only, tambah baris file-only; tidak menghapus) |
+| `minicode memory reconcile [--json] [--cwd PATH]` | Samakan `vector.db` ↔ `.minicode/MEMORY.md` (adopsi entri vector-only, tambah baris file-only, bersihkan baris superseded; hierarki `MEMORY.md` root/`CLAUDE.md` tak disentuh) |
 | `minicode doctor [--json]` | Diagnosis lokal |
 | `minicode mcp serve` | Ekspos minicode sebagai MCP server |
 | `minicode openwork [inventory\|context\|export\|merge]` | Baca, susun konteks, ekspor, atau deduplikasi pekerjaan lintas sesi; aksi tidak menjalankan task |
@@ -117,7 +117,7 @@ Skema, contoh, scope global/lokal, dan lokasi seluruh data ada di [Config — Fi
 
 ## Anti-injeksi flag
 
-`cli/args.ts:59-67` berhenti di prompt word pertama: prompt `"review --allow-all"` tidak mengaktifkan flag. `--cwd`/value-flag setelah nama subcommand diparse per-subcommand agar tidak menembus boundary prompt.
+`cli/args.ts` (`hasFlag`/`getArg`) berhenti di prompt word pertama: prompt `"review --allow-all"` tidak mengaktifkan flag. `--cwd`/value-flag setelah nama subcommand diparse per-subcommand agar tidak menembus boundary prompt.
 
 ## Exit codes
 
@@ -125,6 +125,6 @@ Skema, contoh, scope global/lokal, dan lokasi seluruh data ada di [Config — Fi
 |---|---|
 | `0` | Sukses, atau help yang memang diminta |
 | `1` | Gagal runtime: provider error, budget lewat, turn gagal, setup gagal |
-| `2` | Salah pakai: argumen hilang/malformed, subcommand asing |
+| `2` | Salah pakai: argumen hilang/malformed, subcommand bersarang asing (token top-level asing malah jadi prompt one-shot) |
 
 Lookup yang gagal (provider/skill/sesi tak dikenal) = `1`: itu kegagalan operasi, bukan pemakaian. Skrip cukup cek `!= 0` untuk gagal; cek `== 2` untuk spesifik salah pakai.

@@ -200,8 +200,8 @@ export type TaskAcceptance = Record<string, unknown>
  * Where a task came from.
  *
  * The `rowToTask` default is
- * `{ origin: "runtime", source: "unknown" }` and `synchronizeTasks` writes
- * `{ origin: "model", source: "todo_write" }`. So `origin` is a closed
+ * `{ origin: "runtime", source: "unknown" }` and `synchronizeCanonicalTasks`
+ * writes `{ origin: "model", source: "todo_write" }`. So `origin` is a closed
  * two-value union and `source` is an open string.
  */
 export interface TaskProvenance {

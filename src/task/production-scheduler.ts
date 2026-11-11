@@ -212,8 +212,8 @@ export async function createProductionScheduler(
   const d = await deps()
 
   // [DESIGN DECISION] The tool set is NOT recomputed here. It comes from the
-  // caller's dapter.tools, and uildAutonomousRunTurn validates it against
-  // the 6S matrix's own ssertAutonomousToolScope at construction. Deriving it
+  // caller's adapter.tools, and buildAutonomousRunTurn validates it against
+  // the 6S matrix's own assertAutonomousToolScope at construction. Deriving it
   // here would create a THIRD copy of one policy, furthest from the tests that
   // justify it and therefore most likely to drift.
 

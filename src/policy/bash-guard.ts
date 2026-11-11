@@ -140,8 +140,8 @@ export function inlineSimpleVars(cmd: string): string {
  *
  * `command env`, `nice env`, `time env`, `exec env` semuanya menjalankan `env`,
  * tapi wrapper-nya menggeser posisi kata sehingga pola yang ter-anchor ke awal
- * perintah (mis. deteksi env-dump) tidak lagi cocok. Ditemukan oleh
- * experiments/extreme-bash-fuzz.ts: `command env` lolos sementara `env` ditolak.
+ * perintah (mis. deteksi env-dump) tidak lagi cocok. Ditemukan oleh fuzz
+ * bash-guard: `command env` lolos sementara `env` ditolak.
  *
  * Wrapper dibuang berulang karena bisa berlapis (`time nice env`).
  * Diekspor untuk test.

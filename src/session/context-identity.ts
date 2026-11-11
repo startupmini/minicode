@@ -40,7 +40,7 @@ export type ContextFrontierRelation = "EQUAL" | "A_AHEAD" | "B_AHEAD" | "DIVERGE
 
 /**
  * Referensi event kanonis — bentuk baris durable `messages` (lihat
- * loadSession di persistence.ts:656-685). `content` di sini adalah nilai
+ * loadSession di persistence.ts:1513). `content` di sini adalah nilai
  * TERSIMPAN (sudah safeContent/scrub/cap saat tulis), bukan objek runtime:
  * hanya dari sanalah anchor stabil lintas replay/restart.
  */
@@ -361,7 +361,7 @@ export function assessContextFreshness(
  * Derivasikan revisi kanonis dari daftar event durable: jumlah event
  * `context.compacted` yang durable+replayable (events.ts DURABILITY).
  * Jembatan kernel `context:compacted` → durable `context.compacted` ada di
- * adapter.ts:951-957, jadi setiap kompaksi loop/recovery meninggalkan satu
+ * adapter.ts:1123-1129, jadi setiap kompaksi loop/recovery meninggalkan satu
  * marker durable — kecuali jalur yang tak memasang adapter (headless tanpa
  * presentation): revisi undercount di sana adalah seam P3.5, bukan angka
  * yang boleh ditebak di sini (fail-closed: hitung yang durable saja).

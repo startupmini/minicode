@@ -17,12 +17,11 @@ export interface RunHookCtx {
  * tanpa gate bila tidak dijaga, melanggar kontrak read-only. Diekspor agar
  * composition root + test memakai predikat yang sama.
  *
- * P12 S2.2 — WorkMode-aware. WorkMode DISCUSS adalah posture read-only penuh
- * (ceiling handler menolak semua tool tulis/eksekusi, termasuk delegate), jadi
- * hooks (eksekusi Node di luar permission system) juga TIDAK boleh jalan —
- * walau permissionMode="auto". PLAN/EXECUTE mempertahankan perilaku lama:
- * keputusan murni dari permission mode. Param workMode opsional agar pemanggil
- * lama tanpa WorkMode tetap kompatibel (default undefined = perilaku lama).
+ * P12 S2.2 + P0.2 — WorkMode-aware. Hooks (eksekusi Node di luar permission
+ * system) HANYA boleh jalan di WorkMode EXECUTE; DISCUSS dan PLAN dilarang
+ * karena keduanya posture non-eksekusi (ceiling handler menolak tool
+ * tulis/eksekusi). Pemanggil legacy tanpa workMode memakai keputusan murni
+ * permission mode (default undefined = perilaku lama).
  */
 export function shouldRunHooks(
   permissionMode: string,

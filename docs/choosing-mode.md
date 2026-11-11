@@ -18,7 +18,7 @@ Hard security (path jail, sensitive-file, owned-state, bash-guard) selalu berlak
 | Menyusun rencana tanpa eksekusi | `--work-mode PLAN` | Baca + artefak rencana (`todo_write`) + delegasi read-only; tanpa mutasi file/git/commit |
 | Otomasi/CI tanpa manusia | One-shot/`exec` + default `DISCUSS` untuk baca; tambah `--work-mode BUILD` bila perlu mutasi | `AUTO` menolak `ask_user` deterministik (BLOCKED) di non-TTY; MCP tak-terkonfigurasi deny; tidak ada prompt yang bisa menggantung |
 | Otonom penuh di mesin sendiri | `--work-mode BUILD` + `AUTO` + `--sandbox docker` (atau OS) + `--budget` | Tanpa prompt, TETAPI jail path + bash-guard tetap aktif; sandbox memberi isolasi nyata |
-| Full akses tanpa pembatas (VM/VPN tepercaya) | `/unrestric` (perintah TUI tersembunyi, per-sesi) | Melepas jail + bash-guard + sandbox/allowlist; gerbang = kepercayaan operator; gembok footer jadi 🔓 gelap |
+| Full akses tanpa pembatas (VM/VPN tepercaya) | `/unrestric` (perintah TUI tersembunyi, per-sesi) | Melepas jail + bash-guard + sandbox/allowlist; gerbang = kepercayaan operator; gembok footer jadi 🔓 terang (bukan redup) |
 
 ## Rule of thumb
 

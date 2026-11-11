@@ -255,7 +255,7 @@ export class McpHttpTransport implements McpTransportLike {
  * notifikasi tanpa id) berarti request kita **tidak** terjawab. Tanpa cek ini,
  * balasan untuk request orang lain — atau notifikasi kosong — akan diterima
  * sebagai hasil, dan `result: undefined` menjalar ke pemanggil sebagai
- * "sukses". Ditemukan oleh experiments/extreme-mcp-adversarial.ts.
+ * "sukses". Ditemukan oleh harness MCP adversarial (server jahat).
  *
  * `expectId` opsional agar helper tetap bisa diuji tanpa konteks request.
  * Diekspor untuk test.

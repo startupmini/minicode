@@ -59,6 +59,14 @@ interface RendererInput {
 }
 ```
 
+> **Catatan sinkronisasi:** blok tipe di atas adalah **sketsa target**. Implementasi
+> aktif memakai `UiPresentationSnapshot`/`PresentationPolicy` (`src/ui/contract.ts`)
+> dan `ProjectionNode` berbentuk `{ kind, id, seq, data }` dengan kind
+> `message|turn|tool|approval|reasoning|system|plan|finding|result|diagnostic`
+> (`src/presentation/projection.ts`). Tipe `PresentationSnapshot`, `ContentResolver`,
+> `RendererClock`, `SourceRef`, `EvidenceRef`, dan `SemanticError` belum ada sebagai
+> tipe runtime.
+
 `PresentationSnapshot` harus read-only. `ContentResolver` mengembalikan `ContentEntry`
 dengan marker retention; tidak mengembalikan seluruh raw database tanpa batas.
 `RendererClock` adalah satu-satunya sumber waktu visual; `Date.now()` tidak boleh
@@ -132,7 +140,8 @@ popup tidak boleh membuat listener stdin kedua.
 - Assistant stream: live buffer yang di-cap; final node dipisah dari stream.
 - Whitespace jawaban dirapikan hanya pada layer tampilan: baris kosong tepi dibuang,
   jeda berulang di luar code fence dirapatkan, isi fenced code tetap literal.
-- Activity: started → running → terminal, dengan glyph + status word.
+- Activity: started → running → terminal, dengan status word (glyph status dihapus;
+  bukan lagi penanda `✓`/`✗` — lihat `OUTPUT_UX_RULES.md` §3).
 - Tool child: default dikelompokkan ke parent `delegate_task`; child detail tersedia
   pada verbose/debug.
 - Context compaction: system entry, tidak menghapus history.
@@ -263,9 +272,12 @@ untuk regressions visual dan protocol.
 3. TUI/linear dapat membandingkan canonical projection dengan legacy output pada test.
 4. Exec/ACP memakai canonical projection lebih dulu karena machine parity paling mudah
    diukur.
-5. After one release and green golden tests, raw semantic subscriptions were
-   removed from user-facing TUI. Raw EventBus remains for streaming content and
-   diagnostics/trace only.
+5. Raw EventBus tetap dipakai untuk streaming content, trace, dan sebagian
+   lifecycle turn/execution yang dibaca TUI (`src/ui/tui/transcript.ts`,
+   `src/ui/tui/app.ts`); keputusan user-facing tetap lewat semantic
+   projection/policy. Klaim lama "raw semantic subscriptions dihapus dari TUI"
+   tidak akurat: TUI masih melanggan `turn:*`/`execution:*`/`provider:extension`
+   untuk transcript dan status.
 
 ## 13. Definition of done renderer
 

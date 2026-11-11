@@ -13,7 +13,7 @@ Konvensi: `file:line` menunjuk simbol yang dimaksud. Aturan repo tetap berlaku:
 ## 1. Jalur pipeline (9 tahap)
 
 Tahap A — provider stream mentah: `src/providers/router.ts` (fallback +
-`provider:text/extension/tool_call/finish`), `src/providers/guards.ts:32`
+`provider:text` + `provider:extension`), `src/providers/guards.ts:32`
 (timeout + text-cap + stream-guard tunggal), adapter `anthropic.ts`,
 `responses.ts`, `effort.ts`. Dirakit di `src/app/provider-layer.ts`.
 
@@ -23,7 +23,7 @@ reasoning/usage/error, `context:compacted` reason `pressure:*`/`recovery`,
 `step:started/completed`), `executor.ts` (`execution:started/completed`),
 `session.ts` (`turn:completed` HANYA di jalur sukses).
 
-Tahap C — raw runtime/content contract: `src/ui/contract.ts:33` `UiEvent` masih
+Tahap C — raw runtime/content contract: `src/ui/contract.ts` (`UiEvent`) masih
 mencerminkan bentuk event kernel untuk streaming konten dan transport. Ledger,
 status, lifecycle, dan keputusan user-facing melalui `PresentationEvent` +
 `PresentationPolicy` dari `cli/setup.ts`; `attachSimpleLogger` dan
@@ -39,7 +39,8 @@ memprojection seluruh `DomainEventType` melalui `toPresentationEvent()`;
 activity/turn, running pin, envelope machine) yang di-inject ke renderer sebagai
 `PresentationPolicy`. Lihat kontrak aktif di `docs/OUTPUT_EVENT_MODEL.md`.
 
-Tahap D — logger utama `src/ui/assistant/simple.ts:104`: append-only
+Tahap D — logger utama `src/ui/assistant/simple.ts` (`attachSimpleLogger`):
+append-only
 scrollback, tanpa alternate screen. `provider:text` → `sanitizeAnsi` PER CHUNK
 → `streamBuffer` → `flushBuf` (line-buffered) → `flushLine` (fence-state +
 `decorateMarkdown` + `formatWrapped`) → `stdout`. Jawaban bisa minimize
@@ -91,7 +92,7 @@ mempertahankan source sanitized pada non-TTY. `exec --json`/ACP tidak melewati
 renderer ini.
 Tahap I — view murni vs controller: `src/ui/screens/` (props + callback,
 tanpa IO) digerakkan `cli/` (`tui.ts`, `commands.ts`, `wizard.ts`,
-`provider/model-manager.ts`, `approval/prompt.ts` via DI `ask`,
+`model-manager.ts`, `provider-manager.ts`, `src/ui/approval/prompt.ts` via DI `ask`,
 `setupWhenEmpty`, `setSubAgentSessionFactory`).
 
 ## 2. Kontrak Event → UI
@@ -123,7 +124,7 @@ Mismatch yang dicari, hasil: raw EventBus tetap ada untuk konten/streaming,
 tetapi keputusan user-facing kini membaca policy yang sama (raw ledger TUI
 dihapus di Phase 8). Buffer jawaban live TUI dibatasi 1.000.000 karakter;
 layout paint memakai satu proyeksi transcript dan cache render jawaban.
-`cli/setup.ts:172-376` memproyeksikan seluruh `DomainEventType` secara
+`cli/setup.ts` (`toPresentationEvent()`) memproyeksikan seluruh `DomainEventType` secara
 exhaustive; TUI memakai `describeActivity`/`matchTurn`/`elapsedVisible` via
 injeksi, linear memakai deskripsi + `activityFor` untuk label turn-status, dan
 machine memakai `toMachineEnvelope`. `bus-debug.ts` hanya debug subscription.
@@ -179,7 +180,8 @@ pasca-reflow (terbukti model + ConPTY: reflow milik konsumen).
 Dijaga `test/ansi-fragmentation.test.ts`
 (termasuk properti semua-titik-belah ≡ whole-string),
 `test/non-tty-output.test.ts`, `test/thinking-truncation.test.ts`,
-`test/ui-combined.test.ts` (satu sistem: stream + tool + resize + footer),
+`test/tui-format.test.ts` (stdout/stderr + ledger tool), `test/footer-render.test.ts`
+(footer),
 `test/input-resize.test.ts` (gagal di kode lama: CUP ke anchor basi).
 
 Batas yang TERVERIFIKASI BENAR (bukti harness + 178 test UI hijau):

@@ -34,13 +34,13 @@
 /**
  * [FACT] Where an evaluation request came from. Classification from survey §2:
  *
- *  - `startup`        AVAILABLE BUT UNUSED — a composition root exists at
- *                      `cli/setup.ts:950`; nothing calls `cycle()` there.
+ *  - `startup`        AVAILABLE BUT UNUSED — a composition root exists in
+ *                      `cli/setup.ts`; nothing calls `cycle()` there.
  *  - `task-mutation`  AVAILABLE BUT UNUSED — `TaskStore.patchTask`/`createTask`
  *                      emit nothing, so there is no signal to subscribe to.
- *  - `explicit-command` AVAILABLE BUT UNUSED — `cli/router.ts` has 13 subcommands,
- *                      none task-related; adding one is an enablement decision
- *                      and out of scope.
+ *  - `explicit-command` AVAILABLE BUT UNUSED — `cli/router.ts` has 14 subcommands;
+ *                      `openwork` membaca task tapi tak memicu `cycle()`. Adding a
+ *                      trigger subcommand is an enablement decision, out of scope.
  *  - `interval`       NOT IMPLEMENTED, and deliberately not added: a repeating
  *                      timer is the one option that would require assuming
  *                      MiniCode is a long-running server. It is not.

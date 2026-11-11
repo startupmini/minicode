@@ -5,9 +5,9 @@
 // berikutnya. Modul ini PURE dan deterministik: tanpa I/O, tanpa clock, tanpa
 // jaringan — masukan yang sama selalu menghasilkan keputusan yang sama.
 //
-// Batas lapisan: `src/policy/` hanya boleh mengimpor pustaka standar Node dan
-// modul policy lain (lihat test/ui-boundary.test.ts). Karena itu tipe ACE juga
-// diimpor oleh session/runtime-header.ts dan composition root, bukan sebaliknya.
+// Modul ini PURE (tanpa IO/clock/network) dan hanya impor tipe Node +
+// `./tool-contract.ts`. Karena itu tipe ACE diimpor oleh session/runtime-header.ts
+// dan composition root, bukan sebaliknya.
 //
 // [ACE-INV-01] HARD CONSTRAINT: percobaan manipulasi evaluator SELALU
 // mengalahkan metrik lain. Tidak ada kombinasi input yang boleh mengubah

@@ -121,7 +121,7 @@ function open(cwd?: string, local = false): Database {
   // [Phase 7 / Live #1] Pembukaan koneksi + PRAGMA setup dibungkus dengan
   // withBusyRetrySync. Sebelumnya hanya DDL yang di-retry; `new Database(p)`
   // dan `PRAGMA journal_mode=WAL` bisa gagal SQLITE_BUSY saat dua proses CLI
-  // paralel membuka DB bersamaan (race nyata di cli/router.ts:128). Dengan
+  // paralel membuka DB bersamaan (race nyata saat dua proses CLI membuka DB). Dengan
   // membungkus seluruh urutan inisialisasi, proses yang kalah tunggu lalu
   // coba ulang sampai lock dilepas (backoff eksponensial + jitter, 8×).
   // PRAGMA busy_timeout DIATUR dalam retry yang sama SEBELUM journal_mode:

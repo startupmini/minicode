@@ -1,4 +1,4 @@
-// Printer linier — satu-satunya renderer output agen (one-shot & REPL linier).
+// Printer linier — renderer output jalur one-shot (dan TUI non-verbose).
 // Output append-only ke scrollback terminal, tanpa alternate screen. Tool call
 // inline dan EXPANDED by default (transparansi shell); mode compact via
 // MINICODE_COMPACT=1 atau setCompactMode (/compact).
@@ -123,7 +123,7 @@ const wErrDirect = (s: string) =>
 // Error provider terakhir turn ini — diingat, BUKAN dicetak langsung.
 // Alasan: error tengah-turn sering pulih via fallback router; mencetak tiap
 // event + sekali lagi di catch driver = dua blok ✗ untuk satu kegagalan.
-// Driver (index.ts/repl.ts) mencetak sekali via takePendingError().
+// Driver (`cli/index.ts`) mencetak sekali via takePendingError().
 //
 // [Area A · PROMPT 06] Error tertunda milik SESI (state per-sesi), bukan
 // variabel modul — dua sesi dalam satu proses tak lagi saling menimpa
@@ -202,7 +202,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
   // per baris utuh agar tampilan rapi, bukan salad fragmen per chunk.
   let reasoningLine = ""
 
-  // Section answer (jawaban model): default minimize di REPL — teks lengkap
+  // Section answer (jawaban model): minimize hanya bila diminta (env/opsi) — teks lengkap
   // TETAP ditulis (buffer), tampilan default satu baris `  + answer (N)`.
   // /copy tak tersentuh (rememberTurn selalu jalan sebelum sink).
   let answerBuf = ""

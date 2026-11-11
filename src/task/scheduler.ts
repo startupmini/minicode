@@ -1,8 +1,9 @@
 // Phase 6C — Scheduler core: headless, dependency-injected, single-session,
 // serial. NEW ARCHITECTURE.
 //
-// Implements the Phase 6A design lock. NOT wired into production: nothing in
-// src/ constructs a Scheduler, and this module imports nothing that could.
+// Implements the Phase 6A design lock. Wired into production via
+// `src/task/production-scheduler.ts` (`new Scheduler(...)`), diaktifkan dari
+// composition root saat scheduler di-enable.
 //
 // ── WHAT IT IS ───────────────────────────────────────────────────────────────
 //

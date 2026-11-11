@@ -1,4 +1,4 @@
-// M14/M15 — Produksi runtime composition: SATU seam,Mode bertingkat.
+// M14/M15 — Produksi runtime composition: SATU seam, mode bertingkat.
 //
 // Kenapa berkas ini ada: `createRuntimeComposition` (composition.ts) merakit satu
 // runtime, tapi tidak tahu BAGAIMANA produksi memanggilnya. Tanpa lapisan ini,
@@ -185,7 +185,7 @@ export { runtimeFactsFrom } from "./runtime-status-facts.ts"
  * sini — flush adalah operasi drain, bukan probe; memanggilnya dari jalur
  * status akan memicu drain setiap kali status dibaca.
  *
- * Sumber kebenaran:(handle → composition). FAKTA runtime dibaca dari komposisi
+ * Sumber kebenaran: (handle → composition). FAKTA runtime dibaca dari komposisi
  * (satu-satunya pemilik state runtime); observation hanya menimpa fakta
  * lapisan task (scheduler/TaskStore) yang memang tak bisa dibaca dari dalam.
  */

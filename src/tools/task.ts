@@ -43,7 +43,7 @@ const pool = new Pool(LIMITS.SUB_AGENT_POOL_SIZE)
 
 // Harness-P2: scope read-only bersama untuk sub-agen explore DAN sesi utama
 // (--tool-scope explore). Satu daftar, satu makna: scoping per fase (pelajaran
-// Vercel: tool minimum per fase, bukan semua 36 sekaligus). Diuji oleh
+// Vercel: tool minimum per fase, bukan semua 37 sekaligus). Diuji oleh
 // test/harness-p2 + audit invariant bench/harness-audit.
 // [Fase 2 / TOOL-01] Diimpor dari registry kontrak tool — dulu daftar manual
 // di sini yang harus disinkronkan dengan tool-layer.

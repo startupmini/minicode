@@ -107,6 +107,7 @@
     "bench": "bun bench/runner.ts",
     "bench:smoke": "bun bench/runner.ts --fake",
     "bench:render": "bun scripts/bench-render.ts",
+    "bench:typing": "bun scripts/bench-typing.ts",
     "gate:eval": "bun bench/eval-gate.ts",
     "audit:harness": "bun bench/harness-audit.ts",
     "bench:runs": "bun bench/runner.ts --runs 2"

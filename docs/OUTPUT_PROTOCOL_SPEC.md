@@ -248,7 +248,7 @@ APA YANG BISA DILAKUKAN NEXT
 Contoh:
 
 ```text
-✕ Build failed
+Build failed
   TypeScript reported errors in 2 files.
   → Fix the reported errors, then retry.
 ```

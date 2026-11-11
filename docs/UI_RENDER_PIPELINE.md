@@ -112,11 +112,11 @@ I = bisa diinterupsi, L = bisa tiba setelah completion.
 | permission request | executor → `ask` DI | header stdout + `askLine y/a/n`, fail-closed non-TTY | tidak | tidak | tidak | ya (deny) | tidak |
 | permission denied | executor | error tool penuh, tak pernah minimize + reason | tidak | tidak | tidak | tidak | tidak |
 | sub-agent | delegate_task → bus parent | ledger `›` biasa + usage; tanpa view khusus | tidak | tidak (jurnal skip forward) | tidak | ya | tidak |
-| error provider | provider extension | `pendingError` consume-once → satu `✗` oleh driver | tidak | tidak (E15) | tidak | ya | tidak |
+| error provider | provider extension | `pendingError` consume-once → satu pesan error berwarna oleh driver | tidak | tidak (E15) | tidak | ya | tidak |
 | warning | budget/recovery/verify | `[budget]`/`[recovery]`/`[verify]` kuning stderr | tidak | tidak (warned80 sekali) | tidak | tidak | tidak |
 | completion | kernel loop | flush + `finalizeAnswer` + footer idle | tidak | tidak | tidak | tidak | tidak |
 | abort | user/Esc | `(stopped)` + cleanup `finally` | tidak | tidak | tidak | — | tidak |
-| timeout | kernel `createTimeout` | `✗ timeout` + turn dibuang transaksional | tidak | tidak | tidak | — | ya (late work ke turnStore privat, dibuang) |
+| timeout | kernel `createTimeout` | `timeout` (berwarna) + turn dibuang transaksional | tidak | tidak | tidak | — | ya (late work ke turnStore privat, dibuang) |
 | budget exceeded | watcher/driver | `[budget] … stopping turn` + abort ber-kind | tidak | tidak (fire-once) | tidak | — | tidak |
 | provider failure | recovery policy | retry/compact/throw deterministik; cap retryAfter 30 dtk | tidak | tidak | tidak | tidak | tidak |
 

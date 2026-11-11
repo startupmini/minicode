@@ -300,9 +300,16 @@ const GIT_DIR_OVERRIDE = /(?:^|\s)(?:-C\s*(\S+)|--(?:git-dir|work-tree)(?:=|\s+)
  * `-c` di atas, lewat assignment env. */
 const GIT_EXEC_ENV = /(?:^|[;&|\n]\s*)GIT_(?:PAGER|SSH|ASKPASS|EDITOR|DIR|WORK_TREE)\s*=/i
 
-/** Interpreter dijalankan dengan kode inline (semua bentuk flag). */
+/**
+ * Interpreter dijalankan dengan kode inline (semua bentuk flag).
+ *
+ * Interpreter diperluas mengikuti allowlist developer (python/node/bun/…
+ * sudah lama; tambah lua/julia/elixir/groovy/scala/tcl/dotnet/swift/dart/java)
+ * supaya `lua -e`, `julia -e`, `elixir -e`, dst tetap ditolak — tanpa ini,
+ * memperluas allowlist ke bahasa baru membuka jalur kode-inline pada bahasa itu.
+ */
 const INLINE_INTERPRETER =
-  /\b(?:pyw?|python[\d.]*|pypy[\d.]*|sh|bash|dash|zsh|ksh|node|deno|bun|perl|ruby|php|Rscript)(?:\.exe)?\b\s+(?:-\w*\s+)*(?:-c|-e|-E|--eval|--print|-p|--command|-r|--execute|--require|--import|--loader)\b/i
+  /\b(?:pyw?|python[\d.]*|pypy[\d.]*|sh|bash|dash|zsh|ksh|node|deno|bun|perl|ruby|php|Rscript|lua|luajit|julia|elixir|escript|erl|groovy|scala|tclsh|dotnet|swift|swiftc|dart|java|raku)(?:\.exe)?\b\s+(?:-\w*\s+)*(?:-c|-e|-E|--eval|-eval|--print|-p|--command|-r|--execute|--require|--import|--loader)\b/i
 // Residual jujur (audit 2026-09-16 B3): eksekusi via stdin/redirect TANPA
 // flag inline (`bash -s < skrip`, `python3 < prog`, `... | python3 -`) tidak
 // ditahan — menahan `| python3 -` mematahkan pipeline sah, dan `bash berkas`
@@ -313,9 +320,10 @@ const INLINE_INTERPRETER =
 /** Process substitution / here-string yang memasukkan output perintah lain. */
 const PROCESS_SUB = /<\s*\(|>\s*\(|<<<|\bsource\s+<|\.\s+<\(/
 
-/** Pipe ke shell/interpreter — bentuk apa pun sumbernya. */
+/** Pipe ke shell/interpreter — bentuk apa pun sumbernya (interpreter baru
+ * mengikuti perluasan allowlist developer). */
 const PIPE_TO_SHELL =
-  /\|\s*(?:sudo\s+)?(?:sh|bash|dash|zsh|ksh|python|python2|python3|pyw?|node|deno|bun|perl|ruby|php|iex|Invoke-Expression|powershell|pwsh)(?:\.exe)?\b/i
+  /\|\s*(?:sudo\s+)?(?:sh|bash|dash|zsh|ksh|python|python2|python3|pyw?|node|deno|bun|perl|ruby|php|iex|Invoke-Expression|powershell|pwsh|lua|luajit|julia|elixir|escript|erl|groovy|scala|tclsh|dotnet|swift|swiftc|dart|java|raku)(?:\.exe)?\b/i
 
 /** Unduh ke berkas lalu jalankan berkas itu dalam satu baris. Catatan pola:
  * - `certutil -urlcache` ikut (downloader Windows di luar curl/wget/iwr).
@@ -520,6 +528,18 @@ const STATIC_DENY: [RegExp, string][] = [
   // arbitrer dari argumen single-command. `wscript`/`cscript` (Windows Script
   // Host), `mshta` (HTML app), `rundll32`/`regsvr32` (load arbitrary DLL).
   [/\b(?:mshta|wscript|cscript|rundll32|regsvr32)(?:\.exe)?\b/i, "dangerous windows launcher"],
+  // Verba rilis/kredensial registry — aksi IREVERSIBEL yang butuh kredensial,
+  // bukan bagian alur membangun aplikasi: `npm publish`, `cargo publish`/
+  // `login`, `gem push`, `dotnet nuget push`, `poetry publish`,
+  // `docker push`/`login`, `mvn deploy`, `gradle publish`, `dart pub publish`,
+  // `twine upload`, `cargo owner`/`yank`. Ditahan di SEMUA mode (armor) agar
+  // allowlist developer boleh LUAS tanpa membuka jalur terbit diam-diam.
+  // Over-block dijaga ketat: verba rilis HARUS tepat setelah manager (+ satu
+  // subcommand opsional), jadi `npm run deploy` TIDAK kena ("run" bukan verba).
+  [
+    /\b(?:npm|cargo|gem|poetry|twine|dotnet|docker|podman|mvn|gradle|bun|yarn|pnpm|dart|flutter|pub|nuget)\b(?:\s+(?:nuget|pub|compose|token))?\s+(?:publish|unpublish|push|deploy|login|logout|adduser|upload|yank|owner|signout)\b/i,
+    "registry publish/credential verb",
+  ],
 ]
 
 /**

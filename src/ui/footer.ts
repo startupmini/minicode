@@ -8,7 +8,7 @@
 // dengan spasi dan warna, tanpa bullet separator. Work Mode ada di kiri;
 // Permission Mode berwarna cyan di sisi kanan, dekat penggunaan konteks.
 import { sanitizeAnsiLine } from "./render/sanitize.ts"
-import { c, glyphs } from "./render/theme.ts"
+import { c, glyphs, themeCapabilityKey } from "./render/theme.ts"
 import { displayWidth, truncateToWidth } from "./render/width.ts"
 
 export type TimerHighlight = "seconds" | "minutes" | "hours"
@@ -146,13 +146,53 @@ export function shortenPath(p: string, maxSegments = 2): string {
 }
 
 /**
+ * Cache satu-entri: footer dirender ulang SETIAP paint, padahal isinya jarang
+ * berubah (idle: mode/model/cwd/konteks tetap). Key memuat SEMUA field +
+ * kapabilitas tema supaya cache tak menyajikan output basi setelah env/lebar
+ * berubah. Satu entri cukup: perubahan beruntun (mis. timer busy) memang selalu
+ * miss, dan entri lama tak berguna lagi.
+ */
+let footerCache: { key: string; line: string } | null = null
+
+function footerCacheKey(s: FooterStatus, cols: number): string {
+  // JSON.stringify = pemisah tak ambigu; nilai model/cwd bisa memuat karakter
+  // apa pun (termasuk separator buatan), dan tabrakan key = footer salah.
+  return JSON.stringify([
+    themeCapabilityKey(),
+    cols,
+    s.mode,
+    s.strictBash === true,
+    s.workMode ?? "",
+    s.model,
+    s.cwd,
+    s.context ?? "",
+    s.metrics ?? "",
+    s.sparkFrame ?? 0,
+    s.activity ?? "",
+    s.timer ?? "",
+    s.timerActive === true,
+    s.timerHighlight ?? "",
+  ])
+}
+
+/**
  * Render 1 baris footer untuk lebar `columns` (+ 1 baris kosong di atasnya
  * bila dilukis lengket). Tanpa garis separator — clean (keputusan user).
  * Non-TTY/dimati diputuskan pemanggil (mekanisme), bukan di sini.
  */
 export function renderFooter(s: FooterStatus, columns: number): string[] {
   const cols = Math.max(10, Math.floor(columns) || 80)
+  const key = footerCacheKey(s, cols)
+  const cached = footerCache
+  // Kembalikan array BARU tiap panggilan: pemanggil bebas memutasi hasilnya
+  // tanpa merusak cache.
+  if (cached && cached.key === key) return [cached.line]
+  const line = buildFooterLine(s, cols)
+  footerCache = { key, line }
+  return [line]
+}
 
+function buildFooterLine(s: FooterStatus, cols: number): string {
   const spark = sparkGlyph(s.sparkFrame ?? 0)
   const timerText = s.timer ? sanitizeAnsiLine(s.timer) : ""
   const timer = timerText
@@ -228,7 +268,7 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
       for (const [workStyle, permissionStyle] of pairGroup) {
         for (const left of leftCandidates(workStyle)) {
           const line = align(left, rightFor(permissionStyle))
-          if (line && displayWidth(line) <= target) return [line]
+          if (line && displayWidth(line) <= target) return line
         }
       }
     }
@@ -236,7 +276,7 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
   for (const pairGroup of labelPairGroups) {
     for (const [workStyle, permissionStyle] of pairGroup) {
       const line = align(leftModeOnlyFor(workStyle), rightFor(permissionStyle))
-      if (line && displayWidth(line) <= target) return [line]
+      if (line && displayWidth(line) <= target) return line
     }
   }
 
@@ -254,9 +294,9 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
     if (contextBudget > 0) {
       const shortenedContext = truncateToWidth(context, contextBudget, "…")
       const withContext = `${spark} ${shortWorkValue} ${c.gray(shortenedContext)} ${[permissionValue, strictValue].filter(Boolean).join(" ")}`
-      if (displayWidth(withContext) <= target) return [withContext]
+      if (displayWidth(withContext) <= target) return withContext
     }
   }
-  if (displayWidth(modeOnly) <= target) return [modeOnly]
-  return [truncateToWidth(modeOnly, target, "…")]
+  if (displayWidth(modeOnly) <= target) return modeOnly
+  return truncateToWidth(modeOnly, target, "…")
 }

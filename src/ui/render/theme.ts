@@ -53,6 +53,18 @@ function colorLevel(): number {
   return 1
 }
 
+/**
+ * Kunci kapabilitas tampilan (level warna + glyph UTF-8) untuk cache render.
+ *
+ * Dievaluasi LAZY tiap panggilan: NO_COLOR/TERM/COLORTERM dan deteksi UTF-8
+ * bisa berubah di runtime (dan antar test). Konsumen yang meng-cache string
+ * berwarna WAJIB menyertakan kunci ini; tanpa itu output mono bisa tersaji ke
+ * terminal berwarna (atau sebaliknya) setelah env berubah.
+ */
+export function themeCapabilityKey(): string {
+  return `${colorLevel()}:${hasTruecolorEnv() ? 1 : 0}:${supportsUtf8() ? 1 : 0}`
+}
+
 type Paint = (s: string) => string
 const identity: Paint = (s) => s
 

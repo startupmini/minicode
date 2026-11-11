@@ -28,7 +28,7 @@ bisa di-pipe, di-grep, dan tinggal di scrollback Anda sendiri.
 | stderr | Progress/diagnostik: ledger tool (`› …` hijau/merah), reasoning (verbose), warning, error. Boleh transient bila TTY — ditahan saat layar interaktif memegang terminal |
 
 - Warna hanya bila TTY (`stdout.isTTY`); `NO_COLOR` menang; `TERM`/`COLORTERM` tidak menyalakan warna di pipe.
-- Error `✗ pesan actionable` sekali per kegagalan (`takePendingError`) — bukan spam di setiap langkah.
+- Error `pesan actionable` (berwarna merah, tanpa ikon sejak v0.17.0) sekali per kegagalan (`takePendingError`) — bukan spam di setiap langkah.
 
 ## Primitif tampilan
 

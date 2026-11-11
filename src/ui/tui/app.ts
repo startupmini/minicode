@@ -120,6 +120,15 @@ interface FrameLayout {
   composerOffset: number
 }
 
+/** Baris visual composer + posisi kursor (indeks baris 0-based, kolom 1-based). */
+interface ComposerLayout {
+  rows: string[]
+  visIdx: number
+  col: number
+}
+
+const EMPTY_COMPOSER_LAYOUT: ComposerLayout = { rows: [], visIdx: 0, col: 1 }
+
 interface SelectionState {
   anchor: TranscriptPoint
   focus: TranscriptPoint
@@ -203,6 +212,13 @@ export class TuiApp {
   /** Hint "tekan lagi untuk keluar" tampil sekali setelah abort pertama. */
   private abortHintOn = false
   private frames = 0
+  /**
+   * Kedalaman batch input. Selama >0 paint ditunda lalu digabung jadi SATU
+   * frame per chunk stdin: burst/paste 500 karakter tidak lagi melukis 500
+   * frame (O(N²) diff-write). Key tunggal tetap melukis langsung.
+   */
+  private paintBatchDepth = 0
+  private paintPending = false
   private quitRequested = false
   private finish: (() => void) | null = null
   private runtimeFailure: { error: unknown } | null = null
@@ -233,6 +249,19 @@ export class TuiApp {
   private mouseMode: MouseMode = "off"
   private selection: SelectionState | null = null
   private lastLayout: FrameLayout | null = null
+  /**
+   * Cache layout composer: satu paint memanggil tinggi, isi, dan posisi
+   * kursor untuk state yang SAMA. Dulu tiap panggilan me-wrap ulang seluruh
+   * teks (3×), jadi ketikan panjang membayar wrap berulang. Key memuat line,
+   * kursor, lebar efektif, dan mode editing agar tak menyajikan frame basi.
+   */
+  private composerCache: {
+    line: string
+    cursor: number
+    cols: number
+    editing: boolean
+    layout: ComposerLayout
+  } | null = null
   private onExit: (() => void) | null = null
   /**
    * Langganan bus untuk repaint live (streaming jawaban, ledger tool,
@@ -554,11 +583,26 @@ export class TuiApp {
     // Tanpa ini repaint penuh App 50ms kemudian menimpa region popup +
     // memutasi state di belakang view. Gagal-di-kode-lama.
     if (this.suspended > 0) return false
-    for (const { key } of keys) {
-      if (this.quitRequested) return true
-      this.handleKey(key)
+    // Satu chunk stdin = satu key-event di decoder (burst/paste), jadi semua
+    // key di sini digabung menjadi satu paint. finally WAJIB menurunkan depth
+    // walau handler melempar, supaya paint berikutnya tidak tertahan selamanya.
+    this.paintBatchDepth++
+    try {
+      for (const { key } of keys) {
+        if (this.quitRequested) return true
+        this.handleKey(key)
+      }
+      return this.quitRequested
+    } finally {
+      this.paintBatchDepth--
+      if (this.paintBatchDepth === 0) this.flushPendingPaint()
     }
-    return this.quitRequested
+  }
+
+  private flushPendingPaint(): void {
+    if (this.paintBatchDepth > 0 || !this.paintPending) return
+    this.paintPending = false
+    this.paintCurrent()
   }
 
   private handleKey(key: PromptKey): void {
@@ -1109,12 +1153,12 @@ export class TuiApp {
       return [this.activityRow(content, cols)]
     }
     if (!this.editing) return [""]
-    return this.inputRows(cols)
+    return this.composerLayout(cols).rows
   }
 
   private composerHeight(cols: number, busy = this.busy): number {
     if (busy || !this.editing) return 1
-    return Math.min(MAX_INPUT_ROWS, Math.max(1, this.inputRows(cols).length))
+    return Math.min(MAX_INPUT_ROWS, Math.max(1, this.composerLayout(cols).rows.length))
   }
 
   // ── Paint ──
@@ -1133,6 +1177,10 @@ export class TuiApp {
   }
 
   private paintCurrent(): void {
+    if (this.paintBatchDepth > 0) {
+      this.paintPending = true
+      return
+    }
     if (!this.currentScreen || this.quitRequested) return
     try {
       this.paint(this.currentScreen)
@@ -1157,23 +1205,72 @@ export class TuiApp {
     return Math.max(1, rows - 2 - inputH - menuH)
   }
 
-  private inputRows(cols: number): string[] {
-    if (!this.editing) return []
+  private composerLayout(cols: number): ComposerLayout {
+    if (!this.editing) return EMPTY_COMPOSER_LAYOUT
     const w = Math.max(10, cols)
-    const out: string[] = []
-    if (!this.state.line) {
-      out.push(PROMPT_FIRST)
-      return out
+    const line = this.state.line
+    const cursor = this.state.cursor
+    const cached = this.composerCache
+    if (cached?.editing && cached.cols === w && cached.cursor === cursor && cached.line === line) {
+      return cached.layout
     }
-    const logical = this.state.line.split("\n")
-    logical.forEach((ln, idx) => {
-      const prefix = idx === 0 ? PROMPT_FIRST : PROMPT_CONT
-      const full = `${prefix}${ln}`
+    const layout = this.layoutComposer(line, cursor, w)
+    this.composerCache = { line, cursor, cols: w, editing: true, layout }
+    return layout
+  }
+
+  /**
+   * Wrap composer + posisi kursor dalam SATU lintasan. Semantiknya sama
+   * dengan gabungan inputRows + cursorIndex lama: prefix per baris logis,
+   * potong per kolom, kursor di baris visual yang memuat targetWidth.
+   */
+  private layoutComposer(line: string, cursor: number, w: number): ComposerLayout {
+    // Prompt kosong SELALU satu baris utuh — sama dengan jalur lama. Tanpa
+    // special-case, terminal sempit (w < lebar prefix) memecah prefix jadi dua
+    // baris dan menggeser kursor; MIN_COLS membuatnya tak terjangkau di app,
+    // tapi helper ini juga dipakai layout lain/test.
+    if (!line) return { rows: [PROMPT_FIRST], visIdx: 0, col: displayWidth(PROMPT_FIRST) + 1 }
+    // Kursor dinormalisasi ke batas grapheme supaya emoji tak terbelah saat
+    // dihitung (targetWidth memakai teks sebelum kursor).
+    const units = toGraphemes(line)
+    const safeCursor = Math.max(0, Math.min(cursor, units.length))
+    const before = units.slice(0, safeCursor).join("")
+    const beforeLines = before.split("\n")
+    const logicalIdx = beforeLines.length - 1
+    const lastLine = beforeLines[logicalIdx] ?? ""
+    const targetWidth =
+      displayWidth(logicalIdx === 0 ? PROMPT_FIRST : PROMPT_CONT) + displayWidth(lastLine)
+
+    const rows: string[] = []
+    const logical = line.split("\n")
+    let visIdx = 0
+    let col = 1
+    let cursorRowFound = false
+    for (let li = 0; li < logical.length; li++) {
+      const prefix = li === 0 ? PROMPT_FIRST : PROMPT_CONT
+      const full = `${prefix}${logical[li] ?? ""}`
       const wrapped = chunkByWidth(full, w)
-      if (!wrapped.length) out.push(full)
-      else for (const r of wrapped) out.push(r)
-    })
-    return out
+      for (const row of wrapped) rows.push(row)
+      if (li < logicalIdx) {
+        visIdx += wrapped.length
+        continue
+      }
+      if (li !== logicalIdx || cursorRowFound) continue
+      // Baris kursor: baris visual pertama yang memuat targetWidth (atau
+      // baris terakhir bila kursor tepat di ujung wrap).
+      let acc = 0
+      for (let wi = 0; wi < wrapped.length; wi++) {
+        const ww = displayWidth(wrapped[wi] ?? "")
+        if (targetWidth < acc + ww || wi === wrapped.length - 1) {
+          visIdx += wi
+          col = Math.max(1, targetWidth - acc + 1)
+          cursorRowFound = true
+          break
+        }
+        acc += ww
+      }
+    }
+    return { rows, visIdx, col }
   }
 
   private menuRows(rows: number, cols: number, busy = this.isBusy()): string[] {
@@ -1452,7 +1549,7 @@ export class TuiApp {
     let cursorCol = 1
     let composerOffset = 0
     if (!busy && this.editing) {
-      const cursor = this.cursorIndex(width)
+      const cursor = this.composerLayout(width)
       const winStart = Math.max(0, Math.min(allComposer.length - composerH, cursor.visIdx))
       composerOffset = winStart
       shownComposer = allComposer.slice(winStart, winStart + composerH)
@@ -1523,47 +1620,5 @@ export class TuiApp {
     this.lastLayout = layout
     screen.paint(layout.frame, layout.cursor)
     this.frames++
-  }
-
-  /**
-   * Indeks baris visual kursor (koordinat PENUH inputAll) + kolom 1-based.
-   * Wrap-aware; CJK/emoji dihitung per kolom via displayWidth.
-   */
-  private cursorIndex(cols: number): { visIdx: number; col: number } {
-    // Baris kursor dalam teks logis → petakan ke baris visual (wrap-aware).
-    const units = toGraphemes(this.state.line)
-    const before = units.slice(0, Math.max(0, Math.min(this.state.cursor, units.length))).join("")
-    const logicalIdx = before.split("\n").length - 1
-    const lastLine = before.split("\n").pop() ?? ""
-    const prefix = logicalIdx === 0 ? PROMPT_FIRST : PROMPT_CONT
-    const targetWidth = displayWidth(prefix) + displayWidth(lastLine)
-    const w = Math.max(10, cols)
-    // Baris visual ke berapa (dari atas blok input) posisi kursor berada.
-    let visIdx = 0
-    const logical = this.state.line.split("\n")
-    for (let li = 0; li < logical.length; li++) {
-      const full = `${li === 0 ? PROMPT_FIRST : PROMPT_CONT}${logical[li] ?? ""}`
-      const wrapped = chunkByWidth(full, w)
-      const n = Math.max(1, wrapped.length)
-      if (li < logicalIdx) {
-        visIdx += n
-        continue
-      }
-      // Baris kursor: kolom ke-n dalam wrap.
-      let acc = 0
-      for (let wi = 0; wi < n; wi++) {
-        const ww = displayWidth(wrapped[wi] ?? "")
-        if (targetWidth < acc + ww || wi === n - 1) {
-          visIdx += wi
-          // Kolom 1-based dalam baris visual — SAMA untuk baris tengah
-          // maupun terakhir (dulu baris tengah selalu diparkir di EOL).
-          return { visIdx, col: Math.max(1, targetWidth - acc + 1) }
-        }
-        acc += ww
-      }
-      visIdx += n - 1
-      break
-    }
-    return { visIdx, col: 1 }
   }
 }

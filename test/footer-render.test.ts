@@ -286,4 +286,21 @@ describe("footer render", () => {
     expect(plain).not.toContain("D:\\very\\long")
     expect(displayWidth(plain)).toBeLessThanOrEqual(69)
   })
+
+  test("cache footer: env tema berubah dirender ulang, array hasil tetap baru", () => {
+    tty = installFakeTty({ columns: 80 })
+    const args = { mode: "auto", model: "m1", cwd: "cwd" } as const
+    const colored = renderFooter(args, 80)[0]!
+    expect(colored).toContain("\x1b[")
+    // Mutasi hasil panggilan tidak boleh meracuni cache.
+    const mutable = renderFooter(args, 80)
+    mutable[0] = "rusak"
+    expect(renderFooter(args, 80)[0]).toBe(colored)
+    // NO_COLOR mengubah kapabilitas: cache lama (berwarna) tak boleh dipakai.
+    process.env.NO_COLOR = "1"
+    const plain = renderFooter(args, 80)[0]!
+    expect(plain).not.toContain("\x1b[")
+    delete process.env.NO_COLOR
+    expect(renderFooter(args, 80)[0]).toBe(colored)
+  })
 })

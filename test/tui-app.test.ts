@@ -259,6 +259,21 @@ describe("TuiApp", () => {
     if (previous === undefined) delete process.env.MINICODE_MOUSE_SELECTION
     else process.env.MINICODE_MOUSE_SELECTION = previous
   })
+  test("satu chunk input = satu paint (burst tidak melukis per karakter)", async () => {
+    const { app, screenText } = setup()
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
+    const paints = () => tty!.all().split("\x1b[?2026h").length - 1
+    const before = paints()
+    await tty!.send("x".repeat(40))
+    // Gagal-di-kode-lama: 40 karakter dalam satu chunk = 40 paint.
+    expect(paints() - before).toBe(1)
+    expect(screenText()).toContain(`minicode › ${"x".repeat(40)}`)
+    await tty!.send(KEY.ctrlU)
+    await tty!.send(KEY.ctrlD)
+    await runP
+  })
   test("ketik + Enter: submit terpanggil + gema di transkrip", async () => {
     const { app, calls, screenText } = setup()
     const runP = app.run()

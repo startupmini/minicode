@@ -51,7 +51,7 @@ export async function runModelManager(opts: {
   // scope asal jadi tak terlihat ("balik lagi"). SEMUA salinan diupdate (bila
   // duplikat lintas file sudah terlanjur ada) agar tak ada yang menghidupkan
   // data basi. Lempar bila provider tak ada di scope mana pun — view
-  // menampilkan ✗ (dulu ditelan diam-diam).
+  // menampilkan pesan error berwarna (dulu ditelan diam-diam).
   const updateProviderInScopes = async (
     id: string,
     mutate: (p: ProviderEntry) => void,

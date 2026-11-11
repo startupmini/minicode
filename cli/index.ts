@@ -711,7 +711,7 @@ if (enterRepl) {
     })
   } catch (e) {
     // Error provider biasanya sudah dirender ramah oleh event handler
-    // (takePendingError) — cetak sekali saja, jangan dua blok ✗.
+    // (takePendingError) — cetak sekali saja, jangan dua blok error.
     const shown = ctx.uiState.takePendingError()
     process.stderr.write(`\n${c.red(glyphs.cross)} ${shown ?? formatError(e)}\n`)
     // Audit #04 P1: sama seperti REPL — turn gagal setelah delegasi

@@ -895,14 +895,12 @@ test("[ARCHITECTURE-GUARD] P2.10: child effect verification references lineage a
   expect(code.includes("finalText")).toBe(false)
 })
 
-test("[ARCHITECTURE-GUARD] P2.10: vendor remains untouched", () => {
-  const status = spawnSync("git", ["status", "--short", "vendor/"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-    timeout: 30_000,
-  })
-  expect(status.status).toBe(0)
-  expect(status.stdout.trim()).toBe("")
+test("[ARCHITECTURE-GUARD] P2.10: vendor unfreeze didokumentasikan (HOST-EDITABLE)", () => {
+  // Keputusan pemilik 2026-11-10: vendor/minicore DI-UNFREEZE (host-editable),
+  // lihat vendor/minicore/VENDOR.md. Guard lama "git status vendor/ kosong"
+  // menegakkan vendor beku; kini satu-satunya invarian tersisa adalah keputusan
+  // itu tercatat, agar pengembang tahu vendor boleh diedit (seam aditif).
+  expect(readProd("vendor/minicore/VENDOR.md")).toContain("HOST-EDITABLE")
 })
 
 test("[ARCHITECTURE-GUARD] P2.10: no presentation-phase code is introduced", () => {
@@ -1220,14 +1218,10 @@ test("[ARCHITECTURE-GUARD] P2.11: no second canonical presentation persistence",
   expect(persist).toContain("appendPresentationEvents")
 })
 
-test("[ARCHITECTURE-GUARD] P2.11: vendor remains untouched", () => {
-  const status = spawnSync("git", ["status", "--short", "vendor/"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-    timeout: 30_000,
-  })
-  expect(status.status).toBe(0)
-  expect(status.stdout.trim()).toBe("")
+test("[ARCHITECTURE-GUARD] P2.11: vendor unfreeze didokumentasikan (HOST-EDITABLE)", () => {
+  // Lihat P2.10 — vendor unfrozen sejak v0.16.0; invarian tersisa = keputusan
+  // tercatat di VENDOR.md.
+  expect(readProd("vendor/minicore/VENDOR.md")).toContain("HOST-EDITABLE")
 })
 
 test("[ARCHITECTURE-GUARD] P2.11: no P2.12 work enters P2.11", () => {

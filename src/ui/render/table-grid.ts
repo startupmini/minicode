@@ -1,5 +1,5 @@
 import type { MarkdownTable, PipeTableAlignment } from "./markdown-table.ts"
-import { cleanUntrusted, sanitizeAnsiLine } from "./sanitize.ts"
+import { cleanUntrusted, sanitizeAnsiLine, stripSgr } from "./sanitize.ts"
 import { c, getTerminalWidth, supportsUtf8 } from "./theme.ts"
 import {
   displayWidth,
@@ -35,6 +35,9 @@ export interface GridRenderOptions {
   wrap?: boolean
   /** Render sebagai kotak ber-garis (opencode-like) dengan padding dalam sel. */
   box?: boolean
+  /** Minimum kolom proporsional (tabel markdown jawaban model) alih-alih
+   * minimum atomik 1–3 kolom. Lihat `fairMinimums`. */
+  fairMinimums?: boolean
 }
 
 const DEFAULT_ELLIPSIS = "…"
@@ -129,6 +132,41 @@ function atomicMinimums(table: GridTable, natural: readonly number[]): number[] 
   })
 }
 
+/**
+ * Lebar minimum KONTEN per kolom untuk render markdown (jawaban model).
+ *
+ * Minimum 1 kolom membuat kolom identifier (mis. `read_file`, path, hash)
+ * terbelah di tengah token saat terminal sempit — `read_fi` / `le`. Untuk
+ * tabel jawaban model lebih baik kolom pendek dikorbankan sedikit agar kolom
+ * panjang punya ruang: `MIN_MD_CONTENT_WIDTH` kolom, ditambah bagian
+ * proporsional (maks `min(natural, MAX)`), supaya kolom lebar tidak menyusut
+ * jadi satu potongan grapheme. Ini tetap deterministik (fungsi murni nilai).
+ */
+const MIN_MD_CONTENT_WIDTH = 6
+const MAX_MD_FAIR_MINIMUM = 14
+
+/**
+ * Minimum "pintar" untuk tabel jawaban model: lebar TOKEN terpanjang di kolom.
+ *
+ * `read_file` cukup 9 kolom — memberi kolom itu 9 (bukan 1, bukan 50) berarti
+ * kolom identifier tak terbelah di tengah kata sementara kolom prosa tetap
+ * mendapat sisa ruang. Ditutup `MAX_MD_FAIR_MINIMUM` supaya satu path panjang
+ * di satu baris tidak memborong seluruh lebar terminal, dan tak pernah
+ * melebihi lebar natural kolom itu sendiri.
+ */
+function fairMinimums(table: GridTable, natural: readonly number[]): number[] {
+  return natural.map((value, col) => {
+    let longestToken = Math.min(value, MIN_MD_CONTENT_WIDTH)
+    const cells = [table.headers[col] ?? "", ...table.rows.map((row) => row[col] ?? "")]
+    for (const cell of cells) {
+      for (const token of cleanCell(cell).split(/\s+/)) {
+        longestToken = Math.max(longestToken, displayWidth(token))
+      }
+    }
+    return Math.max(1, Math.min(value || 1, Math.min(longestToken, MAX_MD_FAIR_MINIMUM)))
+  })
+}
+
 function fitWidths(
   natural: readonly number[],
   budget: number,
@@ -138,9 +176,18 @@ function fitWidths(
   const naturalTotal = widths.reduce((sum, value) => sum + value, 0)
   if (naturalTotal <= budget) return widths
   const floor = minimums.reduce((sum, value) => sum + value, 0)
-  const room = budget - floor
+  // Minimum bersama lebih besar dari ruang tersedia: susutkan SEMUA minimum
+  // secara proporsional (bukan menyerah ke render vertical) — geometri tabel
+  // dipertahankan dan tiap kolom tetap dapat bagian sebanding lebar isinya.
+  const scale = floor > budget && floor > 0 ? budget / floor : 1
+  const applied =
+    scale >= 1
+      ? minimums
+      : minimums.map((m, i) => Math.max(1, Math.min(natural[i] || 1, Math.floor(m * scale))))
+  const appliedFloor = applied.reduce((sum, value) => sum + value, 0)
+  const room = budget - appliedFloor
   if (room < 0) return null
-  const extras = widths.map((value, i) => value - minimums[i]!)
+  const extras = widths.map((value, i) => value - applied[i]!)
   const extraTotal = extras.reduce((sum, value) => sum + value, 0)
   if (extraTotal <= 0) return null
   let assigned = 0
@@ -148,7 +195,7 @@ function fitWidths(
     const share =
       i === widths.length - 1 ? room - assigned : Math.floor((extras[i]! * room) / extraTotal)
     const amount = Math.min(extras[i]!, Math.max(0, share))
-    widths[i] = minimums[i]! + amount
+    widths[i] = applied[i]! + amount
     assigned += amount
   }
   return widths
@@ -199,14 +246,26 @@ function renderBorderedGrid(
   // (I1) terlalu mahal untuk ditebak — potong defensif tanpa ellipsis.
   const fitCellLine = (line: string, colWidth: number): string =>
     displayWidth(line) > colWidth ? truncateToWidth(line, colWidth, "") : line
+  // Sel yang seluruhnya satu token tanpa spasi (identifier, path, hash, URL
+  // pendek) tidak punya titik patah yang wajar untuk dibaca user.
+  const hasNoBreakOpportunity = (plain: string): boolean => !/[\s\-_/.]/.test(plain.trim())
   const cellLines = (value: unknown, col: number): string[] => {
     const colWidth = widths[col]!
     const align = aligns[col] ?? "left"
     const raw = cleanCell(value)
     const rendered = options.formatCell?.(raw) ?? raw
-    return wrapByWidth(rendered, colWidth).map((l) =>
-      alignCell(fitCellLine(l, colWidth), colWidth, align),
-    )
+    // Token tanpa spasi (identifier/path/angka) TIDAK dipecah: bila ia tak
+    // muat, ia melimpah keluar kolom dengan `…` alih-alih pecah jadi
+    // `read_fi`/`le`. Bir-patah token bahkan lebih sulit dibaca daripada
+    // ellipsis, dan memilih minimum lebih besar per kolom tak menyelesaikan
+    // kasus ekstrem (lebar terminal tetap terbatas).
+    const chunks = wrapByWidth(rendered, colWidth)
+    const atomicOverflow =
+      chunks.length > 1 &&
+      hasNoBreakOpportunity(stripSgr(rendered)) &&
+      displayWidth(stripSgr(rendered)) > colWidth
+    const lines = atomicOverflow ? [rendered] : chunks
+    return lines.map((l) => alignCell(fitCellLine(l, colWidth), colWidth, align))
   }
   const headerCols = table.headers.map((v, i) => {
     const rendered = options.formatCell?.(cleanCell(v)) ?? cleanCell(v)
@@ -259,9 +318,14 @@ export function renderGridTable(table: GridTable, options: GridRenderOptions = {
     : table.headers.length * 3 - 1
   const budget = width - overhead
   const natural = naturalWidths(table, maxCellWidth)
-  const minimums = atomicMinimums(table, natural).map((m) =>
+  const atomic = atomicMinimums(table, natural).map((m) =>
     Math.max(m, Math.min(minCellWidth, ...natural.map((value) => Math.max(1, value)))),
   )
+  // Tabel jawaban model boleh lebih "pintar" memilih minimum: kolom identifier
+  // tak boleh terbelah di tengah token hanya untuk memberi kolom prosa kolam
+  // yang sama. Tabel UI internal (config/sessions/skills) tetap memakai minimum
+  // atomik sempit — kolom pendeknya memang pendek.
+  const minimums = options.fairMinimums ? fairMinimums(table, natural) : atomic
   const widths =
     (width < 40 && table.headers.length > 3) ||
     budget < minimums.reduce((sum, value) => sum + value, 0)
@@ -344,7 +408,7 @@ export function renderMarkdownTable(
       rows: table.rows,
       aligns: table.aligns,
     },
-    { width, styleHeader: true, formatCell, box: true },
+    { width, styleHeader: true, formatCell, box: true, fairMinimums: true },
   )
 }
 

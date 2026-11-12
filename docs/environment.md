@@ -69,6 +69,7 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 |---|---|
 | `MINICODE_BUDGET_STRICT` | `1` → penegasan eksplisit fail-closed (cost tak dikenal + pemakaian = over; kini juga default `--budget`) |
 | `MINICODE_MAX_TURNS` | Batas keras maksimum jumlah turn per sesi (termasuk carry-forward lintas `--resume`; bilangan ≥1) |
+| `MINICODE_AUTO_CONTINUE` | `1` → pada `exec`, saat turn berakhir `max_steps_exceeded`, lanjutkan turn pada sesi yang sama (progres parsial sudah durable) alih-alih gagal; dibatasi `--max-turns` (default 3) |
 | `MINICODE_ALLOW_LOCAL_CONFIG` | `1` → percayai config lokal workspace (default: diabaikan) |
 
 ## Terminal & aksesibilitas

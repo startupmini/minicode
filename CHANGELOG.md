@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.22.0] - 2026-11-12
+
+### Added
+- **Auto-continue saat batas langkah (`exec`).** `--auto-continue` atau
+  `MINICODE_AUTO_CONTINUE=1` membuat turn yang berakhir `max_steps_exceeded`
+  dilanjutkan pada sesi yang sama (progres parsial sudah durable lewat
+  `safeTurnBoundary`) alih-alih gagal fatal; dibatasi `--max-turns` (default 3)
+  dan tetap terikat `--budget`. `--max-steps`/`--max-turns` juga dipakai sebagai
+  pagu.
+- **Soft-cap warning.** Sebelum tabrakan keras di `max_steps`, host memperingatkan
+  sekali per turn saat langkah mendekati ~85% cap (stderr), memberi operator
+  waktu untuk membungkus/mendelegasikan.
+- **Matriks ketahanan `audit:harness`** (`bench/harness-audit.ts`): provider
+  (fallback bounded, 429 retry-after, auth fail-fast, pin-no-fallback, timeout
+  guard, cap teks/tool-arg/frame SSE) dan kompresi (scaling ringkasan,
+  anti-surrogate, regresi clamp-4k).
+- **Byte-bounds SSE jalur openai-compat** (`vendor/minicore`): frame 16 MB / total
+  64 MB + `reader.cancel()` saat `[DONE]` — menutup akumulasi buffer tak-terbatas
+  pada adapter yang paling umum.
+
+### Fixed
+- **Kompaksi LLM** tidak lagi di-clamp balik ke 4k char: pagu ringkasan kini
+  benar-benar mengikuti jendela model (R9), sehingga model berjendela besar tidak
+  over-discard fakta lama.
+- **Pembacaan body error provider** kini abort-aware — provider yang membalas
+  status error lalu menghentikan body tidak lagi menggantung pembacaan.
+- **Klasifikasi konteks-overflow Anthropic** disamakan dengan adapter lain
+  (`context length`/`input is too long`/`context window`) agar compact-and-retry
+  tidak jatuh jadi `invalid_request` terminal.
+- **Kompaksi active-turn** mempertahankan instruksi terkini verbatim di input
+  summarizer (paritas dengan jalur mekanikal).
+- **Dropdown `/`** kini men-scroll window mengikuti pilihan — tidak ada lagi
+  perintah terpilih yang tak terlihat (termasuk `/clear`/`/undo` yang destruktif).
+- **Tabel jawaban model** tidak lagi memecah token di tengah kata (`fairMinimum`
+  + elision tanpa break-opportunity): `read_file`/angka+satuan tetap utuh.
+- **Kontras aksesibilitas**: `accent` dinaikkan ke rasio ≥4.5, timer idle dan
+  gembok nonaktif dipindah dari `faint` ke `gray`.
+- **Spasi mati glyph ledger** dibuang — baris ledger kini berindentasi bersih 2
+  kolom tanpa kolom kosong ekstra.
+
+### Changed
+- **`vendor/minicore` di-unfreeze** (host-editable sejak v0.16.0, kini
+  didokumentasikan di `AGENTS.md`); guard `vendor untouched` diganti menjadi
+  verifikasi status unfreeze tercatat di `VENDOR.md`.
+- Pesan error `Batas langkah tool tercapai` kini menyebut jalur pemulihan
+  (`/resume` atau `--max-steps`) alih-alih saran "pecah tugas" yang membingungkan.
+
 ## [0.21.0] - 2026-11-11
 
 ### Added

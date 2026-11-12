@@ -7,6 +7,13 @@ import type { ModelProvider, ProviderEvent, StreamRequest } from "../core/provid
 import type { ToolSchema } from "../core/tool.ts";
 import type { Content, Message } from "../core/types.ts";
 
+// HOST seam (F2): byte bounds SSE — sejajar LIMITS.PROVIDER_SSE_FRAME_MAX_BYTES
+// (16MB) dan LIMITS.PROVIDER_SSE_TOTAL_MAX_BYTES (64MB) di sisi host. Vendor
+// self-contained, tak impor src/; nilai diduplikasi sengaja (single source di
+// host tetap src/constants.ts — ini salinan wire-level).
+const MAX_FRAME_BYTES = 16_777_216;
+const MAX_TOTAL_BYTES = 67_108_864;
+
 // Provider-metadata side-map: toolCallId -> extra provider payload (e.g.
 // Gemini thought_signature / extra_content). It must NOT travel inside
 // `args` — the executor rejects unknown properties (all schemas are
@@ -352,16 +359,31 @@ async function* sse(body: ReadableStream<Uint8Array>, signal: AbortSignal): Asyn
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let totalBytes = 0;
+  let reachedEof = false;
   try {
     while (true) {
       if (signal.aborted) throw new Error("AbortError");
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        reachedEof = true;
+        break;
+      }
+      // HOST seam (F2): byte bounds. Sebelumnya stream menumpuk baris tanpa batas
+      // sehingga satu `data:` raksasa (upstream rusak/hostil) di-buffer + JSON.parse
+      // sebelum guard host sempat memotong event yang sudah ter-decode → OOM.
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_TOTAL_BYTES) {
+        throw new ProviderError("invalid_request", "SSE stream exceeds total byte limit");
+      }
       buffer += decoder.decode(value, { stream: true });
       let index: number;
       while ((index = buffer.indexOf("\n")) >= 0) {
         const line = buffer.slice(0, index).replace(/\r$/, "");
         buffer = buffer.slice(index + 1);
+        if (line.length > MAX_FRAME_BYTES) {
+          throw new ProviderError("invalid_request", "SSE frame exceeds byte limit");
+        }
         if (!line.startsWith("data:")) continue;
         const payload = line.slice(5).trim();
         if (payload === "[DONE]") return;
@@ -373,8 +395,15 @@ async function* sse(body: ReadableStream<Uint8Array>, signal: AbortSignal): Asyn
           }
         }
       }
+      // Satu baris tak-berakhir yang tumbuh melebihi cap frame = runaway buffer.
+      if (buffer.length > MAX_FRAME_BYTES) {
+        throw new ProviderError("invalid_request", "SSE frame exceeds byte limit");
+      }
     }
   } finally {
+    // HOST seam (F2): cancel (bukan hanya releaseLock) agar exit prematur /
+    // [DONE] melepas body & koneksi, bukan membiarkannya menggantung.
+    if (!reachedEof) await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
 }

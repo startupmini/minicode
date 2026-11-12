@@ -312,7 +312,7 @@ export const en = {
   "err.timeout": "Run exceeded timeout",
   "err.timeoutFix": "Increase --timeout or use a faster model.",
   "err.steps": "Tool step limit reached",
-  "err.stepsFix": "Split the task into smaller prompts.",
+  "err.stepsFix": "Progress is saved — run /resume to continue, or raise --max-steps.",
   "err.budget": "Session budget exceeded",
   "err.budgetFix": "Start a new session or increase --budget.",
   "err.busy": "A run is still in progress",

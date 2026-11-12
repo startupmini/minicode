@@ -6,7 +6,6 @@
 // tersendiri — bukan kebiasaan — dan bila guard ini merah, yang benar adalah
 // mengubah kode, bukan menurunkan guard.
 import { describe, expect, test } from "bun:test"
-import { spawnSync } from "node:child_process"
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -281,13 +280,10 @@ describe("guard P2.12 — hidup-mati & peta", () => {
     expect(daemonFiles().length).toBeGreaterThanOrEqual(16)
   })
 
-  test("vendor/minicore tak tersentuh", () => {
-    const r = spawnSync("git", ["status", "--porcelain", "--", "vendor/"], {
-      cwd: ROOT,
-      encoding: "utf8",
-      timeout: 30_000,
-    })
-    expect(r.status).toBe(0)
-    expect(r.stdout.trim()).toBe("")
+  test("vendor/minicore unfreeze didokumentasikan", () => {
+    // Keputusan pemilik 2026-11-10: vendor/minicore DI-UNFREEZE (host-editable),
+    // lihat vendor/minicore/VENDOR.md. Guard "git status vendor/ kosong" lama
+    // menegakkan vendor beku; kini invarian = keputusan tercatat.
+    expect(read("vendor/minicore/VENDOR.md")).toContain("HOST-EDITABLE")
   })
 })

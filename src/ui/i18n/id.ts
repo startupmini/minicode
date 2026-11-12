@@ -314,7 +314,7 @@ export const id: Record<MsgKey, string> = {
   "err.timeout": "Run melewati batas waktu",
   "err.timeoutFix": "Naikkan --timeout atau pakai model lebih cepat.",
   "err.steps": "Batas langkah tool tercapai",
-  "err.stepsFix": "Pecah tugas menjadi prompt lebih kecil.",
+  "err.stepsFix": "Progres sudah tersimpan — lanjutkan via /resume, atau naikkan --max-steps.",
   "err.budget": "Budget sesi terlampaui",
   "err.budgetFix": "Mulai sesi baru atau naikkan --budget.",
   "err.busy": "Run masih berjalan",

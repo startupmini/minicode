@@ -947,7 +947,7 @@ export function machineError(e: unknown): MachineError {
   if (kind === "timeout" || (/timeout|timed out/i.test(message) && kind !== "aborted"))
     return { category: "AGENT_ERROR", message, action: "retry with a higher --timeout" }
   if (kind === "max_steps_exceeded" || /max.?steps/i.test(message))
-    return { category: "AGENT_ERROR", message, action: "raise --max-steps" }
+    return { category: "AGENT_ERROR", message, action: "continue via /resume or raise --max-steps" }
   if (kind === "aborted" || /^(run cancelled|turn aborted|aborted)/i.test(message))
     return { category: "USER_ERROR", message }
   if (/refusing|denied|not allowed|not permitted/i.test(message))

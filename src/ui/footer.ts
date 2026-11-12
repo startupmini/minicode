@@ -108,7 +108,7 @@ export function paintPermissionMode(mode: string, style: ModeLabelStyle = "full"
  * jadi dirender jelas (bukan redup). */
 export function paintBashStrict(strictBash?: boolean, unrestricted = false): string {
   if (unrestricted) return c.info(glyphs.unlock)
-  return strictBash ? c.yellow(glyphs.lock) : c.faint(glyphs.lock)
+  return strictBash ? c.yellow(glyphs.lock) : c.gray(glyphs.lock)
 }
 
 /** Spark glyph: redup saat idle, pulse putih↔abu saat busy (frame genap/ganjil). */
@@ -119,7 +119,7 @@ function sparkGlyph(frame: number): string {
 }
 
 function paintTimer(text: string, active: boolean, highlight: TimerHighlight = "seconds"): string {
-  if (!active) return c.faint(text)
+  if (!active) return c.gray(text)
   const parts = text.split(".")
   if (parts.length !== 3) return c.white(text)
   const rank: Record<TimerHighlight, number> = { seconds: 1, minutes: 2, hours: 3 }

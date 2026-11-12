@@ -134,7 +134,7 @@ export function createAnthropicProvider(config: AnthropicConfig): ModelProvider 
         throw new ProviderError("network", e instanceof Error ? e.message : String(e))
       }
       if (!response.ok) {
-        const txt = await readProviderErrorBody(response).catch(() => "")
+        const txt = await readProviderErrorBody(response, signal).catch(() => "")
         throw toAnthropicError(response.status, txt, response.headers)
       }
       if (!response.body) throw new ProviderError("network", "empty response body")
@@ -413,9 +413,19 @@ function toAnthropicError(status: number, body: string, headers: Headers): Provi
   if (status === 401 || status === 403)
     return new ProviderError("auth", `auth failed (${status}): ${detail}`)
   if (status === 400 || status === 422) {
-    const isCtx =
-      body.toLowerCase().includes("maximum context") ||
-      body.toLowerCase().includes("prompt is too long")
+    // Samakan frasa deteksi overflow dengan adapter lain (openai-compat /
+    // responses): gateway kompatibel-Anthropic bisa memfrasakan jendela konteks
+    // sebagai "context window"/"input is too long" — tanpa frasa itu, kasus
+    // compact-and-retry jatuh jadi invalid_request terminal.
+    const lower = body.toLowerCase()
+    const isCtx = [
+      "context_length",
+      "context length",
+      "maximum context",
+      "prompt is too long",
+      "input is too long",
+      "context window",
+    ].some((phrase) => lower.includes(phrase))
     return new ProviderError(
       isCtx ? "context_length_exceeded" : "invalid_request",
       `${status}: ${detail}`,

@@ -12,10 +12,22 @@
 
 import { existsSync, readFileSync } from "node:fs"
 import type { ToolCall } from "#minicore"
+import { ProviderError } from "#minicore/core/errors.ts"
+import type { ModelProvider, ProviderEvent, StreamRequest } from "#minicore/core/provider.ts"
+import type { Message } from "#minicore/core/types.ts"
 import { setupToolLayer } from "../src/app/tool-layer.ts"
+import { LIMITS } from "../src/constants.ts"
 import { inspectBashCommand } from "../src/policy/bash-guard.ts"
+import {
+  composeBoundedSummary,
+  createLlmCompaction,
+  summaryCharBudgetForWindow,
+} from "../src/policy/compaction.ts"
 import { createPermissionHandler, type PermissionMode } from "../src/policy/permission.ts"
 import { budgetStatus } from "../src/policy/usage.ts"
+import { withStreamGuards } from "../src/providers/guards.ts"
+import { createRouterProvider } from "../src/providers/router.ts"
+import { appendToolArgument, boundedSseBody } from "../src/providers/sse-bounds.ts"
 
 export interface AuditCheck {
   id: string
@@ -160,6 +172,255 @@ function budgetMatrix(): AuditCheck[] {
   })
 }
 
+// ── Provider resilience (deterministik, tanpa jaringan/API key) ─────────────
+// Fake provider in-process; invariants yang sebelumnya hanya ada di bun test.
+
+type Script = (req: StreamRequest, n: number) => AsyncIterable<ProviderEvent>
+
+function scripted(
+  id: string,
+  models: string[],
+  scripts: Script[],
+  extra?: { kind?: string },
+): ModelProvider & { calls: number } {
+  let n = 0
+  return {
+    id,
+    models,
+    ...(extra?.kind ? { kind: extra.kind } : {}),
+    async *stream(req: StreamRequest, _signal: AbortSignal): AsyncIterable<ProviderEvent> {
+      const i = n++
+      yield* scripts[Math.min(i, scripts.length - 1)]!(req, i)
+    },
+    get calls() {
+      return n
+    },
+  } as unknown as ModelProvider & { calls: number }
+}
+
+async function* oneText(t: string): AsyncGenerator<ProviderEvent> {
+  yield { type: "text", text: t }
+  yield { type: "finish", reason: "stop" }
+}
+
+function thrower(e: unknown): Script {
+  return async function* () {
+    yield* []
+    throw e
+  }
+}
+
+async function drain(p: ModelProvider, req: Partial<StreamRequest> = {}): Promise<unknown> {
+  const ac = new AbortController()
+  try {
+    for await (const _ of p.stream(
+      { messages: [{ role: "user", content: "hi" }], ...req } as StreamRequest,
+      ac.signal,
+    )) {
+    }
+    return null
+  } catch (e) {
+    return e
+  }
+}
+
+async function providerResilience(): Promise<AuditCheck[]> {
+  const out: AuditCheck[] = []
+
+  const serverError = new ProviderError("server", "down")
+  {
+    const a = scripted("a", ["m"], [thrower(serverError)])
+    const b = scripted("b", ["m"], [thrower(serverError)])
+    const err = await drain(createRouterProvider({ providers: [a, b] }), { model: "m" })
+    out.push({
+      id: "provider/fallback-server-bounded",
+      passed: err instanceof ProviderError && a.calls === 1 && b.calls === 1,
+      detail: `a=${a.calls} b=${b.calls} (tiap provider tepat sekali lalu menyerah)`,
+    })
+  }
+  {
+    const a = scripted("a", ["m"], [thrower(new ProviderError("rate_limit", "slow", 1))])
+    const b = scripted(
+      "b",
+      ["m"],
+      [
+        async function* () {
+          yield* oneText("ok-b")
+        } as Script,
+      ],
+    )
+    const err = await drain(createRouterProvider({ providers: [a, b] }), { model: "m" })
+    out.push({
+      id: "provider/429-fallback-bounded",
+      passed: err === null && a.calls === 1 && b.calls === 1,
+      detail: `a=${a.calls} b=${b.calls} (429 retry-after → fallback, tanpa sleep)`,
+    })
+  }
+  {
+    const a = scripted("a", ["m"], [thrower(new ProviderError("auth", "bad key"))])
+    const err = await drain(createRouterProvider({ providers: [a] }), { model: "m" })
+    out.push({
+      id: "provider/auth-fail-fast",
+      passed:
+        err instanceof ProviderError && (err as ProviderError).category === "auth" && a.calls === 1,
+      detail: `calls=${a.calls} (401/403 tanpa retry)`,
+    })
+  }
+  {
+    const a = scripted("a", ["m"], [thrower(serverError)])
+    const b = scripted(
+      "b",
+      ["m"],
+      [
+        async function* () {
+          yield* oneText("ok-b")
+        } as Script,
+      ],
+    )
+    const err = await drain(createRouterProvider({ providers: [a, b] }), { model: "a::m" })
+    out.push({
+      id: "provider/pin-no-fallback",
+      passed: err instanceof ProviderError && a.calls === 1 && b.calls === 0,
+      detail: `a=${a.calls} b=${b.calls} (pin provider tak jatuh ke provider lain)`,
+    })
+  }
+  {
+    const hanging = {
+      id: "h",
+      models: ["m"],
+      async *stream() {
+        yield { type: "text" as const, text: "x" }
+        // Gantung sungguhan: tak pernah finish dan tak pernah return.
+        await new Promise<never>(() => {})
+      },
+    } as unknown as ModelProvider
+    const err = await drain(withStreamGuards(hanging, { timeoutMs: 50 }))
+    out.push({
+      id: "provider/timeout-guard-server",
+      passed: err instanceof ProviderError && (err as ProviderError).category === "server",
+      detail: `hung stream diklasifikasikan server (bukan network/abort)`,
+    })
+  }
+  {
+    const big = {
+      id: "big",
+      models: ["m"],
+      async *stream() {
+        yield { type: "text" as const, text: "z".repeat(1000) }
+        yield { type: "finish" as const, reason: "stop" as const }
+      },
+    } as unknown as ModelProvider
+    const guarded = withStreamGuards(big, { maxTextChars: 25 })
+    const ac = new AbortController()
+    const parts: string[] = []
+    for await (const ev of guarded.stream(
+      { messages: [{ role: "user", content: "hi" }] } as StreamRequest,
+      ac.signal,
+    )) {
+      if (ev.type === "text") parts.push(ev.text)
+    }
+    const zCount = [...parts.join("")].filter((ch) => ch === "z").length
+    out.push({
+      id: "provider/text-cap",
+      passed: zCount <= 25,
+      detail: `akumulasi teks dipotong (z=${zCount})`,
+    })
+  }
+  {
+    let threw = false
+    try {
+      appendToolArgument("", 0, "123456", 0, "test", { maxArgumentBytes: 3 })
+    } catch {
+      threw = true
+    }
+    out.push({
+      id: "provider/tool-arg-cap",
+      passed: threw,
+      detail: "tool args melebihi cap ditolak",
+    })
+  }
+  {
+    const source = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode("data:123456789"))
+      },
+    })
+    const bounded = boundedSseBody(source, new AbortController().signal, "test", {
+      maxFrameBytes: 4,
+    })
+    let threw = false
+    try {
+      await bounded.getReader().read()
+    } catch {
+      threw = true
+    }
+    out.push({
+      id: "provider/sse-frame-cap",
+      passed: threw,
+      detail: "frame SSE melebihi cap ditolak",
+    })
+  }
+  return out
+}
+
+// ── Compression/compaction resilience (deterministik, tanpa jaringan) ────────
+
+function convo(n: number): Message[] {
+  const out: Message[] = []
+  for (let i = 0; i < n; i++) {
+    out.push({ role: "user", content: `pertanyaan ${i}` })
+    out.push({ role: "assistant", content: `jawaban ${i}` })
+  }
+  return out
+}
+
+async function compactionMatrix(): Promise<AuditCheck[]> {
+  const out: AuditCheck[] = []
+  const min = LIMITS.COMPACTION_SUMMARY_MAX_CHARS
+  const max = LIMITS.COMPACTION_SUMMARY_SCALED_MAX_CHARS
+  out.push({
+    id: "compaction/summary-budget-scaling",
+    passed:
+      summaryCharBudgetForWindow(32_000) === min &&
+      summaryCharBudgetForWindow(131_072) > min &&
+      summaryCharBudgetForWindow(1_000_000) === max,
+    detail: `floor=${min} ceil=${max} (pagu ringkasan mengikuti jendela)`,
+  })
+  {
+    const LONE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/
+    const s = composeBoundedSummary("", `${"a".repeat(1400)}👍`)
+    out.push({
+      id: "compaction/surrogate-safe",
+      passed: !LONE.test(s) && s.length <= LIMITS.COMPACTION_SUMMARY_MAX_CHARS,
+      detail: "pemotongan pagu tak menyisakan lone surrogate",
+    })
+  }
+  {
+    // F1 regresi: ringkasan LLM 1M-jendela TIDAK di-clamp balik ke 4k.
+    const big = {
+      id: "fake",
+      models: ["m"],
+      async *stream() {
+        yield { type: "text" as const, text: `RINGKASAN-PANJANG-${"S".repeat(40_000)}` }
+        yield { type: "finish" as const, reason: "stop" as const }
+      },
+    } as unknown as ModelProvider
+    const s = createLlmCompaction({ provider: big, getContextWindowTokens: () => 1_000_000 })
+    const outMsg = await s.compactAsync!(
+      { messages: convo(6) } as never,
+      { keepRecentTurns: 2 },
+      new AbortController().signal,
+    )
+    const len = String((outMsg[0] as { content: string }).content).length
+    out.push({
+      id: "compaction/llm-summary-not-clamped-4k",
+      passed: len > LIMITS.COMPACTION_SUMMARY_MAX_CHARS,
+      detail: `len=${len} floor=${LIMITS.COMPACTION_SUMMARY_MAX_CHARS}`,
+    })
+  }
+  return out
+}
+
 function fakeDetector(): AuditCheck[] {
   // Advisory: angka dari run --fake tak boleh dikutip sebagai kemampuan.
   const out: AuditCheck[] = []
@@ -195,6 +456,8 @@ export async function runAudit(root: string): Promise<AuditReport> {
     ...guardCorpus(),
     ...budgetMatrix(),
     ...(await scopeInvariant()),
+    ...(await providerResilience()),
+    ...(await compactionMatrix()),
     ...fakeDetector(),
   ]
   const hard = checks.filter((c) => !c.id.startsWith("fake/"))

@@ -2395,6 +2395,30 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       })
     } catch {}
   })
+  // ── Phase C: soft-cap warning (host-side) ──
+  // Peringatkan SEKALI per turn saat langkah mendekati cap (~85%) supaya operator
+  // tahu batas akan tercapai dan bisa memecah/mendelegasikan sebelum tabrakan
+  // keras di "Batas langkah tool tercapai". Operator-facing (stderr); menembus
+  // ke MODEL butuh seam system-prompt terpisah (di luar scope fase ini).
+  let softStepWarned = false
+  session.events.on("turn:started", () => {
+    softStepWarned = false
+  })
+  session.events.on("step:completed", (e) => {
+    try {
+      if (softStepWarned) return
+      const cap = maxSteps ?? LIMITS.DEFAULT_MAX_STEPS
+      const idx = (e.step as { index?: unknown })?.index
+      if (typeof idx !== "number") return
+      const threshold = Math.max(1, Math.floor(cap * 0.85))
+      if (idx >= threshold && idx < cap) {
+        softStepWarned = true
+        warnLine(
+          `mendekati batas langkah (step ${idx}/${cap}) — bungkus hasil, delegasikan, atau siapkan /resume`,
+        )
+      }
+    } catch {}
+  })
   // ── P2.11 observasi verifikasi (observation-only) ──
   // Bukti kanonik hidup di jurnal mutasi; presentasi hanya mengamatinya.
   // Setiap tool selesai (dan setiap turn selesai untuk verifikasi susulan),

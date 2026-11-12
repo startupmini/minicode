@@ -172,3 +172,29 @@ test("provider HTTP errors: reads only the diagnostic byte cap and cancels remai
   expect((await readProviderErrorBody(response)).length).toBe(65_536)
   expect(cancelled).toBe(true)
 })
+
+test("provider HTTP errors: abort signal releases a stalled error body (no hang)", async () => {
+  // Regresi F3: server mengembalikan status error lalu menstall body-nya.
+  // Tanpa abort-aware, reader.read() menggantung selamanya; dengan signal yang
+  // di-abort, readProviderErrorBody harus selesai (mengembalikan "" terpotong)
+  // dan reader dibatalkan.
+  let cancelled = false
+  const response = new Response(
+    new ReadableStream<Uint8Array>({
+      start() {
+        // tidak pernah enqueue apa pun — stream mengambang.
+      },
+      cancel() {
+        cancelled = true
+      },
+    }),
+    { status: 500 },
+  )
+  const ctl = new AbortController()
+  // Abort segera supaya read tak tertunda; fungsi harus tetap resolve singkat.
+  const pending = readProviderErrorBody(response, ctl.signal)
+  ctl.abort()
+  const txt = await pending
+  expect(typeof txt).toBe("string")
+  expect(cancelled).toBe(true)
+})

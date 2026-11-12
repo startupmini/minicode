@@ -222,6 +222,37 @@ describe("compactWithLlm", () => {
     expect(seenPrompt).toContain("gagal total")
   })
 
+  test("F6: active-turn fold mempertahankan request terkini verbatim di input summarizer", async () => {
+    let seenPrompt = ""
+    const spy = {
+      id: "spy",
+      models: ["m"],
+      async *stream(req: { messages: Message[] }) {
+        seenPrompt = String(req.messages[0]?.content ?? "")
+        yield { type: "text" as const, text: "ok" }
+        yield { type: "finish" as const, reason: "stop" as const }
+      },
+    } as never
+    // Satu turn aktif didominasi hasil tool (keep >= panjang → activeTurn).
+    const messages: Message[] = [
+      { role: "user", content: "Buat jadwal lembur dari data acuan ini" },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{ id: "1", name: "read_file", args: { path: "acuan.docx" } }],
+      } as Message,
+      {
+        role: "tool",
+        name: "read_file",
+        content: `data ${"x".repeat(8_000)}`,
+        toolCallId: "1",
+      } as Message,
+    ]
+    await compactWithLlm(storeOf(messages), { keepRecentTurns: 1, provider: spy })
+    expect(seenPrompt).toContain("Current request (verbatim):")
+    expect(seenPrompt).toContain("Buat jadwal lembur dari data acuan ini")
+  })
+
   // `String.slice` memotong per code unit UTF-16 sehingga bisa menyisakan
   // surrogate TUNGGAL, yang tidak valid di JSON provider (risiko 400) dan
   // berubah jadi U+FFFD. Sweep seluruh posisi batas yang mungkin, langsung ke
@@ -400,6 +431,30 @@ describe("createLlmCompaction", () => {
     await expect(
       s.compactAsync!(storeOf(convo(6)), { keepRecentTurns: 2 }, ac.signal),
     ).rejects.toThrow()
+  })
+
+  test("R9: ringkasan LLM TIDAK di-clamp balik ke 4k pada jendela besar", async () => {
+    // Regresi F1: ringkasan yang SUDAH diproduksi dengan budget jendela
+    // (summaryCharBudgetForWindow ≈ 32k untuk 1M token) dulu di-truncate ulang
+    // ke COMPACTION_SUMMARY_MAX_CHARS (4k) oleh boundCompactionResult, sehingga
+    // model 1M over-discard fakta lama. Provider mengembalikan ringkasan panjang
+    // (~40k char) dan compactAsync harus mempertahankan > lantai 4k.
+    const window = 1_000_000
+    const budget = summaryCharBudgetForWindow(window)
+    expect(budget).toBeGreaterThan(LIMITS.COMPACTION_SUMMARY_MAX_CHARS)
+    const big = `RINGKASAN-PANJANG-${"S".repeat(40_000)}`
+    const s = createLlmCompaction({
+      provider: fakeProvider(big),
+      getContextWindowTokens: () => window,
+    })
+    const out = await s.compactAsync!(
+      storeOf(convo(6)),
+      { keepRecentTurns: 2 },
+      new AbortController().signal,
+    )
+    const summaryLen = String(out[0]!.content).length
+    expect(summaryLen).toBeGreaterThan(LIMITS.COMPACTION_SUMMARY_MAX_CHARS)
+    expect(summaryLen).toBeLessThanOrEqual(budget)
   })
 })
 

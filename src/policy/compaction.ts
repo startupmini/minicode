@@ -280,9 +280,14 @@ function boundCompactionResult(
   store: ContextStore,
   result: readonly import("#minicore/core/types.ts").Message[],
   keepRecentTurns: number,
-  targetTokens?: number,
+  targetTokens: number | undefined,
+  maxSummaryChars: number,
 ): readonly import("#minicore/core/types.ts").Message[] {
-  let bounded = boundSummary(result, LIMITS.COMPACTION_SUMMARY_MAX_CHARS)
+  // R9 — pagu ringkasan mengikuti jendela (summaryCharBudgetForWindow), bukan
+  // 4k konstan. Tanpa ini ringkasan LLM untuk model berjendela raksasa
+  // (1M token) yang SUDAH diproduksi dengan budget skala 32k dipangkas ulang
+  // ke COMPACTION_SUMMARY_MAX_CHARS, sehingga fakta lama over-discard.
+  let bounded = boundSummary(result, maxSummaryChars)
   if (targetTokens !== undefined && estimateMessages(bounded, minicodeEstimator) > targetTokens) {
     bounded = boundedMechanical(store, Math.min(1, keepRecentTurns), targetTokens)
   }
@@ -307,6 +312,9 @@ export function createLlmCompaction(opts: LlmCompactionOptions = {}): Compaction
       ? Math.floor((limit as number) * LIMITS.COMPACTION_SUMMARY_TARGET_RATIO)
       : undefined
   }
+  // R9 — pagu karakter ringkasan mengikuti jendela (satu sumber, dipakai juga
+  // oleh boundCompactionResult agar ringkasan LLM tidak di-clamp balik ke 4k).
+  const summaryChars = () => summaryCharBudgetForWindow(opts.getContextWindowTokens?.())
   // F3.1 anti-thrash (state per strategi = per sesi, karena strategy dibuat
   // sekali di setup): kernel memicu kompaksi budget sekali PER TURN, jadi
   // turn panjang dengan jendela penuh-kembali langsung (= satu output raksasa)
@@ -384,6 +392,7 @@ export function createLlmCompaction(opts: LlmCompactionOptions = {}): Compaction
             fallback.compact(store, { keepRecentTurns: 1 }),
             1,
             targetTokens(),
+            summaryChars(),
           )
         }
         const progress = before > 0 ? (before - out.length) / before : 1
@@ -399,7 +408,13 @@ export function createLlmCompaction(opts: LlmCompactionOptions = {}): Compaction
             )
           }
         }
-        return boundCompactionResult(store, out, cOpts.keepRecentTurns, targetTokens())
+        return boundCompactionResult(
+          store,
+          out,
+          cOpts.keepRecentTurns,
+          targetTokens(),
+          summaryChars(),
+        )
       } finally {
         clearTimeout(timer)
         signal.removeEventListener("abort", onAbort)
@@ -646,11 +661,23 @@ export async function compactWithLlm(
           : ""
     return `- tool(${m.name}): ${head(raw, toolHeadLen(m.name, 250))}`
   }
+  // F6 — pertahankan instruksi terkini verbatim saat active-turn fold. Jalur
+  // mekanikal (compactActiveTurn) menyimpan "Current task/request" mentah; jalur
+  // LLM merangkum seluruh prefix lewat summarizer sehingga request persis bisa
+  // terparafrase atau hilang — terutama saat satu turn didominasi output tool
+  // raksasa. Sertakan request terakhir verbatim (dengan pagu) di awal input
+  // summarizer supaya apa yang sebenarnya diminta user tidak menyusut.
+  const currentRequest = (() => {
+    if (!activeTurn) return ""
+    const lastUser = [...prefix].reverse().find((m) => m.role === "user")
+    const text = lastUser ? contentToText(lastUser.content).trim() : ""
+    return text ? `Current request (verbatim):\n${head(text, 1200)}\n\n` : ""
+  })()
   const scrubbedPrefix = scrubSecrets(
-    prefix
-      .map(lineFor)
-      .join("\n")
-      .slice(0, opts.maxInputChars ?? LIMITS.COMPACTION_LLM_INPUT_MIN_CHARS),
+    (currentRequest + prefix.map(lineFor).join("\n")).slice(
+      0,
+      opts.maxInputChars ?? LIMITS.COMPACTION_LLM_INPUT_MIN_CHARS,
+    ),
   )
   // Guard anti-injeksi (temuan audit #02): prefix berisi output tool/web/repo
   // tak-terpercaya yang bisa memuat "abaikan instruksi". Tanpa pagar, payload

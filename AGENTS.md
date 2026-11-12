@@ -131,6 +131,8 @@ persetujuan pemilik.
   (`width.ts`) SENGAJA mempertahankan sekuens utuh karena footer memakai CHA
   non-SGR untuk merapatkan konteks.
 - `cwd` tool file **wajib** dari `ToolContext.cwd`, bukan `process.cwd()`.
-- Jangan edit `vendor/minicore/**` kecuali seam aditif eksplisit.
+- `vendor/minicore/**` **HOST-EDITABLE** sejak v0.16.0 (keputusan pemilik
+  2026-11-10; lihat `vendor/minicore/VENDOR.md`). Tetap utamakan seam aditif
+  dan jangan menurunkan kontrak lapisan yang dijaga test.
 - Komentar Indonesia, jelaskan **mengapa**. Encoding UTF-8 tanpa BOM.
 - Jangan commit kecuali diminta; jangan pernah commit rahasia.

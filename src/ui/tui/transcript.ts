@@ -17,7 +17,7 @@ import type {
 } from "../contract.ts"
 import { t } from "../i18n/locale.ts"
 import { renderActivityPanel } from "../render/activity-panel.ts"
-import { paintLedger, runMarker, statusGlyph, statusWord } from "../render/ledger.ts"
+import { paintLedger, runMarker, statusWord } from "../render/ledger.ts"
 import { parseFence, renderInline } from "../render/markdown.ts"
 import { type MarkdownTable, parseMarkdownBlocks } from "../render/markdown-table.ts"
 import { sanitizeAnsi, sanitizeAnsiLine, stripSgr } from "../render/sanitize.ts"
@@ -1255,7 +1255,7 @@ export class Transcript {
       : denyReason
         ? `: ${truncateToWidth(sanitizeAnsi(denyReason), 200, "…").split("\n")[0] ?? ""}`
         : ""
-    const line = `  ${statusGlyph(status)} ${name}${targetText} ${statusWord(status)}${retry}${child}${verificationMark}${provenanceMark}${message}`
+    const line = `  ${name}${targetText} ${statusWord(status)}${retry}${child}${verificationMark}${provenanceMark}${message}`
     // Lipat aktivitas (opencode-like): saat minimizeActivity ATAU panel
     // aktivitas aktif, baris ledger per-tool TIDAK boleh menghilang diam-diam
     // — ditahan lalu dirangkum saat turn selesai (panel: per keluarga tool;
@@ -1313,7 +1313,7 @@ export class Transcript {
     const targetText = target ? ` ${truncateToWidth(sanitizeAnsiLine(target), 120, "")}` : ""
     const line =
       verification.verdict === "present"
-        ? `  ${statusGlyph("completed")} ${name}${targetText} verified`
+        ? `  ${name}${targetText} verified`
         : `  ? ${name}${targetText} unverified (${verification.verdict})`
     this.append(
       verification.verdict === "present" ? paintLedger("completed", line) : c.muted(line),

@@ -182,7 +182,12 @@ const INVENTORY: Record<string, { max: number; owner: string }> = {
   // `--allowlist` deprecation notices on the exec machine path (parity with
   // cli/index.ts). Explicit compatibility handling; stdout stays pure JSONL.
   // Declared, not absorbed.
-  "cli/commands/exec.ts": { max: 19, owner: "machine" },
+  // [Phase D auto-continue] 19 -> 20 for exactly ONE writer: the
+  // `[auto-continue] batas langkah tercapai — melanjutkan (n/m)` stderr notice
+  // on the machine path. A silently swallowed continuation would make the
+  // operator believe the run stopped when it actually spawned follow-up turns —
+  // stdout stays pure JSONL. Declared, not absorbed, per the rule above.
+  "cli/commands/exec.ts": { max: 20, owner: "machine" },
   "cli/commands/mcp.ts": { max: 2, owner: "human-cmd" },
   "cli/commands/memory.ts": { max: 11, owner: "human-cmd" },
   // [P14.4] 0 -> 8 for the openwork command's writers, per the terminal

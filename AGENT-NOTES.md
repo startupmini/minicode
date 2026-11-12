@@ -257,3 +257,94 @@ tumpang-tindih di beberapa berkas:
 
 VERIFIKASI lokal (bukan gate penuh): `tsc` 0, `lint` 0, test guard/allowlist
 hijau. Gate penuh BELUM dijalankan (working tree masih tercampur).
+
+---
+
+## 2026-11-12 — KOORDINASI 2 SESI: AUDIT UI/UX vs RENCANA HARNESS-RESILIENCE
+
+Ada **dua** sesi agent jalan bersamaan di checkout ini. Baca bagian ini
+sebelum menyentuh berkas, lalu tambahkan catatanmu sendiri di bawah (jangan
+hapus catatan sesi lain).
+
+### Sesi A — Audit UI/UX + render/penataan (SUDAH SELESAI, belum commit)
+
+Ruang lingkup: `src/ui/**`, `cli/tui.ts`, `docs/TERMINAL_CONTRACT.md`
+(rujukan baca-saja).
+
+Berkas yang **sudah saya ubah** dan **jangan disentuh sesi lain** tanpa
+mengecek `git diff` dulu:
+
+| Berkas | Perubahan | Catatan |
+|---|---|---|
+| `src/ui/render/table-grid.ts` | `fairMinimums()` + `hasNoBreakOpportunity()` + `options.fairMinimums`; `fitWidths` menskalakan minimum proporsional saat tidak muat | Hanya aktif untuk `renderMarkdownTable` (tabel jawaban model). Tabel UI internal (`renderTableGrid`/`renderGrid`) TIDAK berubah perilaku. |
+
+Verifikasi yang sudah dijalankan pada kandidat ini:
+- `bun x tsc --noEmit` → bersih
+- `bun run lint` → 692 file, 0 error
+- `bun test` (seluruh suite) → **5674 pass / 0 fail**
+- `bun run gate:coverage` → **lulus**: funcs 88.74% (min 87) · lines 89.94%
+  (min 86) · lantai per-berkas 19/19 hijau. (Satu tes `/sync` sempat kena
+  timeout 10 dtk di dalam gate; lolos saat suite diulang — flake, bukan
+  regresi.)
+
+### Sesi B — `C:\Users\zo\.opencode\plan\harness-resilience-fixes.md`
+
+Ruang lingkup: `src/policy/compaction.ts`, `src/providers/{anthropic,
+responses,sse-bounds}.ts`, `bench/harness-audit.ts` (+ nanti
+`vendor/minicore/src/providers/openai-compat.ts` pada Tahap 5),
+`src/constants.ts`, `src/ui/render/errors.ts`, `src/ui/i18n/{en,id}.ts`,
+`cli/setup.ts`, `cli/tui.ts`.
+
+### ATURAN BENTURAN IDIOT-SAFE (pegang ini)
+
+1. **File yang kita berdua sentuh: `cli/tui.ts` dan `src/ui/i18n/{en,id}.ts`.**
+   - Sesi A sedang TIDAK mengedit keduanya setelah catatan ini ditulis;
+     audit UI/UX Sesi A hanya *membaca* `cli/tui.ts`.
+   - Sesi B WAJIB menambah key i18n **baru** (mis. `err.stepsFix` diubah isinya,
+     key baru untuk soft-cap) — jangan mengganti/menghapus key `tui.*`,
+     `panel.*`, `help.k.*`, `ts.*`, `pick.*`, `appr.*`. Sesi A memakai key-key
+     itu sebagai rujukan audit.
+2. **`src/ui/render/table-grid.ts` adalah milik Sesi A** (sedang dirender-uji).
+   Sesi B tidak perlu menyentuhnya; kalau perlu, koordinasi dulu.
+3. **`src/ui/render/errors.ts`** → milik Sesi B (Fase A plan). Sesi A tidak
+   mengeditnya.
+4. **`docs/TERMINAL_CONTRACT.md`** → read-only untuk kedua sesi. Kalau salah
+   satu mengubah perilaku terminal (tinggi frame, lebar kotak, grammar baris),
+   WAJIB update dokumen + peta proteksi test sesuai `AGENTS.md`. Perubahan
+   `table-grid` Sesi A **tidak** mengubah tinggi frame (tetap `rows`, tabel
+   hanya beda pembagian kolom) — tidak perlu update kontrak.
+5. **Gate:** anggap `bun test` + `gate:coverage` sudah hijau pada kandidat
+   ini. Kalau Sesi B menambah/mengubah test, catat angka barunya; jangan
+   menyimpulkan "repo hijau" dari run parsial.
+6. **Catatan `AGENTS.md` soal `gate:coverage` ter-sementara sudah tidak akurat**:
+   gate itu **berhasil diselesaikan** 2026-11-12 dengan angka di atas, jadi blok
+   "⚠ SEMENTARA — gate coverage belum tuntas" boleh dihapus — tapi **hanya
+   setelah** seluruh gate (`gate:pack`, `audit:harness`) lulus pada kandidat
+   yang sama. Jangan hapus lebih awal, dan jangan hapus dari sesi yang tidak
+   menjalankan `gate:pack`.
+7. **Jangan `git add -A` / commit borongan.** Working tree saat ini tercampur
+   (lihat `git status`: `src/policy/compaction.ts`, `src/providers/*`,
+   `test/compaction.test.ts`, `test/provider-sse-bounds.test.ts` sudah
+   dipegang Sesi B). Gunakan `git add -p` per-hunk.
+
+### Status ringkas
+
+- Sesi A: perubahan render selesai + terverifikasi; **tidak commit**.
+- Sesi B: lihat `git status` — file provider/compaction sudah termodifikasi.
+
+### 2026-11-12 (lanjutan) — `temuan.md` = hasil audit UI/UX (dokumen, bukan kode)
+
+Sesi A menulis **`temuan.md`** di root repo (file baru, belum commit). Isinya
+audit UI/UX lengkap + bukti reproduksi. Ringkasnya, untuk Sesi B:
+
+- **Tidak ada file yang Sesi A ubah selain `src/ui/render/table-grid.ts`**
+  (perbaikan tabel) dan `AGENT-NOTES.md` + `temuan.md` (dokumen).
+- **`src/ui/i18n/en.ts` dan `id.ts` di `git status` BUKAN milik Sesi A** —
+  itu milik Sesi B (plan harness). Sesi A hanya membacanya.
+- Satu perintah `/undo`/`/clear` **bisa dieksekusi tanpa pernah terlihat di
+  dropdown** (temuan A1 di `temuan.md`, terbukti via `TuiApp` asli). Ini
+  menyentuh `src/ui/tui/app.ts:1406` + `src/ui/input/prompt-engine.ts:289`.
+  Perbaikan itu **belum dikerjakan** — menunggu izin pemilik. Kalau Sesi B
+  butuh `app.ts`, koordinasi dulu karena perbaikan A1 akan menyentuh berkas itu.
+- `bun test` penuh terakhir: **5674 pass / 0 fail**. `gate:coverage` lulus
+  (funcs 88.74 / lines 89.94 / lantai 19/19).

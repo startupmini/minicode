@@ -131,7 +131,7 @@ describe("footer render", () => {
     expect(stripAnsi(minutes)).toMatch(/✦ {2}00\.01\.02 {2}Work Mode: Discuss +m1 +cwd/)
     expect(stripAnsi(hours)).toMatch(/✦ {2}01\.00\.00 {2}Work Mode: Discuss +m1 +cwd/)
     for (const line of [idle, seconds, minutes, hours]) expect(stripAnsi(line)).not.toContain("•")
-    expect(idle).toContain("\x1b[38;2;72;72;72m00.00.00")
+    expect(idle).toContain("\x1b[90m00.00.00")
     expect(seconds).toContain("\x1b[37m42\x1b[39m")
     expect(minutes).toContain("\x1b[37m01\x1b[39m")
     expect(hours).toContain("\x1b[37m01\x1b[39m")
@@ -189,7 +189,7 @@ describe("footer render", () => {
     expect(stripAnsi(paintBashStrict(undefined))).toBe("🔒")
     // aktif = kuning/terang, nonaktif = redup.
     expect(paintBashStrict(true)).toContain(c.yellow("🔒"))
-    expect(paintBashStrict(false)).toContain(c.faint("🔒"))
+    expect(paintBashStrict(false)).toContain(c.gray("🔒"))
     const [strict] = renderFooter({ mode: "auto", strictBash: true, model: "m1", cwd: "cwd" }, 80)
     const [plain] = renderFooter({ mode: "auto", strictBash: false, model: "m1", cwd: "cwd" }, 80)
     expect(stripAnsi(strict!)).toContain("🔒")

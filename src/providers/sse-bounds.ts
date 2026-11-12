@@ -99,16 +99,29 @@ export function boundedSseBody(
   })
 }
 
-/** Body error dibaca secukupnya untuk kategori/pesan, lalu sisa stream dibuang. */
-export async function readProviderErrorBody(response: Response): Promise<string> {
+/** Body error dibaca secukupnya untuk kategori/pesan, lalu sisa stream dibuang.
+ * `signal` membuat pembacaan abort-aware: server yang mengembalikan status error
+ * lalu menstall body-nya tidak boleh menggantung reader selamanya — cancel reader
+ * saat abort sehingga jalur error tetap terbatas waktu. */
+export async function readProviderErrorBody(
+  response: Response,
+  signal?: AbortSignal,
+): Promise<string> {
   if (!response.body) return ""
+  if (signal?.aborted) return ""
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
   let size = 0
   let reachedEof = false
+  const onAbort = () => {
+    void reader.cancel(signal?.reason).catch(() => {})
+  }
+  signal?.addEventListener("abort", onAbort, { once: true })
   try {
     while (size < LIMITS.PROVIDER_ERROR_BODY_MAX_BYTES) {
+      if (signal?.aborted) break
       const { done, value } = await reader.read()
+      if (signal?.aborted) break
       if (done) {
         reachedEof = true
         break
@@ -121,6 +134,7 @@ export async function readProviderErrorBody(response: Response): Promise<string>
     }
     return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8")
   } finally {
+    signal?.removeEventListener("abort", onAbort)
     if (!reachedEof) await reader.cancel().catch(() => {})
     reader.releaseLock()
   }

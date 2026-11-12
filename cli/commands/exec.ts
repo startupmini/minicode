@@ -34,6 +34,14 @@ function writeMachineLine(line: string): void {
   process.stdout.write(`${cleanUntrusted(scrubSecrets(line), false)}\n`)
 }
 
+/** Prompt lanjutan (Phase D auto-continue): minta model menyelesaikan sisa
+ * pekerjaan dari titik berhenti, memanfaatkan progres parsial yang sudah
+ * durable (safeTurnBoundary + persist). */
+const CONTINUE_PROMPT =
+  "Continue from where you left off: an earlier turn hit the tool-step limit " +
+  "but its completed steps are preserved. Finish the remaining work now " +
+  "(re-read state if needed) and do not start over from scratch."
+
 function machineSummary(ok: boolean, fields: Record<string, unknown>): Record<string, unknown> {
   return { schema: MACHINE_SCHEMA, type: "summary", ok, ...fields }
 }
@@ -186,6 +194,18 @@ export async function handleExec(
     )
     timeoutMs = 900_000
   }
+  // Phase D — auto-continue (opt-in): pecah tugas panjang menjadi beberapa turn
+  // bounded. Saat turn berakhir dengan max_steps_exceeded, kernel SUDAH
+  // meng-commit progres parsial (safeTurnBoundary); run lanjutan melanjutkan dari
+  // situ alih-alih mati fatal. `--max-turns` menetapkan jumlah turn lanjutan
+  // (default 3) — hard cap mencegah loop belanja; --budget tetap mengikat per turn.
+  const autoContinue =
+    hasFlag(subArgs, "--auto-continue") || process.env.MINICODE_AUTO_CONTINUE === "1"
+  const maxTurnsRaw = getArg("--max-turns")
+  const autoContinueBudget =
+    maxTurnsRaw && Number.isFinite(Number(maxTurnsRaw)) && Number(maxTurnsRaw) > 0
+      ? Math.min(20, Math.floor(Number(maxTurnsRaw)))
+      : 3
 
   const ignoredFlags = flagsAfterPromptBoundary(subArgs)
   if (ignoredFlags.length > 0) {
@@ -296,7 +316,30 @@ export async function handleExec(
     )
   })
   try {
-    await ctx.runPromptWithVerify(effectivePrompt)
+    if (autoContinue) {
+      // Lanjutkan sampai selesai / cap tercapai. `isStepLimit` memisahkan
+      // "habis langkah" (layak dilanjut) dari error lain (auth/network/dll yang
+      // wajib gagal keras). Tiap iterasi = satu turn utuh pada sesi sama; kernel
+      // sudah commit progres parsial turn yang gagal (safeTurnBoundary).
+      const isStepLimit = (e: unknown): boolean =>
+        (e as { kind?: string } | undefined)?.kind === "max_steps_exceeded" ||
+        /max.?steps/i.test(String((e as { message?: string } | undefined)?.message ?? ""))
+      for (let i = 0; i <= autoContinueBudget; i++) {
+        let err: unknown = null
+        try {
+          await ctx.runPromptWithVerify(i === 0 ? effectivePrompt : CONTINUE_PROMPT)
+        } catch (e) {
+          err = e
+        }
+        if (err === null) break
+        if (!isStepLimit(err) || i >= autoContinueBudget) throw err
+        process.stderr.write(
+          `[auto-continue] batas langkah tercapai — melanjutkan (turn lanjutan ${i + 1}/${autoContinueBudget})\n`,
+        )
+      }
+    } else {
+      await ctx.runPromptWithVerify(effectivePrompt)
+    }
     // Harness-P1: exec sebelumnya mengabaikan --budget total (flag diteruskan
     // tapi tak pernah diperiksa). Samakan dengan one-shot: over → exit 1.
     const ue = ctx.usage.getSession(ctx.modelRef.current)

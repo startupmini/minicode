@@ -46,6 +46,52 @@ test("anthropic maps context_length", async () => {
   globalThis.fetch = origFetch
 })
 
+test("anthropic maps context_length via 'input is too long' phrase (F5)", async () => {
+  const origFetch = globalThis.fetch
+  ;(globalThis as unknown as { fetch: unknown }).fetch = async () =>
+    new Response("input is too long: 200000 tokens > 128000", {
+      status: 400,
+      headers: {},
+    }) as unknown as Response
+  const p = createAnthropicProvider({ apiKey: "k", models: ["claude-sonnet-4"] })
+  try {
+    for await (const _ of p.stream(
+      { messages: [{ role: "user", content: "hi" }] },
+      new AbortController().signal,
+    )) {
+    }
+    expect(false).toBe(true)
+  } catch (e) {
+    expect((e as ProviderError).category).toBe("context_length_exceeded")
+  }
+  globalThis.fetch = origFetch
+})
+
+test("openai-compat [DONE] melepas body stream (cancel) — F2", async () => {
+  let cancelled = false
+  const origFetch = globalThis.fetch
+  ;(globalThis as unknown as { fetch: unknown }).fetch = async () =>
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"choices":[]}\n\ndata: [DONE]\n\n'))
+        },
+        cancel() {
+          cancelled = true
+        },
+      }),
+      { headers: { "content-type": "text/event-stream" } },
+    ) as unknown as Response
+  const p = createOpenAICompatProvider({ apiKey: "k", baseUrl: "https://x/v1", models: ["m"] })
+  for await (const _ of p.stream(
+    { messages: [{ role: "user", content: "hi" }], model: "m" },
+    new AbortController().signal,
+  )) {
+  }
+  globalThis.fetch = origFetch
+  expect(cancelled).toBe(true)
+})
+
 test("router first match wins for shared model names", async () => {
   const primary: any = {
     id: "primary",

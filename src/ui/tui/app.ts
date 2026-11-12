@@ -131,6 +131,19 @@ export function timerHighlight(ms: number): TimerHighlight {
   return "seconds"
 }
 
+/**
+ * Indeks awal jendela dropdown yang menjaga item terpilih (`sel`) selalu tampil.
+ * Sebelum A1, jendela selalu `slice(0, visible)` sehingga `sel >= visible` tak
+ * pernah tersorot tetapi Enter tetap mengirim `hints[sel]` — perintah destruktif
+ * yang tak terlihat. Kontrak: untuk `0 <= sel < total` berlaku
+ * `start <= sel < start + min(visible, total)`.
+ */
+export function dropdownWindowStart(sel: number, visible: number, total: number): number {
+  const v = Math.max(1, Math.floor(visible))
+  if (total <= v) return 0
+  return Math.max(0, Math.min(sel - v + 1, total - v))
+}
+
 interface FrameLayout {
   frame: string[]
   cursor: { row: number; col: number }
@@ -1407,11 +1420,19 @@ export class TuiApp {
     const hints = this.host.listCommands(this.state.line)
     if (!hints.length) return []
     const room = Math.max(0, rows - 2 - this.composerHeight(cols, busy) - 3)
-    const shown = hints.slice(0, Math.min(MAX_DROPDOWN_ROWS, room))
+    const visible = Math.max(1, Math.min(MAX_DROPDOWN_ROWS, room))
+    const total = hints.length
+    // A1: jendela MENGIKUTI `sel`, bukan selalu slice dari index 0. `sel` bisa
+    // wrap melewati jumlah baris terlihat (mis. 24 perintah → sel 9..23), dan
+    // bila jendela tetap index 0, tak ada baris tersorot tetapi Enter tetap
+    // mengirim hints[sel] — perintah yang tak pernah terlihat (destruktif untuk
+    // /clear, /undo). `start` menjaga item terpilih selalu tampil.
+    const start = dropdownWindowStart(this.state.sel, visible, total)
+    const shown = hints.slice(start, start + visible)
     const w = Math.max(10, cols)
     const out: string[] = []
     shown.forEach((h, i) => {
-      const picked = i === this.state.sel
+      const picked = start + i === this.state.sel
       const text = sanitizeAnsiLine(h).replace(/^\/+/, "")
       out.push(picked ? c.accent(c.bold(text)) : text)
     })

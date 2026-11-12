@@ -13,6 +13,7 @@ import { resetLocaleState, setSessionLocale } from "../src/ui/i18n/locale.ts"
 import { displayWidth } from "../src/ui/render/width.ts"
 import { altScreenDepth, resetAltScreenDepth } from "../src/ui/runtime/screen.ts"
 import {
+  dropdownWindowStart,
   formatTimer,
   TuiApp,
   type TuiHost,
@@ -392,14 +393,14 @@ describe("TuiApp", () => {
     const runP = app.run()
     await tty!.ready()
     await tty!.waitForOutput((o) => o.includes("00.00.00"))
-    expect(tty!.all()).toContain("\x1b[38;2;72;72;72m00.00.00")
+    expect(tty!.all()).toContain("\x1b[90m00.00.00")
     await tty!.send("/slow")
     await tty!.send(KEY.enter)
     await waitForCall(calls, "/slow")
     // Gaya putih kini datang dari run diff (`ESC[0m ESC[37m 00`), jadi
     // pasangan tutup 39 tidak lagi berurutan — cukup buktikan style-nya.
     expect(tty!.all()).toContain("\x1b[37m00")
-    expect(tty!.all()).toContain("\x1b[38;2;72;72;72m00")
+    expect(tty!.all()).toContain("\x1b[90m00")
     await releaseSlow()
     await tty!.send(KEY.ctrlD)
     await runP
@@ -701,6 +702,31 @@ describe("TuiApp", () => {
     await tty!.send(KEY.ctrlD)
     await runP
   })
+  describe("dropdownWindowStart (A1: jendela menu mengikuti sel)", () => {
+    test("selapapun dalam [0,total) selalu tampil saat total > visible", () => {
+      const visible = 8
+      const total = 24
+      for (let sel = 0; sel < total; sel++) {
+        const start = dropdownWindowStart(sel, visible, total)
+        expect(start).toBeGreaterThanOrEqual(0)
+        expect(start + visible).toBeLessThanOrEqual(total)
+        expect(sel).toBeGreaterThanOrEqual(start)
+        expect(sel).toBeLessThan(start + visible)
+      }
+    })
+    test("total <= visible → start 0 (semua tampil)", () => {
+      expect(dropdownWindowStart(3, 8, 5)).toBe(0)
+    })
+    test("sel terakhir tampil di baris terakhir jendela", () => {
+      const start = dropdownWindowStart(23, 8, 24)
+      expect(start).toBe(16)
+      expect(23).toBeLessThan(start + 8)
+    })
+    test("sel = -1 (belum ada pilihan) → jendela di atas", () => {
+      expect(dropdownWindowStart(-1, 8, 24)).toBe(0)
+    })
+  })
+
   test("dropdown / hanya menampilkan nama command, tanpa slash atau judul (I16)", async () => {
     const { app, screenText } = setup()
     const runP = app.run()

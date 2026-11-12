@@ -140,7 +140,7 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
         // Bila request gagal saat membawa previous_response_id, hapus ID tersebut
         // agar turn berikutnya tidak macet permanen pada ID yang kedaluwarsa/ditolak.
         if (prev) lastResponseByModel.delete(modelKey)
-        const txt = await readProviderErrorBody(res).catch(() => "")
+        const txt = await readProviderErrorBody(res, signal).catch(() => "")
         const retryAfter = res.headers.get("retry-after")
         if (res.status === 429) {
           const ms = retryAfter ? Number(retryAfter) * 1000 : undefined

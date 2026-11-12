@@ -92,7 +92,7 @@ const TOKENS = {
   error: "38;2;244;135;113",
   warning: "38;2;204;167;0",
   info: "38;2;117;190;255",
-  accent: "38;2;0;122;204",
+  accent: "38;2;74;144;226",
   // String literal kode (VS Code Dark+ `string` #CE9178) — sengaja terpisah dari
   // `success` (green): string harus tampak jingga-salm ala VS Code, sementara
   // status sukses tetap hijau. Alias lama `green` tetap menyasar success.

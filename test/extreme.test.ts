@@ -118,6 +118,27 @@ test("02 session max_steps exceeded", async () => {
   await expect(s.run("go")).rejects.toMatchObject({ kind: "max_steps_exceeded" })
 })
 
+test("02b max_steps: progres utuh di-commit + turn:interrupted ter-emit (resume-ready)", async () => {
+  // B3: pada error max_steps, kernel harus meng-commit langkah yang SUDAH selesai
+  // (safeTurnBoundary) ke store lalu emit turn:interrupted — dasar persist parsial
+  // sehingga /resume tidak amnesia. Tanpa ini pesan error "/resume" menyesatkan.
+  const p = new FakeProvider([
+    { events: [toolCall("echo", { x: "1" }), finish("tool_calls")] },
+    { events: [toolCall("echo", { x: "2" }), finish("tool_calls")] },
+    { events: [toolCall("echo", { x: "3" }), finish("tool_calls")] },
+  ])
+  const s = createSession({ provider: p, permissions: allowAll, tools: [echoTool], maxSteps: 2 })
+  let interrupted = 0
+  s.events.on("turn:interrupted", () => interrupted++)
+  await expect(s.run("go")).rejects.toMatchObject({ kind: "max_steps_exceeded" })
+  expect(interrupted).toBe(1)
+  // 2 langkah selesai utuh: user + (assistant toolCalls + tool result)×2 = 5 pesan.
+  expect(s.state.history.length).toBe(5)
+  // Resume-ready: store memegang hasil tool kedua (bukan kosong).
+  const results = s.state.history.filter((m: { role: string }) => m.role === "tool")
+  expect(results).toHaveLength(2)
+})
+
 // ── 03 Persistence ───────────────────────────────────────────────────────────
 test("03 persistence corrupt session id → null", () => {
   const id = `x-${randomUUID().slice(0, 6)}`

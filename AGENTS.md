@@ -38,7 +38,11 @@ bun x tsc --noEmit && bun run lint && bun test && bun run gate:coverage && bun r
 
 Gate memakai manifest `package.json` yang ada pada checkout ini.
 
-### Catatan eksekusi gate (2026-11-12, working tree audit render)
+### ⚠ SEMENTARA — gate coverage belum tuntas (2026-11-12)
+
+> **Catatan sementara, WAJIB diselesaikan agent berikutnya.** Hapus seluruh
+> bagian ini dari `AGENTS.md` setelah `gate:coverage` benar-benar lulus pada
+> kandidat yang sama dan angkanya dicatat.
 
 Terukur pada kandidat yang sama (`bun x tsc --noEmit` = bersih,
 `bun run lint` = 692 file / 0 error, `bun test` = 5672 pass / 26 skip / 0 fail
@@ -60,6 +64,21 @@ Dua gejala flake yang sudah teridentifikasi, jangan dikejar sebagai regresi:
   run penuh berikutnya 0 fail.
 - `test/concurrency-cross-process.test.ts` (§32 dua proses tulis sesi) adalah
   flake lintas-proses Windows yang sama kelasnya.
+
+**Tugas yang harus diselesaikan agent berikutnya:**
+
+1. Jalankan `bun run gate:coverage` sampai SELESAI pada commit ini (suite penuh
+   dengan `--coverage`, ~18–20 menit). Butuh lingkungan yang tidak mematikan
+   job panjang saat sesi pemanggil berakhir — jangan mengandalkan proses
+   background/detached, dan jangan menaikkan timeout test untuk "membuatnya
+   cepat".
+2. Catat angka `funcs`/`lines` agregat + status lantai per-berkas yang dicetak
+   `scripts/coverage-gate.ts`, lalu jalankan `bun run gate:pack` lagi.
+3. Bila lulus: perlakukan kandidat sebagai gate lengkap, tulis angkanya di
+   laporan, lalu HAPUS bagian sementara ini.
+4. Bila gagal: perbaiki penyebabnya — turunkan cakupan kode yang tak teruji
+   atau tambah test; **jangan** menurunkan ambang di `scripts/coverage-gate.ts`
+   atau menaikkan budget di `scripts/pack-budget.ts`.
 
 Artinya: laporan status wajib menyebut perintah yang benar-benar dijalankan
 dan yang tidak; jangan menyimpulkan "repository hijau" dari run parsial, dan

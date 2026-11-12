@@ -52,7 +52,8 @@ Batas 4.096 KiB disetujui pemilik pada 2026-11-11 untuk rilis v0.21.0. Jangan me
 Gerbang lain:
 
 ```bash
-bun run gate:bash      # 62 pola serangan + 24 perintah sah → 0 bypass / 0 over-block
+bun run gate:bash      # korpus pola serangan + perintah sah (auto & allowlist) → 0 bypass / 0 over-block
+                       # hitungan tercetak oleh probe itu sendiri; jangan disalin ke dokumen
 bun run bench:smoke    # fake, CI-safe
 bun run vendor:check   # provenance MiniCore (soft; vendor host-editable sejak v0.16.0)
 ```

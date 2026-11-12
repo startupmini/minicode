@@ -15,6 +15,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
+  blankQuotedDataArgs,
+  expandBraceAlternatives,
+  expandIfsRefs,
   inspectBashCommand,
   normalizeCommand,
   stripCaretEscapes,
@@ -121,6 +124,86 @@ describe("integrasi: mode default `auto` menahan ketiga kelas", () => {
       expect(await verdict("type %USERPROFILE%\\notes.txt")).toBe("deny")
       expect(await verdict("for /f %i in (.env) do @echo %i")).toBe("deny")
       expect(await verdict("type src/index.ts")).toBe("allow")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("audit 2026-11-12: pemisah kata, glob, dan brace expansion", () => {
+  // Tiga kelas yang membuat guard menahan bentuk kanonik tapi meloloskan
+  // bentuk SETARA yang benar-benar dieksekusi bash:
+  //   - `$IFS`/`\${IFS…}` adalah pemisah kata (`cat\${IFS}.env` = `cat .env`)
+  //   - glob `?`/`[e]` mengembang seperti `*` (`cat .?nv` = `cat .env`)
+  //   - brace `{a,b}` diekspansi sebelum eksekusi (`cat .{env,}`)
+  // Lint `noTemplateCurlyInString` menolak literal `${` di string, sementara
+  // test ini justru harus memuat bentuk shell ASLINYA. Konstanta berikut
+  // merakit nilai yang sama tanpa literal terlarang.
+  const OPEN = "{"
+  const I1 = `$${OPEN}IFS}` // ${IFS}
+  const I2 = "$IFS"
+  const I3 = `$${OPEN}IFS:0:1}` // ${IFS:0:1}
+
+  test("expandIfsRefs memetakan semua bentuk IFS ke pemisah", () => {
+    expect(expandIfsRefs(`cat${I1}.env`)).toBe("cat .env")
+    expect(expandIfsRefs(`cat${I2}.env`)).toBe("cat .env")
+    expect(expandIfsRefs(`cat${I3}.env`)).toBe("cat .env")
+    expect(normalizeCommand(`rm${I1}-rf${I1}/`)).toBe("rm -rf /")
+  })
+
+  test("expandBraceAlternatives hanya memecah grup berkoma", () => {
+    expect(expandBraceAlternatives("cat .{env,}")).toContain(".env")
+    expect(expandBraceAlternatives("cat {.env,x}")).toContain(".env")
+    // Pola awk tanpa koma bukan ekspansi — jangan dipecah (anti over-block).
+    expect(expandBraceAlternatives("awk '{print $1}' a.ts")).toContain("{print")
+  })
+
+  test("blankQuotedDataArgs mengosongkan data, tapi tidak substitusi", () => {
+    expect(blankQuotedDataArgs('echo "rm -rf /"')).not.toContain("rm -rf")
+    expect(blankQuotedDataArgs('git commit -m "docs: sudo rm"')).not.toContain("sudo rm")
+    // Substitusi perintah di dalam kutip BENAR-BENAR dieksekusi → jangan
+    // dikosongkan, supaya aturan statis tetap melihat payload-nya.
+    expect(blankQuotedDataArgs('echo "$(rm -rf /)"')).toContain("rm -rf")
+    expect(blankQuotedDataArgs('bash -c "rm -rf /"')).toContain("rm -rf")
+  })
+
+  test("semua varian ditolak di cwd nyata", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ifs-"))
+    try {
+      writeFileSync(join(dir, ".env"), "DUMMY=1\n")
+      const attacks = [
+        `cat${I1}.env`,
+        `cat${I2}.env`,
+        `cat${I3}.env`,
+        `cat${I1}.e""nv`,
+        `c'a't${I1}.env`,
+        `type${I1}.env`,
+        `type${I1}.e^nv`,
+        `rm${I1}-rf${I1}/`,
+        `rm${I2}-rf${I2}/`,
+        `rm${I1}--recursive${I1}--force${I1}/`,
+        `dd${I1}if=/dev/zero${I1}of=/dev/sda`,
+        `chmod${I1}-R${I1}777${I1}.`,
+        `find${I1}.${I1}-delete`,
+        `npm${I1}publish`,
+        `cat$(printf${I1}' ').env`,
+        "cat .?nv",
+        "cat .[e]nv",
+        "cat {.env,x}",
+        "cat .{env,}",
+        'echo "$(rm -rf /)"',
+        "bash -c 'rm -rf /'",
+      ]
+      for (const cmd of attacks) expect(deniedIn(cmd, dir), `bypass: ${cmd}`).toBe(true)
+      // Arah sebaliknya: data dalam kutip dan pola pencarian bukan perintah.
+      const benign = [
+        'echo "rm -rf /"',
+        'grep "rm -rf" src/a.ts',
+        "awk '{print $1}' src/a.ts",
+        "grep -E 'a[0-9]' src/a.ts",
+        "cat src/a.ts",
+      ]
+      for (const cmd of benign) expect(deniedIn(cmd, dir), `over-block: ${cmd}`).toBe(false)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

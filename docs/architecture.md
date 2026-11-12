@@ -9,15 +9,19 @@ Roadmap fase pemilik tidak tersedia di checkout ini; jangan simpulkan status fas
 ```
 L1 cli/ + src/ui/   → controller tipis + presentation mandiri
 L2 src/ non-ui      → agen: tools, agents, hooks, policy, providers, mcp, lsp, session, skills
-L3 vendor/minicore  → kernel STATE/MODEL/ACTION/LOOP (freeze, zero-dep, via #minicore)
+L3 vendor/minicore  → kernel STATE/MODEL/ACTION/LOOP (vendored, host-editable, zero-dep, via #minicore)
 ```
 
-Pin source kernel ada di [catatan vendor MiniCore](https://github.com/minilabs-id/minicode/blob/main/vendor/minicore/VENDOR.md):
-`0d33571`. Impor kernel aplikasi hanya melalui `#minicore`.
+Kernel di-vendor dan **dapat diedit di host** sejak v0.16.0 (lihat
+[catatan vendor MiniCore](https://github.com/minilabs-id/minicode/blob/main/vendor/minicore/VENDOR.md));
+commit sumber `0d33571` hanya referensi historis provenance, bukan invarian
+keras. Impor kernel aplikasi hanya melalui `#minicore`.
 
 Patch host yang diperlukan runtime tersimpan di `scripts/vendor-overlays/` dan
-diterapkan saat sinkronisasi vendor; `VENDOR.md` mem-pin source, overlay, dan
-fingerprint hasil akhirnya.
+diterapkan saat sinkronisasi vendor. `bun run vendor:check` masih bisa dipakai
+sebagai alat diagnosa provenance, tetapi bukan gate: hash yang tercatat di
+`VENDOR.md` adalah checkpoint historis dan tidak ikut berubah saat kernel
+diedit di host.
 
 - `cli/` boleh impor `src/ui/` + `src/`; `src/` non-ui dilarang impor `src/ui/`; `src/ui/` dilarang impor `cli/`, `src/` non-ui, `#minicore`. Dijaga `test/ui-boundary.test.ts`.
 - Satu-satunya jendela UI↔luar: `src/ui/contract.ts` (`UiEvent/UiBus/UiStep/UiExecution`).

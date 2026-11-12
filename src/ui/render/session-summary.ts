@@ -8,6 +8,7 @@
 // merata di semua terminal dan pernah membuat "minicode" tak tampil. Bold polos
 // via `c` menjamin selalu terlihat + hormati NO_COLOR.
 
+import { t } from "../i18n/locale.ts"
 import { formatUsd } from "./money.ts"
 import { sanitizeAnsiLine, stripSgr } from "./sanitize.ts"
 import { c } from "./theme.ts"
@@ -36,7 +37,8 @@ export function formatDuration(ms: number): string {
 
 /** Render kop: wordmark + detail sesi (baris demi baris). */
 export function renderSessionSummary(s: SessionSummary): string {
-  const label = (t: string): string => c.muted(t.padEnd(7))
+  // Parameter dinamai `text`, bukan `t`: `t` sudah dipakai untuk i18n.
+  const label = (text: string): string => c.muted(text.padEnd(7))
   const cost = s.cost != null ? formatUsd(s.cost) : null
   // sessionId/model = input tak-terpercaya (config/network): buang SEMUA ANSI
   // (termasuk SGR) sebelum dibungkus style — nilai mentah hanya boleh muncul
@@ -44,9 +46,9 @@ export function renderSessionSummary(s: SessionSummary): string {
   const clean = (v: string): string => stripSgr(sanitizeAnsiLine(v))
   return `${[
     paintWordmark(),
-    `${label("Session")} ${c.gray(clean(s.sessionId))}`,
-    `${label("Model")} ${c.gray(clean(s.model))}`,
-    `${label("Usage")} ${s.totalTokens.toLocaleString()} tokens${
+    `${label(t("summary.session"))} ${c.gray(clean(s.sessionId))}`,
+    `${label(t("summary.model"))} ${c.gray(clean(s.model))}`,
+    `${label(t("summary.usage"))} ${s.totalTokens.toLocaleString()} ${t("summary.tokens")}${
       cost != null ? ` · ${cost}` : ""
     } · ${formatDuration(s.durationMs)}`,
   ]

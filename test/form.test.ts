@@ -190,3 +190,78 @@ describe("runForm", () => {
     s.close()
   })
 })
+
+// ── Audit renderer 2026-11-12 ───────────────────────────────────────────────
+describe("runForm: temuan audit 2026-11-12", () => {
+  test("Tab + teks dalam SATU chunk masuk ke field BARU (pointer field basi)", async () => {
+    // Gagal-di-kode-lama: `st` dicapture sebelum loop, jadi Tab yang menggeser
+    // `idx` tetap menulis ke field sebelumnya — API key bisa mendarat di URL.
+    const s = screen()
+    const p = runForm(
+      {
+        title: "T",
+        fields: [
+          { id: "a", label: "A", kind: "text" },
+          { id: "b", label: "B", kind: "text" },
+        ],
+      },
+      s,
+    )
+    await tty!.ready()
+    await tty!.send(`${KEY.tab}X`)
+    await tty!.send(KEY.enter)
+    const res = await p
+    expect(res.cancelled).toBe(false)
+    expect(res.values).toEqual({ a: "", b: "X" })
+    s.close()
+  })
+
+  test("Esc pada select: tekan-1 kembalikan pilihan bawaan, form tetap terbuka", async () => {
+    // Kontrak I21 menyebut SEMUA input teks/pilihan; dulu select/confirm
+    // langsung membatalkan seluruh form pada Esc pertama.
+    const s = screen()
+    const p = runForm(
+      {
+        title: "S",
+        fields: [
+          { id: "scope", label: "Scope", kind: "select", options: ["global", "local"], initial: 0 },
+          { id: "url", label: "URL", kind: "text" },
+        ],
+      },
+      s,
+    )
+    await tty!.ready()
+    await tty!.send(KEY.right)
+    expect(tty!.screen().join("\n")).toContain("local")
+    await tty!.send(KEY.esc, 90)
+    const frame = tty!.screen().join("\n")
+    expect(frame).toContain("global")
+    expect(frame).toContain("Scope")
+    // Tekan-2 (sudah di nilai bawaan) = batal total.
+    await tty!.send(KEY.esc, 90)
+    const res = await p
+    expect(res.cancelled).toBe(true)
+    s.close()
+  })
+
+  test("field aktif di luar tinggi kotak tetap terlihat (jendela digeser)", async () => {
+    // Gagal-di-kode-lama: kursor diparkir di baris marker/border dan ketikan
+    // masuk ke field yang tidak ada di layar.
+    tty = installFakeTty({ columns: 70, rows: 10 })
+    const s = openAltScreen()
+    const fields = Array.from({ length: 10 }, (_, i) => ({
+      id: `f${i}`,
+      label: `Field ${i}`,
+      kind: "text" as const,
+    }))
+    const p = runForm({ title: "Banyak", fields }, s)
+    await tty!.ready()
+    for (let i = 0; i < 9; i++) await tty!.send(KEY.tab)
+    await tty!.send("ZZMARKERZZ")
+    expect(tty!.screen().join("\n")).toContain("ZZMARKERZZ")
+    await tty!.send(KEY.esc, 90)
+    await tty!.send(KEY.esc, 90)
+    await p
+    s.close()
+  })
+})

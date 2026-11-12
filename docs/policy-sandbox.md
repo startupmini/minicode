@@ -30,7 +30,7 @@ Set terkait: `INTERNAL_WRITE_TOOLS`, `FILE_WRITE_TOOLS`, `GATED_TOOLS` (+ `*.*` 
 | `echo x > "%TEMP%\evil"` | ditolak; target berisi ekspansi `%NAMA%` tak bisa dipastikan aman secara statis |
 | `py -c …`, `python3.14 -c …` | ditolak bersama varian launcher dan versi Python |
 | `type ..\..\windows\system32\config\sam`, `Get-Content .../ntds.dit` | ditolak (hive Windows + `reg save|export` hive + `vssadmin create|delete shadow` + `ntdsutil`; `reg query`, `vssadmin list`, `system.txt` biasa tetap lolos) |
-| `write_file .minicode/<apa-pun>` | ditolak fail-closed (kunci penuh segmen `.minicode/`; kecuali restore `.trash/` → workspace dan skrip `.minicode/hooks/`) |
+| `write_file .minicode/<apa-pun>` | ditolak fail-closed (kunci penuh segmen `.minicode/`; satu-satunya pengecualian restore `.trash/` → workspace; skrip `.minicode/hooks/` kini ikut terkunci — lihat [Keamanan](security.md)) |
 | `bash <(curl x)` | ditolak |
 | `rm -rf ..`, `rm --recursive --force /`, `rm -rf /; :` | ditolak |
 | `command env`, `nice env`, dkk. (wrapper) | deteksi env-dump ter-anchor ke awal | ditolak via `stripCommandWrappers` (buang wrapper berlapis) |
@@ -38,6 +38,11 @@ Set terkait: `INTERNAL_WRITE_TOOLS`, `FILE_WRITE_TOOLS`, `GATED_TOOLS` (+ `*.*` 
 | `type .e^nv`, `ty^pe .env` (escape caret cmd.exe) | ditolak setelah caret dinormalisasi sebelum aturan nama/jail |
 | `type %USERPROFILE%\notes.txt` | ditolak; argumen pembaca berpola `%NAMA%` tak bisa dipastikan aman |
 | `for /f %i in (.env) do @echo %i` | ditolak; file set pada loop `for /f` ikut diperiksa |
+| `cat${IFS}.env`, `cat$IFS.env`, `cat${IFS:0:1}.env` (audit 2026-11-12) | ditolak; `$IFS` adalah pemisah kata, dinormalisasi jadi spasi sebelum aturan nama |
+| `cat .?nv`, `cat .[e]nv` | ditolak; glob `?`/`[]` mengembang ke nama lain sama seperti `*` |
+| `cat .{env,}`, `cat {.env,x}` | ditolak; brace expansion diekspansi sebelum pemeriksaan |
+| `cat$(printf ' ').env` | ditolak; argumen pembaca berupa substitusi perintah tak bisa dipastikan statis |
+| `echo "rm -rf /"`, `git commit -m "docs: sudo rm"` | lolos (arah over-block); isi kutip milik echo/printf/grep/`-m` git adalah DATA, bukan perintah — kecuali memuat `$(`, backtick, atau `$VAR` yang tetap dieksekusi |
 
 Allowlist (bentuk perintah yang boleh; diperiksa SETELAH bash-guard). Dua daftar:
 - **Narrow** (`--allowlist`, task tak-terpercaya): `git status/diff/log/branch/show`, `bun test/run/x tsc`, `npm/bun/pnpm/yarn install|add`, `npm run/exec/install/ci/test/start`, `node`, `npx`, `ls dir cat type head tail wc grep rg find which echo pwd`. Tulis via shell (`mkdir cp mv rm touch`) ditahan — pakai `write_file`/`edit` yang ter-jail.

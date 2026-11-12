@@ -467,3 +467,12 @@ describe("7.4 Per-prompt wall-clock timeout", () => {
     }
   }, 15_000)
 })
+
+// [HERMETIC] File ini memakai jalur produksi `createCliSession`, yang membaca
+// config GLOBAL (~/.minicode/config.json) bila MINICODE_HOME tak diset. Di
+// mesin dengan provider nyata, provider global ikut ter-merge sehingga test
+// bisa memanggil API sungguhan (atau provider global menang atas provider
+// palsu). Isolasi per-file — lihat helpers/hermetic-home.ts.
+import { isolateHomeForTests } from "./helpers/hermetic-home.ts"
+
+isolateHomeForTests()

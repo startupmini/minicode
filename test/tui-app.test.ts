@@ -10,6 +10,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import type { UiPresentationActivity } from "../src/ui/contract.ts"
 import { resetLocaleState, setSessionLocale } from "../src/ui/i18n/locale.ts"
+import { displayWidth } from "../src/ui/render/width.ts"
 import { altScreenDepth, resetAltScreenDepth } from "../src/ui/runtime/screen.ts"
 import {
   formatTimer,
@@ -887,6 +888,41 @@ describe("TuiApp", () => {
     await runP
     expect(tty!.all()).toContain("\x1b[?1049l")
   })
+
+  test("terminal 40 kolom: hint abort (id 51 kolom) dipotong, frame tetap <= cols", async () => {
+    // Gagal-di-kode-lama: baris indikator tak dipotong → lebih lebar dari
+    // terminal → auto-wrap → frame rows+1 → seluruh diff CUP meleset.
+    const { app, calls, screenText } = setup({ columns: 40, rows: 12 })
+    // installFakeTty mereset locale ke en → set SESUDAH setup.
+    setSessionLocale("id")
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
+    await tty!.send("/slow")
+    await tty!.send(KEY.enter)
+    await waitForCall(calls, "/slow")
+    await tty!.send(KEY.esc, 90)
+    expect(screenText()).toContain("abort terkirim")
+    for (const line of tty!.screen()) expect(displayWidth(line)).toBeLessThanOrEqual(40)
+    await tty!.send(KEY.esc, 90)
+    await runP
+  })
+
+  test("repaint() selama suspend tidak menimpa region popup", async () => {
+    const { app } = setup()
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
+    const before = tty!.screen().join("\n")
+    app.suspend()
+    app.repaint()
+    await new Promise((r) => setTimeout(r, 40))
+    expect(tty!.screen().join("\n")).toBe(before)
+    app.resume()
+    await tty!.send(KEY.ctrlD)
+    await runP
+  })
+
   test("stream bus me-repaint live tanpa keypress (layar tak buta saat turn)", async () => {
     const { app, bus } = setup()
     const runP = app.run()
@@ -959,7 +995,7 @@ describe("TuiApp", () => {
     await runP
     void app
   })
-  test("idle awal: prompt langsung tampil; Esc menutup, karakter membuka lagi", async () => {
+  test("idle awal: prompt tampil; Esc membersihkan isi, prompt tetap tampil", async () => {
     const { app, screenText } = setup()
     const runP = app.run()
     await tty!.ready()
@@ -968,8 +1004,10 @@ describe("TuiApp", () => {
     expect(screenText()).toContain("00.00.00")
     await tty!.send(KEY.left)
     expect(screenText()).toMatch(/^minicode ›$/m)
+    // Audit 2026-11-12 (I13): prompt idle TIDAK boleh hilang setelah Esc —
+    // layar tanpa prompt terbaca sebagai sesi mati.
     await tty!.send(KEY.esc, 90)
-    expect(screenText()).not.toMatch(/^minicode ›$/m)
+    expect(screenText()).toMatch(/^minicode ›$/m)
     await tty!.send("a")
     expect(screenText()).toContain("minicode › a")
     await tty!.send(KEY.backspace)

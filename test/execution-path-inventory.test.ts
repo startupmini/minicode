@@ -250,6 +250,12 @@ export const EXECUTION_PATHS: Readonly<Record<string, RegisteredPath>> = {
     proof: "resolveTrustedExecutable",
     note: "Resolusi path executable (bukan spawn). Tetap terdaftar karena di situlah spawn diarahkan.",
   },
+  "src/daemon/discovery.ts": {
+    cls: "external-integration",
+    entry: "hardenAcl (execFileSync icacls)",
+    proof: "execFileSync",
+    note: "ACL endpoint daemon (v0.17.0 R4): mode 0600 diabaikan Win32, jadi izin warisan dicabut agar bootstrap secret tak terbaca user lain. Best-effort, tanpa efek ke workspace.",
+  },
   // ── Re-exec proses CLI (ditemukan audit P1 F1a; pola glob lama melewatkannya)
   "cli/index.ts": {
     cls: "external-integration",

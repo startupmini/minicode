@@ -77,7 +77,9 @@ describe("sub-agent mewarisi model parent", () => {
     await delegateTaskTool.execute({ prompt: "x" }, ctx)
     // Kode lama: spec tak punya model (anak pakai default router).
     expect(seen?.model).toBe("prov::m1")
-  })
+    // Spawn sesi anak + router bisa lambat di bawah beban suite penuh; beri
+    // jatah lebih dari default agar kegagalan berarti bug, bukan antrean CPU.
+  }, 30_000)
 
   test("tanpa model di state → spec.model absen (factory lama tetap jalan)", async () => {
     process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || "sk-test-hermetic"

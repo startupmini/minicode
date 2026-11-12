@@ -187,14 +187,21 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
   hilang, id selamat).
 - Form dalam popup (`form.ts`): field text/secret(mask `•`)/select/confirm,
   Tab/↑↓ pindah, ←/→ pilih atau geser kursor, Enter validasi+submit, Esc
-  dua-tahap (tekan-1 bersihkan field aktif, tekan-2 batal — isi tidak pernah
-  hilang sekali tekan); error validasi merah dalam box; kursor terminal
-  diparkir di field aktif. Add/edit provider, delete confirm, dan wizard
-  input WAJIB lewat ini (bukan askLine liar di luar kotak).
+  dua-tahap (tekan-1 KEMBALIKAN nilai bawaan field aktif — text/secret/select/
+  confirm, tekan-2 batal — isi tidak pernah hilang sekali tekan); error
+  validasi merah dalam box; kursor terminal diparkir di field aktif dan field
+  aktif SELALU terlihat (jendela body digeser via `focusRow` bila kotak
+  terpotong). Add/edit provider, delete confirm, dan wizard input WAJIB lewat
+  ini (bukan askLine liar di luar kotak).
+- Picker ber-filter: Esc-1 mengosongkan filter (= kembali ke nilai bawaan
+  pencarian, analogen revert-to-default I21), Esc-2 menutup. Ctrl+U juga
+  mengosongkan filter. Tidak ada draft yang hilang tanpa undo.
 - Dropdown `/` tetap inline menempel prompt (harus mengikuti kursor ketik):
   berbingkai, terhapus di SEMUA jalur keluar.
 - **Kursor diparkir di SEMUA permukaan** (picker/manager/form/App): baris
-  item/field aktif — bukan ditinggal di posisi paint terakhir.
+  item/field aktif — bukan ditinggal di posisi paint terakhir. Kursor idle App
+  berada tepat setelah prompt `minicode ›` (prompt tidak lagi disembunyikan
+  setelah Esc/Enter kosong — I13).
 - **i18n dwibahasa** (`src/ui/i18n/`): kamus statis `en.ts`/`id.ts` (id WAJIB
   kunci = en — tsc mengawal), `t(key, params)` interpolasi `{nama}`, fallback
   kunci hilang → en. Prioritas: `/lang` (sesi) > `MINICODE_LANG` >
@@ -563,7 +570,9 @@ panjang).
 > [Gap proteksi](#peta-proteksi-dan-gap-tersisa) di bawah — jangan
 > dipoles dengan mengganti kata-kata.
 
-- `test/tui-app.test.ts` — I1/I13/I14/I17-I20 (boot/exit pairing, transcript
+- `test/tui-app.test.ts` — I1/I13/I14/I17-I20 (baris indikator dipotong ke
+  lebar frame walau locale id 51 kolom; prompt idle bertahan setelah Esc;
+  `repaint()` tak melukis saat suspended; boot/exit pairing, transcript
   viewport, mouse-wheel/drag-selection/PgUp/PgDn scroll + indikator, prompt
   editing, dots/timer, status bar, Esc-only abort, quit, suspend/resume,
   busy-freeze, live repaint; I14: Home/End jump + Shift+PgUp/PgDn + hint abort
@@ -619,7 +628,21 @@ panjang).
 - `test/tui-popup.test.ts` — I16 (komposit di atas transkrip, anti-bocor,
   anti-hantu).
 - `test/form.test.ts` — I21 (field, validasi, secret, select, confirm, batal;
-  Esc-1 kembalikan prefill, Esc-2 batal).
+  Esc-1 kembalikan prefill untuk text/secret DAN pilihan bawaan untuk
+  select/confirm, Esc-2 batal; Tab+teks dalam satu chunk tidak menulis ke field
+  lama; field aktif di luar tinggi kotak tetap terlihat).
+- `test/render-audit-2026-11.test.ts` — audit renderer 2026-11-12 (proyeksi
+  pending dimemo per baris → tidak O(n²); SGR majemuk diproses berurutan di
+  `truncateToWidth`; indentasi `wordWrap`; SGR opak di highlight; cap input &
+  guard LCS diff; lebar tabel untuk grapheme 2 kolom; kop sesi lewat i18n;
+  `dialogBox` menggeser jendela ke `focusRow`) **plus penutupan kebocoran**:
+  `U+2028/U+2029` jadi spasi di jalur satu-baris, dan paste composer tidak
+  bisa menyelundupkan CSI C1 (`U+009B`) — buffer composer dilukis apa adanya,
+  jadi gate-nya ada di `prompt-engine` sebelum buffer terbentuk. Jalur pesan
+  error layar (`picker`, `model-manager`/`provider-manager` fail-open) dan
+  hasil probe jaringan `cli/commands.ts` (`/sync`) memakai `cleanUntrusted` /
+  `sanitizeAnsiLine`; hook `?25h` loading-bar didaftarkan lazy agar modul yang
+  sekadar di-import tidak menulis byte ke alt-screen.
 - `test/approval-tui.test.ts` — I23 (blok + keputusan tercatat, deny;
   stdout-pipe tanpa sink = deny).
 - `test/footer-render.test.ts` — I13 (label title case, Work Mode kiri dan Permission Mode cyan rata kanan dekat konteks, posisi kolom stabil, fallback terminal sempit, ikon gembok 🔒 terang/redup).

@@ -8,7 +8,7 @@ import {
   type DecoderState,
   toGraphemes,
 } from "../input/prompt-engine.ts"
-import { sanitizeAnsiLine } from "../render/sanitize.ts"
+import { cleanUntrusted, sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, stripAnsi } from "../render/theme.ts"
 import { displayWidth, truncateToWidth } from "../render/width.ts"
 import { type AltScreen, openAltScreen } from "../runtime/screen.ts"
@@ -406,7 +406,11 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
           cleanup()
         } catch {}
         try {
-          console.log(`⚠ ${t("pick.fail", { msg: String((e as Error)?.message ?? e) })}`)
+          console.log(
+            `⚠ ${t("pick.fail", {
+              msg: cleanUntrusted(String((e as Error)?.message ?? e), !!process.stdout.isTTY),
+            })}`,
+          )
         } catch {}
         try {
           opts.onCancel()
@@ -434,7 +438,11 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
         cleanup()
       } catch {}
       try {
-        console.log(`⚠ ${t("pick.failOpen", { msg: String((e as Error)?.message ?? e) })}`)
+        console.log(
+          `⚠ ${t("pick.failOpen", {
+            msg: cleanUntrusted(String((e as Error)?.message ?? e), !!process.stdout.isTTY),
+          })}`,
+        )
       } catch {}
       try {
         opts.onCancel()

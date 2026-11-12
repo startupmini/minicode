@@ -11,6 +11,34 @@ import { dialogBox } from "./dialog.ts"
 import { runForm, validateUrl } from "./form.ts"
 import { runPicker } from "./picker.ts"
 
+/**
+ * Batas tunggu simpan-provider (audit 2026-11-12, MEDIUM-7).
+ *
+ * `detect()` sendiri punya timeout, tapi callback controller juga melakukan
+ * I/O config (kunci, tulis disk) yang bisa lambat; tanpa batas, kotak
+ * "mendeteksi…" bertahan selama proses menggantung dan user tak punya jalan
+ * keluar (tak ada Esc di kotak progres). Timeout = pesan jujur, UI pulih.
+ */
+async function withWatchdog<T>(fn: () => Promise<T>, ms = 60_000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const pending = Promise.resolve().then(fn)
+  // Rejection telat tanpa handler = unhandledRejection (Bun: crash).
+  pending.catch(() => {})
+  try {
+    return await Promise.race([
+      pending,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(t("ntc.timeout"))), ms)
+        try {
+          ;(timer as unknown as { unref?: () => void }).unref?.()
+        } catch {}
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 export interface WizardPreset {
   label: string
   baseUrl: string
@@ -148,7 +176,7 @@ export async function runSetupWizardView(opts: SetupWizardViewOptions): Promise<
     )
     screen.paintRegion(box.lines, box.topRow)
     try {
-      const message = await opts.onSubmit(targetUrl, apiKey)
+      const message = await withWatchdog(() => opts.onSubmit(targetUrl, apiKey))
       // Pesan dari jaringan (nama model/gateway) — sanitasi sebelum tampil.
       screen.clearRegion()
       const doneBox = dialogBox(

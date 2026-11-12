@@ -186,7 +186,16 @@ function isSgrSeq(seq: string): boolean {
   return params.split(/[:;]/).every((p) => p === "" || /^[0-9]+$/.test(p))
 }
 
-/** True bila string berakhir dengan gaya SGR masih terbuka (butuh reset). */
+/**
+ * True bila string berakhir dengan gaya SGR masih terbuka (butuh reset).
+ *
+ * Parameter diproses BERURUTAN, bukan "ada OFF di mana pun": `\x1b[0;31m`
+ * berarti reset lalu merah (= masih terbuka), sedangkan `some(SGR_OFF)` lama
+ * menyimpulkan tertutup dan tak menambahkan reset → warna bocor ke sisa baris
+ * (audit 2026-11-12, HIGH-7). Parameter extended color (`38;2;r;g;b`,
+ * `38;5;n`) juga dikonsumsi sebagai satu atribut: komponen warnanya bisa
+ * bernilai 0 dan tidak boleh disalahartikan sebagai reset.
+ */
 function sgrLeftOpen(s: string): boolean {
   let open = false
   let i = 0
@@ -195,11 +204,7 @@ function sgrLeftOpen(s: string): boolean {
       const len = escapeLength(s, i)
       if (len > 0) {
         const seq = s.slice(i, i + len)
-        if (isSgrSeq(seq)) {
-          const params = seq.slice(2, -1).split(/[:;]/)
-          if (params.some((p) => SGR_OFF.has(p) || p === "")) open = false
-          else if (params.some((p) => p !== "")) open = true
-        }
+        if (isSgrSeq(seq)) open = sgrParamsEndOpen(seq.slice(2, -1).split(/[:;]/), open)
         i += len
         continue
       }
@@ -208,6 +213,30 @@ function sgrLeftOpen(s: string): boolean {
     i += cp > 0xffff ? 2 : 1
   }
   return open
+}
+
+/** State "masih terbuka" setelah satu sekuens SGR, mengikuti urutan parameter. */
+function sgrParamsEndOpen(params: string[], open: boolean): boolean {
+  let state = open
+  for (let i = 0; i < params.length; i++) {
+    const p = params[i]!
+    if (p === "" || p === "0") {
+      state = false
+      continue
+    }
+    // Extended color: 38/48/58 diikuti 5;n atau 2;r;g;b — satu atribut utuh.
+    if (p === "38" || p === "48" || p === "58") {
+      const mode = params[i + 1]
+      i += mode === "5" ? 2 : mode === "2" ? 4 : 1
+      state = true
+      continue
+    }
+    // OFF hanya menutup satu atribut; atribut lain bisa tetap aktif, jadi
+    // status dibiarkan (arah aman: reset ekstra tak berbahaya).
+    if (SGR_OFF.has(p)) continue
+    state = true
+  }
+  return state
 }
 /** Panjang sekuens escape yang mulai di `i`, atau 0 bila bukan escape. */
 export function escapeLength(s: string, i: number): number {

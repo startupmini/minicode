@@ -48,23 +48,45 @@ export function wordWrap(text: string, width: number): string {
     for (const tok of line.split(/(\s+)/)) {
       if (tok === "") continue
       if (/^\s+$/.test(tok)) {
-        if (current !== "") current += tok
+        // Run whitespace di AWAL baris = indentasi, bukan pemisah: ia harus
+        // ikut baris pertama. Dulu run ini dibuang saat `current` masih kosong
+        // sehingga indentasi & marker list panjang hilang di jalur linear
+        // (audit 2026-11-12, HIGH-6).
+        current += tok
         continue
       }
       const word = tok
       // Kata tunggal lebih lebar dari baris: pecah paksa per kolom.
       if (displayWidth(word) > width) {
-        flush()
-        const pieces = chunkByWidth(word, width)
-        for (let i = 0; i < pieces.length - 1; i++) out.push(pieces[i]!)
-        current = pieces[pieces.length - 1] ?? ""
+        // Indentasi (bila ada) menempel ke potongan PERTAMA dan menyusutkan
+        // lebar potongan itu — tanpa ini indentasi hilang atau baris meluap.
+        const lead = current.trim() === "" ? current : ""
+        // Teks yang sudah terkumpul (bila ada) ditutup dulu; hanya indentasi
+        // murni yang ikut menempel ke potongan pertama.
+        if (current.trim() !== "") out.push(current.trimEnd())
+        current = ""
+        const avail = Math.max(1, width - displayWidth(lead))
+        const pieces = chunkByWidth(word, avail)
+        if (lead && pieces.length > 0) {
+          out.push(lead + (pieces[0] ?? ""))
+          for (let i = 1; i < pieces.length - 1; i++) out.push(pieces[i]!)
+          current = pieces[pieces.length - 1] ?? ""
+          if (pieces.length === 1) current = ""
+        } else {
+          for (let i = 0; i < pieces.length - 1; i++) out.push(pieces[i]!)
+          current = pieces[pieces.length - 1] ?? ""
+        }
         continue
       }
       // `current` sudah memuat run whitespace aslinya; tambah satu spasi
       // hanya bila tidak ada pemisah di antara dua kata.
       const glued = !current || /\s$/.test(current) ? `${current}${word}` : `${current} ${word}`
-      if (displayWidth(glued) > width && current) {
+      if (displayWidth(glued) > width && current.trim() !== "") {
         out.push(current.trimEnd())
+        current = word
+      } else if (displayWidth(glued) > width) {
+        // Indentasi + kata tak muat bersama: indentasi dilepas untuk baris ini
+        // (baris tetap <= width; lebih baik daripada meluap/memecah kata).
         current = word
       } else {
         current = glued

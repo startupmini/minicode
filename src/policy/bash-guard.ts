@@ -98,6 +98,70 @@ export function stripCaretEscapes(cmd: string): string {
 }
 
 /**
+ * Ekspansi `$IFS` / `${IFS...}` menjadi pemisah kata.
+ *
+ * Bash memecah kata pada karakter di `$IFS` (default: spasi/tab/newline),
+ * sehingga `cat${IFS}.env` dieksekusi PERSIS seperti `cat .env` — tapi tanpa
+ * normalisasi guard hanya melihat satu kata `cat${IFS}.env` dan tak pernah
+ * mencocokkan READERS/SENSITIVE_TARGET. Bentuk `$IFS`, `${IFS}` dan
+ * `${IFS:0:1}` semuanya menghasilkan pemisah, jadi semuanya dipetakan ke
+ * spasi. Diterapkan dua kali dalam pipeline (sebelum dan sesudah quote
+ * dibuang) karena `${I"F"S}` juga sah di bash.
+ *
+ * Diekspor untuk test.
+ */
+export function expandIfsRefs(cmd: string): string {
+  return cmd.replace(/\$\{\s*IFS\b[^}]*\}/g, " ").replace(/\$IFS\b/g, " ")
+}
+
+/**
+ * Ekspansi brace `{a,b}` → semua alternatifnya, sebagai kata-kata terpisah.
+ *
+ * Brace expansion terjadi SEBELUM perintah dijalankan: `cat .{env,}` dan
+ * `cat {.env,x}` membaca `.env`. Karena hasilnya beberapa kata, untuk
+ * pemeriksaan alternatif digabung sebagai kata terpisah sehingga aturan
+ * berbasis nama (`SENSITIVE_TARGET`) melihat setiap kandidat nyata.
+ *
+ * Hanya grup yang MENGANDUNG koma yang dianggap ekspansi: `awk '{print $1}'`
+ * (tanpa koma) adalah argumen biasa dan tidak boleh ikut dipecah — itu
+ * mencegah over-block pada pola awk/sed yang lazim. Kedalaman dan jumlah
+ * alternatif dibatasi karena ini heuristik deteksi, bukan evaluator shell.
+ */
+function expandWordBraces(w: string, depth = 0): string[] {
+  if (depth > 4 || w.length > 512) return [w]
+  const m = /\{([^{}]*)\}/.exec(w)
+  if (!m) return [w]
+  const body = m[1]!
+  if (!body.includes(",")) return [w]
+  const pre = w.slice(0, m.index)
+  const post = w.slice(m.index + m[0].length)
+  const out: string[] = []
+  for (const alt of body.split(",")) {
+    for (const r of expandWordBraces(pre + alt + post, depth + 1)) {
+      out.push(r)
+      if (out.length >= 64) return out
+    }
+  }
+  return out
+}
+
+/**
+ * Diekspor untuk test.
+ *
+ * Tanpa grup berkoma, perintah dikembalikan APA ADANYA: pemecahan kata di
+ * sini mengganti tab/newline dengan spasi, dan kontrak normalisasi menuntut
+ * makna (termasuk "perintah ini mencari dari cwd") tetap terbaca —
+ * `C=find\t/; ${C} -name x` harus tetap terlihat sebagai tab, bukan `find /`.
+ */
+export function expandBraceAlternatives(cmd: string): string {
+  if (!/\{[^{}]*,[^{}]*\}/.test(cmd)) return cmd
+  return cmd
+    .split(/\s+/)
+    .flatMap((w) => (w.includes("{") ? expandWordBraces(w) : [w]))
+    .join(" ")
+}
+
+/**
  * Substitusi assignment variabel sederhana dalam satu perintah.
  * `X=.env; cat $X` → `X=.env; cat .env`
  * `p=python3 && $p -c 1` → `p=python3 && python3 -c 1`
@@ -205,16 +269,89 @@ export function normalizeCommand(cmd: string): string {
   // [SEC-1] Gabungkan backslash line-continuation dulu agar perintah multi-baris
   // (`curl ... \\\n -d $KEY`) tidak membuat regex satu-baris `[^\n]*` meleset.
   let c = cmd.replace(/\\\r?\n/g, " ")
+  // [SEC-3] `$IFS`/`${IFS…}` adalah PEMISAH KATA bagi shell: tanpa ini
+  // `cat${IFS}.env` lolos seluruh aturan berbasis nama perintah.
+  c = expandIfsRefs(c)
   // [SEC-2] Dekode ANSI-C quoting sebelum quote dibuang.
   c = decodeAnsiCQuotes(c)
-  return stripCommandWrappers(inlineSimpleVars(stripQuotes(stripCaretEscapes(c))))
+  // IFS dan brace diekspansi sekali lagi setelah quote dibuang: `${I"F"S}`
+  // dan `".{env,}"` sama-sama sah di bash.
+  return stripCommandWrappers(
+    inlineSimpleVars(expandBraceAlternatives(expandIfsRefs(stripQuotes(stripCaretEscapes(c))))),
+  )
+}
+
+/**
+ * Kosongkan isi kutip yang merupakan DATA untuk perintah pencetak/pencari.
+ *
+ * `echo "rm -rf /"` dan `git commit -m "docs: sudo rm"` tidak mengeksekusi
+ * apa pun, tetapi karena normalisasi membuang kutip keduanya terlihat persis
+ * seperti perintah berbahaya dan diblokir (over-block yang mengganggu alur
+ * dokumentasi/commit). Argumen kutip milik echo/printf/grep/rg dan
+ * `-m`/`--message` git adalah teks, jadi isinya dijadikan spasi SEBELUM aturan
+ * statis dievaluasi.
+ *
+ * Pengaman penting: kutip yang memuat substitusi/ekspansi (`$(`, backtick,
+ * `${`, `$VAR`) TIDAK dikosongkan — `git commit -m "$(rm -rf /)"` benar-benar
+ * mengeksekusi perintah di dalamnya, jadi teks itu bukan data inert.
+ *
+ * Blanking HANYA dipakai untuk aturan statis (STATIC_DENY/RM_*); pemeriksaan
+ * target berkas (SENSITIVE_TARGET, READERS, redirect, jail) tetap memakai
+ * bentuk ternormalisasi penuh.
+ *
+ * Diekspor untuk test.
+ */
+export function blankQuotedDataArgs(cmd: string): string {
+  const INERT_HEADS = /^(?:echo|printf|grep|egrep|fgrep|rg|ag)$/i
+  const out = cmd.split("")
+  let i = 0
+  // Awal segmen perintah terakhir: head ditentukan dari sini, bukan dari awal
+  // seluruh baris (`git status && echo "x"` → head segmen kedua = echo).
+  let segStart = 0
+  while (i < cmd.length) {
+    const ch = cmd[i]!
+    if (ch === "\\" && i + 1 < cmd.length) {
+      i += 2
+      continue
+    }
+    if (ch === ";" || ch === "&" || ch === "|" || ch === "\n") {
+      segStart = i + 1
+      i++
+      continue
+    }
+    if (ch === "'" || ch === '"') {
+      const closer = ch
+      let j = i + 1
+      while (j < cmd.length && cmd[j] !== closer) {
+        if (closer === '"' && cmd[j] === "\\" && j + 1 < cmd.length) j++
+        if (cmd[j] === "\n") break
+        j++
+      }
+      const closed = j < cmd.length && cmd[j] === closer
+      const body = cmd.slice(i + 1, j)
+      if (closed && body !== "") {
+        const words = cmd.slice(segStart, i).trim().split(/\s+/).filter(Boolean)
+        const head = words[0] ?? ""
+        const prev = words[words.length - 1] ?? ""
+        const inertTarget =
+          prev !== head && (/^--message$/i.test(prev) || /^-[a-zA-Z]{0,2}m$/.test(prev))
+        const isData =
+          (INERT_HEADS.test(head) || inertTarget) && !/\$\(|`|\$\{|\$[A-Za-z_]/.test(body)
+        if (isData) for (let k = i + 1; k < j; k++) out[k] = " "
+      }
+      i = closed ? j + 1 : j
+      continue
+    }
+    i++
+  }
+  return out.join("")
 }
 
 // ── Aturan ──
 
 /** Path/berkas kredensial, dicek pada bentuk ternormalisasi. */
 const SENSITIVE_TARGET =
-  /(?:^|[\s/\\=@"'([:<>])(?:\.env(?:\.[\w.-]+)?|\.git-credentials|\.npmrc|\.netrc|id_(?:rsa|dsa|ecdsa|ed25519)|credentials(?:\.json)?|\.pem|\.p12|\.pfx|shadow|master\.key|config[/\\](?:sam|system|security|software|default)(?=[/\\]|$|[\s;"'&|])|ntds\.dit\b|hklm[/\\](?:sam|system|security)(?=[/\\]|$|[\s;"'&|]))\b/i
+  /(?:^|[\s/\\=@"'([:<>{,])(?:\.env(?:\.[\w.-]+)?|\.git-credentials|\.npmrc|\.netrc|id_(?:rsa|dsa|ecdsa|ed25519)|credentials(?:\.json)?|\.pem|\.p12|\.pfx|shadow|master\.key|config[/\\](?:sam|system|security|software|default)(?=[/\\]|$|[\s;"'&|])|ntds\.dit\b|hklm[/\\](?:sam|system|security)(?=[/\\]|$|[\s;"'&|]))\b/i
 
 /** Direktori kredensial: ~/.ssh, $HOME/.aws, /etc/shadow, dst. */
 const SENSITIVE_DIR = /(?:~|\$HOME|\$\{HOME\}|\/etc|\/root|\/proc\/self)[/\\](?:\.?[\w.-]+)/i
@@ -452,8 +589,11 @@ const ROOT_SCAN = /\b(?:find|fd|ls|dir|du|tree|grep|rg)\b[^\n]*\s\/(?:\s|$)/i
  * -r menghapus isi dotfile root.
  */
 const RM_RECURSIVE = /\brm\b[^\n]*(?:\s-[a-z]*[rR]|\s--recursive\b|\s--dir\b)/i
+// Terminator target root ikut mencakup `)`, `,` dan backtick: bentuk
+// bersubstitusi (`rm -rf $(pwd)`) berakhir dengan `)` sehingga `\s\/(?:\s|…)`
+// dulu meleset dan seluruh perintah lolos.
 const RM_DANGEROUS_TARGET =
-  /(?:\s\/(?:\s|$|\*|;|&|\/|\.)|\s~(?:[/\\]\s*)?(?:\s|$|;|&)|\$\{?HOME\}?|\.\.(?:[/\\]|\s|$|;|&)|\s\*\s*(?:$|;|&)|--no-preserve-root)/
+  /(?:\s\/(?:\s|$|\*|;|&|\/|\.|\)|,|`)|\s~(?:[/\\]\s*)?(?:\s|$|;|&|\))|\$\{?HOME\}?|\.\.(?:[/\\]|\s|$|;|&)|\s\*\s*(?:$|;|&)|--no-preserve-root)/
 
 const STATIC_DENY: [RegExp, string][] = [
   // Fork bomb: definisi fungsi rekursif yang memanggil dirinya lewat pipe.
@@ -553,11 +693,17 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
   const raw = rawCmd
   const norm = normalizeCommand(rawCmd)
   const both = (re: RegExp): boolean => re.test(norm) || re.test(raw)
+  // Aturan statis dievaluasi pada bentuk yang teks-kutip-inert-nya sudah
+  // dikosongkan (blankQuotedDataArgs), sehingga `echo "rm -rf /"` tidak lagi
+  // diblokir sementara `rm -rf /` dan `bash -c "rm -rf /"` tetap.
+  const inert = blankQuotedDataArgs(raw)
+  const inertNorm = normalizeCommand(inert)
+  const staticHit = (re: RegExp): boolean => re.test(inertNorm) || re.test(inert)
 
   for (const [re, reason] of STATIC_DENY) {
-    if (both(re)) return { denied: true, reason }
+    if (staticHit(re)) return { denied: true, reason }
   }
-  if (both(RM_RECURSIVE) && both(RM_DANGEROUS_TARGET)) {
+  if (staticHit(RM_RECURSIVE) && staticHit(RM_DANGEROUS_TARGET)) {
     return { denied: true, reason: "destructive rm" }
   }
   if (both(PROCESS_SUB)) return { denied: true, reason: "process substitution" }
@@ -721,6 +867,16 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
 
   // Berkas sensitif: berbahaya bila dibaca/disalin ATAU dijadikan argumen
   // perintah jaringan. Menyebut `.env` dalam `echo` saja tidak diblokir.
+  // Pembaca yang argumennya langsung substitusi perintah (`cat$(printf ' ')`)
+  // menyembunyikan nama berkas sepenuhnya dari analisis statis.
+  if (
+    /\b(?:cat|bat|less|more|head|tail|nl|od|xxd|strings|type|Get-Content|gc|cp|copy|mv|move|tar|base64|openssl|awk|sed|grep|egrep|fgrep|rg|findstr)\b\s*(?:\$\(|`)/i.test(
+      inertNorm,
+    )
+  ) {
+    return { denied: true, reason: "reader command substitution" }
+  }
+
   const touchesSensitive = both(SENSITIVE_TARGET) || both(SENSITIVE_DIR)
   if (touchesSensitive && (both(READERS) || /\b(?:curl|wget|nc|ncat|socat|scp)\b/i.test(norm))) {
     return { denied: true, reason: "sensitive file access" }
@@ -773,12 +929,20 @@ export function inspectBashCommand(rawCmd: string, cwd?: string): BashVerdict {
       // `%` tunggal (`100%.txt`) tetap lolos karena bukan pola ekspansi.
       if (/%[^%\s]+%/.test(t))
         return { denied: true, reason: "reader target with env expansion (%VAR%)" }
-      if (t.includes("*")) {
+      // Glob `?` dan `[abc]` sama-sama mengembang ke nama lain: `cat .?nv`
+      // membaca `.env` walau tak ada `*`. Hanya diperiksa untuk token yang
+      // berbentuk path (berawalan `.`/`~`/`/`, drive letter, atau memuat
+      // pemisah path) supaya pola grep/awk seperti `a[0-9]` tidak terblokir.
+      const pathLike = /^[.~/]|^[A-Za-z]:[\\/]|[/\\]/.test(t)
+      if (t.includes("*") || (pathLike && /[*?[]/.test(t))) {
         // Wildcard di READER bisa mengembang ke .env/.minicode — tolak bila
         // cwd tersedia (butuh path eksplisit). Tanpa cwd, heuristik sensitif.
         if (cwd != null) return { denied: true, reason: "reader wildcard" }
         if (isSensitive(t) || isOwnedState(t)) return { denied: true, reason: "reader wildcard" }
       }
+      // Nama target yang dihitung shell tak bisa dipastikan statis:
+      // `cat$(printf ' ')` membaca `.env` tanpa pernah menampakkan nama itu.
+      if (/^\$\(|^`/.test(t)) return { denied: true, reason: "reader command substitution" }
       if (isSensitive(t) || isSensitive(resolve(cwd ?? ".", t))) {
         return { denied: true, reason: "sensitive file access" }
       }

@@ -232,6 +232,12 @@ export function applyKey(
         .replace(/\t/g, " ")
         // biome-ignore lint/suspicious/noControlCharactersInRegex: membuang byte kontrol dari paste
         .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "")
+        // C1 (0x80–0x9F) juga dibuang: U+009B bertindak sebagai CSI di banyak
+        // terminal, jadi paste bisa menyuntik escape TANPA byte ESC — melewati
+        // filter di atas dan gate sanitize (buffer composer dilukis apa adanya).
+        .replace(/[\u0080-\u009f]/g, "")
+        // Separator garis/paragraf Unicode = pindah baris di sebagian terminal.
+        .replace(/[\u2028\u2029]/g, "\n")
       if (!ins) return { state, action: "none" }
       const { line, cursor } = insertAt(state.line, state.cursor, ins)
       return { state: withLine(line, cursor), action: "render" }

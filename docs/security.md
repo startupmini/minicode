@@ -52,17 +52,25 @@ provider model pihak ketiga.
   yang belum bermutasi (by-design, bukan korupsi).
 - State milik runtime (`.minicode/` — DB, todos, plans, checkpoints, jurnal,
   traces, allowlist, config, + file APAPUN lain di bawahnya): tulis via file
-  tools ditolak fail-closed (pengecualian: restore `.minicode/.trash/` →
-  workspace dan skrip hooks `.minicode/hooks/` — hook adalah kode arbitrer di
-  luar permission system, aktif hanya via opt-in `MINICODE_HOOKS=1` dan
-  dilarang di WorkMode non-`EXECUTE`); baca tetap boleh (observability). Tulis
+  tools ditolak fail-closed (satu-satunya pengecualian: restore
+  `.minicode/.trash/` → workspace); baca tetap boleh (observability). Tulis
   catatan sendiri ke workspace, bukan ke `.minicode/`.
+- Skrip hooks `.minicode/hooks/` ikut terkunci untuk penulisan (audit
+  2026-11-12). Hook adalah kode arbitrer di luar permission system yang
+  dieksekusi OTOMATIS lewat scan direktori saat opt-in `MINICODE_HOOKS=1`
+  (hanya WorkMode `EXECUTE`, timeout 5 dtk, env disanitasi). Kalau file tool
+  boleh menulis ke sana, model/prompt-injection bisa menanam hook lalu
+  menjalankannya di sesi yang sama — jadi skrip hook dibuat operator di luar
+  sesi. Repo clone-an yang sudah memuat `.minicode/hooks/*.js` tetap harus
+  diperlakukan sebagai config lokal tak tepercaya: periksa isinya sebelum
+  menyalakan `MINICODE_HOOKS=1`.
 
 ## Config lokal & supply chain
 
 - Config lokal `.minicode/config.json` + allowlist **diabaikan secara default** — repo clone-an tidak bisa men-spawn MCP, menyedot prompt, atau memasang hook. Percayai dengan `--allow-local-config`.
 - Server MCP terdaftar tidak mendapat wildcard auto-allow. Capability tetap harus diotorisasi; di ASK pemanggilan yang digate meminta persetujuan per pasangan server+tool+args, sedangkan AUTO menjalankan capability authorized tanpa prompt rutin. `[a] Always` menyimpan cakupan yang disetujui ke allowlist.
 - Config/allowlist/auth ditulis atomik + chmod 600; token OAuth terpisah di `~/.minicode/auth.json` (bukan config yang rawan ter-commit).
+- Daemon menaruh `bootstrap` secret di `<cwd>/.minicode/daemon-endpoint.json` (`0600`). Di Windows mode POSIX diabaikan, jadi ACL berkas itu dicabut dari warisan dan dibatasi ke user pemilik via `icacls` (best-effort). Residual: pada mesin multi-user Windows di mana `icacls` gagal, user lain yang bisa membaca folder repo masih bisa membaca secret dan menerbitkan capability daemon (loopback, bukan remote).
 - `mcp serve` stdio-only (tanpa mode HTTP → tanpa permukaan jaringan), curated tools, permission aktif; `--all-tools` opt-in operator.
 
 ## Checkpoint & recovery

@@ -108,7 +108,10 @@ function toState(def: FormField): FieldState {
   }
   return {
     def,
-    text: typeof def.initial === "string" ? def.initial : "",
+    // Prefill berasal dari config/berkas (teks tak-terpercaya). Disanitasi di
+    // STATE, bukan saat render: kursor & viewStart dihitung dari `text`, jadi
+    // escape di dalamnya akan menggeser kolom kursor dari yang terlihat.
+    text: typeof def.initial === "string" ? sanitizeAnsiLine(def.initial) : "",
     cursor: 0,
     selectIdx: 0,
     confirmed: false,
@@ -249,6 +252,9 @@ export async function runForm(spec: FormSpec, screen: AltScreen): Promise<FormRe
           // bernapas saat error muncul/hilang).
           minWidth: FORM_BOX_W,
           maxWidth: FORM_BOX_W,
+          // Field aktif WAJIB terlihat: dialog menggeser jendela body bila
+          // muat-tidaknya terpaksa memotong (audit 2026-11-12, HIGH-2).
+          focusRow: activeRow >= 0 ? activeRow : undefined,
         },
         screen.cols,
         screen.rows,
@@ -260,7 +266,12 @@ export async function runForm(spec: FormSpec, screen: AltScreen): Promise<FormRe
       // dari lebar baris (yang sudah termasuk padding) terbukti off-by-N.
       try {
         if (activeRow >= 0) {
-          const li = Math.min(box.lines.length - 1, box.bodyTop + activeRow)
+          // bodyStart = offset jendela body yang benar-benar dirender; tanpa
+          // dikurangi, kursor mendarat di baris marker/border saat body dipotong.
+          const li = Math.max(
+            0,
+            Math.min(box.lines.length - 1, box.bodyTop + (activeRow - box.bodyStart)),
+          )
           const row = box.topRow + li
           const stripped = stripAnsi(box.lines[li] ?? "")
           const leftPad = boxLeftPad(stripped)
@@ -352,25 +363,56 @@ export async function runForm(spec: FormSpec, screen: AltScreen): Promise<FormRe
       st.error = null
     }
 
+    /**
+     * Esc tahap-1: kembalikan nilai bawaan field AKTIF, apa pun jenisnya.
+     *
+     * Kontrak I21 menyebut "semua input teks/pilihan", tapi dulu hanya
+     * text/secret yang di-revert — pada select/confirm Esc langsung menutup
+     * seluruh form dan perubahan field lain ikut hilang (audit 2026-11-12,
+     * MEDIUM-6). `false` = sudah di nilai bawaan → lanjut ke tahap-2 (batal).
+     */
+    const revertField = (cur: FieldState): boolean => {
+      if (cur.def.kind === "select") {
+        const n = Math.max(1, cur.def.options?.length ?? 1)
+        const init = typeof cur.def.initial === "number" ? cur.def.initial : 0
+        const target = Math.min(Math.max(0, init), n - 1)
+        if (cur.selectIdx === target) return false
+        cur.selectIdx = target
+        cur.error = null
+        return true
+      }
+      if (cur.def.kind === "confirm") {
+        const target = typeof cur.def.initial === "boolean" ? cur.def.initial : false
+        if (cur.confirmed === target) return false
+        cur.confirmed = target
+        cur.error = null
+        return true
+      }
+      const initial = typeof cur.def.initial === "string" ? cur.def.initial : ""
+      if (cur.text === initial) return false
+      cur.text = initial
+      cur.cursor = toGraphemes(initial).length
+      cur.viewStart = 0
+      cur.error = null
+      return true
+    }
+
     const handleKeys = (keys: DecodedKey[]): boolean => {
       if (done) return true
       resetIdle()
-      const st = fields[idx]!
       for (const d of keys) {
         const k = d.key
+        // Field STATE dibaca ulang tiap iterasi: Tab/↑/↓ di dalam chunk yang
+        // sama memindahkan `idx`, dan pointer yang dicapture sebelum loop
+        // membuat ketikan masuk ke field SEBELUMNYA (audit 2026-11-12, HIGH-1).
+        const st = fields[idx]!
         // Esc/Ctrl+C dua-tahap (anti-hilang draft): field kotor → kembalikan
         // ke nilai bawaan (prefill edit tak hilang sekali tekan — dulu
         // langsung dikosongkan tanpa undo); sudah bawaan/kosong → batal
         // total. Ctrl+D = batal langsung (konvensi EOF, tidak dipakai
         // menghapus).
         if (k.type === "esc" || k.type === "ctrl-c") {
-          const cur = fields[idx]!
-          const initial = typeof cur.def.initial === "string" ? cur.def.initial : ""
-          if ((cur.def.kind === "text" || cur.def.kind === "secret") && cur.text !== initial) {
-            cur.text = initial
-            cur.cursor = toGraphemes(initial).length
-            cur.viewStart = 0
-            cur.error = null
+          if (revertField(fields[idx]!)) {
             render()
             continue
           }

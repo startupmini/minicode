@@ -52,8 +52,23 @@ function track(name: string): string {
 const tmp = track(".tmp-extreme")
 const ctx: any = { signal: new AbortController().signal, cwd: process.cwd() }
 
+// Hapus DENGAN retry: di Windows handle SQLite (`vector.db-wal`/`-shm`) baru
+// dilepas beberapa milidetik setelah `db.close()`, sehingga `rm` pertama gagal
+// EBUSY. Dulu kegagalan itu ditelan diam-diam → tiap run meninggalkan
+// `.tmp-extreme-*/.minicode/vector.db` di root repo (temuan audit 2026-11-12).
+async function drop(p: string): Promise<void> {
+  for (let i = 0; i < 6; i++) {
+    try {
+      await rm(p, { recursive: true, force: true })
+      return
+    } catch {
+      await new Promise((r) => setTimeout(r, 25 * (i + 1)))
+    }
+  }
+}
+
 afterAll(async () => {
-  for (const p of TRACKED) await rm(p, { recursive: true, force: true }).catch(() => {})
+  for (const p of TRACKED) await drop(p)
 })
 
 // ── 02 Session Core ──────────────────────────────────────────────────────────
@@ -119,7 +134,7 @@ test("03 persistence updated_at sorts most recent first", async () => {
   await saveSession(b, d, "s", [{ role: "user", content: "b" }] as any, {})
   const list = listSessions(d)
   expect(list[0]?.id).toBe(b)
-  await rm(d, { recursive: true, force: true }).catch(() => {})
+  await drop(d)
 })
 
 // ── 04 Config ────────────────────────────────────────────────────────────────
@@ -436,7 +451,7 @@ test("10 glob {a,b} expansion", async () => {
   const out = (await globTool.execute({ pattern: "**/*.{ts,js}", cwd: d }, ctx)) as string
   expect(out).toContain("a.ts")
   expect(out).toContain("c.js")
-  await rm(d, { recursive: true, force: true }).catch(() => {})
+  await drop(d)
 })
 
 test("10 grep include filter + null byte skip", async () => {
@@ -448,7 +463,7 @@ test("10 grep include filter + null byte skip", async () => {
   const out = (await grepTool.execute({ pattern: "hello", cwd: d, include: "*.ts" }, ctx)) as string
   expect(out).toContain("a.ts")
   expect(out).not.toContain("b.js")
-  await rm(d, { recursive: true, force: true }).catch(() => {})
+  await drop(d)
 })
 
 // ── 11 Shell / Git ───────────────────────────────────────────────────────────
@@ -473,7 +488,7 @@ test("12 vector add/search/forget + dim mismatch cosine", async () => {
   expect(hits.some((h) => h.text.includes(marker))).toBe(true)
   const del = await deleteMemoryByQuery(marker, d)
   expect(del).toBe(1)
-  await rm(d, { recursive: true, force: true }).catch(() => {})
+  await drop(d)
 })
 
 // ── 13 Task / Sub-Agent ──────────────────────────────────────────────────────

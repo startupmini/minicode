@@ -405,7 +405,15 @@ export const ESC = String.fromCharCode(27)
 // hanya cocok untuk `ESC[P`/`ESC[_` dst. sehingga payload DCS bocor.
 export const ANSI_PATTERN = `${ESC}(?:\\[[0-9;?<=>]*[@-~]|\\[[0-9;?<=>]*|\\][^${ESC}\\u0007]*(?:\\u0007|${ESC}\\\\)|(?:P|_|\\^|X)[^${ESC}\\u0007]*(?:\\u0007|${ESC}\\\\)|[()#][0-~]|[0-~])`
 
+/** Regex bersama untuk stripAnsi.
+ *
+ * Dulu `new RegExp(...)` dibuat tiap panggilan — meski hasilnya benar (lastIndex
+ * `replace` selalu di-reset), ini hot path yang dipanggil per baris. Regex
+ * global dicomile sekali; `String.replace` dengan flag `g` mereset `lastIndex`
+ * sendiri sehingga aman dipakai bersama antar pemanggil (audit 2026-11-12).
+ */
+const ANSI_STRIP = new RegExp(ANSI_PATTERN, "g")
+
 export function stripAnsi(str: string): string {
-  // regex baru per panggilan: aman dari lastIndex bersama antar pemanggil
-  return str.replace(new RegExp(ANSI_PATTERN, "g"), "")
+  return str.replace(ANSI_STRIP, "")
 }

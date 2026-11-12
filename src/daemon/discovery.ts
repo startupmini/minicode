@@ -14,6 +14,7 @@
 //      koneksi yang berhasil; lease segar hanya menghasilkan "suspect" —
 //      ada kandidat, belum terbukti.
 
+import { execFileSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { resolveLocalDbPath } from "../lib/db-path.ts"
@@ -77,11 +78,34 @@ function leasePath(cwd?: string): string {
   return resolveLocalDbPath(LEASE_FILE, cwd)
 }
 
+/**
+ * Win32 mengabaikan mode POSIX, jadi `0600` pada berkas endpoint (yang memuat
+ * bootstrap secret) TIDAK membatasi siapa pun. Satu-satunya kontrol nyata
+ * adalah ACL: cabut warisan lalu beri hak penuh hanya ke user pemilik.
+ *
+ * Best-effort dan senyap: kegagalan icacls (kebijakan domain, PATH aneh)
+ * tidak boleh menggagalkan daemon — tapi juga tidak boleh dianggap aman.
+ * Residual yang tersisa (mesin multi-user Windows tanpa izin mengubah ACL)
+ * didokumentasikan di docs/security.md.
+ */
+function hardenAcl(path: string): void {
+  if (process.platform !== "win32") return
+  const user = process.env.USERNAME
+  if (!user) return
+  try {
+    execFileSync("icacls", [path, "/inheritance:r", "/grant:r", `${user}:F`], {
+      stdio: "ignore",
+      windowsHide: true,
+    })
+  } catch {}
+}
+
 /** Tulis atomik (tmp + rename) supaya pembaca tak pernah melihat file separuh. */
 function writeAtomic(path: string, value: unknown, mode = 0o600): void {
   const tmp = `${path}.${process.pid}.tmp`
   writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { mode })
   renameSync(tmp, path)
+  if (mode <= 0o600) hardenAcl(path)
 }
 
 export function writeEndpoint(ep: DaemonEndpoint, cwd?: string): string {

@@ -19,7 +19,7 @@ sub-milestone (`P2.x`), Quality Remediation (`Stage 1`–`10`), dan hotfix
 
 ## Status checkout
 
-`CHANGELOG.md` dan `package.json` saat ini mencatat v0.17.0. `PLAN.md` adalah
+`CHANGELOG.md` dan `package.json` saat ini mencatat v0.21.0. `PLAN.md` adalah
 ledger milestone legacy, bukan roadmap aktif. `ROADMAP.md`,
 `docs/ARCHITECTURE.html`, dan `docs/audit/` tidak ada; status roadmap belum
 tersedia. Gate repository dapat dijalankan, tetapi checkout tidak boleh
@@ -37,6 +37,33 @@ bun x tsc --noEmit && bun run lint && bun test && bun run gate:coverage && bun r
 ```
 
 Gate memakai manifest `package.json` yang ada pada checkout ini.
+
+### Catatan eksekusi gate (2026-11-12, working tree audit render)
+
+Terukur pada kandidat yang sama (`bun x tsc --noEmit` = bersih,
+`bun run lint` = 692 file / 0 error, `bun test` = 5672 pass / 26 skip / 0 fail
+dari 5698 test di 402 file, `bun run gate:pack` = 23 pass / 0 fail, 309 file /
+4021 KB).
+
+`bun run gate:coverage` **TIDAK selesai** pada lingkungan ini dan **tidak
+boleh dicatat sebagai lulus**: gate itu menjalankan ulang seluruh suite dengan
+`--coverage` (~18–20 menit), sedangkan job panjang yang dilepas (background/
+detached) dihentikan saat sesi pemanggil berakhir. Tiga percobaan berakhir
+tanpa output gate — bukan kegagalan ambang, juga bukan bukti hijau.
+
+Dua gejala flake yang sudah teridentifikasi, jangan dikejar sebagai regresi:
+
+- Di bawah beban suite penuh, tiga test yang menunggu subproses keluar dengan
+  batas 5–6,5 dtk bisa timeout: `test/supply-chain.test.ts` (`git_diff`
+  textconv), `test/work-mode-cli.test.ts` (`exec --json --verify`), dan
+  `test/writer-inventory.test.ts`. Ketiganya lulus saat dijalankan sendiri;
+  run penuh berikutnya 0 fail.
+- `test/concurrency-cross-process.test.ts` (§32 dua proses tulis sesi) adalah
+  flake lintas-proses Windows yang sama kelasnya.
+
+Artinya: laporan status wajib menyebut perintah yang benar-benar dijalankan
+dan yang tidak; jangan menyimpulkan "repository hijau" dari run parsial, dan
+jangan menurunkan ambang coverage/pack untuk menutupi gate yang belum jalan.
 
 **Ruang lingkup klaim hasil — baca sebelum menulis laporan status.**
 

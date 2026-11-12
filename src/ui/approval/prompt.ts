@@ -13,6 +13,7 @@ import { t } from "../i18n/locale.ts"
 import { askLine } from "../input/input.ts"
 import { sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c } from "../render/theme.ts"
+import { truncateToWidth } from "../render/width.ts"
 import { getApprovalSink } from "../tui/transcript.ts"
 
 /** Subset struktural tool call yang dibutuhkan view — tanpa tipe kernel. */
@@ -73,10 +74,16 @@ export async function promptAsk(call: ApprovalRequest): Promise<"allow" | "deny"
   const toolName = sanitizeAnsiLine(call.name)
   const args = (call.args ?? {}) as Record<string, unknown>
 
+  // Sanitasi DULU, potong SESUDAH: `slice` mentah bisa membelah surrogate
+  // pair (byte U+FFFD di layar) dan memotong sekuens ANSI di tengah sehingga
+  // ekor `\x1b[` menggantung (terminal menelan output berikutnya sebagai
+  // parameter CSI) — audit 2026-11-12, MEDIUM-1.
+  const summarize = (value: unknown, max: number): string =>
+    truncateToWidth(sanitizeAnsiLine(String(value)), max, "…")
   let actionSummary = ""
-  if (args.command) actionSummary = `${t("appr.cmdLabel")} ${String(args.command).slice(0, 100)}`
-  else if (args.path) actionSummary = `${t("appr.fileLabel")} ${String(args.path)}`
-  else if (args.query) actionSummary = `${t("appr.queryLabel")} ${String(args.query)}`
+  if (args.command) actionSummary = `${t("appr.cmdLabel")} ${summarize(args.command, 100)}`
+  else if (args.path) actionSummary = `${t("appr.fileLabel")} ${summarize(args.path, 100)}`
+  else if (args.query) actionSummary = `${t("appr.queryLabel")} ${summarize(args.query, 100)}`
   else {
     let json = ""
     try {
@@ -84,7 +91,7 @@ export async function promptAsk(call: ApprovalRequest): Promise<"allow" | "deny"
     } catch {
       json = String(args)
     }
-    actionSummary = `${t("appr.argsLabel")} ${json.slice(0, 100)}`
+    actionSummary = `${t("appr.argsLabel")} ${summarize(json, 100)}`
   }
   actionSummary = sanitizeAnsiLine(actionSummary)
 
@@ -162,7 +169,9 @@ export async function promptAskText(question: string, options?: string[]): Promi
   // Paritas promptAsk: tanpa sink + stdout pipe = jawab tak terlihat & pipe
   // tercemar → batal fail-closed.
   if (!textSink && !process.stdout.isTTY) return null
-  const q = sanitizeAnsiLine(question).slice(0, 2000)
+  // Potong SESUDAH sanitasi lewat truncateToWidth (bukan `slice`): `slice`
+  // bisa menyisakan `\x1b[` menggantung di ekor potongan.
+  const q = truncateToWidth(sanitizeAnsiLine(question), 2000, "…")
   const block = [
     ``,
     `${c.warning(c.bold(t("appr.askTitle")))}`,
@@ -188,7 +197,9 @@ export async function promptAskText(question: string, options?: string[]): Promi
   if (ans == null || !ans.trim()) return null
   const out = ans.trim()
   if (sink) {
-    sink.pushBlock([c.muted(`  → ${sanitizeAnsiLine(out).slice(0, 200)}`)])
+    // Gema jawaban juga dipotong lewat truncateToWidth: `slice` bisa membelah
+    // surrogate pair (emoji → U+FFFD) atau menyisakan escape menggantung.
+    sink.pushBlock([c.muted(`  → ${truncateToWidth(sanitizeAnsiLine(out), 200, "…")}`)])
     sink.repaint()
   }
   return out

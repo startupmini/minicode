@@ -182,30 +182,58 @@ function highlightTsLine(line: string): string {
   return highlightTsTokens(line)
 }
 
+/**
+ * Jalankan `fn` hanya pada bagian DI LUAR sekuens SGR.
+ *
+ * Sekuens SGR yang dipertahankan sanitizeAnsi adalah byte opak. Dulu tokenizer
+ * melihat isinya dan mewarnai `1`/`31` sebagai angka, memecah escape sehingga
+ * user melihat literal `1;31m` di dalam code fence (audit 2026-11-12, HIGH-4).
+ * Regex di-reuse dengan `lastIndex` direset tiap panggilan.
+ */
+// Dibangun tanpa literal kontrol (aturan lint noControlCharactersInRegex).
+const SGR_SEQ = new RegExp(`${String.fromCharCode(27)}\\[[0-9;:]*m`, "g")
+
+function mapOutsideSgr(line: string, fn: (chunk: string) => string): string {
+  SGR_SEQ.lastIndex = 0
+  let out = ""
+  let last = 0
+  let m = SGR_SEQ.exec(line)
+  while (m) {
+    if (m.index > last) out += fn(line.slice(last, m.index))
+    out += m[0]
+    last = m.index + m[0].length
+    m = SGR_SEQ.exec(line)
+  }
+  if (last < line.length) out += fn(line.slice(last))
+  return out
+}
+
 function highlightTsTokens(text: string): string {
   // Regex to match string literals, numbers, identifiers, operators
   const tokenRe =
     /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b\d+(?:\.\d+)?\b|\b[A-Za-z_$][A-Za-z0-9_$]*\b|[{}()[\];:,.<>=+\-*/%!&|^~?]+|\s+)/g
-  return text.replace(tokenRe, (token) => {
-    if (token.startsWith('"') || token.startsWith("'") || token.startsWith("`")) {
-      return c.string(token)
-    }
-    if (/^\d+(?:\.\d+)?$/.test(token)) {
-      return c.brightYellow(token)
-    }
-    if (TS_KEYWORDS.has(token)) {
-      return c.brightMagenta(c.bold(token))
-    }
-    if (/^[A-Z][A-Za-z0-9_$]*$/.test(token)) {
-      // Type / Class name
-      return c.brightCyan(token)
-    }
-    // Tidak ada cabang khusus untuk true/false/null/undefined: keempatnya sudah
-    // ada di TS_KEYWORDS, jadi cabang di atas selalu menang. Cabang terpisah
-    // yang pernah ada di sini tak pernah terjangkau (terlihat saat coverage
-    // highlight.ts dinaikkan: satu baris mustahil dicapai test apa pun).
-    return token
-  })
+  return mapOutsideSgr(text, (chunk) =>
+    chunk.replace(tokenRe, (token) => {
+      if (token.startsWith('"') || token.startsWith("'") || token.startsWith("`")) {
+        return c.string(token)
+      }
+      if (/^\d+(?:\.\d+)?$/.test(token)) {
+        return c.brightYellow(token)
+      }
+      if (TS_KEYWORDS.has(token)) {
+        return c.brightMagenta(c.bold(token))
+      }
+      if (/^[A-Z][A-Za-z0-9_$]*$/.test(token)) {
+        // Type / Class name
+        return c.brightCyan(token)
+      }
+      // Tidak ada cabang khusus untuk true/false/null/undefined: keempatnya sudah
+      // ada di TS_KEYWORDS, jadi cabang di atas selalu menang. Cabang terpisah
+      // yang pernah ada di sini tak pernah terjangkau (terlihat saat coverage
+      // highlight.ts dinaikkan: satu baris mustahil dicapai test apa pun).
+      return token
+    }),
+  )
 }
 
 function highlightPythonLine(line: string): string {
@@ -221,22 +249,24 @@ function highlightPythonLine(line: string): string {
 function highlightPythonTokens(text: string): string {
   const tokenRe =
     /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_]*\b|[{}()[\];:,.<>=+\-*/%!&|^~?]+|\s+)/g
-  return text.replace(tokenRe, (token) => {
-    if (token.startsWith('"') || token.startsWith("'")) {
-      return c.string(token)
-    }
-    if (/^\d+/.test(token)) return c.brightYellow(token)
-    if (PY_KEYWORDS.has(token)) return c.brightMagenta(c.bold(token))
-    if (/^[A-Z][A-Za-z0-9_]*$/.test(token)) return c.brightCyan(token)
-    return token
-  })
+  return mapOutsideSgr(text, (chunk) =>
+    chunk.replace(tokenRe, (token) => {
+      if (token.startsWith('"') || token.startsWith("'")) {
+        return c.string(token)
+      }
+      if (/^\d+/.test(token)) return c.brightYellow(token)
+      if (PY_KEYWORDS.has(token)) return c.brightMagenta(c.bold(token))
+      if (/^[A-Z][A-Za-z0-9_]*$/.test(token)) return c.brightCyan(token)
+      return token
+    }),
+  )
 }
 
 function highlightJsonLine(line: string): string {
   // Key vs string value vs number/bool
-  return line.replace(
-    /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|\b(-?\d+(?:\.\d+)?)\b/g,
-    (match, str, colon, bool, num) => {
+  const tokenRe = /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|\b(-?\d+(?:\.\d+)?)\b/g
+  return mapOutsideSgr(line, (chunk) =>
+    chunk.replace(tokenRe, (match, str, colon, bool, num) => {
       if (str) {
         if (colon) return c.brightCyan(str) + colon
         return c.string(str)
@@ -244,7 +274,7 @@ function highlightJsonLine(line: string): string {
       if (bool) return c.yellow(bool)
       if (num) return c.brightYellow(num)
       return match
-    },
+    }),
   )
 }
 
@@ -261,15 +291,16 @@ function highlightShellLine(line: string): string {
 function highlightShellTokens(text: string): string {
   // Alternatif flag (`-x`/`--long`) WAJIB sebelum kata: tanpa itu `-` tak pernah
   // jadi awal token (cabang yellow di bawah mati — dulu flag tampil polos).
-  return text.replace(
-    /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\$[A-Za-z0-9_]+|-{1,2}[A-Za-z0-9][A-Za-z0-9_-]*|\b[A-Za-z_][A-Za-z0-9_-]*\b|\s+)/g,
-    (token) => {
+  const tokenRe =
+    /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\$[A-Za-z0-9_]+|-{1,2}[A-Za-z0-9][A-Za-z0-9_-]*|\b[A-Za-z_][A-Za-z0-9_-]*\b|\s+)/g
+  return mapOutsideSgr(text, (chunk) =>
+    chunk.replace(tokenRe, (token) => {
       if (token.startsWith('"') || token.startsWith("'")) return c.string(token)
       if (token.startsWith("$")) return c.brightCyan(token)
       if (SH_KEYWORDS.has(token)) return c.brightMagenta(c.bold(token))
       if (token.startsWith("-")) return c.yellow(token)
       return token
-    },
+    }),
   )
 }
 

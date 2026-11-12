@@ -12,6 +12,7 @@ import {
 } from "../src/task/scheduler-observability.ts"
 import { type MsgKey, t } from "../src/ui/i18n/locale.ts"
 import { formatUsd } from "../src/ui/render/money.ts"
+import { sanitizeAnsiLine } from "../src/ui/render/sanitize.ts"
 import { glyphs } from "../src/ui/render/theme.ts"
 import { padToWidth } from "../src/ui/render/width.ts"
 
@@ -594,11 +595,13 @@ export async function handleBuiltinCommand(
         if (cfg.providers.length === 0) console.log(t("cmd.noProviders"))
         else console.log(t("cmd.noChanges"))
       } else {
+        // id provider datang dari probe jaringan (tak-terpercaya): paritas
+        // dengan `minicode providers sync` yang sudah menyaring ANSI.
         for (const r of updated) {
-          console.log(`  ${glyphs.check} ${r.id}: ${r.from} → ${r.to}`)
+          console.log(`  ${glyphs.check} ${sanitizeAnsiLine(r.id)}: ${r.from} → ${r.to}`)
         }
         for (const f of failed) {
-          console.log(`  ${glyphs.cross} ${f.id}: ${f.reason}`)
+          console.log(`  ${glyphs.cross} ${sanitizeAnsiLine(f.id)}: ${sanitizeAnsiLine(f.reason)}`)
         }
         // "Restart" hanya jujur bila ADA model baru — tanpa updated, restart
         // tak mengubah apa pun (sebelumnya selalu dicetak, menyesatkan saat

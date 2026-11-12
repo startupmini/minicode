@@ -292,8 +292,6 @@ export class TuiApp {
    */
   private busUnsubs: (() => void)[] = []
   private repaintTimer: ReturnType<typeof setTimeout> | undefined
-  /** Ukuran transkrip saat terakhir ikut ekor (basis indikator "baru"). */
-  private tailSize = 0
   /** Ukuran transkrip saat mulai scroll ke atas (basis hitung baris baru). */
   private scrollBase = 0
   /** Panjang visual terakhir (kunci posisi baca agar stream tak merampasnya). */
@@ -486,8 +484,7 @@ export class TuiApp {
         this.thinkingActive = false
       })
       sub("context:compacted")
-      this.tailSize = this.transcript.total()
-      this.scrollBase = this.tailSize
+      this.scrollBase = this.transcript.total()
       this.setMouseMode(mouseSelectionEnabled() ? "drag" : "off")
       this.paint(screen)
       await done
@@ -694,7 +691,10 @@ export class TuiApp {
       if (this.state.line || this.editing) {
         this.state = createState()
         this.histIdx = -1
-        this.editing = false
+        // Prompt TETAP tampil setelah Esc: kontrak I13 mensyaratkan prompt
+        // ada saat idle, dan menyembunyikannya membuat layar terlihat mati
+        // sampai user menekan tombol berikutnya (audit 2026-11-12, MEDIUM-4).
+        this.editing = true
         this.paintCurrent()
       }
       return
@@ -869,6 +869,9 @@ export class TuiApp {
     this.followTail()
     this.abortHintOn = false
     if (!line) {
+      // Enter pada baris kosong tetap idle: prompt harus langsung kembali
+      // (I13), bukan menghilang sampai ketikan berikutnya.
+      this.editing = true
       this.paintCurrent()
       return
     }
@@ -1120,8 +1123,7 @@ export class TuiApp {
     if (this.scrollBack === 0 && pages > 0) this.scrollBase = this.transcript.total()
     this.scrollBack = Math.max(0, Math.round(this.scrollBack + pages * page))
     if (this.scrollBack === 0) {
-      this.tailSize = this.transcript.total()
-      this.scrollBase = this.tailSize
+      this.scrollBase = this.transcript.total()
     }
     this.paintCurrent()
   }
@@ -1130,7 +1132,7 @@ export class TuiApp {
    * Scroll per BARIS (bukan per halaman) — dipakai auto-scroll seleksi agar
    * gulirnya halus & presisi. `n` = baris terbungkus (+ = ke atas/lama,
    * - = ke bawah/baru); di-clamp ke [0, wrapped - viewH]. Menjaga basis
-   * `tailSize`/`scrollBase` sama seperti `scrollBy`.
+   * `scrollBase` sama seperti `scrollBy`.
    */
   private scrollRows(n: number): void {
     const cols = process.stdout.columns || 80
@@ -1141,8 +1143,7 @@ export class TuiApp {
     if (this.scrollBack === 0 && n > 0) this.scrollBase = this.transcript.total()
     this.scrollBack = Math.max(0, Math.min(this.scrollBack + n, maxBack))
     if (this.scrollBack === 0) {
-      this.tailSize = this.transcript.total()
-      this.scrollBase = this.tailSize
+      this.scrollBase = this.transcript.total()
     }
     this.paintCurrent()
   }
@@ -1165,8 +1166,7 @@ export class TuiApp {
       this.scrollBack = Math.max(0, curWrapped - viewH)
     } else {
       this.scrollBack = 0
-      this.tailSize = this.transcript.total()
-      this.scrollBase = this.tailSize
+      this.scrollBase = this.transcript.total()
     }
     this.paintCurrent()
   }
@@ -1174,8 +1174,7 @@ export class TuiApp {
   /** Kembali ke ekor: dipakai tiap ketikan/submit baru (I18). */
   private followTail(): void {
     this.scrollBack = 0
-    this.tailSize = this.transcript.total()
-    this.scrollBase = this.tailSize
+    this.scrollBase = this.transcript.total()
   }
 
   /** Kosongkan transkrip (/clear): viewport + basis scroll ikut di-reset agar
@@ -1234,7 +1233,10 @@ export class TuiApp {
       const content = this.thinkingActive ? thinkingDots(now, start) : status
       return [this.activityRow(content, cols)]
     }
-    if (!this.editing) return [""]
+    // Idle: prompt tetap tampil. Dulu baris kosong menggantikannya sehingga
+    // setelah Esc/Enter-kosong layar terlihat mati (I13: prompt tampil saat
+    // boot/idle) — audit 2026-11-12, MEDIUM-4.
+    if (!this.editing) return [chunkByWidth(PROMPT_FIRST, Math.max(10, cols))[0] ?? ""]
     return this.composerLayout(cols).rows
   }
 
@@ -1277,7 +1279,11 @@ export class TuiApp {
    * jalan atau sudah quit.
    */
   repaint(): void {
-    if (!this.quitRequested) this.paintCurrent()
+    // Suspend = pemilik layar lain (popup/approval) sedang melukis region
+    // sendiri; melukis frame penuh di sini akan menimpanya. Sebelumnya guard
+    // ini hanya ada di `requestPaint`, jadi API publik tak konsisten (audit
+    // 2026-11-12, MEDIUM-9).
+    if (!this.quitRequested && this.suspended === 0) this.paintCurrent()
   }
 
   private viewportHeight(rows: number, cols: number): number {
@@ -1625,9 +1631,16 @@ export class TuiApp {
       this.turnStartedAt = 0
     }
     const newCount = this.scrollBack > 0 ? this.transcript.total() - this.scrollBase : 0
+    // Baris indikator WAJIB dipotong ke lebar frame seperti baris lain: teks
+    // locale id lebih panjang dari terminal sempit (51 kolom untuk abort hint),
+    // dan baris lebih lebar dari `cols` membungkus sendiri → frame jadi
+    // `rows+1`, alt-screen scroll, seluruh diff CUP meleset (audit 2026-11-12,
+    // HIGH-3).
     const indicator: string[] = []
-    if (busy && this.abortHintOn) indicator.push(c.warning(t("app.abortHint")))
-    else if (newCount > 0) indicator.push(c.muted(t("app.newBelow", { n: newCount })))
+    if (busy && this.abortHintOn)
+      indicator.push(c.warning(truncateToWidth(t("app.abortHint"), width)))
+    else if (newCount > 0)
+      indicator.push(c.muted(truncateToWidth(t("app.newBelow", { n: newCount }), width)))
 
     const allMenu = this.menuRows(height, width, busy)
     const allComposer = this.composerRows(width, snap, busy, now)
@@ -1681,6 +1694,9 @@ export class TuiApp {
     } else {
       shownComposer = allComposer.slice(0, composerH)
       cursorRow = viewH + menu.length + indicator.length + 1
+      // Kursor parkir tepat setelah prompt saat idle (bukan kolom 1) supaya
+      // caret terlihat di tempat user akan mengetik.
+      if (!busy) cursorCol = displayWidth(PROMPT_FIRST) + 1
     }
 
     const started = this.turnStartedAt || now

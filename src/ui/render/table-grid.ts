@@ -1,7 +1,14 @@
 import type { MarkdownTable, PipeTableAlignment } from "./markdown-table.ts"
 import { cleanUntrusted, sanitizeAnsiLine } from "./sanitize.ts"
 import { c, getTerminalWidth, supportsUtf8 } from "./theme.ts"
-import { displayWidth, padToWidth, truncateToWidth, wrapByWidth } from "./width.ts"
+import {
+  displayWidth,
+  graphemeWidth,
+  padToWidth,
+  segmentGraphemes,
+  truncateToWidth,
+  wrapByWidth,
+} from "./width.ts"
 
 export interface GridColumn {
   header: string
@@ -100,13 +107,40 @@ function naturalWidths(table: GridTable, maxCellWidth: number): number[] {
   })
 }
 
-function fitWidths(natural: readonly number[], budget: number, minimum: number): number[] | null {
-  const widths = natural.map((value) => Math.max(minimum, value))
+/**
+ * Minimum per kolom berdasarkan ATOMIC WIDTH isinya.
+ *
+ * Lebar kolom 1 memotong grapheme 2 kolom (CJK/emoji) sehingga baris data
+ * menjadi lebih lebar dari border — terminal membungkusnya sendiri dan tinggi
+ * frame meleset (audit 2026-11-12, MEDIUM-8). Kolom yang isinya memuat
+ * grapheme 2 kolom minimal 2 (dibatasi lebar naturalnya).
+ */
+function atomicMinimums(table: GridTable, natural: readonly number[]): number[] {
+  return table.headers.map((_, col) => {
+    const naturalW = natural[col] ?? 1
+    if (naturalW >= 2) return 1
+    const cells = [table.headers[col] ?? "", ...table.rows.map((row) => row[col] ?? "")]
+    for (const cell of cells) {
+      for (const g of segmentGraphemes(cleanCell(cell))) {
+        if (graphemeWidth(g) >= 2) return 2
+      }
+    }
+    return 1
+  })
+}
+
+function fitWidths(
+  natural: readonly number[],
+  budget: number,
+  minimums: number[],
+): number[] | null {
+  const widths = natural.map((value, i) => Math.max(minimums[i]!, value))
   const naturalTotal = widths.reduce((sum, value) => sum + value, 0)
   if (naturalTotal <= budget) return widths
-  const room = budget - widths.length * minimum
+  const floor = minimums.reduce((sum, value) => sum + value, 0)
+  const room = budget - floor
   if (room < 0) return null
-  const extras = widths.map((value) => value - minimum)
+  const extras = widths.map((value, i) => value - minimums[i]!)
   const extraTotal = extras.reduce((sum, value) => sum + value, 0)
   if (extraTotal <= 0) return null
   let assigned = 0
@@ -114,7 +148,7 @@ function fitWidths(natural: readonly number[], budget: number, minimum: number):
     const share =
       i === widths.length - 1 ? room - assigned : Math.floor((extras[i]! * room) / extraTotal)
     const amount = Math.min(extras[i]!, Math.max(0, share))
-    widths[i] = minimum + amount
+    widths[i] = minimums[i]! + amount
     assigned += amount
   }
   return widths
@@ -160,17 +194,26 @@ function renderBorderedGrid(
         h: "-",
         v: "|",
       }
+  // Guard terakhir: baris sel TIDAK BOLEH lebih lebar dari kolomnya. Dengan
+  // minimum wide-aware ini seharusnya tak terjadi, tapi invariant geometri
+  // (I1) terlalu mahal untuk ditebak — potong defensif tanpa ellipsis.
+  const fitCellLine = (line: string, colWidth: number): string =>
+    displayWidth(line) > colWidth ? truncateToWidth(line, colWidth, "") : line
   const cellLines = (value: unknown, col: number): string[] => {
     const colWidth = widths[col]!
     const align = aligns[col] ?? "left"
     const raw = cleanCell(value)
     const rendered = options.formatCell?.(raw) ?? raw
-    return wrapByWidth(rendered, colWidth).map((l) => alignCell(l, colWidth, align))
+    return wrapByWidth(rendered, colWidth).map((l) =>
+      alignCell(fitCellLine(l, colWidth), colWidth, align),
+    )
   }
   const headerCols = table.headers.map((v, i) => {
     const rendered = options.formatCell?.(cleanCell(v)) ?? cleanCell(v)
     const styled = styleHeader ? c.bold(c.accent(rendered)) : rendered
-    return wrapByWidth(styled, widths[i]!).map((l) => alignCell(l, widths[i]!, aligns[i] ?? "left"))
+    return wrapByWidth(styled, widths[i]!).map((l) =>
+      alignCell(fitCellLine(l, widths[i]!), widths[i]!, aligns[i] ?? "left"),
+    )
   })
   const rowLine = (cols: string[][], li: number): string =>
     c.dim(g.v) +
@@ -216,11 +259,14 @@ export function renderGridTable(table: GridTable, options: GridRenderOptions = {
     : table.headers.length * 3 - 1
   const budget = width - overhead
   const natural = naturalWidths(table, maxCellWidth)
-  const minimum = Math.max(1, Math.min(minCellWidth, ...natural.map((value) => Math.max(1, value))))
+  const minimums = atomicMinimums(table, natural).map((m) =>
+    Math.max(m, Math.min(minCellWidth, ...natural.map((value) => Math.max(1, value)))),
+  )
   const widths =
-    (width < 40 && table.headers.length > 3) || budget < table.headers.length * minimum
+    (width < 40 && table.headers.length > 3) ||
+    budget < minimums.reduce((sum, value) => sum + value, 0)
       ? null
-      : fitWidths(natural, budget, minimum)
+      : fitWidths(natural, budget, minimums)
   if (!widths) return renderVertical(table, width, ellipsis).join("\n")
 
   const aligns = table.aligns ?? table.headers.map(() => "left" as const)

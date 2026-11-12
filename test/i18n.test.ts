@@ -86,6 +86,8 @@ describe("t()", () => {
       "form.footerDefault",
       "st.model",
       "st.budget",
+      // Label kop sesi: "Model" adalah istilah teknis yang sama di id.
+      "summary.model",
       "help.cMore",
       "help.gModel",
       "help.gMode",

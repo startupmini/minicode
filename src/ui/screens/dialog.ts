@@ -28,6 +28,13 @@ export interface DialogSpec {
   minWidth?: number
   /** Tinggi kotak maksimum (inklusif border). Default: setinggi layar. */
   maxHeight?: number
+  /**
+   * Indeks body (0-based) yang WAJIB terlihat, mis. field aktif form. Bila
+   * body melebihi tinggi kotak, jendela digeser agar baris ini ikut tampil —
+   * tanpa ini user mengetik ke field yang tidak ada di layar (audit
+   * 2026-11-12, HIGH-2).
+   */
+  focusRow?: number
 }
 
 interface BoxChars {
@@ -63,6 +70,11 @@ export interface DialogBox {
    * (bug nyata di 4 view).
    */
   bodyTop: number
+  /**
+   * Indeks body pertama yang benar-benar dirender (0 kecuali body digeser
+   * karena `focusRow`). Kursor = `bodyTop + (activeRow - bodyStart)`.
+   */
+  bodyStart: number
 }
 
 /**
@@ -132,7 +144,16 @@ export function dialogBox(spec: DialogSpec, cols: number, rows: number): DialogB
   const room = Math.max(0, boxBudget - chromeFixed)
   const clipped = spec.body.length > room
   const shown = clipped ? Math.max(0, room - 1) : spec.body.length
-  const body = spec.body.slice(0, shown)
+  // Jendela body: default dari atas, tapi bila pemanggil menandai baris fokus
+  // (form: field aktif) jendela digeser agar baris itu terlihat. Tanpa ini
+  // `activeRow` menunjuk baris di luar yang dirender sehingga kursor parkir di
+  // marker/border dan ketikan user tak terlihat (audit 2026-11-12, HIGH-2).
+  const focus = spec.focusRow
+  const bodyStart =
+    clipped && focus != null && shown > 0 && Number.isFinite(focus)
+      ? Math.max(0, Math.min(Math.floor(focus) - shown + 1, spec.body.length - shown))
+      : 0
+  const body = spec.body.slice(bodyStart, bodyStart + shown)
   for (const ln of body) boxed.push(`${box.v} ${padToWidth(cut(ln), innerW)} ${box.v}`)
   if (clipped)
     boxed.push(
@@ -148,7 +169,7 @@ export function dialogBox(spec: DialogSpec, cols: number, rows: number): DialogB
     const left = Math.max(0, Math.floor((c0 - displayWidth(ln)) / 2))
     return `${" ".repeat(left)}${ln}`
   })
-  return { lines, topRow, height: boxed.length, bodyTop: 1 + (hasTitle ? 1 : 0) }
+  return { lines, topRow, height: boxed.length, bodyTop: 1 + (hasTitle ? 1 : 0), bodyStart }
 }
 
 /**

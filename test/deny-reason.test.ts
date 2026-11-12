@@ -110,7 +110,8 @@ describe("app handler reasons", () => {
     // owned-state membaca string argumen, bukan target nyata (`write_file
     // linkdir/config.json` → allow, lalu tulis mendarat di state). Kunci
     // ganda: string mentah DAN target realpath dicek (permission.ts), dengan
-    // carve-out hooks/trash yang dipertahankan.
+    // carve-out trash yang dipertahankan. `.minicode/hooks/` TIDAK lagi
+    // dikecualikan (audit 2026-11-12).
     const rootDir = mkdtempSync(join(tmpdir(), "mc-ownedlink-"))
     try {
       mkdirSync(join(rootDir, ".minicode"), { recursive: true })
@@ -174,11 +175,14 @@ describe("app handler reasons", () => {
           const benign = await g("write_file", { path: benignPath })
           expect(benign.decision).toBe("allow")
         }
-        // Carve-out hooks: skrip hooks user tetap boleh ditulis lewat tool.
+        // Audit 2026-11-12: skrip hooks TIDAK boleh ditulis lewat tool. Hook
+        // dieksekusi otomatis saat opt-in, jadi izin menulis = model bisa
+        // menanam kode yang berjalan di luar permission/jail/sandbox.
         const hook = await g("write_file", {
           path: join(rootDir, ".minicode", "hooks", "pre-x.js"),
         })
-        expect(hook.decision).toBe("allow")
+        expect(hook.decision).toBe("deny")
+        expect(hook.reason).toBe("jail: owned state")
       }
       // Jalur sah non-link tetap berfungsi (mode check di bawah izin tulis).
       const normal = await g("write_file", { path: join(rootDir, "notes.txt") })

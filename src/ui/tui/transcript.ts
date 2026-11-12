@@ -33,6 +33,10 @@ import { defaultUiState, type UiSessionState } from "../session-state.ts"
 // substansi berbeda (viewport vs riwayat yang bisa di-replay).
 export const TRANSCRIPT_CAP = 5000
 export const TRANSCRIPT_TEXT_MAX_CHARS = 1_000_000
+/** Baris pending lebih panjang dari ini tidak dimemo (kunci = isi baris). */
+const PENDING_MEMO_LINE_MAX = 4096
+/** Batas entri memo proyeksi pending sebelum dibuang seluruhnya. */
+const PENDING_MEMO_MAX_ENTRIES = 4000
 /** Baris thinking yang terlihat di area live (Fase 3). */
 const MAX_THINKING_ROWS = 10
 const TRANSCRIPT_TRUNCATION_MARKER = "… [transcript truncated: turn cap exceeded]"
@@ -500,6 +504,7 @@ export class Transcript {
   clear(): void {
     this.lines = []
     this.rowCache.clear()
+    this.pendingRowMemo.clear()
     this.tables = []
     this.ids = []
     this.sourcePrefixes = []
@@ -847,13 +852,28 @@ export class Transcript {
     return rows
   }
 
+  /**
+   * Memo proyeksi baris pending, dikunci isi baris (bukan indeks).
+   *
+   * Cache `pendingProjection` lama hanya valid per `pendingVersion`, dan versi
+   * itu naik SETIAP delta — jadi tiap paint memproyeksikan ulang seluruh
+   * jawaban. Biayanya O(pending) per frame → total O(n²) per turn (audit
+   * 2026-11-12, CRITICAL-1): terukur 295 ms/frame pada 200 KB dan 1,4 dtk/
+   * frame pada batas 1 MB. Mayoritas baris saat streaming sudah final, jadi
+   * proyeksi per baris dimemo: yang tumbuh hanya baris terakhir.
+   *
+   * Dikunci juga `w` dan fenceState karena keduanya mengubah hasil proyeksi.
+   * Baris sangat panjang tidak dimemo (kuncinya akan sebesar barisnya sendiri).
+   */
+  private pendingRowMemo = new Map<string, TranscriptRow[]>()
+
   /** Proyeksi `pending` (jawaban streaming) + marker truncasi. Di-cache per
-   * (width, pendingVersion, truncated): tanpa ini `parseMarkdownBlocks(pending)`
-   * + `normalizeAssistantOutput` diulang penuh tiap paint saat jawaban panjang
-   * mengalir (O(pending) per frame). pendingVersion naik di stream/commit/clear. */
+   * (width, pendingVersion, truncated) untuk hasil total; proyeksi per baris
+   * dimemo terpisah agar delta baru tidak memaksa kerja ulang penuh. */
   private pendingRows(w: number): TranscriptRow[] {
     if (!this.pending) {
       this.pendingProjection = null
+      this.pendingRowMemo.clear()
       return []
     }
     if (
@@ -872,8 +892,23 @@ export class Transcript {
         if (block.type === "table") rows.push(...this.projectTable(block.table, -1, w))
         else
           for (const line of block.text.split("\n")) {
+            const fenceState = pendingFence(line)
+            const memoKey =
+              line.length <= PENDING_MEMO_LINE_MAX ? `${w}\u0000${fenceState}\u0000${line}` : null
+            const memo = memoKey === null ? undefined : this.pendingRowMemo.get(memoKey)
+            if (memo) {
+              rows.push(...memo)
+              continue
+            }
             const clean = stripSgr(sanitizeAnsi(line))
-            rows.push(...this.projectText(line, clean, -1, w, false, "", true, pendingFence(line)))
+            const produced = this.projectText(line, clean, -1, w, false, "", true, fenceState)
+            if (memoKey !== null) {
+              // Batas sederhana: memo adalah cache tampilan, bukan struktur
+              // data — dibuang seluruhnya saat terlalu besar.
+              if (this.pendingRowMemo.size >= PENDING_MEMO_MAX_ENTRIES) this.pendingRowMemo.clear()
+              this.pendingRowMemo.set(memoKey, produced)
+            }
+            rows.push(...produced)
           }
       }
     }

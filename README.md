@@ -1,6 +1,6 @@
 # MiniCode
 
-MiniCode is an open-source terminal coding agent built on the frozen MiniCore kernel. It is zero-dependency (Bun is the only runtime). It inspects and edits a workspace, runs local tools, and connects to the AI providers and MCP/LSP servers you configure.
+MiniCode is an open-source terminal coding agent built on the vendored MiniCore kernel (host-editable since v0.16.0). It is zero-dependency (Bun is the only runtime). It inspects and edits a workspace, runs local tools, and connects to the AI providers and MCP/LSP servers you configure.
 
 Interactive sessions run as a fullscreen TUI; one-shot and automation runs flow to the shell scrollback or a machine-readable JSONL stream. Every tool action is visible in the ledger, file changes are jailed to the workspace, and sensitive actions are gated behind your permission. Prompts and relevant workspace context are sent to the provider you configure; MCP and LSP servers may receive data or perform external effects. MiniCode itself sends no telemetry — traces are local-only (`MINICODE_TELEMETRY=0` to disable).
 

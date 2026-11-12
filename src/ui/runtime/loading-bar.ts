@@ -15,10 +15,19 @@ import { truncateToWidth } from "../render/width.ts"
 import { motionReduced } from "./motion.ts"
 import { acquireTransientPaint, paintWrite } from "./statusline.ts"
 
-// Jaga agar kursor terminal selalu ter-restore meski proses dihentikan (SIGINT/dll).
-process.on("exit", () => {
-  if (process.stderr.isTTY) process.stderr.write("\x1b[?25h")
-})
+// Jaga agar kursor terminal selalu ter-restore meski proses dihentikan
+// (SIGINT/dll). Hook didaftarkan LAZY saat bar benar-benar menyembunyikan
+// kursor: hook di scope modul menulis `ESC[?25h` ke stderr pada SETIAP proses
+// yang sekadar meng-import modul ini — byte asing yang mendarat di alt-screen
+// TUI walau bar tak pernah dibuat (audit 2026-11-12).
+let exitHookInstalled = false
+function installExitHook(): void {
+  if (exitHookInstalled) return
+  exitHookInstalled = true
+  process.on("exit", () => {
+    if (process.stderr.isTTY) process.stderr.write("\x1b[?25h")
+  })
+}
 
 export interface LoadingBar {
   /** Ganti label + persen (0..100). Tak pernah melampaui target yang diberikan. */
@@ -73,7 +82,10 @@ export function createLoadingBar(
     started = true
     // Sembunyikan kursor hanya saat animasi normal; mode gerak-dikurangi
     // cukup melukis baris tanpa mengubah visibilitas kursor.
-    if (!reduced) paintWrite("\x1b[?25l")
+    if (!reduced) {
+      installExitHook()
+      paintWrite("\x1b[?25l")
+    }
     owned = acquireTransientPaint("loading-bar", paint)
     paint()
   }

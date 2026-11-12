@@ -532,7 +532,9 @@ test("supply: src/ tanpa eval/new-Function/destruktur-ekstraksi", async () => {
     if (arcRe.test(src)) bad.push(`${f}: archive-extract`)
   }
   expect(bad).toEqual([])
-})
+  // Scan seluruh src/+cli/ (ratusan berkas) ikut melambat saat suite penuh
+  // berjalan paralel; timeout default 15 dtk pernah terlampaui di mesin lambat.
+}, 30_000)
 
 test("supply: tak ada mekanisme install skill (hanya baca lokal)", async () => {
   const { readFileSync: rf } = await import("node:fs")

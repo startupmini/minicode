@@ -18,7 +18,6 @@ import {
 import { inspectBashCommand } from "./bash-guard.ts"
 import {
   isCwdOutsideRoot,
-  isHookScript,
   isOwnedState,
   isOwnedStateReal,
   isRealPathOutsideRoot,
@@ -649,7 +648,10 @@ export function createPermissionHandler(
       const v = inspectBashCommand(cmd, root)
       return v.denied ? (v.reason ?? "blocked command") : null
     } catch {
-      return null
+      // Fail-closed: guard yang melempar exception bukan bukti perintah aman.
+      // Sebelumnya `return null` membuat setiap error internal menjadi ALLOW —
+      // satu bug di guard cukup untuk membuka seluruh permukaan eksekusi.
+      return "bash-guard internal error — command refused (fail-closed)"
     }
   }
 
@@ -908,9 +910,10 @@ export function createPermissionHandler(
             ? ([(earlyArgs?.from as string) ?? "", (earlyArgs?.to as string) ?? ""] as const)
             : ([(earlyArgs?.path as string) ?? ""] as const)
         // Carve-out sah (string mentah): restore `.minicode/.trash/` →
-        // workspace dan skrip `.minicode/hooks/` — satu-satunya gerak sah
-        // yang menyentuh state. Cek string dulu supaya jalur sah (yang target
-        // nyatanya justru `.minicode/`) tidak ikut ditahan kunci realpath.
+        // workspace — satu-satunya gerak sah yang menyentuh state. Cek string
+        // dulu supaya jalur sah (yang target nyatanya justru `.minicode/`)
+        // tidak ikut ditahan kunci realpath. Skrip hooks TIDAK lagi punya
+        // carve-out (lihat jail.ts): hook auto-dieksekusi saat opt-in.
         if (call.name === "move_file") {
           const f = rawTargets[0] ?? ""
           const t = rawTargets[1] ?? ""
@@ -925,7 +928,7 @@ export function createPermissionHandler(
           }
         } else {
           const p = rawTargets[0] ?? ""
-          if (p !== "" && (isOwnedState(p) || (!isHookScript(p) && isOwnedStateReal(p, root)))) {
+          if (p !== "" && (isOwnedState(p) || isOwnedStateReal(p, root))) {
             return deny(call, "jail: owned state")
           }
         }

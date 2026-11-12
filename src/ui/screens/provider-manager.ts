@@ -9,7 +9,7 @@ import {
   type DecodedKey,
   type DecoderState,
 } from "../input/prompt-engine.ts"
-import { sanitizeAnsiLine } from "../render/sanitize.ts"
+import { cleanUntrusted, sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, glyphs, stripAnsi } from "../render/theme.ts"
 import { truncateToWidth } from "../render/width.ts"
 import { type AltScreen, openAltScreen } from "../runtime/screen.ts"
@@ -400,7 +400,10 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
           if (res.ok) notice = `${glyphs.check} ${sanitizeAnsiLine(res.ok)}`
           else if (res.err) notice = `${glyphs.cross} ${sanitizeAnsiLine(res.err)}`
         } catch (e) {
-          notice = `${glyphs.cross} ${(e as Error).message}`
+          // Pesan error jaringan/controller = input tak-terpercaya: tanpa
+          // sanitasi, body provider bisa menyuntik `ESC[2J` ke popup dan
+          // menghapus layar TUI (audit 2026-11-12, MEDIUM-2).
+          notice = `${glyphs.cross} ${sanitizeAnsiLine((e as Error).message)}`
         } finally {
           busy = false
           await reload().catch(() => {})
@@ -632,7 +635,12 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
         cleanup()
       } catch {}
       try {
-        console.log(`⚠ ${t("prov.failOpen", { msg: String((e as Error)?.message ?? e) })}`)
+        // Pesan setup gagal (bisa memuat body jaringan) = teks tak-terpercaya.
+        console.log(
+          `⚠ ${t("prov.failOpen", {
+            msg: cleanUntrusted(String((e as Error)?.message ?? e), !!process.stdout.isTTY),
+          })}`,
+        )
       } catch {}
       try {
         resolve()

@@ -341,4 +341,12 @@ export const id: Record<MsgKey, string> = {
   "loading.rag": "memuat konteks",
   "loading.session": "menyiapkan sesi",
   "loading.finalize": "menyelesaikan",
+  "diff.noChanges": "(tidak ada perubahan)",
+  "diff.truncated": "… diff dipotong — input terlalu besar",
+  "tbl.noColumns": "(tanpa kolom)",
+  "tbl.noEntries": "(tanpa entri)",
+  "summary.session": "Sesi",
+  "summary.model": "Model",
+  "summary.usage": "Pemakaian",
+  "summary.tokens": "token",
 }

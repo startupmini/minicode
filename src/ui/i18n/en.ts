@@ -339,4 +339,12 @@ export const en = {
   "loading.rag": "loading context",
   "loading.session": "preparing session",
   "loading.finalize": "finalizing",
+  "diff.noChanges": "(no changes)",
+  "diff.truncated": "… diff truncated — input too large",
+  "tbl.noColumns": "(no columns)",
+  "tbl.noEntries": "(no entries)",
+  "summary.session": "Session",
+  "summary.model": "Model",
+  "summary.usage": "Usage",
+  "summary.tokens": "tokens",
 } as const

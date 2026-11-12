@@ -441,8 +441,12 @@ test("delegate: file tool tak boleh tulis state minicode (semua mode)", async ()
       // BACA tetap boleh; file user biasa tetap bisa tulis.
       expect(await check("read_file", { path: ".minicode/todos/s.json" })).toBe("allow")
       expect(await check("write_file", { path: "MEMORY.md", content: "x" })).toBe("allow")
+      // Audit 2026-11-12: `.minicode/hooks/` BUKAN lagi carve-out. Hook
+      // dieksekusi otomatis (scan direktori) saat MINICODE_HOOKS=1, jadi
+      // menulis skrip hook lewat tool = model menanam kode yang jalan di luar
+      // permission/jail/sandbox. Operator membuat skrip hook di luar sesi.
       expect(await check("write_file", { path: ".minicode/hooks/pre-x.js", content: "x" })).toBe(
-        "allow",
+        "deny",
       )
       expect(await check("write_file", { path: "src/a.ts", content: "x" })).toBe("allow")
     }

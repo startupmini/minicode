@@ -17,17 +17,19 @@ const configLocks = new Map<string, Promise<void>>()
 export async function withConfigLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
   const prev = configLocks.get(path) ?? Promise.resolve()
   let release!: () => void
-  const next = new Promise<void>((res) => (release = res))
-  configLocks.set(
-    path,
-    prev.then(() => next),
-  )
+  const gate = new Promise<void>((res) => (release = res))
+  // Yang DISIMPAN harus rantai yang sama dengan yang dibandingkan di finally.
+  // Dulu map menyimpan `prev.then(() => next)` sementara finally membandingkan
+  // dengan `next` — tak pernah sama, sehingga entri map tidak pernah dihapus
+  // dan rantai promise tumbuh per penulisan config.
+  const tail = prev.then(() => gate)
+  configLocks.set(path, tail)
   await prev
   try {
     return await fn()
   } finally {
     release()
-    if (configLocks.get(path) === next) configLocks.delete(path)
+    if (configLocks.get(path) === tail) configLocks.delete(path)
   }
 }
 

@@ -106,6 +106,36 @@ const CASES: [string, boolean][] = [
   ["New-Item -ItemType HardLink -Path linkx -Value .env", true],
   ["New-Item -ItemType Junction -Path linkdir -Target:.minicode", true],
 
+  // ── kelas 15: pemisah kata lewat `$IFS` (temuan audit 2026-11-12) ──
+  // Bash memecah kata pada karakter `$IFS`, jadi `cat${IFS}.env` dieksekusi
+  // PERSIS seperti `cat .env` — sementara guard hanya melihat satu kata
+  // `cat${IFS}.env` dan tak pernah mencocokkan READERS/SENSITIVE_TARGET.
+  ["cat${IFS}.env", true],
+  ["cat$IFS.env", true],
+  ["cat${IFS:0:1}.env", true],
+  ['cat${IFS}.e""nv', true],
+  ["c'a't${IFS}.env", true],
+  ["type${IFS}.env", true],
+  ["type${IFS}.e^nv", true],
+  ["rm${IFS}-rf${IFS}/", true],
+  ["rm$IFS-rf$IFS/", true],
+  ["rm${IFS}--recursive${IFS}--force${IFS}/", true],
+  ["dd${IFS}if=/dev/zero${IFS}of=/dev/sda", true],
+  ["chmod${IFS}-R${IFS}777${IFS}.", true],
+  ["find${IFS}.${IFS}-delete", true],
+  ["npm${IFS}publish", true],
+  ["cat$(printf${IFS}' ').env", true],
+
+  // ── kelas 16: glob `?`/`[]` dan brace expansion ──
+  // `*` sudah ditolak; `?` dan `[e]` mengembang ke nama lain sama seperti
+  // `*` (`cat .?nv` membaca `.env`), dan `{a,b}` diekspansi shell sebelum
+  // eksekusi (`cat .{env,}` = `cat .env .`).
+  ["cat .?nv", true],
+  ["cat .[e]nv", true],
+  ["cat {.env,x}", true],
+  ["cat .{env,}", true],
+  ["head -1 {.git-credentials,x}", true],
+
   // Mode `allowlist` sengaja lebih ketat: operasi tulis lewat shell memang
   // ditahan di sana, jadi mkdir/cp/rm ditandai auto-only.
   ["git status", false],
@@ -124,6 +154,17 @@ const CASES: [string, boolean][] = [
   ['echo "a^b"', false],
   ["echo 100%.txt", false],
   ["type src/index.ts", false],
+  // Teks dalam kutip untuk perintah PENCETAK/PENCARI adalah DATA, bukan
+  // perintah — dulu diblokir karena normalisasi membuang kutip. Kutip yang
+  // memuat substitusi TETAP dieksekusi, jadi versi itu diuji sebagai serangan.
+  ['echo "rm -rf /"', false],
+  ['grep "rm -rf" src/a.ts', false],
+  ['echo "{a,b}"', false],
+
+  // ── kelas 17: substitusi perintah yang mengeksekusi payload ──
+  ['echo "$(rm -rf /)"', true],
+  ['git commit -m "$(rm -rf /)"', true],
+  ["bash -c 'rm -rf /'", true],
 ]
 
 // Perintah sah di mode `auto` yang memang tak punya pola `allowlist`: operasi
@@ -135,6 +176,11 @@ const AUTO_ONLY_BENIGN: string[] = [
   "rm -rf node_modules/.cache",
   "touch src/new.ts",
   "for /f %i in (src/list.txt) do @echo %i",
+  // awk tak ada di allowlist narrow (mode allowlist menahannya by design),
+  // jadi perintah sah ini hanya diuji di mode auto.
+  "awk '{print $1}' src/a.ts",
+  // `git commit` adalah operasi tulis — allowlist narrow tak memuatnya.
+  'git commit -m "docs: explain sudo rm risks"',
   // Link ke target JINAK harus tetap lolos (kelas 14 hanya menahan operand
   // sensitif/owned-state); di mode allowlist perintah tulis ini memang
   // ditahan by design.

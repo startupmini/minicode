@@ -39,7 +39,7 @@ Hooks mati secara default; nyalakan dengan `MINICODE_HOOKS=1`.
 | Konteks | Env `MINICODE_HOOK_CTX` (JSON run) |
 | Sanitasi | Env hook disanitasi tanpa secret; hook dilewati bila sesi dibatalkan |
 
-Hooks global + lokal di-merge (bukan lewat allowlist). Karena hook adalah kode arbitrer di luar permission system, ia hanya jalan bila `MINICODE_HOOKS=1` dan WorkMode `EXECUTE` (tidak di `DISCUSS`/`PLAN`); setiap hook dikenai timeout 5 dtk dan env-nya disanitasi. Repo clone-an bisa menyuntik `.minicode/hooks/*.js` — perlakukan seperti config lokal yang tak tepercaya (lihat [Keamanan](security.md)).
+Hooks global + lokal di-merge (bukan lewat allowlist). Karena hook adalah kode arbitrer di luar permission system, ia hanya jalan bila `MINICODE_HOOKS=1` dan WorkMode `EXECUTE` (tidak di `DISCUSS`/`PLAN`); setiap hook dikenai timeout 5 dtk dan env-nya disanitasi. File tool **tidak** boleh menulis ke `.minicode/hooks/` (audit 2026-11-12) — skrip hook dibuat operator di luar sesi, sehingga model tidak bisa menanam hook yang langsung dieksekusi. Repo clone-an yang sudah memuat `.minicode/hooks/*.js` tetap tak tepercaya: periksa isinya sebelum menyalakan `MINICODE_HOOKS=1` (lihat [Keamanan](security.md)).
 
 ## Lanjut
 

@@ -1,7 +1,34 @@
 // Diff renderer - Ubuntu Server style: indentasi + warna, tanpa border.
+import { t } from "../i18n/locale.ts"
 import { sanitizeAnsi, sanitizeAnsiLine } from "./sanitize.ts"
 import { c } from "./theme.ts"
 import { truncateToWidth, wrapByWidth } from "./width.ts"
+
+/**
+ * Batas input diff (audit 2026-11-12, HIGH-5).
+ *
+ * LCS kata adalah O(n·m) waktu DAN memori (matriks dp penuh). Argumen
+ * `edit` datang mentah dari model dan skemanya tak membatasi panjang: satu
+ * baris 8k kata butuh ~2 dtk + ratusan MB, dan 20k kata berujung OOM — cukup
+ * untuk membekukan CLI linear sebelum satu byte pun dicetak. Dipotong di sini
+ * (bukan di schema tool) supaya renderer aman untuk pemanggil mana pun.
+ */
+const DIFF_MAX_CHARS = 64 * 1024
+const DIFF_MAX_LINES = 2000
+/** Sel matriks LCS kata maksimum; di atas ini sorotan-per-kata dilepas. */
+const WORD_LCS_MAX_CELLS = 250_000
+
+/** Potong input diff pada batas baris terdekat agar tak ada baris separuh. */
+function capDiffInput(text: string): { text: string; truncated: boolean } {
+  const lines = text.split("\n")
+  if (lines.length > DIFF_MAX_LINES) {
+    return { text: lines.slice(0, DIFF_MAX_LINES).join("\n"), truncated: true }
+  }
+  if (text.length <= DIFF_MAX_CHARS) return { text, truncated: false }
+  const head = text.slice(0, DIFF_MAX_CHARS)
+  const nl = head.lastIndexOf("\n")
+  return { text: nl > 0 ? head.slice(0, nl) : head, truncated: true }
+}
 
 export interface DiffLine {
   type: "add" | "delete" | "context"
@@ -80,6 +107,15 @@ export function markChangedWords(
   const b = tokenizeWords(newLine)
   const n = a.length
   const m = b.length
+  // Baris raksasa (minified JSON, satu baris hasil generate): LCS penuh =
+  // ratusan MB. Semua token ditandai berubah → paintWords menampilkan polos
+  // (rasio > 0.6), jadi tak ada info hilang, hanya tanpa sorotan kata.
+  if (n * m > WORD_LCS_MAX_CELLS) {
+    return {
+      oldMask: new Array<boolean>(n).fill(true),
+      newMask: new Array<boolean>(m).fill(true),
+    }
+  }
   const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0))
   for (let i = n - 1; i >= 0; i--)
     for (let j = m - 1; j >= 0; j--)
@@ -119,9 +155,17 @@ export function renderDiffCard(
   // dirender. Tanpa ini `\n` di path menjadi baris diff palsu dan `ESC[2J`
   // lolos via `cut` (truncate menyalin escape apa pun sebelum F-04).
   const safePath = sanitizeAnsiLine(filePath)
-  const diff = computeLineDiff(sanitizeAnsi(oldText), sanitizeAnsi(newText))
+  const cappedOld = capDiffInput(oldText)
+  const cappedNew = capDiffInput(newText)
+  const diff = computeLineDiff(sanitizeAnsi(cappedOld.text), sanitizeAnsi(cappedNew.text))
   const changes = diff.filter((d) => d.type !== "context")
-  if (changes.length === 0) return c.muted("  (no changes)")
+  // Tanpa perubahan pada PREFIKS yang dipotong, jangan klaim "no changes":
+  // perbedaan bisa berada di bagian yang dibuang. Marker truncasi menang.
+  if (changes.length === 0) {
+    return c.muted(
+      `  ${t(cappedOld.truncated || cappedNew.truncated ? "diff.truncated" : "diff.noChanges")}`,
+    )
+  }
   // Pasangan del/add untuk sorot kata: kelompokkan run perubahan beruntun,
   // pasangkan del ke-i dengan add ke-i (pola hunk unified).
   const wordMask = new Map<number, boolean[]>()
@@ -197,6 +241,11 @@ export function renderDiffCard(
       lines.push(...wrapDiffLine("  - ", body, (s) => c.error(s)))
     } else lines.push(...wrapDiffLine("    ", d.content, (s) => c.dim(s)))
     count++
+  }
+  // Pemotongan input WAJIB terlihat: user harus tahu diff yang tampil bukan
+  // keseluruhan perubahan (OUTPUT_UX_RULES: truncate selalu dengan marker).
+  if (cappedOld.truncated || cappedNew.truncated) {
+    lines.push(c.muted(`    ${t("diff.truncated")}`))
   }
   return lines.join("\n")
 }

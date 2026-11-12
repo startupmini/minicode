@@ -8,7 +8,7 @@ import {
   type DecoderState,
   toGraphemes,
 } from "../input/prompt-engine.ts"
-import { sanitizeAnsiLine } from "../render/sanitize.ts"
+import { cleanUntrusted, sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, glyphs, stripAnsi } from "../render/theme.ts"
 import { displayWidth, truncateToWidth } from "../render/width.ts"
 import { type AltScreen, openAltScreen } from "../runtime/screen.ts"
@@ -575,7 +575,13 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
         finish()
       } catch {}
       try {
-        console.log(`⚠ ${t("model.failOpen", { msg: String((e as Error)?.message ?? e) })}`)
+        // Pesan error bisa memuat body jaringan (tak-terpercaya): sanitasi
+        // sebelum ditulis ke stdout agar escape tak membersihkan layar.
+        console.log(
+          `⚠ ${t("model.failOpen", {
+            msg: cleanUntrusted(String((e as Error)?.message ?? e), !!process.stdout.isTTY),
+          })}`,
+        )
       } catch {}
     }
   })

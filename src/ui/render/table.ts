@@ -1,3 +1,4 @@
+import { t } from "../i18n/locale.ts"
 import { sanitizeAnsiLine } from "./sanitize.ts"
 import { renderGridTable } from "./table-grid.ts"
 import { c, getTerminalWidth } from "./theme.ts"
@@ -18,8 +19,9 @@ function cleanCell(value: unknown): string {
 }
 
 export function renderTable(columns: ColumnDef[], data: Record<string, unknown>[]): string {
-  if (columns.length === 0) return c.muted("(no columns)")
-  if (data.length === 0) return c.muted("(no entries)")
+  // Status kosong juga user-visible → lewat t() (I26).
+  if (columns.length === 0) return c.muted(t("tbl.noColumns"))
+  if (data.length === 0) return c.muted(t("tbl.noEntries"))
   const rows = data.map((row) => columns.map((column) => cleanCell(row[column.key])))
   return renderGridTable(
     {

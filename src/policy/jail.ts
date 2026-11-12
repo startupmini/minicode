@@ -47,29 +47,20 @@ export function isSensitive(p: string): boolean {
 // ("always" palsu!), config (server MCP jahat!), atau membutakan recovery.
 // BACA tetap boleh (observability/debug). Pola di-anchor ke segmen
 // `.minicode/` agar file user bernama mirip di tempat lain tak kena.
-// Pengecualian: skrip hooks milik user (.minicode/hooks/, lihat HOOKS_RE)
-// dan restore dari `.minicode/.trash/` (ditangani di permission.ts, bukan
-// di sini, agar arahnya eksplisit).
+// Pengecualian: restore dari `.minicode/.trash/` (ditangani di permission.ts,
+// bukan di sini, agar arahnya eksplisit).
+//
+// `.minicode/hooks/` TIDAK lagi dikecualikan (audit 2026-11-12): hook
+// dieksekusi otomatis lewat scan direktori begitu `MINICODE_HOOKS=1`, jadi
+// carve-out tulis = model/prompt-injection bisa menanam kode lalu menjalankannya
+// di sesi yang sama, di luar permission/jail/sandbox. Skrip hook sekarang
+// dibuat operator di luar sesi (shell manual), bukan lewat file tool.
 const OWNED_STATE_RE = /(?:^|[/\\])\.minicode(?:[/\\]|$)/i
-
-// Skrip hooks milik user (.minicode/hooks/): BUKAN state runtime — alur
-// legit "buatkan hook" menulis lewat tool (dikunci test delegate-audit).
-// Registrasi eksekusi tetap dikunci (allowlist.json owned), jadi file
-// titipan tak jalan sendiri. skills//steering/MEMORY tetap terkunci:
-// isinya ikut ke konteks (persistensi prompt-injection), user kelola via shell.
-const HOOKS_RE = /(?:^|[/\\])\.minicode[/\\]hooks(?:[/\\]|$)/i
-
-/** true bila jalurargumen tool menunjuk skrip hooks user (carve-out tulis). */
-export function isHookScript(p: string): boolean {
-  if (!p || DOTDOT_SEG_RE.test(p)) return false
-  return HOOKS_RE.test(p)
-}
 
 export function isOwnedState(p: string): boolean {
   if (!p) return false
   const cleaned = cleanPathForMatch(p)
-  const matchesOwned = OWNED_STATE_RE.test(p) || OWNED_STATE_RE.test(cleaned)
-  return matchesOwned && !isHookScript(p) && !isHookScript(cleaned)
+  return OWNED_STATE_RE.test(p) || OWNED_STATE_RE.test(cleaned)
 }
 /**
  * Kunci realpath untuk owned-state (temuan audit 2026-09-22 F-CRIT): cek
@@ -90,10 +81,7 @@ export function isOwnedStateReal(p: string, root: string): boolean {
   let tail = ""
   for (let i = 0; i < 64; i++) {
     try {
-      const real = resolve(realpathSync(probe), tail)
-      // Carve-out hooks: skrip hooks sah tetap lewat kunci ini (registrasi
-      // eksekusinya terkunci di allowlist.json yang owned).
-      return isOwnedState(real) && !isHookScript(real)
+      return isOwnedState(resolve(realpathSync(probe), tail))
     } catch {
       const parent = dirname(probe)
       if (parent === probe) break

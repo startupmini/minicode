@@ -98,9 +98,13 @@ export function sanitizeAnsi(s: string): string {
 /**
  * Versi satu-baris: newline juga dibuang (jadi spasi).
  * Untuk tempat yang menggambar tepat satu baris — judul, label, sel tabel.
+ *
+ * U+2028/U+2029 (LINE/PARAGRAPH SEPARATOR) ikut jadi spasi: sebagian terminal
+ * memperlakukannya sebagai pindah baris, dan satu label yang memecah baris
+ * menggeser seluruh geometri frame (audit 2026-11-12).
  */
 export function sanitizeAnsiLine(s: string): string {
-  return sanitizeAnsi(s).replace(/\n/g, " ")
+  return sanitizeAnsi(s).replace(/[\n\u2028\u2029]/g, " ")
 }
 
 // ── Sanitasi sadar-stream (temuan F1) ──

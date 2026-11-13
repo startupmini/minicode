@@ -58,6 +58,7 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | `MINICODE_EMBED_MODEL` | Model embedding untuk memory/vector (default `text-embedding-3-small`) |
 | `MINICODE_COMPACT_KEEP_TURNS` | Override keepRecentTurns kompaksi (bilangan ≥1; invalid → default kernel + warn) |
 | `MINICODE_MICROCOMPACT` | `0` → matikan pemangkasan isi hasil tool lama (lapisan termurah sebelum kompaksi penuh). Default aktif; matikan bila sesi butuh seluruh output tool verbatim |
+| `MINICODE_PROMPT_CACHE` | `0` → matikan prompt caching (`cache_control: ephemeral` Anthropic). Default aktif; kill-switch runtime bila gateway menolak header cache atau untuk diagnostik hit-rate (berpasangan dengan metrik cache di ringkasan sesi/`/status`) |
 | `MINICODE_CONTEXT_PROBE` | `0` → matikan eskalasi adaptif jendela konteks (probe reaktif setelah overflow terverifikasi). Default aktif; probe juga dibatasi anggaran per-model/per-proses terlepas dari nilai ini |
 | `MINICODE_MEMORY_SCOPE` | Scope baca memory: `cwd` (default) \| `global` \| `all` (gabung, tanpa silent shadowing) |
 | `MINICODE_AUTO_MEMORY` | `0` → matikan auto-simpan summary/snippet ke memory (opt-out) |

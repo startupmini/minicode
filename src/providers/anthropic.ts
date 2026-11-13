@@ -68,7 +68,11 @@ export function createAnthropicProvider(config: AnthropicConfig): ModelProvider 
     .replace(/\/+$/, "")
     .replace(/\/v1$/, "")
   const endpoint = `${baseUrl}/v1/messages`
-  const enableCache = config.enablePromptCaching !== false
+  // Prompt caching (cache_control ephemeral) aktif default — hemat biaya input pada
+  // run panjang. Kill-switch ganda: config `enablePromptCaching:false` (statis, saat
+  // provision) + env `MINICODE_PROMPT_CACHE=0` (runtime, pola microcompact/probe).
+  const enableCache =
+    config.enablePromptCaching !== false && process.env.MINICODE_PROMPT_CACHE !== "0"
 
   // brand `kind` dipakai router agar tahu konten Uint8Array ditangani native
   const provider: ModelProvider & { kind: "anthropic" } = {

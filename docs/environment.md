@@ -57,6 +57,8 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | `MINICODE_PROVIDER_ORDER` | Urutkan provider agnostik tanpa edit config: `openai,anthropic,deepseek` |
 | `MINICODE_EMBED_MODEL` | Model embedding untuk memory/vector (default `text-embedding-3-small`) |
 | `MINICODE_COMPACT_KEEP_TURNS` | Override keepRecentTurns kompaksi (bilangan ≥1; invalid → default kernel + warn) |
+| `MINICODE_MICROCOMPACT` | `0` → matikan pemangkasan isi hasil tool lama (lapisan termurah sebelum kompaksi penuh). Default aktif; matikan bila sesi butuh seluruh output tool verbatim |
+| `MINICODE_CONTEXT_PROBE` | `0` → matikan eskalasi adaptif jendela konteks (probe reaktif setelah overflow terverifikasi). Default aktif; probe juga dibatasi anggaran per-model/per-proses terlepas dari nilai ini |
 | `MINICODE_MEMORY_SCOPE` | Scope baca memory: `cwd` (default) \| `global` \| `all` (gabung, tanpa silent shadowing) |
 | `MINICODE_AUTO_MEMORY` | `0` → matikan auto-simpan summary/snippet ke memory (opt-out) |
 | `MINICODE_READ_VOLUME_GUARD` | `1` → aktifkan peringatan sekali per turn saat volume baca (char hasil tool) melewati ambang — penanda "banyak dibaca tanpa kompaksi" (risiko degradasi working-memory, bukan jendela token); default nonaktif |

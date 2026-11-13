@@ -6,6 +6,7 @@ import { createOpenAICompatProvider } from "#minicore/providers/openai-compat.ts
 import { LIMITS } from "../constants.ts"
 import { isPrivateHostWithDns } from "../lib/net.ts"
 import { minicodeEstimator } from "./context.ts"
+import { applyMicrocompact } from "./microcompact.ts"
 import { scrubSecrets } from "./scrub.ts"
 
 /** F3.2: parse MINICODE_COMPACT_KEEP_TURNS (murni, diekspor untuk test).
@@ -295,6 +296,10 @@ function boundCompactionResult(
 }
 
 export function createLlmCompaction(opts: LlmCompactionOptions = {}): CompactionStrategy {
+  // Kill-switch: audit yang butuh output tool verbatim sepanjang sesi bisa
+  // mematikan lapisan ini. Default aktif — tanpa microcompact, payload sesi
+  // panjang dikuasai hasil tool lama yang sudah tak relevan.
+  const microcompactEnabled = (process.env.MINICODE_MICROCOMPACT ?? "") !== "0"
   const fallback = opts.fallback ?? {
     kind: "bounded-mechanical",
     compact(store: ContextStore, cOpts: { keepRecentTurns: number }) {
@@ -333,6 +338,28 @@ export function createLlmCompaction(opts: LlmCompactionOptions = {}): Compaction
       cOpts: { keepRecentTurns: number },
     ): readonly import("#minicore/core/types.ts").Message[] {
       return fallback.compact(store, cOpts)
+    },
+    /**
+     * Lapisan termurah: pangkas ISI hasil tool lama, tanpa LLM, tanpa membuang
+     * pesan. Dijalankan kernel sebelum kompaksi penuh; bila cukup menurunkan
+     * token, ringkasan mahal tak perlu dibuat sama sekali.
+     *
+     * `MINICODE_MICROCOMPACT=0` mematikannya (mis. saat audit butuh seluruh
+     * output tool verbatim sepanjang sesi).
+     */
+    microcompact(
+      store: ContextStore,
+      mOpts: { budgetTokens?: number },
+    ): readonly import("#minicore/core/types.ts").Message[] {
+      if (!microcompactEnabled) return store.messages
+      const result = applyMicrocompact(store.messages, {
+        keepRecent: LIMITS.MICROCOMPACT_KEEP_RECENT,
+        minSavingTokens: LIMITS.MICROCOMPACT_MIN_SAVING_TOKENS,
+        minToolShare: LIMITS.MICROCOMPACT_MIN_TOOL_SHARE,
+        estimateTokens: (text) => minicodeEstimator(text),
+        budgetTokens: mOpts.budgetTokens,
+      })
+      return result.clearedCount > 0 ? result.messages : store.messages
     },
     async compactAsync(
       store: ContextStore,

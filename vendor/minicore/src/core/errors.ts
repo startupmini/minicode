@@ -15,10 +15,20 @@ export class AgentError extends Error {
   constructor(
     readonly kind: AgentErrorKind,
     message: string,
-    options?: { cause?: unknown },
+    options?: {
+      cause?: unknown
+      /** Diagnostik terstruktur untuk kegagalan yang butuh ANGKA, bukan hanya
+       * prosa (mis. `budget_exceeded` dengan `reason: "fixpoint"` + berapa
+       * token tersisa). Pemanggil bisa menampilkan sebab yang tepat alih-alih
+       * menyuruh user "coba lagi" pada kondisi yang tak akan berubah. */
+      details?: Record<string, unknown>
+    },
   ) {
     super(message, options);
+    if (options?.details) this.details = options.details;
   }
+  /** Rincian mesin-terbaca; `undefined` bila tak ada. */
+  readonly details?: Record<string, unknown>;
 }
 
 /**

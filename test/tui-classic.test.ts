@@ -644,13 +644,18 @@ describe("runProviderManager", () => {
     expect(overridden).toBeUndefined()
   })
 
-  test("daftar provider tanpa footer hint", async () => {
+  test("daftar provider menampilkan hint aksi minimalis di dasar kotak", async () => {
+    // Kontrak baru (audit UI/UX 2026-11): hint satu baris "kunci label"
+    // (kunci terang, label redup) selalu tampil di dasar body — tanpa judul
+    // dan tanpa footer dekoratif di dalam kotak. Gagal-di-kode-lama: manager
+    // tanpa petunjuk sama sekali (user harus menebak a/d/e).
     tty = installFakeTty({ rows: 24 })
     const p = runProviderManager({ cwd: tmpHome })
     await tty.ready()
     const out = visible(tty)
-    expect(out).not.toContain("delete")
-    expect(out).not.toContain("edit")
+    expect(out).toContain("a add")
+    expect(out).toContain("e edit")
+    expect(out).toContain("Esc close")
     await tty.send(KEY.esc, 30)
     await p
   })

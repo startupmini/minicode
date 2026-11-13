@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises"
-import type { MinicodeConfig } from "../config.ts"
+import type { ContextWindowSource, MinicodeConfig } from "../config.ts"
 import { findContextWindowFromCatalog } from "./context-window-catalog.ts"
 import { contextWindowsCachePath } from "./pricing.ts"
 
@@ -7,14 +7,13 @@ import { contextWindowsCachePath } from "./pricing.ts"
  * Operators can set an exact `ProviderEntry.contextWindows` value or use the
  * explicit `--context-window` override when a gateway exposes aliases.
  *
- * SENGAJA beda dari `DEFAULT_ALIAS_CONTEXT_WINDOW_TOKENS` (128K): ini adalah
- * batas-bawah aman untuk model yang BENAR-BENAR tak dikenal (nilai minimal yang
- * didukung hampir semua model), sedangkan default alias router memilih 128K
- * karena model aslinya pasti model besar — hanya identitasnya yang disembunyikan
- * oleh alias `auto`/`best`. Menyatukan keduanya ke satu nilai akan membuat
- * salah satu sisi salah arah: 32K → alias dikompaksi prematur; 128K → model
- * belum-tentu-mendukung melampaui jendela. */
-export const DEFAULT_FALLBACK_CONTEXT_WINDOW_TOKENS = 32_000
+ * KENAPA 131.072 dan bukan 32.000: nilai lama 32k lebih kecil dari ambang
+ * reklasifikasi 400 (50k), sehingga model yang jendelanya benar-benar 32k
+ * TIDAK PERNAH bisa menempuh jalur recovery `compact-and-retry` — jendelanya
+ * penuh jauh sebelum ambangnya tercapai. Nilai ini juga di atas ukuran jendela
+ * model yang beredar luas (≥128k), jadi model tak dikenal tidak dikompaksi
+ * prematur. Nilai eksak tetap menang bila endpoint/operator memberikannya. */
+export const DEFAULT_FALLBACK_CONTEXT_WINDOW_TOKENS = 131_072
 
 // Alias router (`auto`/`best`/...) model aslinya tak diketahui dari config.
 // Default konservatif 128K (bukan 32K) supaya kompaksi tidak prematur; bila
@@ -22,6 +21,39 @@ export const DEFAULT_FALLBACK_CONTEXT_WINDOW_TOKENS = 32_000
 // menyelamatkan. User bisa set `provider.contextWindows` untuk nilai eksak.
 export const DEFAULT_ALIAS_CONTEXT_WINDOW_TOKENS = 131_072
 const ROUTER_ALIAS_RE = /^(auto|best|default|cheapest|router)([:_-]|$)/i
+
+/**
+ * Batas output model (`max_output_tokens`) yang dilaporkan endpoint/config.
+ * `undefined` = tak diketahui (pemanggil memakai reserve default).
+ *
+ * KENAPA terpisah dari jendela: reserve output yang tepat bergantung pada
+ * batas output model, bukan pada jendela. Menyatukan keduanya membuat model
+ * berbatas output kecil mendapat reserve kelebihan, dan model berjendela
+ * raksasa mendapat reserve hampir nol.
+ */
+export function resolveMaxOutputTokens(config: MinicodeConfig, model?: string): number | undefined {
+  let providerId: string | undefined
+  let modelId = model
+  let provider = undefined as MinicodeConfig["providers"][number] | undefined
+  if (model?.includes("::")) {
+    const sep = model.indexOf("::")
+    providerId = model.slice(0, sep)
+    modelId = model.slice(sep + 2)
+    provider = config.providers.find((entry) => entry.id === providerId)
+  } else if (model) {
+    provider = config.providers.find((entry) => entry.models?.includes(model))
+    providerId = provider?.id
+  } else {
+    provider = config.providers[0]
+    providerId = provider?.id
+    modelId = provider?.models?.[0]
+  }
+  const exact = modelId ? provider?.maxOutputTokens?.[modelId] : undefined
+  if (typeof exact === "number" && exact > 0) return exact
+  const providerDefault = provider?.maxOutputTokensDefault
+  if (typeof providerDefault === "number" && providerDefault > 0) return providerDefault
+  return undefined
+}
 
 export interface ContextWindowResolution {
   readonly tokens: number
@@ -32,6 +64,10 @@ export interface ContextWindowResolution {
     | "catalog"
     | "models-dev"
     | "safe-default"
+  /** Asal nilai per lapis ketika config menyimpannya (`user`/`endpoint`/`probe`/
+   * `public-directory`/`static-table`). Murni diagnostik: UI memakainya untuk
+   * menyatakan apakah angka ini niat operator atau hasil temuan otomatis. */
+  readonly origin?: ContextWindowSource
   readonly model?: string
   readonly providerId?: string
   /** R9/T8 — hadir bila katalog built-in dan overlay models.dev saling beda
@@ -144,6 +180,7 @@ export function resolveContextWindow(
     return {
       tokens: exact,
       source: "model",
+      origin: (modelId ? provider?.contextWindowSources?.[modelId] : undefined) ?? "user",
       ...(modelId ? { model: modelId } : {}),
       ...(providerId ? { providerId } : {}),
     }
@@ -153,6 +190,7 @@ export function resolveContextWindow(
     return {
       tokens: providerDefault,
       source: "provider-default",
+      origin: provider?.contextWindowSources?.["*"] ?? "user",
       ...(modelId ? { model: modelId } : {}),
       ...(providerId ? { providerId } : {}),
     }

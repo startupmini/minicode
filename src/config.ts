@@ -33,6 +33,17 @@ export async function withConfigLock<T>(path: string, fn: () => Promise<T>): Pro
   }
 }
 
+/** Asal nilai jendela konteks. `user` = operator menetapkan sendiri (presedensi
+ * tertinggi, tak pernah ditimpa otomatis); `endpoint` = dibaca dari metadata
+ * `/models` endpoint yang dipakai; `probe` = hasil eskalasi adaptif terverifikasi;
+ * `public-directory` = katalog publik (cache); `static-table` = tabel bawaan. */
+export type ContextWindowSource =
+  | "user"
+  | "endpoint"
+  | "probe"
+  | "public-directory"
+  | "static-table"
+
 export interface ProviderEntry {
   id: string
   baseUrl: string
@@ -40,9 +51,22 @@ export interface ProviderEntry {
   apiKey: string
   models: string[]
   /** Context window tokens by exact model id; `*` is a provider-wide fallback.
-   * Values are operator-supplied because gateways often expose aliases whose
-   * actual model capacity cannot be discovered reliably at runtime. */
+   * Values may be operator-supplied or discovered from the endpoint's `/models`
+   * metadata. Gateways often expose aliases whose real capacity is invisible
+   * otherwise, so an exact value from the endpoint in use wins over any catalog. */
   contextWindows?: Record<string, number>
+  /** Asal tiap nilai `contextWindows`, per model id. Dipakai untuk presedensi:
+   * nilai `user` tak boleh ditimpa otomatis oleh endpoint/sync, sedangkan nilai
+   * `endpoint` boleh diperbarui dan kalah dari nilai eksak yang lebih baru.
+   * Entri tanpa catatan diperlakukan sebagai `user` (kompatibel ke belakang:
+   * config lama tanpa field ini dianggap niat operator). */
+  contextWindowSources?: Record<string, ContextWindowSource>
+  /** Batas output per model id (`max_output_tokens`) bila endpoint melaporkan.
+   * Dipakai sebagai reserve output proporsional; tanpa ini reserve memakai
+   * default 20k. */
+  maxOutputTokens?: Record<string, number>
+  /** Alias lama/global untuk batas output berlaku ke semua model provider. */
+  maxOutputTokensDefault?: number
   providerHint?: string
   /** Knob generik reasoning effort — dipetakan per-wire (openai reasoning_effort, anthropic thinking, gemini). */
   reasoningEffort?: "low" | "medium" | "high"
@@ -107,6 +131,79 @@ export function localConfigNotice(cwd: string, allowLocal: boolean): string | un
   return `[config] local config enabled: ${p}`
 }
 
+const VALID_CONTEXT_SOURCES: readonly ContextWindowSource[] = [
+  "user",
+  "endpoint",
+  "probe",
+  "public-directory",
+  "static-table",
+]
+
+/** Peta token-positif per model — dipakai untuk `contextWindows` dan
+ * `maxOutputTokens` supaya validasi keduanya tak bisa berbeda diam-diam. */
+function normalizeTokenMap(
+  raw: unknown,
+  opts: { allowStar: boolean },
+): Record<string, number> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined
+  const out: Record<string, number> = {}
+  for (const [model, tokens] of Object.entries(raw as Record<string, unknown>)) {
+    const keyOk = opts.allowStar ? model === "*" || model.length > 0 : model.length > 0
+    if (
+      keyOk &&
+      typeof tokens === "number" &&
+      Number.isSafeInteger(tokens) &&
+      tokens > 0 &&
+      tokens <= 20_000_000
+    ) {
+      out[model] = tokens
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+/** Field kapasitas tambahan (`contextWindowSources`, `maxOutputTokens`) — dipisah
+ * agar `normalizeConfig` tetap terbaca dan asalnya tak bisa hilang diam-diam:
+ * asal hanya dipertahankan untuk model yang punya nilai jendela, sisa asing
+ * dibuang supaya config tidak menumpuk sampah dari versi lama. */
+function normalizeCapacityExtras(
+  p: ProviderEntry,
+  contextWindows: Record<string, number> | undefined,
+): Pick<ProviderEntry, "contextWindowSources" | "maxOutputTokens" | "maxOutputTokensDefault"> {
+  const extras: Pick<
+    ProviderEntry,
+    "contextWindowSources" | "maxOutputTokens" | "maxOutputTokensDefault"
+  > = {}
+  const rawSources = (p as { contextWindowSources?: unknown }).contextWindowSources
+  if (rawSources && typeof rawSources === "object" && !Array.isArray(rawSources)) {
+    const sources: Record<string, ContextWindowSource> = {}
+    for (const [model, value] of Object.entries(rawSources as Record<string, unknown>)) {
+      if (
+        typeof value === "string" &&
+        (VALID_CONTEXT_SOURCES as readonly string[]).includes(value) &&
+        contextWindows?.[model] !== undefined
+      ) {
+        sources[model] = value as ContextWindowSource
+      }
+    }
+    if (Object.keys(sources).length > 0) extras.contextWindowSources = sources
+  }
+  const maxOut = normalizeTokenMap((p as { maxOutputTokens?: unknown }).maxOutputTokens, {
+    allowStar: false,
+  })
+  if (maxOut) extras.maxOutputTokens = maxOut
+  const maxOutDefault = (p as { maxOutputTokensDefault?: unknown }).maxOutputTokensDefault
+  if (
+    typeof maxOutDefault === "number" &&
+    Number.isSafeInteger(maxOutDefault) &&
+    maxOutDefault > 0 &&
+    maxOutDefault <= 20_000_000
+  ) {
+    extras.maxOutputTokensDefault = maxOutDefault
+  }
+  return extras
+}
+
 export function normalizeConfig(raw: unknown): MinicodeConfig {
   const cfg = raw as Record<string, unknown>
   const providers = Array.isArray(cfg?.providers)
@@ -134,6 +231,7 @@ export function normalizeConfig(raw: unknown): MinicodeConfig {
             ...p,
             contextWindows:
               contextWindows && Object.keys(contextWindows).length > 0 ? contextWindows : undefined,
+            ...normalizeCapacityExtras(p, contextWindows),
           }
         })
     : []

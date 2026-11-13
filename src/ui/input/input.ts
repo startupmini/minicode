@@ -3,7 +3,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { createInterface } from "node:readline"
 import { t } from "../i18n/locale.ts"
-import { stripAnsi } from "../render/theme.ts"
+import { glyphs, stripAnsi } from "../render/theme.ts"
 import { displayWidth, escapeLength, truncateToWidth } from "../render/width.ts"
 import { beginInteractiveScreen } from "../runtime/statusline.ts"
 import {
@@ -877,7 +877,7 @@ export async function askSecret(
             .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "")
           if (clean) {
             secret += clean
-            process.stdout.write("*".repeat(toGraphemes(clean).length))
+            process.stdout.write(glyphs.mask.repeat(toGraphemes(clean).length))
           }
         }
       }

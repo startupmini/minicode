@@ -345,6 +345,11 @@ export const glyphs = {
   get spinnerFrames() {
     return supportsUtf8() ? ["·", "··", "···"] : [".", "..", "..."]
   },
+  /** Karakter mask field secret (form & prompt inline) — satu sumber.
+   * Sengaja getter (bukan const): MINICODE_ASCII bisa berubah saat runtime. */
+  get mask() {
+    return supportsUtf8() ? "•" : "*"
+  },
   // Blok progress bar loading (baris tunggal). Fallback ASCII untuk terminal
   // tanpa UTF-8 (MINICODE_ASCII / konsol Windows legacy).
   get blockFilled() {

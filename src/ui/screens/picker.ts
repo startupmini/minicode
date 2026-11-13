@@ -8,12 +8,14 @@ import {
   type DecoderState,
   toGraphemes,
 } from "../input/prompt-engine.ts"
+import { hintLine } from "../render/hint.ts"
 import { cleanUntrusted, sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, stripAnsi } from "../render/theme.ts"
 import { displayWidth, truncateToWidth } from "../render/width.ts"
 import { type AltScreen, openAltScreen } from "../runtime/screen.ts"
 import { beginInteractiveScreen } from "../runtime/statusline.ts"
 import { boxLeftPad, dialogBox } from "./dialog.ts"
+import { createIdleTimer } from "./lifecycle.ts"
 
 export interface PickerItem {
   name: string
@@ -87,9 +89,10 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
     // dicetak — keduanya membungkus dan merusak tampilan.
     const visibleRows = () => {
       const rows = process.stdout.rows || 24
-      // Modal tanpa judul/footer; sisakan border dan baris pencarian bila ada.
-      if (useModal) return Math.max(1, Math.min(rows - (isFilterable ? 3 : 2), 12))
-      const chrome = isFilterable ? 3 : 2
+      // Modal tanpa judul/footer dekoratif; sisakan border, baris pencarian
+      // (bila ada), DAN satu baris hint aksi di dasar.
+      if (useModal) return Math.max(1, Math.min(rows - (isFilterable ? 4 : 3), 12))
+      const chrome = isFilterable ? 4 : 3
       return Math.max(1, Math.min(rows - chrome, 12))
     }
     // Lebar konten = lebar kotak TETAP (min=max, keputusan rasa: geometri
@@ -98,10 +101,18 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
     const width = () =>
       Math.max(8, Math.min((process.stdout.columns || 80) - 2 - 4, PICKER_BOX_W - 4))
 
-    // Isi untuk dialog popup (tanpa judul/hint — dialog yang membingkai).
+    // Isi untuk dialog popup (tanpa judul; hint aksi satu baris di dasar).
     const bodyLines = (): string[] => {
       const items = filteredItems()
       const v = visibleRows()
+      // Hint minimalis: kunci terang, label redup (satu sumber `hintLine`).
+      // Selalu tampil agar navigasi tak perlu ditebak; tidak memakan tinggi
+      // daftar karena `visibleRows` sudah menyisihkan satu baris untuknya.
+      const hint = hintLine([
+        { key: "↑↓", label: t("hint.move") },
+        { key: "Enter", label: t("hint.select") },
+        { key: "Esc", label: t("hint.close") },
+      ])
       if (sel >= items.length) sel = Math.max(0, items.length - 1)
       if (sel < 0) sel = 0
       if (sel < scroll) scroll = sel
@@ -118,6 +129,7 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       }
       if (items.length === 0) {
         lines.push(cut(dim(`  ${t("pick.noMatch", { q: sanitizeAnsiLine(filter) })}`)))
+        lines.push(cut(hint))
         return lines
       }
       for (let i = 0; i < rows.length; i++) {
@@ -133,7 +145,8 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
         if (picked) lines.push(`  ${c.accent("›")} ${c.accent(c.bold(label))}`)
         else lines.push(`   ${dim(label)}`)
       }
-      return lines.slice(0, v + (isFilterable ? 1 : 0))
+      lines.push(cut(hint))
+      return lines
     }
 
     const render = () => {
@@ -180,23 +193,16 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
     // 133 dtk idle di picker). Timer idle 90 dtk auto-batal agar raw-mode
     // tidak digenggam selamanya — tanpa ini picker bisa crash Bun sebelum
     // user menekan apa pun. Bukan perubahan perilaku: idle sepanjang itu
-    // memang harusnya batal.
-    let idleTimer: ReturnType<typeof setTimeout> | undefined
-    const resetIdle = () => {
-      if (idleTimer) clearTimeout(idleTimer)
-      idleTimer = setTimeout(() => {
+    // memang harusnya batal. Satu sumber idle via helper bersama (audit D1).
+    // `cleanup`/`resolve` dirujuk sebagai closure (dievaluasi saat timer fire).
+    const idle = createIdleTimer({
+      cancelMs: 90_000,
+      onCancel: () => {
         cleanup()
         opts.onCancel()
         resolve()
-      }, 90_000)
-      // jangan tahan process tetap hidup hanya karena timer ini
-      if (
-        idleTimer &&
-        typeof (idleTimer as unknown as { unref?: () => void }).unref === "function"
-      ) {
-        ;(idleTimer as unknown as { unref: () => void }).unref!()
-      }
-    }
+      },
+    })
     const decoder: DecoderState = createDecoderState()
     // Seperti manager: simpan batas listener warisan (guard: stdin stub test
     // tak punya getMaxListeners), kembalikan di cleanup agar warning Node
@@ -240,7 +246,7 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       try {
         process.stdin.setMaxListeners(prevMaxListeners)
       } catch {}
-      if (idleTimer) clearTimeout(idleTimer)
+      idle.dispose()
       // Lepas kepemilikan layar: painter boleh melukis lagi setelah ini
       // (kursor sudah kembali ke anchor, overlay sudah dibersihkan).
       endScreen()
@@ -394,7 +400,7 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
     const pickerPump = createKeyStreamPump({ state: decoder, onKeys: handlePickerKeys })
 
     onData = (chunk: Buffer) => {
-      resetIdle()
+      idle.reset()
       try {
         pickerPump.push(chunk)
       } catch (e) {
@@ -428,7 +434,7 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       process.stdin.setMaxListeners(0)
       process.stdin.on("data", onData)
       process.stdout.on("resize", onResize)
-      resetIdle()
+      idle.reset()
       render()
     } catch (e) {
       // Sama seperti di atas: setup gagal (raw-mode ConPTY rusak) harus

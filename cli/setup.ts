@@ -1941,6 +1941,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
 
   let permissions: PermissionControl | undefined
   let noProgressDetector: NoProgressDetector | null = null
+  // Jendela konteks hasil eskalasi adaptif (0 = belum ada). Dipakai /status
+  // untuk menampilkan angka efektif, bukan tebakan awal.
+  const escalatedWindowRef = { current: 0 }
   const effectiveMaxTurns = (() => {
     const raw = (opts as { maxTurns?: number }).maxTurns ?? Number(process.env.MINICODE_MAX_TURNS)
     return typeof raw === "number" && Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : undefined
@@ -2019,6 +2022,17 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       ...(effectiveMaxTurns !== undefined ? { maxTurns: effectiveMaxTurns } : {}),
       onNoProgress: (detector) => {
         noProgressDetector = detector
+      },
+      // Eskalasi jendela konteks: beritahu user secara eksplisit. Tanpa ini,
+      // jendela yang naik otomatis terasa seperti angka ajaib — user perlu tahu
+      // bahwa ada BUKTI overflow dan berapa nilai barunya, agar bisa memutuskan
+      // menyetel `contextWindows` permanen bila perlu.
+      onContextWindowEscalated: (info) => {
+        startupWrite(
+          `${c.yellow(`[context] window raised ${info.fromTokens} → ${info.toTokens} tokens for ${sanitizeAnsi(info.model)} after a verified context overflow (observed ${info.observedTokens}). Set provider.contextWindows to make it permanent.
+`)}`,
+        )
+        escalatedWindowRef.current = info.toTokens
       },
       ...(maxSteps ? { maxSteps } : {}),
       ...(keepRecentTurns ? { keepRecentTurns } : {}),

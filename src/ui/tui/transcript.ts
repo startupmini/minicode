@@ -323,12 +323,43 @@ export class Transcript {
       }),
       bus.on("provider:extension", (e: { kind: string; data: unknown }) => this.extension(e)),
       bus.on("context:compacted", (e: { reason: string }) =>
-        this.push(c.muted(t("ts.compacted", { reason: sanitizeAnsiLine(e.reason ?? "") }))),
+        this.push(c.muted(this.compactedLabel(e.reason ?? ""))),
       ),
     ]
     if (opts.onPresentationEvent) {
       this.presentationUnsub = opts.onPresentationEvent((event) => this.presentationEvent(event))
     }
+  }
+
+  /**
+   * Label hasil kompaksi yang JUJUR soal sebab dan akibat.
+   *
+   * Kernel mengirim `pressure:<level>` saat benar-benar menyusut dan
+   * `pressure:<level>:no-op` saat tak ada yang bisa dibuang. Dulu keduanya
+   * tampil sama ("dipadatkan: pressure:critical:no-op") sehingga sesi yang
+   * konteksnya TIDAK menyusut terlihat seakan berhasil dipadatkan — user lalu
+   * bingung kenapa turn berikut tetap gagal. Pemetaan ini memisahkan empat
+   * kondisi yang berbeda tindak lanjutnya: no-op, fixpoint, mustahil (biaya
+   * tetap), dan ringkasan LLM gagal.
+   */
+  private compactedLabel(reason: string): string {
+    const clean = sanitizeAnsiLine(reason)
+    if (!clean) return t("ts.compacted", { reason: "-" })
+    if (clean.endsWith(":no-op")) {
+      const base = clean.slice(0, -":no-op".length)
+      return t("ts.compactedNoOp", { reason: base })
+    }
+    const kept = /^fixpoint:(\d+)$/.exec(clean)
+    if (kept) return t("ts.compactedFixpoint", { kept: kept[1] ?? "0" })
+    const impossible = /^impossible:(\d+):(\d+)$/.exec(clean)
+    if (impossible)
+      return t("ts.compactedImpossible", {
+        fixed: impossible[1] ?? "0",
+        trigger: impossible[2] ?? "0",
+      })
+    if (clean.startsWith("llm-failed:"))
+      return t("ts.compactedLlmFailed", { reason: clean.slice("llm-failed:".length) })
+    return t("ts.compacted", { reason: clean })
   }
 
   /** Teks model mengalir — ditahan sebagai ekor hidup sampai commit. */
@@ -1341,13 +1372,11 @@ export class Transcript {
       ? `: ${truncateToWidth(sanitizeAnsiLine(String(rationale)), 200, "…")}`
       : ""
     const next = event.nextAction ? ` next=${sanitizeAnsiLine(String(event.nextAction))}` : ""
-    const glyph =
-      verdict === "PASS"
-        ? glyphs.check
-        : verdict === "FAIL" || verdict === "BLOCKED"
-          ? glyphs.cross
-          : "?"
-    const line = `  ${glyph} consequence ${sanitizeAnsiLine(verdict)}${rule}${next}${reason}`
+    // Paritas renderer linear (simple.ts): marker netral `glyphs.bullet`
+    // (●/*). Logika lama memakai glyphs.check/cross (="" setelah ikon
+    // dihapus) + "?", sehingga baris PASS tampil tanpa penanda (dua spasi)
+    // dan divergen antar permukaan — kelas OAP-001.
+    const line = `  ${glyphs.bullet} consequence ${sanitizeAnsiLine(verdict)}${rule}${next}${reason}`
     const paint =
       verdict === "FAIL" || verdict === "BLOCKED"
         ? c.error(line)
@@ -1370,7 +1399,7 @@ export class Transcript {
     this.commit()
     if (event.type === "context.cutoff") {
       const reason = event.reason ? `: ${sanitizeAnsiLine(String(event.reason))}` : ""
-      const line = `  ▪ context cutoff${reason}`
+      const line = `  ${glyphs.bullet} context cutoff${reason}`
       this.append(c.warning(line), {
         kind: "system",
         ...(event.seq !== undefined ? { seq: event.seq } : {}),
@@ -1385,7 +1414,7 @@ export class Transcript {
         used != null
           ? ` ${used.toLocaleString()}${window ? `/${window.toLocaleString()}` : ""} tokens`
           : ""
-      const line = `  ▪ context window${tokens}${pct}`
+      const line = `  ${glyphs.bullet} context window${tokens}${pct}`
       this.append(c.muted(line), {
         kind: "system",
         ...(event.seq !== undefined ? { seq: event.seq } : {}),
@@ -1416,7 +1445,7 @@ export class Transcript {
           ? " [verified]"
           : ` [${event.taskVerification?.verdict ?? "unverified"}]`
         : ""
-    const line = `  ▪ ${sanitizeAnsiLine(id)} ${status}${parent}${deps}${rev}${verify}`
+    const line = `  ${glyphs.bullet} ${sanitizeAnsiLine(id)} ${status}${parent}${deps}${rev}${verify}`
     const paint =
       raw === "FAILED"
         ? c.error(line)

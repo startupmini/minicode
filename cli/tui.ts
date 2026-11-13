@@ -36,7 +36,7 @@ import type { UiBus } from "../src/ui/contract.ts"
 import { t } from "../src/ui/i18n/locale.ts"
 import { loadHistory } from "../src/ui/input/input.ts"
 import { formatUsd } from "../src/ui/render/money.ts"
-import { c } from "../src/ui/render/theme.ts"
+import { c, glyphs } from "../src/ui/render/theme.ts"
 // [Area A · PROMPT 06] State UI milik SESI ini. TUI + printer linier sesi yang
 // sama berbagi state (satu instance), sesi lain di proses yang sama tak
 // tersentuh. Absen = instance default (fixture tes partial).
@@ -629,7 +629,7 @@ export async function runTui(ctx: CliSession): Promise<void> {
         // WorkMode EXECUTE (BUILD) agar ceiling DISCUSS/PLAN tak menahan tulis.
         workModeControl?.setWorkMode("EXECUTE")
         app.repaint()
-        transcript.pushInfo([c.warning(t("tui.unrestrictedOn"))])
+        transcript.pushInfo([c.warning(`${glyphs.unlock} ${t("tui.unrestrictedOn")}`)])
         return
       }
       mode = modeBeforeUnrestricted ?? "auto"
@@ -643,7 +643,7 @@ export async function runTui(ctx: CliSession): Promise<void> {
       modeBeforeUnrestricted = null
       workModeBeforeUnrestricted = null
       app.repaint()
-      transcript.pushInfo([c.muted(t("tui.unrestrictedOff", { m: mode }))])
+      transcript.pushInfo([c.muted(`${glyphs.unlock} ${t("tui.unrestrictedOff", { m: mode })}`)])
       return
     }
     if (name === "lang") {

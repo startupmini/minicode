@@ -100,7 +100,8 @@ describe("production compaction path (P4-M09)", () => {
       // Tepat 2 request: length-attempt + retry (bukan loop).
       expect(p.requests.length).toBe(2)
       // Kompaksi benar-benar jalan lewat seam loop (bukan klaim): tepat satu
-      // event context:compacted dengan reason recovery.
+      // event context:compacted dengan reason recovery. Sesi ini TANPA
+      // compactAsync, jadi tak ada jalur LLM yang bisa gagal.
       const compacted = events.filter((e) => e.type === "context:compacted")
       expect(compacted).toHaveLength(1)
       expect((compacted[0] as { reason?: string }).reason).toBe("recovery")
@@ -147,9 +148,14 @@ describe("production compaction path (P4-M09)", () => {
       expect(p.requests.length).toBe(3)
       // Jalur async benar-benar dicoba tepat sekali (bukan dilewati).
       expect(asyncAttempts).toBe(1)
+      // Dua peristiwa: satu `llm-failed:*` (kegagalan summarizer LLM kini
+      // DILAPORKAN, bukan ditelan diam-diam) dan satu `recovery` (kompaksi
+      // mekanikal yang benar-benar menyusutkan konteks). Urutannya penting:
+      // kegagalan terjadi dulu, fallback kemudian.
       const compacted = events.filter((e) => e.type === "context:compacted")
-      expect(compacted).toHaveLength(1)
-      expect((compacted[0] as { reason?: string }).reason).toBe("recovery")
+      expect(compacted).toHaveLength(2)
+      expect((compacted[0] as { reason?: string }).reason).toMatch(/^llm-failed:/)
+      expect((compacted[1] as { reason?: string }).reason).toBe("recovery")
       // Request retry memakai konteks HASIL kompaksi (susut), bukan prakompaksi.
       const bodies = p.requests.map((r) => r as { messages?: unknown[] })
       expect(bodies[2]!.messages!.length).toBeLessThan(bodies[1]!.messages!.length)

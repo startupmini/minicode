@@ -135,5 +135,10 @@ function serializeContent(value: unknown, maxTokens: number): unknown {
   if (text.length <= maxChars) return text;
   const headLen = Math.max(0, Math.floor(maxChars * 0.7));
   const tailLen = Math.max(0, maxChars - headLen - 12);
-  return `${text.slice(0, headLen)}\n…[truncated]…\n${text.slice(-tailLen)}`;
+  // Penanda menyebut CARA mengambil sisa, bukan sekadar "terpotong": tanpa itu
+  // model tahu ada yang hilang tapi tak tahu harus berbuat apa, lalu menebak
+  // atau menyerah. Pola head+tail dipilih agar awal dan akhir (lokasi error /
+  // ringkasan hasil) tetap terbaca.
+  const omitted = text.length - headLen - tailLen;
+  return `${text.slice(0, headLen)}\n…[output dipotong: ${omitted} karakter tidak ditampilkan; jalankan ulang tool dengan batas lebih sempit (mis. path/baris/pola spesifik) atau baca bertahap]…\n${text.slice(-tailLen)}`;
 }

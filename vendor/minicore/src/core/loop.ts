@@ -5,7 +5,7 @@ import type { RecoveryAction } from "./errors.ts";
 import type { ExecutorDeps } from "./executor.ts";
 import type { StreamRequest, FinishReason } from "./provider.ts";
 import { snapshotMessages, snapshotState, snapshotStep, snapshotToolCall, snapshotToolResult, snapshotToolSchemas } from "./snapshot.ts";
-import { estimateSessionContext } from "./tokens.ts";
+import { estimateSessionContext, estimateSystem, estimateTools } from "./tokens.ts";
 import type { ToolSchema } from "./tool.ts";
 import type { ToolCall, ToolResult } from "./types.ts";
 import type { SessionInternal, Step, TurnResult } from "./session.ts";
@@ -51,6 +51,9 @@ export async function executeTurn(
   // turn. The hard cap prevents a no-progress compactor from looping forever.
   let budgetCompactions = 0;
   const maxBudgetCompactions = 3;
+  // Berapa kali berturut-turut kompaksi tidak mengurangi apa pun. Dipakai untuk
+  // membedakan "konteks penuh tapi bisa dipadatkan" dari "sudah di titik tetap".
+  let noProgressCompactions = 0;
   let compactedForRecovery = false;
 
   // Resolve once for the turn: model switching is a between-turn operation,
@@ -78,7 +81,46 @@ export async function executeTurn(
       limitTokens: contextWindowTokens,
     });
     let reduced = false;
+    // Lapisan termurah lebih dulu: pangkas isi hasil tool lama. Ini TIDAK
+    // memanggil model apa pun, jadi aman dicoba di setiap titik tekanan — bila
+    // ia berhasil menurunkan token di bawah ambang, kompaksi penuh (mahal +
+    // lossy) tidak perlu dijalankan sama sekali.
+    if (s.budget.shouldCompact(pressure) && s.compaction.microcompact) {
+      const beforeMicro = contextTokens(s);
+      try {
+        const trimmed = s.compaction.microcompact(s.store, { budgetTokens: contextWindowTokens });
+        if (trimmed !== s.store.messages) {
+          s.store.replace(0, s.store.messages.length, trimmed);
+        }
+      } catch {
+        // Microcompact adalah optimisasi; kegagalannya tidak boleh menggagalkan
+        // turn. Kompaksi penuh di bawah tetap menjadi jaringnya.
+      }
+      const afterMicro = contextTokens(s);
+      if (afterMicro < beforeMicro) {
+        const freed = beforeMicro - afterMicro;
+        s.events.emit({ type: "context:compacted", reason: `microcompact:${freed}` });
+        pressure = s.budget.evaluate({ usedTokens: afterMicro, limitTokens: contextWindowTokens });
+      }
+    }
     if (s.budget.shouldCompact(pressure) && budgetCompactions < maxBudgetCompactions) {
+      // Biaya TETAP (system prompt + skema tool + pesan yang tak boleh dibuang)
+      // tidak pernah tersentuh kompaksi. Bila biaya itu sendiri sudah melebihi
+      // jendela, mencoba kompaksi hanya membakar satu panggilan LLM untuk
+      // menghasilkan no-op — laporkan sekali dengan angka, lalu berhenti
+      // mencoba. Ini membedakan "perlu dipadatkan" dari "mustahil dipadatkan".
+      const fixed = fixedContextTokens(s);
+      if (fixed > 0 && fixed >= contextWindowTokens) {
+        s.events.emit({
+          type: "context:compacted",
+          reason: `impossible:${fixed}:${contextWindowTokens}`,
+        });
+        throw new AgentError(
+          "budget_exceeded",
+          `context window exceeded before compaction (fixed instructions and tool schemas alone cost ${fixed} > ${contextWindowTokens}); compaction cannot help — reduce the fixed instructions/tools or select a model with a larger context window`,
+          { details: { reason: "impossible", fixedTokens: fixed, windowTokens: contextWindowTokens } },
+        );
+      }
       const before = s.store.messages.length;
       await compactStore(s, signal);
       budgetCompactions++;
@@ -95,15 +137,40 @@ export async function executeTurn(
         usedTokens: contextTokens(s),
         limitTokens: contextWindowTokens,
       });
+      if (!reduced) noProgressCompactions++;
+      else noProgressCompactions = 0;
     }
     if (s.budget.shouldCompact(pressure) && reduced && budgetCompactions < maxBudgetCompactions) {
       continue;
     }
     if (pressure === "critical") {
       const used = contextTokens(s);
+      // Bila kompaksi berulang TIDAK mengurangi apa pun, penyebabnya bukan
+      // pesan yang bisa dibuang melainkan biaya tetap: system prompt + skema
+      // tool + ekor verbatim `keepRecentTurns` yang tak bisa dipotong lagi.
+      // Mencoba lagi tak akan berubah; laporkan SEBAB-nya dengan angka supaya
+      // user tahu harus mengurangi instruksi/alat atau memilih model berjendela
+      // lebih besar — bukan sekadar pesan "context window exceeded" yang
+      // menyiratkan "coba lagi".
+      const fixed = contextTokens(s);
+      if (noProgressCompactions > 0) {
+        throw new AgentError(
+          "budget_exceeded",
+          `context compaction cannot reduce this session further (fixpoint: ${fixed} > ${contextWindowTokens} after ${noProgressCompactions} compaction attempt(s) with ${s.store.messages.length} message(s) left); the remaining cost is fixed instructions, tool schemas, or the retained tail — reduce them or select a model with a larger context window`,
+          {
+            details: {
+              reason: "fixpoint",
+              fixedTokens: fixed,
+              windowTokens: contextWindowTokens,
+              keptMessages: s.store.messages.length,
+            },
+          },
+        );
+      }
       throw new AgentError(
         "budget_exceeded",
         `context window exceeded after compaction (${used} > ${contextWindowTokens}); reduce the prompt, tool output, or fixed instructions, or select a model with a larger context window`,
+        { details: { reason: "critical", fixedTokens: used, windowTokens: contextWindowTokens } },
       );
     }
 
@@ -381,6 +448,22 @@ function contextTokens(s: SessionInternal): number {
   return estimateSessionContext(s.store, system, s.registry.list(), s.estimator);
 }
 
+/**
+ * Biaya yang TIDAK bisa dikurangi kompaksi: system prompt + skema tool.
+ *
+ * KENAPA dipisah dari `contextTokens`: kompaksi hanya bisa membuang/memadatkan
+ * PESAN. Bila system + tools saja sudah melebihi jendela, setiap percobaan
+ * kompaksi dijamin no-op. Memisahkan angka ini membuat loop bisa menyimpulkan
+ * "mustahil dipadatkan" tanpa membakar panggilan LLM.
+ */
+function fixedContextTokens(s: SessionInternal): number {
+  let system = s.system;
+  try {
+    system = s.systemForContext?.() ?? system;
+  } catch {}
+  return estimateSystem(system, s.estimator) + estimateTools(s.registry.list(), s.estimator);
+}
+
 // The single compaction seam. Prefers the strategy's optional async method
 // (LLM summary) and always falls back to the sync strategy on failure — an
 // async compactor must never be able to crash the loop.
@@ -393,7 +476,14 @@ async function compactStore(s: SessionInternal, signal: AbortSignal): Promise<vo
       return;
     } catch (error) {
       if (signal.aborted) throw abortError(signal);
-      // fall through to sync mechanical compaction
+      // Kegagalan ringkasan LLM TIDAK boleh diam: fallback mekanikal memang
+      // benar, tapi tanpa jejak ini sesi panjang terlihat "dipadatkan" padahal
+      // isinya hasil pemangkasan mekanis yang jauh lebih miskin. Laporkan
+      // sebabnya agar penyebab (timeout, thrash, model menolak) bisa dibedah.
+      const reason = String((error as Error)?.message ?? error)
+        .replace(/\s+/g, " ")
+        .slice(0, 160)
+      s.events.emit({ type: "context:compacted", reason: `llm-failed:${reason}` })
     }
   }
   s.store.replace(0, s.store.messages.length, s.compaction.compact(s.store, opts));

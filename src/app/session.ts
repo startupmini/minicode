@@ -26,6 +26,8 @@ import {
   createIncrementalTokenCounter,
   minicodeEstimator,
 } from "../policy/context.ts"
+import { contextBudgetFor, outputReserveFor } from "../policy/context-budget.ts"
+import { nextLadderStep } from "../policy/context-escalation.ts"
 import { DEFAULT_FALLBACK_CONTEXT_WINDOW_TOKENS } from "../policy/context-window.ts"
 import { parallelExecutor } from "../policy/executor.ts"
 import {
@@ -190,6 +192,18 @@ export async function createMinicodeSession(
     noProgress?: NoProgressOptions | false
     /** Hook opsional agar composition root dapat mereset riwayat osilasi saat verify hijau. */
     onNoProgress?: (detector: NoProgressDetector) => void
+    /**
+     * Dipanggil saat jendela konteks dinaikkan otomatis setelah overflow
+     * terverifikasi. Composition root memakainya untuk memberi tahu user
+     * (footer/log) dan — bila diinginkan — mempersistensikan nilai baru.
+     * Tidak pernah dipanggil untuk 429/402/auth/jaringan.
+     */
+    onContextWindowEscalated?: (info: {
+      model: string
+      fromTokens: number
+      toTokens: number
+      observedTokens: number
+    }) => void
     /**
      * [Area B · PROMPT 06] Penyimpanan binding persetujuan milik SESI.
      *
@@ -540,15 +554,48 @@ export async function createMinicodeSession(
   let lastProviderInputTokens: number | undefined
   let lastRequestMessageCount = 0
   const contextWindowForModel = (model?: string): number => {
+    // Eskalasi adaptif menang atas resolusi statis: ia adalah bukti dari
+    // endpoint bahwa jendela lebih besar daripada tebakan. Tetap tunduk pada
+    // nilai eksak operator? TIDAK: operator yang memasang flag eksplisit sudah
+    // dihormati di `contextWindowBase`, namun bila flag itu TERBUKTI kurang
+    // (overflow nyata terjadi), menaikkan satu anak tangga lebih benar daripada
+    // mengulang kegagalan yang sama.
+    const escalated = escalatedWindows.get(escalationKey(model))
+    if (escalated !== undefined) return escalated
+    return contextWindowBase(model)
+  }
+  // Batas output model: dipakai sebagai reserve output (bukan angka tetap 20k).
+  // Dicari dari metadata provider (`maxOutputTokens`, diisi dari `/models` bila
+  // endpoint melaporkannya); tanpa metadata → `undefined` = reserve default.
+  const maxOutputTokensForModel = (model?: string): number | undefined => {
+    try {
+      const fromCore = rest.maxOutputTokensForModel?.(model)
+      if (typeof fromCore === "number" && Number.isSafeInteger(fromCore) && fromCore > 0)
+        return fromCore
+      const fromProvider = (
+        provider as { maxOutputTokensForModel?: (m?: string) => number }
+      ).maxOutputTokensForModel?.(model)
+      if (
+        typeof fromProvider === "number" &&
+        Number.isSafeInteger(fromProvider) &&
+        fromProvider > 0
+      )
+        return fromProvider
+    } catch {}
+    return undefined
+  }
+  // ── Eskalasi adaptif jendela konteks ───────────────────────────────────
+  // Nilai yang dinaikkan SESI INI saja (bukan ditulis ke config: perubahan
+  // konfigurasi harus lewat /sync atau niat operator). Kunci = `provider::model`
+  // ternormalisasi; nilai = jendela hasil eskalasi.
+  const escalatedWindows = new Map<string, number>()
+  const escalationKey = (model?: string): string => {
+    const raw = model ?? currentContextModel() ?? "default"
+    return raw.includes("::") ? raw : `${provider.id}::${raw}`
+  }
+  /** Jendela "dasar" sebelum eskalasi: hasil resolusi biasa, tanpa eskalasi. */
+  const contextWindowBase = (model?: string): number => {
     const explicit = rest.contextWindowTokens
-    if (
-      !rest.contextWindowTokensForModel &&
-      typeof explicit === "number" &&
-      Number.isSafeInteger(explicit) &&
-      explicit > 0
-    ) {
-      return explicit
-    }
     try {
       const resolved =
         rest.contextWindowTokensForModel?.(model) ?? provider.contextWindowTokensForModel?.(model)
@@ -559,6 +606,33 @@ export async function createMinicodeSession(
       ? explicit
       : DEFAULT_FALLBACK_CONTEXT_WINDOW_TOKENS
   }
+  /**
+   * Naikkan jendela satu anak tangga setelah overflow terverifikasi.
+   *
+   * KENAPA otomatis: user yang sedang bekerja tidak bisa tahu ada anak tangga
+   * berikutnya — dan sesi yang mati di tengah jalan jauh lebih mahal daripada
+   * satu eskalasi. Namun ia tetap BOUNDED: satu langkah per kejadian, tak
+   * pernah melebihi batas atas, dan hasilnya hanya berlaku untuk sesi ini.
+   */
+  const escalateContextWindow = (model: string | undefined, observedTokens: number) => {
+    const key = escalationKey(model)
+    const base = escalatedWindows.get(key) ?? contextWindowBase(model)
+    // Bila pengamatan sudah jelas melampaui jendela dasar, naik dari nilai
+    // pengamatan; kalau tidak, naik dari jendela yang sekarang dipakai.
+    const from = Math.max(base, Number.isFinite(observedTokens) ? observedTokens : 0)
+    const next = nextLadderStep(from)
+    if (next === undefined || next <= base) return
+    escalatedWindows.set(key, next)
+    try {
+      rest.onContextWindowEscalated?.({
+        model: key,
+        fromTokens: base,
+        toTokens: next,
+        observedTokens,
+      })
+    } catch {}
+  }
+
   const dynamicProvider: ModelProvider = {
     id: provider.id,
     get models() {
@@ -568,6 +642,7 @@ export async function createMinicodeSession(
       const system = computeLiveSystem()
       const model = req.model ?? currentContextModel()
       let limit = contextWindowForModel(model)
+      const maxOutputTokens = maxOutputTokensForModel(model)
       const estimatorModel = model?.includes("::") ? model : (currentContextModel() ?? model)
       let calibration = calibrationFor(estimatorModel)
       let estimator = (text: string) => preciseEstimator(estimatorModel, text)
@@ -598,10 +673,11 @@ export async function createMinicodeSession(
       }
       // Sisakan ruang framing dan respons minimum. Tanpa reserve, request yang
       // tepat menyentuh batas provider tetap ditolak setelah biaya dibakar.
-      // Reserve ini HANYA headroom framing + respons minimum (skema tool sudah
-      // termasuk di `inputTokens` via estimateTools), jadi cap 256 cukup —
-      // tidak perlu diskala dengan ukuran skema tool.
-      let reserve = Math.min(LIMITS.CONTEXT_WINDOW_RESERVE_CAP_TOKENS, Math.floor(limit / 10))
+      // Reserve dihitung dari anggaran konteks terpusat (`context-budget.ts`):
+      // `min(max_output_tokens, 20k)` dengan lantai 4k dan lantai 2% jendela.
+      // Nilai lama `min(256, limit/10)` praktis nol untuk jendela besar, jadi
+      // model berjendela 1M tetap kehabisan ruang jawaban di ambang batas.
+      let reserve = outputReserveFor(limit, maxOutputTokens)
       let outputAllowance = Math.max(0, limit - inputTokens - reserve)
       let outputTokens = 0
       const streamedText = createIncrementalTokenCounter()
@@ -626,6 +702,13 @@ export async function createMinicodeSession(
         // jalur recovery `force_compact_and_retry`: meringkas lalu coba lagi,
         // alih-alih mati `✗ Context window exceeded`. Bounded — loop recovery
         // menolak bila kompaksi no-op (compactedForRecovery sudah set).
+        //
+        // Eskalasi adaptif: overflow INI adalah bukti terverifikasi bahwa jendela
+        // yang kita pakai terlalu kecil ATAU penuh. Naikkan satu anak tangga untuk
+        // sesi ini supaya percobaan berikutnya (dan turn berikut) punya ruang.
+        // Hanya dipanggil pada jalur yang benar-benar kehabisan konteks — bukan
+        // 429/402/auth/jaringan.
+        escalateContextWindow(model, actualInput + actualOutput)
         return new ProviderError(
           "context_length_exceeded",
           `context window budget reached for the selected model: input ${actualInput} + output ${actualOutput} exceeds ${limit} tokens; reduce the prompt/tools or select a larger context window`,
@@ -665,7 +748,7 @@ export async function createMinicodeSession(
                   estimateSystem(system, estimator) +
                   estimateTools(tools, estimator),
               )
-              reserve = Math.min(LIMITS.CONTEXT_WINDOW_RESERVE_CAP_TOKENS, Math.floor(limit / 10))
+              reserve = outputReserveFor(limit, maxOutputTokens)
               outputAllowance = Math.max(0, limit - inputTokens - reserve)
             }
           }
@@ -677,7 +760,7 @@ export async function createMinicodeSession(
                 estimateSystem(system, estimator) +
                 estimateTools(tools, estimator),
             )
-            reserve = Math.min(LIMITS.CONTEXT_WINDOW_RESERVE_CAP_TOKENS, Math.floor(limit / 10))
+            reserve = outputReserveFor(limit, maxOutputTokens)
             outputAllowance = Math.max(0, limit - inputTokens - reserve)
           }
           admittedFactor = currentFactor
@@ -706,14 +789,16 @@ export async function createMinicodeSession(
         // sebenarnya konteks kepanjangan meski teksnya tak menyebut "context".
         // Reklasifikasi sebagai context_length_exceeded supaya kernel menempuh
         // compact-and-retry (bounded + no-op-safe) alih-alih mati fatal. Ambang
-        // `localInputTokens >= CONTEXT_RECLASSIFY_400_MIN_LOCAL_TOKENS` = proxy
-        // monotonik ukuran konteks berbasis chars/token estimator (toleran
-        // terhadap under-count); sesi kecil dengan 400 format-argumen yang sah
-        // tidak akan salah diklasifikasi.
+        // tanngal
+        // `localInputTokens >= contextReclassifyThreshold(limit)` — ambang
+        // RELATIF jendela (`min(50_000, window*0.5)`), bukan 50.000 mutlak.
+        // Angka mutlak membuat model berjendela < 50k mustahil menempuh
+        // compact-and-retry: jendelanya penuh jauh sebelum ambang tercapai,
+        // sehingga 400 generik selalu mati fatal.
         if (
           error instanceof ProviderError &&
           (error.category === "invalid_request" || error.category === "unknown") &&
-          localInputTokens >= LIMITS.CONTEXT_RECLASSIFY_400_MIN_LOCAL_TOKENS
+          localInputTokens >= contextBudgetFor(limit, maxOutputTokens).reclassifyThreshold
         ) {
           throw overflow(inputTokens, outputTokens)
         }
@@ -736,6 +821,7 @@ export async function createMinicodeSession(
     ...rest,
     contextWindowTokens: contextWindowForModel(currentContextModel()),
     contextWindowTokensForModel: contextWindowForModel,
+    maxOutputTokensForModel: maxOutputTokensForModel,
     // Kompaksi lebih agresif (host-side): ringkas mulai 65% jendela, bukan 75%.
     budget: aggressiveBudgetPolicy,
     provider: dynamicProvider,
@@ -873,7 +959,27 @@ export async function createMinicodeSession(
     },
     run(input: string, runOpts?: { signal?: AbortSignal; model?: string }) {
       activeContextModel = runOpts?.model ?? opts.model
-      return core.run(input, runOpts)
+      const modelForRun = activeContextModel
+      return core.run(input, runOpts).catch((error: unknown) => {
+        // Kernel melaporkan kehabisan konteks sebagai `budget_exceeded` dengan
+        // `details.reason` = `fixpoint` atau `critical`. Keduanya BUKTI
+        // terverifikasi bahwa jendela yang dipakai terlalu kecil untuk sesi ini
+        // — sama sahnya dengan penolakan provider. Tanpa eskalasi di sini,
+        // sesi yang sudah di titik tetap langsung mati padahal endpoint mungkin
+        // punya kapasitas jauh lebih besar.
+        //
+        // Bukan pemicu: `max_steps_exceeded`, `max_turns`, `aborted`, timeout,
+        // dan error provider non-konteks — menaikkan jendela tak akan menolong.
+        if (error instanceof AgentError && error.kind === "budget_exceeded") {
+          const reason = error.details?.reason
+          if (reason === "fixpoint" || reason === "critical") {
+            const used =
+              typeof error.details?.fixedTokens === "number" ? error.details.fixedTokens : 0
+            escalateContextWindow(modelForRun, used)
+          }
+        }
+        throw error
+      })
     },
     abort() {
       core.abort()

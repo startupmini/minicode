@@ -98,8 +98,8 @@ describe("model-manager: alur interactive", () => {
     expect(boxW()).toBe(64)
     await tty.send(KEY.down) // cap::o3-mini
     expect(boxW()).toBe(64)
-    // Effort picker (kotak lain) dibuka lalu dibatalkan → kembali 64.
-    await tty.send(KEY.enter, 30)
+    // Effort picker (kotak lain) dibuka via Tab lalu dibatalkan → kembali 64.
+    await tty.send(KEY.tab, 30)
     await tty.waitForOutput((o) => o.includes("default"), 2000)
     await tty.send(KEY.esc, 80)
     await tty.waitForOutput((o) => o.includes("prov::m1"), 2000)
@@ -147,7 +147,8 @@ describe("model-manager: alur interactive", () => {
     await p
   }, 5000)
 
-  test("Enter memilih model + picker effort default (tanpa kunci effort)", async () => {
+  test("Enter memilih model SATU langkah (tanpa picker effort)", async () => {
+    // Kontrak B4: Enter = pilih & simpan langsung; effort jadi aksi Tab.
     tty = installFakeTty({ rows: 24 })
     const p = runModelManager({
       cwd: workspace,
@@ -158,17 +159,14 @@ describe("model-manager: alur interactive", () => {
     await tty.send(KEY.down, 20) // highlight prov::m2
     await tty.send(KEY.down, 20) // highlight cap::o3-mini (keluarga reasoning)
     await tty.send(KEY.enter, 30)
-    // Enter sekarang membuka picker effort — pilih default
-    await tty.waitForOutput((out) => out.includes("default"), 2000)
-    await tty.send(KEY.enter, 30)
-    await p
+    await p // Enter langsung menyelesaikan — tak menunggu pilihan effort
     expect(overrideLog).toEqual(["cap::o3-mini"])
     // default = hapus kunci (jangan simpan "default" harfiah)
     const cfg = await readConfig(localConfigPath())
     expect(cfg.providers[0]).not.toHaveProperty("reasoningEffort")
   })
 
-  test("Enter + pilih high menyimpan effort ke provider + tetap override", async () => {
+  test("Tab membuka picker effort; pilih high menyimpan effort", async () => {
     tty = installFakeTty({ rows: 24 })
     const p = runModelManager({
       cwd: workspace,
@@ -178,12 +176,18 @@ describe("model-manager: alur interactive", () => {
     await tty.ready()
     await tty.send(KEY.down, 20) // highlight prov::m2
     await tty.send(KEY.down, 20) // highlight cap::o3-mini
-    await tty.send(KEY.enter, 30)
+    await tty.send(KEY.tab, 30) // B4: effort = aksi terpisah, bukan langkah Enter
     await tty.waitForOutput((out) => out.includes("default"), 2000)
     await tty.send(KEY.down, 20) // low
     await tty.send(KEY.down, 20) // medium
     await tty.send(KEY.down, 20) // high
     await tty.send(KEY.enter, 30)
+    // Manager tetap terbuka (Tab tak menutup) — konfirmasi via notice.
+    await tty.waitForOutput(
+      (out) => out.includes("Upaya berpikir") || out.includes("Thinking effort"),
+      2000,
+    )
+    await tty.send(KEY.enter, 30) // pilih model
     await p
     expect(overrideLog).toEqual(["cap::o3-mini"])
     const cfg = await readConfig(localConfigPath())
@@ -194,7 +198,7 @@ describe("model-manager: alur interactive", () => {
     expect(cap?.reasoningEffort).toBe("high")
   })
 
-  test("Esc di picker effort = batal total (model tak jadi dipilih)", async () => {
+  test("Esc di picker effort = batal effort saja (model tak jadi dipilih)", async () => {
     tty = installFakeTty({ rows: 24 })
     const p = runModelManager({
       cwd: workspace,
@@ -202,11 +206,11 @@ describe("model-manager: alur interactive", () => {
       setModelOverride: (m) => overrideLog.push(m),
     })
     await tty.ready()
-    await tty.send(KEY.enter, 30) // pilih cap::o3-mini → picker terbuka
+    await tty.send(KEY.tab, 30) // buka picker effort (tanpa Enter)
     await tty.waitForOutput((out) => out.includes("default"), 2000)
     // Settle >50ms: lone-ESC flush input.ts — Esc berikut ditujukan ke manager
     // yang baru resume, bukan ke picker yang sedang menutup.
-    await tty.send(KEY.esc, 80) // batal: kembali ke daftar, tanpa select
+    await tty.send(KEY.esc, 80) // batal effort: kembali ke daftar, manager hidup
     await tty.waitForListener(2000)
     await tty.send(KEY.esc, 30) // tutup manager
     await p
@@ -257,11 +261,13 @@ describe("model-manager: alur interactive", () => {
       setModelOverride: (m) => overrideLog.push(m),
     })
     await tty.ready()
-    await tty.send(KEY.enter, 30)
+    await tty.send(KEY.tab, 30) // B4: effort via Tab (Enter = pilih langsung)
     await tty.waitForOutput((out) => out.includes("default"), 2000)
     await tty.send(KEY.down, 20) // low
     await tty.send(KEY.down, 20) // medium
     await tty.send(KEY.enter, 30)
+    await tty.waitForListener(2000)
+    await tty.send(KEY.enter, 30) // pilih model setelah effort tersimpan
     await p
     expect(overrideLog).toEqual(["prov::o3-mini"])
     const g = JSON.parse(await readFile(globalPath, "utf8")) as {
@@ -336,7 +342,7 @@ describe("model-manager: alur interactive", () => {
     })
     await tty.ready()
     await tty.send(KEY.up, 20) // sudah di atas (satu-satunya baris): tidak melewati 0
-    await tty.send(KEY.enter, 30) // buka picker effort
+    await tty.send(KEY.tab, 30) // buka picker effort (B4: bukan Enter)
     await tty.waitForOutput((out) => out.includes("default"), 2000)
     // Settle >50ms (lone-ESC flush): Esc berikut ke manager, bukan ke picker.
     await tty.send(KEY.esc, 80) // batal total
@@ -468,16 +474,9 @@ describe("model-manager: cari/filter", () => {
     const one = await freshFrame()
     expect(one).toContain("cap::o3-mini")
     expect(one).not.toContain("prov::m1")
-    await tty.send(KEY.enter, 30) // pilih satu-satunya baris tersaring
-    await tty.waitForOutput((out) => out.includes("default"), 2000)
-    // Settle >50ms (lone-ESC flush): Esc berikut ke manager, bukan ke picker.
-    await tty.send(KEY.esc, 80) // batal effort = batal total
-    await tty.waitForListener(2000)
-    await tty.send(KEY.esc, 30) // keluar mode cari
-    await tty.waitForListener(2000)
-    await tty.send(KEY.esc, 30) // tutup manager
+    await tty.send(KEY.enter, 30) // pilih satu-satunya baris tersaring (B4: satu langkah)
     await p
-    expect(overrideLog).toEqual([])
+    expect(overrideLog).toEqual(["cap::o3-mini"])
   }, 10000)
 
   test("/model <cari> membuka manager dengan filter awal", async () => {

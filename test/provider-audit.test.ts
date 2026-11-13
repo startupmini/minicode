@@ -549,7 +549,11 @@ test("audit: P4-T06-tail hasil raksasa → truncation marker, head/tail utuh", a
   expect(results).toHaveLength(1)
   const content = String(results[0]!.content)
   // Marker kontrak ada, output TERBATAS (jauh di bawah input 20k+).
-  expect(content).toContain("…[truncated]…")
+  // Penanda menyebut SEBAB dan CARA mengambil ulang: tanpa itu model tahu ada
+  // yang hilang tapi tidak tahu harus berbuat apa. Yang dijaga tetap sama:
+  // penanda ada, output terbatas, head+tail utuh.
+  expect(content).toMatch(/output dipotong: \d+ karakter/)
+  expect(content).toContain("jalankan ulang tool")
   expect(content.length).toBeLessThan(big.length)
   // Head dan tail dipertahankan (bukan potong buta).
   expect(content.startsWith("KEPALA-")).toBe(true)

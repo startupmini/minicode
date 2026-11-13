@@ -66,10 +66,13 @@ describe("resolveContextWindow integrasi katalog", () => {
     expect(r.tokens).toBe(12345)
   })
 
-  test("model tak dikenal tanpa config → tetap safe-default 32k", () => {
+  test("model tak dikenal tanpa config → safe-default 131072 (bukan 32k)", () => {
+    // D1: fallback terakhir dinaikkan ke 131.072. Nilai lama 32.000 lebih kecil
+    // dari ambang reklasifikasi 400 (50k), sehingga model berjendela 32k tak
+    // pernah bisa menempuh jalur recovery compact-and-retry.
     const r = resolveContextWindow(cfg, "totally-unknown-model")
     expect(r.source).toBe("safe-default")
-    expect(r.tokens).toBe(32_000)
+    expect(r.tokens).toBe(131_072)
   })
 })
 
@@ -88,8 +91,8 @@ describe("alias router (auto/best) → default konservatif 128K", () => {
     }
   })
 
-  test("bukan alias (mis. 'automotive') tetap 32K", () => {
-    expect(resolveContextWindow(cfg, "automotive").tokens).toBe(32_000)
+  test("bukan alias (mis. 'automotive') memakai fallback 131072", () => {
+    expect(resolveContextWindow(cfg, "automotive").tokens).toBe(131_072)
   })
 
   test("alias tetap bisa ditimpa contextWindows eksplisit", () => {

@@ -54,11 +54,36 @@ export const LIMITS = {
    * request provider: `Math.min(reserve, limit/10)` — cadangan tak naik tanpa
    * batas pada jendela raksasa (1M token tetap cukup 256 untuk framing). */
   CONTEXT_WINDOW_RESERVE_CAP_TOKENS: 256,
-  /** Ambang ukuran konteks (estimasi chars/token lokal) untuk mengklasifikasi
-   * 400 `invalid_request` generik sebagai `context_length_exceeded` alih-alih
-   * mati fatal. Di bawah ambang ini, 400 dianggap error format sah (bukan
-   * konteks). Proxy monotonik ukuran konteks, bukan hitungan presisi. */
+  /** BATAS ATAS ambang ukuran konteks (estimasi chars/token lokal) untuk
+   * mengklasifikasi 400 `invalid_request` generik sebagai
+   * `context_length_exceeded` alih-alih mati fatal. Di bawah ambang ini, 400
+   * dianggap error format sah (bukan konteks). Proxy monotonik ukuran konteks,
+   * bukan hitungan presisi.
+   *
+   * KENAPA batas atas, bukan angka mutlak: nilai ini dulu 50.000 mutlak,
+   * sehingga model berjendela < 50.000 tak pernah bisa menempuh jalur
+   * recovery `compact-and-retry` — jendelanya penuh jauh sebelum ambangnya
+   * tercapai. Ambang efektif kini `min(nilai ini, window * 0.5)` (lihat
+   * `contextReclassifyThreshold`), jadi tetap aman untuk jendela besar tanpa
+   * mematikan recovery di jendela kecil. */
   CONTEXT_RECLASSIFY_400_MIN_LOCAL_TOKENS: 50_000,
+  /** Fraksi jendela konteks untuk ambang reklasifikasi 400 di atas. 0.5 dipilih
+   * karena 400 generik yang benar-benar "konteks kepanjangan" praktis selalu
+   * terjadi setelah separuh jendela terpakai (chars/4 under-count paling buruk
+   * ~2×, jadi 0.5 masih di bawah garis aman). */
+  CONTEXT_RECLASSIFY_400_WINDOW_RATIO: 0.5,
+  /** Microcompact — jumlah hasil tool TERBARU yang dipertahankan utuh. 5 adalah
+   * titik kumpul lintas implementasi harness produksi (median 5 dari enam
+   * implementasi yang disurvei); di bawah 3 model cenderung mengulang
+   * pembacaan berkas yang sama. */
+  MICROCOMPACT_KEEP_RECENT: 5,
+  /** Hemat minimum agar pemangkasan hasil tool sepadan. Di bawah ini, yang
+   * dibuang hanya informasi tanpa manfaat token. */
+  MICROCOMPACT_MIN_SAVING_TOKENS: 20_000,
+  /** Hasil tool harus menempati porsi ini dari budget konteks agar pemangkasan
+   * dipertimbangkan — bila konteks dikuasai pesan lain, memangkas tool hanya
+   * membuang fakta. */
+  MICROCOMPACT_MIN_TOOL_SHARE: 0.4,
   /** R11 — ambang volume-baca per turn (char hasil tool terakumulasi) untuk
    * observer opt-in `MINICODE_READ_VOLUME_GUARD=1`. Di atas ini, peringatkan
    * sekali per turn: "banyak dibaca tanpa kompaksi" = risiko degradasi

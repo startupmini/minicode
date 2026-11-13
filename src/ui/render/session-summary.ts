@@ -9,6 +9,7 @@
 // via `c` menjamin selalu terlihat + hormati NO_COLOR.
 
 import { t } from "../i18n/locale.ts"
+import { renderLogoRows } from "./logo.ts"
 import { formatUsd } from "./money.ts"
 import { sanitizeAnsiLine, stripSgr } from "./sanitize.ts"
 import { c } from "./theme.ts"
@@ -18,6 +19,12 @@ const WORDMARK = "minicode"
 /** "minicode" bold — selalu terlihat, hormat NO_COLOR/non-TTY. */
 function paintWordmark(): string {
   return c.bold(WORDMARK)
+}
+
+/** Block logo pemilik (9×19) dicat dengan aksen brand — jatuh ke plain saat
+ * NO_COLOR, dan ke '#' saat terminal tanpa UTF-8 (fallback di logo.ts). */
+function paintLogo(): string[] {
+  return renderLogoRows().map((row) => c.accent(row))
 }
 
 export interface SessionSummary {
@@ -45,6 +52,9 @@ export function renderSessionSummary(s: SessionSummary): string {
   // sebagai teks polos, styling ditambahkan pemanggil (aturan repo).
   const clean = (v: string): string => stripSgr(sanitizeAnsiLine(v))
   return `${[
+    "",
+    ...paintLogo(),
+    "",
     paintWordmark(),
     `${label(t("summary.session"))} ${c.gray(clean(s.sessionId))}`,
     `${label(t("summary.model"))} ${c.gray(clean(s.model))}`,

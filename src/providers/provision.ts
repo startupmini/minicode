@@ -5,6 +5,7 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import {
+  type ContextWindowSource,
   globalConfigPath,
   LOCAL,
   loadConfig,
@@ -106,6 +107,66 @@ export function deriveProviderId(baseUrl: string, existingIds: string[], id?: st
   return uniqId
 }
 
+/**
+ * Gabungkan metadata kapasitas yang DITEMUKAN endpoint ke entri provider.
+ *
+ * Aturan presedensi (alasannya sama dengan `resolveContextWindow`):
+ * - Nilai ber-`source: "user"` milik operator TIDAK PERNAH ditimpa. Config lama
+ *   tanpa catatan asal diperlakukan `user` supaya perilaku tidak berubah diam-diam.
+ * - Nilai `endpoint`/`probe` boleh diperbarui oleh deteksi berikutnya — endpoint
+ *   yang dipanggil hari ini lebih tahu daripada hasil deteksi kemarin.
+ * - Model yang hilang dari `/models` (sudah tak ada) dibuang agar config tidak
+ *   mengumpulkan nilai basi untuk model yang tak bisa dipakai lagi.
+ *
+ * Diekspor untuk test: ini satu-satunya tempat yang menentukan "siapa menang".
+ */
+export function mergeDiscoveredCapacity(
+  previous: ProviderEntry | undefined,
+  detected: DetectResult,
+): Pick<ProviderEntry, "contextWindows" | "contextWindowSources" | "maxOutputTokens"> {
+  const metadata = detected.modelMetadata
+  if (!metadata || Object.keys(metadata).length === 0) return {}
+  const prevWindows = previous?.contextWindows ?? {}
+  const prevSources = previous?.contextWindowSources ?? {}
+  const prevMaxOut = previous?.maxOutputTokens ?? {}
+  const windows: Record<string, number> = {}
+  const sources: Record<string, ContextWindowSource> = {}
+  const maxOut: Record<string, number> = {}
+  for (const [model, meta] of Object.entries(metadata)) {
+    // Buang entri untuk model yang tak lagi ditawarkan endpoint (basi).
+    // Model di luar metadata tetap dipertahankan dari config lama di bawah.
+    const prevSource = prevSources[model]
+    const userOwned =
+      prevSource === undefined ? prevWindows[model] !== undefined : prevSource === "user"
+    if (meta.contextLength !== undefined && !userOwned) {
+      windows[model] = meta.contextLength
+      sources[model] = "endpoint"
+    }
+    if (meta.maxOutputTokens !== undefined) maxOut[model] = meta.maxOutputTokens
+  }
+  // Pertahankan yang tak dilaporkan endpoint kali ini (endpoint bisa parsial:
+  // sebagian gateway hanya menyertakan kapasitas untuk model yang baru
+  // ditambahkan). `live` hanya dipakai untuk membuang model yang endpoint
+  // TIDAK menawarkan lagi — bukan untuk membuang nilai yang belum dilaporkan.
+  const live = new Set(detected.models)
+  for (const [model, tokens] of Object.entries(prevWindows)) {
+    if (live.size > 0 && !live.has(model)) continue
+    if (windows[model] === undefined) {
+      windows[model] = tokens
+      sources[model] = prevSources[model] ?? "user"
+    }
+  }
+  for (const [model, tokens] of Object.entries(prevMaxOut)) {
+    if (live.size > 0 && !live.has(model)) continue
+    if (maxOut[model] === undefined) maxOut[model] = tokens
+  }
+  return {
+    ...(Object.keys(windows).length > 0 ? { contextWindows: windows } : {}),
+    ...(Object.keys(sources).length > 0 ? { contextWindowSources: sources } : {}),
+    ...(Object.keys(maxOut).length > 0 ? { maxOutputTokens: maxOut } : {}),
+  }
+}
+
 export async function detectAndSave(
   baseUrl: string,
   apiKey: string,
@@ -158,6 +219,9 @@ export async function detectAndSave(
   // ini tiap add/edit me-reset effort ke default diam-diam ("hilang").
   const previous = prevCfg.providers.find((p) => p.id === uniqId)
   const prevEffort = previous?.reasoningEffort
+  // Kapasitas dari metadata endpoint (bila dilaporkan) diutamakan atas tebakan
+  // statis, tapi tak pernah menimpa nilai `user` — lihat mergeDiscoveredCapacity.
+  const capacity = mergeDiscoveredCapacity(previous, detected)
   const entry: ProviderEntry = {
     id: uniqId,
     baseUrl,
@@ -165,6 +229,7 @@ export async function detectAndSave(
     models: detected.models,
     providerHint: detected.providerHint,
     ...(previous?.contextWindows ? { contextWindows: previous.contextWindows } : {}),
+    ...capacity,
     ...(prevEffort ? { reasoningEffort: prevEffort } : {}),
   }
   await saveProvider(entry, opts)
@@ -250,7 +315,14 @@ export async function refreshProviderModels(
     try {
       const detected = await detectModels(p.baseUrl, apiKey)
       if (detected.models.length) {
-        updated.set(p.id, { ...p, models: detected.models, providerHint: detected.providerHint })
+        // Metadata kapasitas ikut disegarkan: gateway yang menambah/mengubah
+        // model akan memperbarui jendela konteksnya tanpa user menyentuh apa pun.
+        updated.set(p.id, {
+          ...p,
+          models: detected.models,
+          providerHint: detected.providerHint,
+          ...mergeDiscoveredCapacity(p, detected),
+        })
       } else if (detected.authFailed) {
         // Key ditolak (401/403): bedakan dari provider tanpa endpoint
         // (Anthropic-style, tetap diam) — operator harus periksa key-nya.
@@ -290,6 +362,11 @@ export async function refreshProviderModels(
           if (nu) {
             p.models = nu.models
             p.providerHint = nu.providerHint
+            // Kapasitas hanya ditulis bila hasil merge memang punya isi — tanpa
+            // guard ini provider tanpa metadata akan menghapus nilai lama.
+            if (nu.contextWindows) p.contextWindows = nu.contextWindows
+            if (nu.contextWindowSources) p.contextWindowSources = nu.contextWindowSources
+            if (nu.maxOutputTokens) p.maxOutputTokens = nu.maxOutputTokens
             changed = true
           }
         }

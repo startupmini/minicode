@@ -17,6 +17,16 @@ export interface CompactionStrategy {
    * The signal is the turn's abort signal (user abort, session.abort, timeout).
    */
   compactAsync?(store: ContextStore, opts: { keepRecentTurns: number }, signal: AbortSignal): Promise<readonly Message[]>;
+  /**
+   * Lapisan pertama sebelum kompaksi penuh: pangkas ISI hasil tool lama
+   * menjadi sentinel pendek. Opsional dan aditif — tanpa ini perilaku lama utuh.
+   *
+   * Mengembalikan daftar pesan baru (atau yang sama bila tak memangkas) dan
+   * WAJIB mempertahankan pasangan `assistant(toolCalls)` → `tool` serta pesan
+   * lain apa adanya. Loop memakai hasilnya hanya bila jumlah token benar-benar
+   * turun, jadi implementasi tak perlu (dan tak boleh) menebak sendiri.
+   */
+  microcompact?(store: ContextStore, opts: { budgetTokens?: number }): readonly Message[];
 }
 
 export const mechanicalCompaction: CompactionStrategy = {

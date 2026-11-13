@@ -1619,8 +1619,11 @@ export class TuiApp {
   private copySelection(): void {
     const selection = this.selection
     if (!selection) return
-    const text = this.transcript.selectionText(selection.anchor, selection.focus).trim()
-    if (!text) {
+    // Salin teks ASLI (bukan `.trim()`): indentasi baris pertama dan newline di
+    // ekor adalah bagian dari konten yang dipilih pengguna (blok kode/teks
+    // berindentasi). Trim hanya untuk mendeteksi "seleksi kosong".
+    const text = this.transcript.selectionText(selection.anchor, selection.focus)
+    if (!text.trim()) {
       this.selection = null
       this.paintCurrent()
       return

@@ -8,13 +8,16 @@ import {
   type DecoderState,
   toGraphemes,
 } from "../input/prompt-engine.ts"
+import { hintLine } from "../render/hint.ts"
 import { cleanUntrusted, sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, glyphs, stripAnsi } from "../render/theme.ts"
 import { displayWidth, truncateToWidth } from "../render/width.ts"
 import { type AltScreen, openAltScreen } from "../runtime/screen.ts"
 import { boxLeftPad, dialogBox } from "./dialog.ts"
 import { runForm } from "./form.ts"
+import { createIdleTimer } from "./lifecycle.ts"
 import { runPicker } from "./picker.ts"
+import { withTimeout } from "./watchdog.ts"
 
 const dim = (s: string): string => c.dim(s)
 
@@ -85,8 +88,12 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
   return new Promise<void>((resolve) => {
     const visibleRows = () => {
       const rows = process.stdout.rows || 24
-      // Dialog tanpa judul/footer; satu baris dipakai untuk pencarian.
-      return Math.max(1, Math.min(rows - 3, 8))
+      // Chrome tetap: 2 border + 1 baris pencarian + 1 baris hint aksi;
+      // struk notice (transient) menyusutkan daftar satu baris agar tak
+      // pernah menyingkirkan hint/marker "… more" (dialogBox memotong body
+      // dari atas). Semua angka pas dengan `room = rows − 2` di dialogBox.
+      const fixed = 4 + (notice ? 1 : 0)
+      return Math.max(1, Math.min(rows - fixed, 8))
     }
     // Lantai lebar tak boleh melebihi terminal. Lebar konten = lebar kotak
     // tetap dikurangi chrome dialog (border+padding = 4) agar sepakat dengan
@@ -125,6 +132,20 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
         }
       }
       if (notice) lines.push(cut(dim(sanitizeAnsiLine(notice))))
+      // Hint aksi minimalis (kunci terang, label redup) — satu sumber dengan
+      // picker/form agar seluruh jendela /model konsisten. Sengaja TANPA
+      // judul/footer dekoratif (kontrak v7.8); ini baris body terakhir.
+      lines.push(
+        cut(
+          hintLine([
+            { key: "↑↓", label: t("hint.move") },
+            { key: "Enter", label: t("hint.select") },
+            { key: "Tab", label: t("hint.effort") },
+            { key: "Del", label: t("hint.delete") },
+            { key: "Esc", label: t("hint.close") },
+          ]),
+        ),
+      )
       return lines
     }
 
@@ -187,17 +208,15 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
     // Manager ini sebelumnya TANPA idleTimer: bila stdin 'data' tak pernah
     // datang (ConPTY macet/fokus hilang/busy bocor), Promise tak pernah settle
     // dan raw-mode dipegang selamanya = "masuk list model macet". Samakan
-    // dengan picker: idle 90 dtk = batal otomatis.
-    let idleTimer: ReturnType<typeof setTimeout> | undefined
-    const clearIdle = () => {
-      if (idleTimer) clearTimeout(idleTimer)
-      idleTimer = undefined
-    }
-    // Didefinisikan di bawah (function hoisting via let) — dipanggil finish.
-    let resetIdle: () => void = () => {}
+    // dengan picker: idle 90 dtk = batal otomatis (helper bersama, audit D1).
+    // `finish` dirujuk sebagai closure — dievaluasi saat timer fire.
+    const idle = createIdleTimer({
+      cancelMs: 90_000,
+      onCancel: () => finish(),
+    })
 
     const suspend = () => {
-      clearIdle()
+      idle.clear()
       attached = false
       process.stdout.write("\x1b[0m\x1b[?25h")
       // TANPA pause — stdin mengalir seumur proses (lihat cleanup askLine).
@@ -233,13 +252,13 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
         attached = true
       }
       render()
-      resetIdle()
+      idle.reset()
     }
 
     const finish = () => {
       if (done) return
       done = true
-      clearIdle()
+      idle.dispose()
       // Kembalikan batas listener warisan (lihat prevMaxListeners): warning
       // MaxListenersExceeded kembali berguna setelah sesi ini selesai.
       try {
@@ -264,18 +283,6 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
       } finally {
         resolve()
       }
-    }
-
-    resetIdle = () => {
-      if (done) return
-      clearIdle()
-      idleTimer = setTimeout(() => {
-        finish()
-      }, 90_000)
-      // Jangan tahan process hidup hanya karena timer ini.
-      try {
-        ;(idleTimer as unknown as { unref?: () => void }).unref?.()
-      } catch {}
     }
 
     const runAction = (fn: () => Promise<void>) =>
@@ -303,26 +310,8 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
      * akhirnya selesai diabaikan hasilnya (tanpa resolve ganda — resolve
      * hanya lewat finish alur normal). Bisa dioverride test via opts.
      */
-    const withWatchdog = async <T>(fn: () => Promise<T> | T): Promise<T> => {
-      const ms = opts.actionTimeoutMs ?? 60_000
-      let timer: ReturnType<typeof setTimeout> | undefined
-      const p = Promise.resolve().then(fn)
-      // Rejection telat TANPA handler = unhandledRejection (bun: crash).
-      p.catch(() => {})
-      try {
-        return await Promise.race([
-          p,
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(() => reject(new Error(t("ntc.timeout"))), ms)
-            try {
-              ;(timer as unknown as { unref?: () => void }).unref?.()
-            } catch {}
-          }),
-        ])
-      } finally {
-        if (timer) clearTimeout(timer)
-      }
-    }
+    const withWatchdog = <T>(fn: () => Promise<T> | T): Promise<T> =>
+      withTimeout(fn, opts.actionTimeoutMs ?? 60_000)
 
     const loadRowsSafe = async () => {
       try {
@@ -486,44 +475,51 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
             if (busy) return true
             busy = true
             suspend()
-            // Alur: picker effort DULU, baru select+simpan. Dibalik (select
-            // dulu) akan butuh rollback saat Esc — dipilih yang tanpa rollback:
-            // Esc = batal total, kembali ke daftar tanpa select/simpan.
+            // B4 (audit UI/UX): Enter = SATU langkah — pilih & simpan model
+            // langsung. Picker effort tidak lagi langkah wajib tiap Enter
+            // (dulu: Esc di effort = batal total, dua tekan untuk ganti model).
+            // Effort kini aksi terpisah lewat Tab (lihat cabang `tab` di bawah).
+            ;(async () => {
+              try {
+                await withWatchdog(() => opts.onSelect(row.id))
+                finish()
+              } catch (e) {
+                // Pilih model yang gagal HARUS terlihat dan kembali ke daftar
+                // untuk retry (pola resume() seperti a/d/e provider-manager),
+                // bukan menutup manager dan kehilangan konteks daftar.
+                // Pesan controller = input tak terpercaya: sanitasi.
+                notice = `${glyphs.cross} ${sanitizeAnsiLine((e as Error).message)}`
+                busy = false
+                await loadRowsSafe()
+                resume()
+              }
+            })()
+            return true
+          } else if (item.key.type === "tab") {
+            // B4: ubah thinking effort TANPA mengganti model. Tab = aksi
+            // eksplisit (bukan langkah wajib), Esc pada picker = batal dan
+            // kembali ke daftar — manajer tidak pernah menutup diri di sini.
+            const row = viewRows()[sel]
+            if (!row || busy || !opts.onSetEffort) return true
+            busy = true
+            suspend()
             ;(async () => {
               try {
                 const picked = await pickEffort(row.id)
-                if (!picked) {
-                  busy = false
-                  await loadRowsSafe()
-                  resume()
-                  return
+                if (picked && picked !== "skip") {
+                  await withWatchdog(() => opts.onSetEffort!(row.id, picked))
+                  // Notice terlihat di daftar (manager tetap terbuka) —
+                  // inilah kehidupan baru `effort.saved` setelah A5.
+                  notice = t("effort.saved", { effort: picked })
                 }
-                try {
-                  await withWatchdog(() => opts.onSelect(row.id))
-                  // "skip" = model tanpa thinking: select langsung, effort
-                  // tersimpan tak disentuh (aman — pengiriman effort juga
-                  // di-gate per keluarga, jadi nilai basi tak pernah terkirim).
-                  if (picked !== "skip" && opts.onSetEffort) {
-                    await withWatchdog(() => opts.onSetEffort!(row.id, picked))
-                    // Struk via notice (rute yang sama dengan receipts lain);
-                    // manager langsung tutup sesudahnya, jadi baris ini hanya
-                    // terlihat bila alur berubah me-resume — badge effort di
-                    // daftar tetap sumber kebenaran yang bisa dibuka ulang.
-                    notice = t("effort.saved", { effort: picked })
-                  }
-                  finish()
-                } catch (e) {
-                  // Pilih model yang gagal HARUS terlihat dan kembali ke daftar
-                  // untuk retry (pola resume() seperti a/d/e provider-manager),
-                  // bukan menutup manager dan kehilangan konteks daftar.
-                  // Pesan controller = input tak terpercaya: sanitasi.
-                  notice = `${glyphs.cross} ${sanitizeAnsiLine((e as Error).message)}`
-                  busy = false
-                  await loadRowsSafe()
-                  resume()
-                }
-              } catch {
-                finish()
+                busy = false
+                await loadRowsSafe()
+                resume()
+              } catch (e) {
+                notice = `${glyphs.cross} ${sanitizeAnsiLine((e as Error).message)}`
+                busy = false
+                await loadRowsSafe()
+                resume()
               }
             })()
             return true
@@ -548,7 +544,7 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
     }
     const managerPump = createKeyStreamPump({ state: decoder, onKeys: handleManagerKeys })
     const onData = (chunk: Buffer) => {
-      resetIdle()
+      idle.reset()
       try {
         managerPump.push(chunk)
       } catch {
@@ -566,7 +562,7 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
       process.stdin.on("data", onData)
       process.stdout.on("resize", onResize)
       attached = true
-      resetIdle()
+      idle.reset()
       render()
     } catch (e) {
       // Setup gagal = tutup + BERSUARA (Fase D): jendela kosong bisu adalah

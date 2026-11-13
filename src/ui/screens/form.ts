@@ -19,10 +19,11 @@ import {
   toGraphemes,
 } from "../input/prompt-engine.ts"
 import { sanitizeAnsiLine } from "../render/sanitize.ts"
-import { c, stripAnsi } from "../render/theme.ts"
+import { c, glyphs, stripAnsi } from "../render/theme.ts"
 import { displayWidth, truncateToWidth } from "../render/width.ts"
 import { type AltScreen, SYNC_UPDATE_END, SYNC_UPDATE_START } from "../runtime/screen.ts"
 import { boxLeftPad, dialogBox } from "./dialog.ts"
+import { createIdleTimer } from "./lifecycle.ts"
 
 export interface FormField {
   id: string
@@ -156,29 +157,23 @@ export async function runForm(spec: FormSpec, screen: AltScreen): Promise<FormRe
     const fields = spec.fields.map(toState)
     let idx = 0
     let done = false
-    let idleTimer: ReturnType<typeof setTimeout> | undefined
     let idleWarned = false
-    const clearIdle = () => {
-      if (idleTimer) clearTimeout(idleTimer)
-      idleTimer = undefined
-    }
-    const resetIdle = () => {
-      if (done) return
-      clearIdle()
-      idleWarned = false
-      idleTimer = setTimeout(() => {
-        // Tahap 1: peringatan (draft TIDAK dibuang — render footer merah).
+    // Idle dua-fase via helper bersama (audit D1): 80 dtk diam → peringatan
+    // di footer kotak (draft TIDAK dibuang); 10 dtk lagi hening → batal.
+    // TOTAL tetap 90 dtk (semantik anti-hang dipertahankan). `finish`/`render`
+    // dirujuk sebagai closure — dievaluasi jauh setelah keduanya terdefinisi.
+    const idle = createIdleTimer({
+      warnMs: IDLE_WARN_MS,
+      cancelMs: IDLE_CANCEL_MS,
+      onWarn: () => {
         idleWarned = true
         render()
-        // Tahap 2: batal — hanya bila tetap hening.
-        idleTimer = setTimeout(() => finish(true), IDLE_CANCEL_MS)
-        try {
-          ;(idleTimer as unknown as { unref?: () => void }).unref?.()
-        } catch {}
-      }, IDLE_WARN_MS)
-      try {
-        ;(idleTimer as unknown as { unref?: () => void }).unref?.()
-      } catch {}
+      },
+      onCancel: () => finish(true),
+    })
+    const resetIdle = () => {
+      idleWarned = false
+      idle.reset()
     }
 
     // Lebar konten = lebar kotak TETAP (64) dikurangi chrome (border+padding
@@ -196,7 +191,8 @@ export async function runForm(spec: FormSpec, screen: AltScreen): Promise<FormRe
       fields.forEach((st, fi) => {
         const active = fi === idx
         if (st.def.kind === "text" || st.def.kind === "secret") {
-          const shown = st.def.kind === "secret" ? "•".repeat(toGraphemes(st.text).length) : st.text
+          const shown =
+            st.def.kind === "secret" ? glyphs.mask.repeat(toGraphemes(st.text).length) : st.text
           // Scroll horizontal dalam KOLOM (bukan grapheme): CJK/emoji 2 kolom,
           // jadi hitung lebar tampil, bukan jumlah unit. Gagal-di-kode-lama:
           // kursor meleset 1 per glyph lebar + scroll prematur/terlambat.
@@ -290,7 +286,7 @@ export async function runForm(spec: FormSpec, screen: AltScreen): Promise<FormRe
     const finish = (cancelled: boolean) => {
       if (done) return
       done = true
-      clearIdle()
+      idle.dispose()
       try {
         formPump.dispose()
       } catch {}

@@ -75,7 +75,7 @@ describe("wizard: pemilihan gateway", () => {
     expect(visible(tty)).toContain("Setup canceled")
   })
 
-  test("daftar gateway tidak menambah judul atau petunjuk", async () => {
+  test("daftar gateway tanpa judul; hint aksi minimalis di dasar kotak", async () => {
     tty = installFakeTty()
     isolateHome()
     const p = runSetupWizard()
@@ -83,7 +83,9 @@ describe("wizard: pemilihan gateway", () => {
     const out = visible(tty)
     expect(out).toContain("OpenAI")
     expect(out).not.toContain("Select gateway")
-    expect(out).not.toContain("Esc")
+    // Kontrak baru (audit UI 2026-11): hint satu baris "kunci label" selalu
+    // tampil di dasar picker — tanpa judul, tanpa footer dekoratif.
+    expect(out).toContain("Esc close")
     await tty.send(KEY.esc, 60)
     await p
   })

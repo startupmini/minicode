@@ -1,4 +1,24 @@
-# Kontrak Terminal MiniCode (TUI fullscreen — v7.12, 2026-11-10)
+# Kontrak Terminal MiniCode (TUI fullscreen — v7.13, 2026-11-13)
+
+Perubahan v7.13: baris status kompaksi (`context:compacted`) kini **membedakan
+hasil** alih-alih mencetak `reason` mentah. Sebelumnya sesi yang konteksnya TIDAK
+menyusut tampil sebagai `… dipadatkan: pressure:critical:no-op` — terbaca seolah
+berhasil, padahal turn berikutnya tetap kehabisan konteks. Empat kondisi sekarang
+punya label berbeda karena tindak lanjut user berbeda: `… dipadatkan: tidak ada
+yang bisa dibuang (<sebab>) — konteks tidak menyusut` (no-op), `… kompaksi
+berhenti: target tak tercapai meski hanya N pesan tersisa` (fixpoint), `…
+kompaksi mustahil: instruksi tetap + skema tool (N) sudah melebihi ambang M`
+(biaya tetap), dan `… ringkasan LLM gagal (<sebab>), memakai ringkasan
+mekanikal`. Label tetap satu baris redup (`c.muted`) dan tetap melewati
+`sanitizeAnsiLine` sebelum tampil — teks sebab berasal dari error provider/model
+(input tak terpercaya). Sumber: `src/ui/tui/transcript.ts` (`compactedLabel`),
+kunci i18n `ts.compactedNoOp`/`ts.compactedFixpoint`/`ts.compactedImpossible`/
+`ts.compactedLlmFailed`, dan emisi `reason` dari `vendor/minicore/src/core/
+loop.ts`. Peta proteksi: `test/tui-classic.test.ts` (kontrak render transkrip)
++ `test/compaction-limits.test.ts` (alasan `impossible:`/`fixpoint` yang
+mendarat di event) + `test/control-plane.test.ts` (`llm-failed:` dilaporkan).
+Nol perubahan pada lebar/geometri: label hanya teks lebih panjang pada jalur
+yang sama, tetap dipotong sesuai aturan baris status yang ada.
 
 Perubahan v7.12: footer `context` & `metrics` (window %) kini **live per step**
 selama turn berjalan — kernel meng-emit estimasi konteks turn-store via event
@@ -181,7 +201,7 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
   atas, TANPA bayangan) di atas konten redup; `dialogBox` untuk komposit,
   `dialogFrame` (backdrop `░` faint) hanya untuk layar yang memiliki buffer
   sendiri.
-- **Lebar kotak popup TETAP** per permukaan (model 64, picker 64, provider 52,
+- **Lebar kotak popup TETAP** per permukaan (model 64, picker 64, provider 64,
   form 64 — min=max): geometri stabil, tak bernapas saat filter/error.
   Nama/ID di DEPAN label (truncasi memakan ekor — tanggal/konteks boleh
   hilang, id selamat).
@@ -213,6 +233,13 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
   `Del` + confirm dalam popup, tercatat); navigasi daftar = `↑↓` + `pgup/
   pgdn` + `home/end` di semua popup ber-daftar; hint footer tiap permukaan
   hanya tombol yang benar-benar berlaku di sana.
+- **Hint aksi minimalis** (audit UI/UX 2026-11): satu baris di dasar body
+  picker/manager (`src/ui/render/hint.ts`, satu sumber), format `kunci label`
+  — kunci lebih terang, label redup, pemisah `·` — tanpa judul dan tanpa
+  footer dekoratif di dalam kotak. `/model`: **Enter = pilih model satu
+  langkah** (tanpa picker effort); **Tab = ubah thinking effort** terpisah
+  (Esc pada picker effort = batal effort, kembali ke daftar — manajer tak
+  pernah menutup diri di sana).
 - Approval tool & ask_user: blok pertanyaan + keputusan DICATAT di transkrip
   (jejak audit) dan layar di-repaint sebelum menjawab; input via askLine di
   baris kursor (aman: input App beku saat busy; Esc/Ctrl+C = abort + deny).
@@ -259,7 +286,7 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     geometri popup, dialog, dan viewport TUI.
 12. Long session tetap readable (cap 5000 baris, tertua dibuang). Proyeksi
     presentasi mempertahankan cap yang sama dan menambahkan satu marker
-    `… N baris awal di luar viewport — riwayat penuh di model` yang melacak
+    `… N baris awal di luar viewport` yang melacak
     jumlah baris yang di-evict; `total()` tetap monotonik. Buffer jawaban
     live dibatasi 1.000.000 karakter dan menampilkan marker truncasi; satu
     layout paint tidak boleh memproyeksikan transcript dua kali.
@@ -337,7 +364,7 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     berkas histori lama). `/copy [n]` menyalin 1–10 turn terakhir (default 1,
     oldest-to-newest) melalui OSC 52.
 19. Dropdown `/` inline berbingkai; Enter pada menu melengkapi + kirim.
-20. Lebar kotak popup TETAP per permukaan (model 64, picker 64, provider 52,
+20. Lebar kotak popup TETAP per permukaan (model 64, picker 64, provider 64,
     form 64 — min=max); nama/ID di depan label; seleksi murni warna; search
     selalu tampil.
 21. Form dalam popup: semua input teks/pilihan di dalam kotak (text/secret/
@@ -369,8 +396,10 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
      `/help full`, pintasan via `/help keys`).
 25. Keybinding konsisten: Esc dua-tahap (isi tak hilang sekali tekan);
     backspace/delete edit-teks (hapus-data = confirm); navigasi daftar
-    (`↑↓`, pgup/pgdn, home/end) di semua popup; hint footer akurat
-    per permukaan; kursor diparkir di semua permukaan.
+    (`↑↓`, pgup/pgdn, home/end) di semua popup; hint aksi minimalis
+    (`kunci label`, kunci terang/label redup) akurat per permukaan;
+    kursor diparkir di semua permukaan; Enter `/model` = pilih satu
+    langkah, Tab = ubah effort.
 26. i18n dwibahasa: semua string user-visible lewat `t()`; id kunci = en
      (tsc mengawal); fallback kunci hilang → en; prioritas sesi > env >
      state.json > locale OS > en (di OS: `LC_ALL` > `LANG`, string kosong

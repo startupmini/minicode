@@ -64,6 +64,12 @@ export interface SessionConfig {
   /** Resolve a model-specific context limit for each run. Additive app seam;
    * the numeric option remains the fallback for existing library callers. */
   contextWindowTokensForModel?: (model?: string) => number;
+  /** Batas output model (`max_output_tokens`) bila endpoint melaporkannya.
+   * Seam aditif: dipakai loop untuk menghitung reserve output proporsional —
+   * tanpa ini kernel hanya bisa memakai reserve angka tetap, yang terlalu
+   * besar untuk model berbatas output kecil dan terlalu kecil untuk jendela
+   * raksasa. `undefined` = tak diketahui (pemanggil memakai default). */
+  maxOutputTokensForModel?: (model?: string) => number | undefined;
   toolResultMaxTokens?: number;
   keepRecentTurns?: number;
   /**
@@ -154,6 +160,7 @@ export interface SessionInternal {
   readonly maxSteps: number;
   readonly contextWindowTokens: number;
   readonly contextWindowTokensForModel?: (model?: string) => number;
+  readonly maxOutputTokensForModel?: (model?: string) => number | undefined;
   readonly toolResultMaxTokens: number;
   readonly keepRecentTurns: number;
   readonly timeoutMs: number;
@@ -196,6 +203,7 @@ export function createSession(config: SessionConfig): Session {
     maxSteps: config.maxSteps ?? DEFAULT_MAX_STEPS,
     contextWindowTokens: config.contextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS,
     contextWindowTokensForModel: config.contextWindowTokensForModel,
+    maxOutputTokensForModel: config.maxOutputTokensForModel,
     toolResultMaxTokens: config.toolResultMaxTokens ?? DEFAULT_TOOL_RESULT_MAX_TOKENS,
     keepRecentTurns: config.keepRecentTurns ?? DEFAULT_KEEP_RECENT_TURNS,
     timeoutMs: config.timeoutMs ?? DEFAULT_TIMEOUT_MS,

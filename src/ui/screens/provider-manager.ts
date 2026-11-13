@@ -9,18 +9,24 @@ import {
   type DecodedKey,
   type DecoderState,
 } from "../input/prompt-engine.ts"
+import { hintLine } from "../render/hint.ts"
 import { cleanUntrusted, sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, glyphs, stripAnsi } from "../render/theme.ts"
 import { truncateToWidth } from "../render/width.ts"
 import { type AltScreen, openAltScreen } from "../runtime/screen.ts"
 import { boxLeftPad, dialogBox } from "./dialog.ts"
 import { runForm, validateRequired, validateUrl } from "./form.ts"
+import { createIdleTimer } from "./lifecycle.ts"
 import { runPicker } from "./picker.ts"
+import { withTimeout } from "./watchdog.ts"
 
 const dim = (s: string): string => c.dim(s)
 
 /** Lebar tetap popup provider setelah daftar diringkas ke nama provider. */
-const PROVIDER_BOX_W = 52
+/** Lebar kotak dialog /providers: TETAP 64 kolom — paritas picker/model/wizard
+ * (audit B3: 52 terlalu sempit; nama provider/ID panjang + baris hint aksi
+ * terpotong). Geometri tetap (min=max), tak pernah melompat mengikuti konten. */
+const PROVIDER_BOX_W = 64
 
 export interface ProviderRow {
   id: string
@@ -90,7 +96,11 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
     // kemungkinan notice tetap masuk ke perhitungan tinggi.
     const visibleRows = () => {
       const rows = process.stdout.rows || 24
-      return Math.max(1, Math.min(rows - 3, 14))
+      // Chrome tetap: 2 border + 1 baris hint aksi; notice (transient)
+      // menyusutkan daftar satu baris — paritas model-manager, agar hint
+      // tak pernah jadi korban potong atas dialogBox.
+      const fixed = 3 + (notice ? 1 : 0)
+      return Math.max(1, Math.min(rows - fixed, 14))
     }
     // Lebar konten = lebar kotak TETAP (min=max, paritas picker/model) —
     // dikurangi chrome dialog (lihat picker.ts).
@@ -124,12 +134,25 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
       }
       // Struk transient (jalur legacy maupun modal).
       if (notice) lines.push(cut(dim(sanitizeAnsiLine(notice))))
+      // Hint aksi minimalis (kunci terang, label redup) — paritas /model.
+      lines.push(
+        cut(
+          hintLine([
+            { key: "Enter", label: t("hint.select") },
+            { key: "a", label: t("hint.add") },
+            { key: "e", label: t("hint.edit") },
+            { key: "d", label: t("hint.delete") },
+            { key: "Esc", label: t("hint.close") },
+          ]),
+        ),
+      )
       return lines
     }
 
     const render = () => {
       // Popup komposit: HANYA region kotak (tanpa clear) di atas konten
-      // pemilik layar. Lebar tetap 52 agar daftar tidak kosong terlalu lebar.
+      // pemilik layar. Lebar TETAP 64 (min=max, paritas picker/model) —
+      // tak pernah melompat mengikuti konten.
       const box = dialogBox(
         {
           title: "",
@@ -172,13 +195,20 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
     let busy = false
     // Idle-timeout 90 dtk seperti picker/model-manager: tanpa ini raw-mode
     // digenggam selamanya bila stdin 'data' tak pernah datang di Windows
-    // (ConPTY macet) = "masuk list macet". Timer di-unref agar tak menahan exit.
-    let idleTimer: ReturnType<typeof setTimeout> | undefined
-    const clearIdle = () => {
-      if (idleTimer) clearTimeout(idleTimer)
-      idleTimer = undefined
-    }
-    let resetIdle: () => void = () => {}
+    // (ConPTY macet) = "masuk list macet". Timer di-unref agar tak menahan
+    // exit — satu sumber idle via helper bersama (audit D1). `cleanup`
+    // dirujuk sebagai closure (dievaluasi saat timer fire).
+    const idle = createIdleTimer({
+      cancelMs: 90_000,
+      onCancel: () => {
+        try {
+          cleanup()
+        } catch {}
+        try {
+          resolve()
+        } catch {}
+      },
+    })
     /** Listener stdin terpasang? Menjaga resume() idempoten (anti-ganda). */
     let attached = false
 
@@ -186,7 +216,7 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
     // di a/d/e). Tidak menyentuh `done` - manager tetap hidup; resume()
     // menggambar ulang region popup.
     const suspend = () => {
-      clearIdle()
+      idle.clear()
       attached = false
       process.stdout.write("\x1b[0m\x1b[?25h")
       // setRawMode dibungkus try/catch: di Windows handle bisa rusak dan
@@ -223,14 +253,14 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
         attached = true
       }
       render()
-      resetIdle()
+      idle.reset()
     }
     // Close final: suspend + tandai selesai (manager tidak bisa dibuka lagi).
     // Selalu resolve walau suspend melempar — tanpa try/finally Promise gantung.
     const cleanup = () => {
       if (done) return
       done = true
-      clearIdle()
+      idle.dispose()
       try {
         providerPump.dispose()
       } catch {}
@@ -246,23 +276,6 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
       } catch {}
       try {
         suspend()
-      } catch {}
-    }
-
-    resetIdle = () => {
-      if (done) return
-      clearIdle()
-      idleTimer = setTimeout(() => {
-        // Idle 90 dtk tanpa input = batal otomatis (samakan picker).
-        try {
-          cleanup()
-        } catch {}
-        try {
-          resolve()
-        } catch {}
-      }, 90_000)
-      try {
-        ;(idleTimer as unknown as { unref?: () => void }).unref?.()
       } catch {}
     }
 
@@ -292,26 +305,8 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
      * pulih; aksi telat yang akhirnya selesai diabaikan hasilnya. Tunggu
      * interaksi user (form/picker) TIDAK dibatasi — hanya await jaringan.
      */
-    const withWatchdog = async <T>(fn: () => Promise<T> | T): Promise<T> => {
-      const ms = opts.actionTimeoutMs ?? 60_000
-      let timer: ReturnType<typeof setTimeout> | undefined
-      const p = Promise.resolve().then(fn)
-      // Rejection telat TANPA handler = unhandledRejection (bun: crash).
-      p.catch(() => {})
-      try {
-        return await Promise.race([
-          p,
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(() => reject(new Error(t("ntc.timeout"))), ms)
-            try {
-              ;(timer as unknown as { unref?: () => void }).unref?.()
-            } catch {}
-          }),
-        ])
-      } finally {
-        if (timer) clearTimeout(timer)
-      }
-    }
+    const withWatchdog = <T>(fn: () => Promise<T> | T): Promise<T> =>
+      withTimeout(fn, opts.actionTimeoutMs ?? 60_000)
 
     const doAdd = () => {
       if (busy) return
@@ -603,7 +598,7 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
     }
     const providerPump = createKeyStreamPump({ state: decoder, onKeys: handleProviderKeys })
     const onData = (chunk: Buffer) => {
-      resetIdle()
+      idle.reset()
       try {
         providerPump.push(chunk)
       } catch {
@@ -626,7 +621,7 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
       process.stdin.on("data", onData)
       process.stdout.on("resize", onResize)
       attached = true
-      resetIdle()
+      idle.reset()
       render()
     } catch (e) {
       // Setup gagal = tutup + BERSUARA (Fase D): jendela kosong bisu adalah

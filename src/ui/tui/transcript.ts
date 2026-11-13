@@ -1167,20 +1167,24 @@ export class Transcript {
       return
     }
     if (event.type === "turn.completed") {
-      this.commit()
       this.commitThinking()
+      // Flush lipatan activity SEBELUM commit jawaban agar urutan persistent
+      // (panel/summary di atas jawaban) konsisten dengan proyeksi transient
+      // (activity sebelum pending) — tanpa ini panel "lompat" ke bawah jawaban
+      // saat turn selesai (sisa dari reorder projectAll).
+      this.flushActivityFold()
+      this.commit()
       // minimizeActivity ON / activityPanel ON → fold meringkas sendiri (nama
       // tool + ok/gagal); turnSummary (turn · files · durasi) dilewati agar
       // tidak ada dua ringkasan.
       if (!this.uiState.minimizeActivity && !this.uiState.activityPanel)
         this.turnSummary(event.summary, event)
-      this.flushActivityFold()
       return
     }
     if (event.type === "turn.failed" || event.type === "turn.cancelled") {
-      this.commit()
       this.commitThinking()
       this.flushActivityFold()
+      this.commit()
       return
     }
     // F-TASK-1: status task kanonik (t<n>) + DAG dirender sebagai baris ledger,

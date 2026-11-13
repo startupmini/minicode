@@ -391,7 +391,10 @@ function toContent(content: Content): unknown {
   )
 }
 
-function toAnthropicTools(tools: readonly ToolSchema[], enableCache: boolean = true): unknown[] {
+export function toAnthropicTools(
+  tools: readonly ToolSchema[],
+  enableCache: boolean = true,
+): unknown[] {
   return tools.map((t, idx) => {
     const isLast = idx === tools.length - 1
     return {

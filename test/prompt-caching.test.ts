@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test"
 import { createEventBus } from "#minicore/core/events.ts"
+import type { ToolSchema } from "#minicore/core/tool.ts"
+import type { Message } from "#minicore/core/types.ts"
 import { createUsageCollector } from "../src/policy/usage.ts"
+import { toAnthropicMessages, toAnthropicTools } from "../src/providers/anthropic.ts"
 
 test("usage: tracks cache read and write tokens and reduces cost", () => {
   const bus = createEventBus()
@@ -27,4 +30,42 @@ test("usage: tracks cache read and write tokens and reduces cost", () => {
   // Normal 10k: 10000*3/1M = $0.030
   // Cached: 2000*3/1M ($0.006) + 8000*0.3/1M ($0.0024) + 500*15/1M ($0.0075) = $0.0159
   expect(u.cost!).toBeLessThan(0.025)
+})
+
+test("Fase 7: prefix Anthropic deterministik antar-turn (syarat cache hit)", () => {
+  // Prefix = system + tools + messages dibangun dari fungsi MURNI. Dua kali
+  // rakitan dengan input sama HARUS byte-identik — bila ada timestamp/session-id/
+  // hitungan yang menyelinap, prefix berubah tiap turn dan cache tak pernah kena.
+  const messages: Message[] = [
+    { role: "user", content: "halo" },
+    { role: "assistant", content: "hai! ada yang bisa dibantu?" },
+  ]
+  const tools: ToolSchema[] = [
+    { name: "glob", description: "Cari file", parameters: { type: "object", properties: {} } },
+    { name: "read_file", description: "Baca file", parameters: { type: "object", properties: {} } },
+  ]
+
+  expect(JSON.stringify(toAnthropicMessages(messages))).toBe(
+    JSON.stringify(toAnthropicMessages(messages)),
+  )
+  expect(JSON.stringify(toAnthropicTools(tools, true))).toBe(
+    JSON.stringify(toAnthropicTools(tools, true)),
+  )
+})
+
+test("Fase 7: cache_control hanya di tool terakhir (bukan bagian volatil)", () => {
+  const tools: ToolSchema[] = [
+    { name: "glob", description: "C", parameters: { type: "object", properties: {} } },
+    { name: "read_file", description: "R", parameters: { type: "object", properties: {} } },
+    { name: "bash", description: "B", parameters: { type: "object", properties: {} } },
+  ]
+  const out = toAnthropicTools(tools, true) as Array<{
+    name: string
+    cache_control?: { type: string }
+  }>
+  expect(out[0]!.cache_control).toBeUndefined()
+  expect(out[1]!.cache_control).toBeUndefined()
+  // Penanda hanya pada tool terakhir: batas blok stabil, bukan pada item yang
+  // bisa berubah urutannya tiap turn.
+  expect(out[2]!.cache_control).toEqual({ type: "ephemeral" })
 })

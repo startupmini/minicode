@@ -662,6 +662,8 @@ if (enterRepl) {
         sessionId: ctx.sessionId,
         model: ctx.modelRef.current ?? "default",
         totalTokens: u.totalTokens,
+        inputTokens: u.inputTokens,
+        cacheReadTokens: u.cacheReadTokens,
         ...(u.cost != null ? { cost: u.cost } : {}),
         durationMs: Date.now() - replStart,
       })

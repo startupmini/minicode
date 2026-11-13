@@ -33,6 +33,10 @@ export interface SessionSummary {
   totalTokens: number
   cost?: number
   durationMs: number
+  /** Input token (Fase 7 ukur): penyebut hit-rate cache. */
+  inputTokens?: number
+  /** Token yang dibaca dari prompt cache (Fase 7 ukur). 0/undefined = nol. */
+  cacheReadTokens?: number
 }
 
 /** "3m 12s" / "1m 5s" / "45s" untuk durasi manusia. */
@@ -47,6 +51,14 @@ export function renderSessionSummary(s: SessionSummary): string {
   // Parameter dinamai `text`, bukan `t`: `t` sudah dipakai untuk i18n.
   const label = (text: string): string => c.muted(text.padEnd(7))
   const cost = s.cost != null ? formatUsd(s.cost) : null
+  // Fase 7 ukur: hit-rate cache — fraksi input yang dilayani dari cache prompt.
+  // Hanya tampil saat benar-benar ada cache read (tak pernah menampilkan 0% palsu).
+  const cacheRead = s.cacheReadTokens ?? 0
+  const input = s.inputTokens ?? 0
+  const cachePart =
+    cacheRead > 0 && input > 0
+      ? ` · cache ${cacheRead.toLocaleString()} (${Math.round((cacheRead / input) * 100)}%)`
+      : ""
   // sessionId/model = input tak-terpercaya (config/network): buang SEMUA ANSI
   // (termasuk SGR) sebelum dibungkus style — nilai mentah hanya boleh muncul
   // sebagai teks polos, styling ditambahkan pemanggil (aturan repo).
@@ -60,7 +72,7 @@ export function renderSessionSummary(s: SessionSummary): string {
     `${label(t("summary.model"))} ${c.gray(clean(s.model))}`,
     `${label(t("summary.usage"))} ${s.totalTokens.toLocaleString()} ${t("summary.tokens")}${
       cost != null ? ` · ${cost}` : ""
-    } · ${formatDuration(s.durationMs)}`,
+    }${cachePart} · ${formatDuration(s.durationMs)}`,
   ]
     .join("\r\n")
     .concat("\r\n")}`

@@ -408,6 +408,7 @@ Ambang coverage/pack **tidak boleh** diturunkan untuk meloloskan fase mana pun.
 | D7 | Gating microcompact | hemat ≥ 20k token **dan** tool > 40% budget **dan** bukan batch aktif | konsensus + kehati-hatian |
 | D8 | Prioritas sumber | endpoint > direktori publik > tabel statis | §3.1 |
 | D9 | Universalitas | tanpa cabang nama model/vendor/status berbayar | prinsip P7 |
+| D10 | Microcompact vs caching | microcompact BOLEH memangkas isi di dalam prefix yang di-cache (membatalkan cache sesaat); cache otomatis re-establish di turn berikut. Gating D7 membuat pemangkasan jarang, dan penghematan token permanen > satu kali cache miss | §2.2 + Fase 7 butir 4 |
 
 ---
 
@@ -538,9 +539,11 @@ Ambang coverage dan budget pack **tidak** diturunkan/dinaikkan.
 
 ### 11.5 Yang belum dikerjakan (jujur)
 
-- **Fase 7 (prompt caching)** — belum disentuh (lihat 11.4 butir 3).
+- **Fase 7 (prompt caching)** — sudah dieksekusi: ukur hit-rate (ekstraksi
+  `cache_read/cached_tokens` semua gateway + display `/status` & ringkasan),
+  `cache_control` ephemeral di system + pesan stabil + tool terakhir, kill-switch
+  `MINICODE_PROMPT_CACHE=0`, dan keputusan D10 (microcompact vs cache). Sisa:
+  validasi **gateway nyata** + pengukuran hit-rate end-to-end (butuh kredensial).
 - **Probe HTTP aktif** — modulnya siap, pemanggilnya belum dipasang (11.4 butir 1).
-- **Commit belum dibuat.** Working tree juga memuat pekerjaan audit UI/UX milik
-  sesi lain; pemisahan dua commit per-hunk tercatat di `catatanagent.md` §4–5.
 - Validasi perilaku **pada gateway nyata** belum dijalankan (butuh kredensial);
   yang divalidasi adalah unit + jalur sesi dengan provider palsu.

@@ -131,6 +131,42 @@ test("F-02: [DONE] tanpa finish menghasilkan finish stop, bukan failure", async 
   }
 })
 
+test("Fase 7: token cache-hit diekstrak dari usage Responses", async () => {
+  // Pengukuran cache: input_tokens_details.cached_tokens → cacheReadTokens di
+  // event usage (sebelumnya Responses tidak menyumbang angka cache sama sekali).
+  const srv = Bun.serve({
+    port: 0,
+    fetch: () =>
+      new Response(
+        sseBody([
+          JSON.stringify({
+            type: "response.completed",
+            response: {
+              id: "resp_cache",
+              usage: {
+                input_tokens: 100,
+                output_tokens: 20,
+                total_tokens: 120,
+                input_tokens_details: { cached_tokens: 80 },
+              },
+            },
+          }),
+        ]),
+        { headers: { "content-type": "text/event-stream" } },
+      ),
+  })
+  try {
+    const evs = await collectAll(`http://127.0.0.1:${srv.port}/v1`)
+    const usage = evs.find(
+      (e) => e.type === "extension" && (e as { kind?: string }).kind === "usage",
+    ) as { type: "extension"; data: { cacheReadTokens?: number } } | undefined
+    expect(usage).toBeDefined()
+    expect(usage!.data.cacheReadTokens).toBe(80)
+  } finally {
+    srv.stop(true)
+  }
+})
+
 test("F-13: 400 invalid token BUKAN context_length_exceeded", async () => {
   const srv = Bun.serve({
     port: 0,

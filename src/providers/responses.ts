@@ -262,12 +262,24 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
                 // budget/cost (buta spend). Bentuk shape sama dengan adapter
                 // openai-compat agar kolektor tak perlu tahu provider.
                 const u = resp?.usage as
-                  | { input_tokens?: unknown; output_tokens?: unknown; total_tokens?: unknown }
+                  | {
+                      input_tokens?: unknown
+                      output_tokens?: unknown
+                      total_tokens?: unknown
+                      cached_tokens?: unknown
+                      input_tokens_details?: { cached_tokens?: unknown }
+                    }
                   | undefined
                 if (
                   u &&
                   (u.input_tokens != null || u.output_tokens != null || u.total_tokens != null)
                 ) {
+                  // Fase 7 (pengukuran cache): token cache-hit (subset dari input)
+                  // di beberapa bentuk gateway Responses. Alias seperti detect.ts.
+                  const cached =
+                    (u.input_tokens_details?.cached_tokens !== undefined
+                      ? u.input_tokens_details.cached_tokens
+                      : u.cached_tokens) ?? undefined
                   yield {
                     type: "extension",
                     kind: "usage",
@@ -276,6 +288,7 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
                       outputTokens:
                         typeof u.output_tokens === "number" ? u.output_tokens : undefined,
                       totalTokens: typeof u.total_tokens === "number" ? u.total_tokens : undefined,
+                      ...(typeof cached === "number" ? { cacheReadTokens: cached } : {}),
                     },
                   }
                 }

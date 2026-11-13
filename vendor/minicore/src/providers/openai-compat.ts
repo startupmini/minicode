@@ -132,14 +132,29 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): ModelPro
       // the kernel would see (and execute) the same tool call twice.
       let finished = false;
       for await (const chunk of sse(response.body, signal)) {
-        const usage = chunk.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
+        const usage = chunk.usage as {
+          prompt_tokens?: number;
+          completion_tokens?: number;
+          total_tokens?: number;
+          // Fase 7 (pengukuran cache): agregator/gateway berbeda menaruh token
+          // cache-hit di field beda (OpenAI nested `prompt_tokens_details`, Gemini/agregator
+          // top-level `cached_tokens`). Perlakukan sebagai alias.
+          prompt_tokens_details?: { cached_tokens?: number };
+          cached_tokens?: number;
+        } | undefined;
         // P8 + race: beberapa provider (b.ai dll) mengirim `usage` pada chunk
         // TERAKHIR setelah finish_reason. Jangan di-drop karena `finished`.
         if (usage && (usage.prompt_tokens != null || usage.completion_tokens != null || usage.total_tokens != null)) {
+          const cached = usage.prompt_tokens_details?.cached_tokens ?? usage.cached_tokens;
           yield {
             type: "extension",
             kind: "usage",
-            data: { inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens, totalTokens: usage.total_tokens },
+            data: {
+              inputTokens: usage.prompt_tokens,
+              outputTokens: usage.completion_tokens,
+              totalTokens: usage.total_tokens,
+              ...(typeof cached === "number" ? { cacheReadTokens: cached } : {}),
+            },
           };
         }
         if (finished) {

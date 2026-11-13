@@ -68,9 +68,8 @@ export function createAnthropicProvider(config: AnthropicConfig): ModelProvider 
     .replace(/\/+$/, "")
     .replace(/\/v1$/, "")
   const endpoint = `${baseUrl}/v1/messages`
-  // Prompt caching (cache_control ephemeral) aktif default — hemat biaya input pada
-  // run panjang. Kill-switch ganda: config `enablePromptCaching:false` (statis, saat
-  // provision) + env `MINICODE_PROMPT_CACHE=0` (runtime, pola microcompact/probe).
+  // Prompt caching aktif default; kill-switch config `enablePromptCaching:false`
+  // (statis) + env `MINICODE_PROMPT_CACHE=0` (runtime, pola microcompact/probe).
   const enableCache =
     config.enablePromptCaching !== false && process.env.MINICODE_PROMPT_CACHE !== "0"
 
@@ -105,11 +104,9 @@ export function createAnthropicProvider(config: AnthropicConfig): ModelProvider 
       const effectiveMaxTokens = legacyBudget
         ? Math.max(config.maxTokens ?? 8192, legacyBudget + 1024)
         : (config.maxTokens ?? 8192)
-      // Fase 7: cache prefix percakapan — setelah system+tools, tandai pesan
-      // "stabil" terakhir (kedua dari akhir; yang terakhir = pesan user saat ini)
-      // agar seluruh histori + tool result ikut ter-cache tiap turn. Tanpa ini
-      // hanya system+tools yang cache-able, dan payload besar hasil tool (insiden
-      // 478KB) tetap dikirim ulang — persis biaya yang caching ingin hemat.
+      // Fase 7: cache prefix percakapan (system+tools+histori) — tandai pesan
+      // stabil terakhir (kedua dari akhir; yang terakhir = pesan user saat ini)
+      // agar tool result besar ikut ter-cache tiap turn (bukan dikirim ulang).
       const messagesPayload = toAnthropicMessages(request.messages)
       if (enableCache && messagesPayload.length >= 2) {
         const lastStable = messagesPayload[messagesPayload.length - 2] as Record<string, unknown>

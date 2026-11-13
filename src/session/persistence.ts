@@ -891,10 +891,8 @@ export function loadPresentationEvents(id: string, cwd?: string): DomainEvent[] 
   return loadPresentationEventsWithStats(id, cwd).events
 }
 
-/** Hitung event kompaksi durable langsung lewat kolom `type` (tanpa muat+decode
- * seluruh presentation_events). Resume dulu menarik SEMUA baris hanya untuk
- * menghitung revisi kompaksi; `type` sudah jadi kolom di schema, jadi COUNT(*)
- * terindeks session_id jauh lebih murah daripada decode tiap payload. */
+/** Hitung kompaksi durable via kolom `type` (jangan muat+decode seluruh
+ * presentation_events — resume dulu tarik semua baris hanya untuk hitung revisi). */
 export function countDurableCompactionEvents(sessionId: string, cwd?: string): number {
   const db = open(cwd)
   try {

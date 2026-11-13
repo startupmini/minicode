@@ -786,11 +786,8 @@ export class Transcript {
     }
     // thinking/running aktif: bangun segar (jarang — hanya saat turn berjalan,
     // dan repaint-nya sudah dicoalesce 30ms, bukan per-keypress).
-    // Urutan: committed (histori) → aktivitas turn berjalan (thinking/running/
-    // panel) → pending (jawaban streaming). Jawaban di EKOR agar jangkar di
-    // bawah saat following-tail: pertumbuhan activity mendorong HISTORI lama
-    // keluar, bukan menggeser jawaban yang sedang dibaca (keluhan "panel
-    // ngumpul di bawah / jawaban lompat-lompat").
+    // Urutan: committed → activity (thinking/running/panel) → pending. Jawaban di
+    // ekor agar jangkar stabil saat streaming (activity mendorong histori, bukan jawaban).
     const rows: TranscriptRow[] = [...this.committedRows(w)]
     if (!this.thinkingAreaMode() && this.thinkingTail) {
       for (const chunk of this.thinkingTail.split("\n")) {
@@ -1168,10 +1165,8 @@ export class Transcript {
     }
     if (event.type === "turn.completed") {
       this.commitThinking()
-      // Flush lipatan activity SEBELUM commit jawaban agar urutan persistent
-      // (panel/summary di atas jawaban) konsisten dengan proyeksi transient
-      // (activity sebelum pending) — tanpa ini panel "lompat" ke bawah jawaban
-      // saat turn selesai (sisa dari reorder projectAll).
+      // Flush panel SEBELUM commit jawaban agar urutan persist = transient (panel di
+      // atas jawaban; tanpa ini panel "lompat" ke bawah saat turn selesai).
       this.flushActivityFold()
       this.commit()
       // minimizeActivity ON / activityPanel ON → fold meringkas sendiri (nama

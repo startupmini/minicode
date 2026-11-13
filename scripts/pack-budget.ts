@@ -64,7 +64,15 @@
 // ukuran), tidak ada `node_modules`/`test`/artefak basi terbawa. Budget baru
 // 4.096 KiB (4,0 MiB) memberi ~108 KiB ruang di atas aktual. Tetap alarm
 // regresi, bukan target ukuran.
-export const PACK_SIZE_BUDGET_KIB = 4096
+// [RE-BASELINE 4,015 MiB — disetujui owner 2026-11-13, rilis v0.23.0]
+// Pertumbuhan sah: Fase 7 prompt caching (`cache_control` ephemeral + ekstraksi
+// cache-hit semua gateway + display /status & ringkasan + kill-switch), perf
+// resume (hitung kompaksi via SQL COUNT + baca histori sekali), bahasa chat ikut
+// locale, dan polish UI (warna panel, reorder activity, caret DECSCUSR, debug
+// `--verbose`). `unpackedSize` terukur 4.104 KiB (npm pack --dry-run, worktree
+// bersih); budget lama 4.096 KiB terlampaui ~8 KiB. Re-baseline ke 4.112 KiB
+// memberi ~8 KiB ruang. Tetap alarm regresi, bukan target ukuran.
+export const PACK_SIZE_BUDGET_KIB = 4112
 
 /**
  * True bila ukuran paket (KiB) masih di dalam budget.

@@ -274,8 +274,7 @@ export function createResponsesProvider(config: ResponsesConfig): ModelProvider 
                   u &&
                   (u.input_tokens != null || u.output_tokens != null || u.total_tokens != null)
                 ) {
-                  // Fase 7 (pengukuran cache): token cache-hit (subset dari input)
-                  // di beberapa bentuk gateway Responses. Alias seperti detect.ts.
+                  // Fase 7: cache-hit alias (input_tokens_details.cached_tokens / cached_tokens).
                   const cached =
                     (u.input_tokens_details?.cached_tokens !== undefined
                       ? u.input_tokens_details.cached_tokens

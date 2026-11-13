@@ -150,9 +150,7 @@ export async function createMinicodeSession(
     Omit<SessionConfig, "permissions" | "estimator" | "recovery" | "system" | "executor">
   > & {
     systemExtra?: string
-    /** Bahasa chat model (di-inject dari composition root via currentLocale()).
-     * "id" → direktif Indonesia, "en" → direktif Inggris. Undefined = tanpa
-     * direktif (perilaku lama; dipakai test/bench yang tak mem-pipe locale). */
+    /** Bahasa chat model ("id"/"en"); undefined = tanpa direktif (test/bench). */
     lang?: "en" | "id"
     cwd?: string
     /** Live model identity used for per-model token calibration. */

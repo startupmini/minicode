@@ -136,9 +136,7 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): ModelPro
           prompt_tokens?: number;
           completion_tokens?: number;
           total_tokens?: number;
-          // Fase 7 (pengukuran cache): agregator/gateway berbeda menaruh token
-          // cache-hit di field beda (OpenAI nested `prompt_tokens_details`, Gemini/agregator
-          // top-level `cached_tokens`). Perlakukan sebagai alias.
+          // Fase 7: cache-hit alias (prompt_tokens_details.cached_tokens / cached_tokens).
           prompt_tokens_details?: { cached_tokens?: number };
           cached_tokens?: number;
         } | undefined;

@@ -962,9 +962,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   })
   const sessionId = identity.sid
   const bootId = identity.bootId
-  // Identitas sesi murni internal (sid/boot) — derau untuk user biasa. Cukup
-  // tampil saat --verbose; resume/--session sudah punya baris "resumed session …"
-  // yang human-friendly. Keputusan: clean + minimalis (masukan user).
+  // Identitas internal (sid/boot) — hanya --verbose; "resumed session …" sudah human-friendly.
   if (verbose) startupWrite(`${c.dim(formatSessionIdentityLine(identity))}\n`)
 
   // P2.2 — admission penulis tunggal. Lease = admission; pagar mutasi =
@@ -987,8 +985,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       )
     }
   }
-  // Lease berhasil = kabar baik internal, bukan info aksi. Hanya --verbose;
-  // kegagalan (STALE/lease-lost) tetap tampil karena bisa ditindaklanjuti.
+  // Lease sukses = internal; hanya --verbose (STALE/lease-lost tetap tampil).
   if (verbose)
     startupWrite(
       `${c.dim(`[writer] admitted sid=${sessionId} boot=${bootId} epoch=${expectedEpoch}${admission.admission.tookOver ? " (takeover)" : ""}${admission.admission.fresh ? " (fresh)" : ""}\n`)}`,
@@ -1971,11 +1968,8 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     const v = opts.writeConcurrency
     return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined
   })()
-  // Bahasa chat model mengikuti locale UI secara deterministik. `configLocale`
-  // (state.json `lang`) biasanya baru dimuat di cli/tui.ts SETELAH sesi terbangun;
-  // di sini dimuat LEBIH AWAL agar direktif bahasa di system prompt ikut pilihan
-  // user yang tersimpan — bukan hanya env/OS. Resolusi tetap currentLocale()
-  // (sesi > MINICODE_LANG > state.json.lang > OS) — satu sumber kebenaran.
+  // Muat state.json.lang LEBIH AWAL (tui.ts memuatnya setelah sesi terbangun) agar
+  // direktif chat di system prompt ikut pilihan user; resolusi tetap currentLocale().
   const { currentLocale, setConfigLocale } = await import("../src/ui/i18n/locale.ts")
   setConfigLocale((await loadLang().catch(() => undefined)) ?? null)
   const sessionLang = currentLocale()

@@ -62,9 +62,7 @@ export function groupActivities(
   return groups
 }
 
-/** Warna baris grup berdasar status agregat: gagal → merah, ditolak → kuning,
- * selebihnya (ok/berjalan) → redup. Ringkas = tenang; hanya kegagalan yang
- * menyala agar tak melelahkan mata (masukan audit: "warna bikin capek"). */
+/** Warna grup: gagal → merah, ditolak → kuning, sisanya → redup (tenang). */
 function groupPaint(g: ActivityGroupView): (s: string) => string {
   if (g.failed > 0) return c.error
   if (g.denied > 0) return c.warning

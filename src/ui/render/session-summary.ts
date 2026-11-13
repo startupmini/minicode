@@ -51,8 +51,7 @@ export function renderSessionSummary(s: SessionSummary): string {
   // Parameter dinamai `text`, bukan `t`: `t` sudah dipakai untuk i18n.
   const label = (text: string): string => c.muted(text.padEnd(7))
   const cost = s.cost != null ? formatUsd(s.cost) : null
-  // Fase 7 ukur: hit-rate cache — fraksi input yang dilayani dari cache prompt.
-  // Hanya tampil saat benar-benar ada cache read (tak pernah menampilkan 0% palsu).
+  // Fase 7 ukur: fraksi input dari cache; tampil hanya bila cache read > 0.
   const cacheRead = s.cacheReadTokens ?? 0
   const input = s.inputTokens ?? 0
   const cachePart =

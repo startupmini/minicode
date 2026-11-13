@@ -154,6 +154,7 @@ import {
   listPersistedTurns,
   loadPresentationEvents,
   loadSession,
+  loadSessionMeta,
   loadSessionUsageSummary,
   loadSessionWorkMode,
   loadThreadHistoryWithSeq,
@@ -1364,11 +1365,17 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       `${c.dim(`[thread sid=${sessionId} tid=${defaultThread.thread_id} head=${defaultThread.head_seq}${backfilled > 0 ? ` backfilled=${backfilled}` : ""}]\n`)}`,
     )
     try {
-      const prev = await startupPhase("resume-session", async () => loadSession(sessionId, cwd))
-      if (prev) {
+      const meta = await startupPhase("resume-session", async () => loadSessionMeta(sessionId, cwd))
+      if (meta) {
         resumeUsageSnapshot = loadSessionUsageSummary(sessionId, cwd)
       }
-      if (prev?.messages.length) {
+      // BACA histori SEKALI (dengan seq). loadSessionMeta tidak decode messages,
+      // jadi decode penuh tinggal SATU kali (dulu `loadSession` + `loadThreadHistoryWithSeq`
+      // decode dua kali — akar lemot resume berhistori banyak, lihat audit perf).
+      const rowsForSelector = await startupPhase("resume-history", async () =>
+        loadThreadHistoryWithSeq(sessionId, defaultThread.thread_id, cwd),
+      )
+      if (meta && rowsForSelector.length) {
         // [Fase 4 / LOOP-13, LOOP-INV-16] Kumpulkan snapshot state operasional
         // deterministik dari sumber durable (TaskStore + usage historis) agar
         // header [RUNTIME_STATE_HEADER] ikut ke konteks resume — tak hilang
@@ -1385,7 +1392,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
               totalTokens: resumeUsageSnapshot?.totalTokens ?? 0,
               cost: resumeUsageSnapshot?.totalCostUsd,
             }),
-            getTurnCount: () => prev.turnCount ?? 0,
+            getTurnCount: () => meta.turnCount ?? 0,
           }
           operationalState = collectOperationalState(
             sessionId,
@@ -1408,9 +1415,6 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         // decode seluruh presentation_events (dulu tarik ratusan ribu baris
         // hanya untuk menghitung revisi; kini COUNT(*) SQL, lihat audit perf).
         const revision = countDurableCompactionEvents(sessionId, cwd)
-        const rowsForSelector = await startupPhase("resume-history", async () =>
-          loadThreadHistoryWithSeq(sessionId, defaultThread.thread_id, cwd),
-        )
         // P3.4: proyeksi kanonik durable adalah sumber UTAMA untuk selector
         // (cakupan-valid: CURRENT atau STALE berjangkar utuh, P3.0 §8 D6),
         // sehingga `summary-plus-tail` menjadi perilaku produksi nyata.
@@ -1460,14 +1464,14 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         runtimeContextMetadata = runtimeMetadataFromSelection(selection, revision)
         if (selection.contextOnly) {
           contextOnlyArtifact = selection.contextOnly
-          contextCanonicalBaseline = prev.messages
+          contextCanonicalBaseline = rowsForSelector.map((r) => r.message)
         }
-        resumeTurnCount = prev.turnCount
+        resumeTurnCount = meta.turnCount
         startupConsoleError(
           c.dim(
             // "(N messages)" dipertahankan VERBATIM (kontrak diagnostik yang
             // sudah dipakai test/CLI).
-            `[resumed session ${sessionId} (${prev.messages.length} messages)]\n`,
+            `[resumed session ${sessionId} (${rowsForSelector.length} messages)]\n`,
           ),
         )
         // P3.3 — jejak provenance seleksi (baca-saja; tak mengubah perilaku).

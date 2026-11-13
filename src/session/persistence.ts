@@ -1575,6 +1575,46 @@ export function loadSession(
   }
 }
 
+/**
+ * Meta sesi TANPA decode histori pesan. Jalur resume hanya butuh turnCount/
+ * workMode/system/cwd; histori penuh dibaca SEKALI lewat `loadThreadHistoryWithSeq`.
+ * Memisahkan meta dari decode menutup bug perf: dulu resume memanggil `loadSession`
+ * (decode SEMUA messages) + `loadThreadHistoryWithSeq` (decode lagi) — dua kali
+ * JSON.parse seluruh histori.
+ */
+export function loadSessionMeta(
+  id: string,
+  cwd?: string,
+): {
+  system?: string
+  cwd?: string
+  turnCount: number
+  workMode?: "DISCUSS" | "PLAN" | "EXECUTE"
+} | null {
+  const db = open(cwd)
+  try {
+    const sess = db.prepare("SELECT system, cwd, work_mode FROM sessions WHERE id = ?").get(id) as {
+      system: string
+      cwd: string
+      work_mode: string | null
+    } | null
+    if (!sess) return null
+    const turnRow = db
+      .prepare("SELECT MAX(turn_idx) AS m FROM turns WHERE session_id = ?")
+      .get(id) as { m: number | null } | null
+    const turnCount = turnRow?.m != null ? turnRow.m + 1 : 0
+    const workMode = parseStoredWorkMode(sess.work_mode)
+    return {
+      system: sess.system,
+      cwd: sess.cwd,
+      turnCount,
+      ...(workMode ? { workMode } : {}),
+    }
+  } finally {
+    db.close()
+  }
+}
+
 // P2.4: baca histori SATU thread (ketat: tanpa NULL transisional).
 // Beda dari loadSession (kompatibel): di sini thread scope eksplisit.
 export function loadThreadHistory(sessionId: string, threadId: string, cwd?: string): unknown[] {

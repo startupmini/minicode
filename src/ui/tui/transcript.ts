@@ -786,7 +786,12 @@ export class Transcript {
     }
     // thinking/running aktif: bangun segar (jarang — hanya saat turn berjalan,
     // dan repaint-nya sudah dicoalesce 30ms, bukan per-keypress).
-    const rows: TranscriptRow[] = [...this.committedRows(w), ...this.pendingRows(w)]
+    // Urutan: committed (histori) → aktivitas turn berjalan (thinking/running/
+    // panel) → pending (jawaban streaming). Jawaban di EKOR agar jangkar di
+    // bawah saat following-tail: pertumbuhan activity mendorong HISTORI lama
+    // keluar, bukan menggeser jawaban yang sedang dibaca (keluhan "panel
+    // ngumpul di bawah / jawaban lompat-lompat").
+    const rows: TranscriptRow[] = [...this.committedRows(w)]
     if (!this.thinkingAreaMode() && this.thinkingTail) {
       for (const chunk of this.thinkingTail.split("\n")) {
         const chunkRows = chunk === "" ? [""] : wrapByWidth(chunk, w)
@@ -821,8 +826,10 @@ export class Transcript {
       })
     }
     // Panel aktivitas (Fase 2): baris grup tool terminal — tampil di bawah
-    // running, di atas transkrip. Hanya saat ada activity.
+    // running, di atas jawaban (pending). Hanya saat ada activity.
     rows.push(...panel)
+    // Jawaban streaming berada di ekor (di bawah semua activity turn berjalan).
+    rows.push(...this.pendingRows(w))
     return rows
   }
 

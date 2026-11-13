@@ -137,6 +137,7 @@ export const id: Record<MsgKey, string> = {
   "st.input": "  Masukan:  {v} (pemakaian provider)",
   "st.output": "  Keluaran: {v} (pemakaian provider)",
   "st.total": "  Total:    {v} (kumulatif sesi)",
+  "st.cache": "  Cache:    {read} hit · {write} tulis (prompt cache)",
   "st.cost": "  Biaya:    {v} (estimasi tabel harga)",
   "st.budget": "  Budget:   {v}{extra}",
   "st.costUnknown": " (biaya tak diketahui — model tanpa harga)",

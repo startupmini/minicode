@@ -134,6 +134,7 @@ export const en = {
   "st.input": "  Input:    {v} (provider usage)",
   "st.output": "  Output:   {v} (provider usage)",
   "st.total": "  Total:    {v} (session cumulative)",
+  "st.cache": "  Cache:    {read} hit · {write} write (prompt cache)",
   "st.cost": "  Cost:     {v} (estimated from price table)",
   "st.budget": "  Budget:   {v}{extra}",
   "st.costUnknown": " (cost unknown — model without pricing)",

@@ -238,6 +238,16 @@ function statusLines(ctx: CommandContext): string[] {
     t("st.output", { v: u.outputTokens.toLocaleString() }),
     t("st.total", { v: u.totalTokens.toLocaleString() }),
     t("st.cost", { v: u.cost != null ? formatUsd(u.cost) : "N/A" }),
+    // Fase 7 (pengukuran cache): tampilkan hit/read hanya bila ada aktivitas cache —
+    // baris nol-byte untuk sesi tanpa caching (clean & minimal).
+    ...((u.cacheReadTokens ?? 0) > 0 || (u.cacheWriteTokens ?? 0) > 0
+      ? [
+          t("st.cache", {
+            read: (u.cacheReadTokens ?? 0).toLocaleString(),
+            write: (u.cacheWriteTokens ?? 0).toLocaleString(),
+          }),
+        ]
+      : []),
     t("st.budget", {
       v: ctx.budgetState(),
       extra: u.cost == null ? t("st.costUnknown") : "",

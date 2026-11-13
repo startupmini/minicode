@@ -615,7 +615,7 @@ export function attachSimpleLogger(bus: UiBus, opts: SimpleOptions = {}): () => 
           const lines = renderActivityPanel(snap.activities, { maxRows: 10 })
           if (lines.length > 0) {
             wErr(c.muted(`${t("panel.header")}\n`))
-            for (const line of lines) wErr(c.muted(`${line}\n`))
+            for (const line of lines) wErr(`${line}\n`)
           }
         }
       }

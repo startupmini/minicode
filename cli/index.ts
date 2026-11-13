@@ -543,6 +543,15 @@ let setupBar: LoadingBar | null = null
 const setupBarPhases: Record<string, { pct: number; label: MsgKey }> = {
   "provider-layer": { pct: 55, label: "loading.provider" },
   "rag-layer": { pct: 75, label: "loading.rag" },
+  // Load-histori resume (paling lambat saat repo berhistori banyak) — sekarang
+  // ter-instrumentasi via startupPhase di cli/setup.ts sehingga bar TIDAK mandeg
+  // diam di 75% selama loadSession/history/projection/select/workspace. Nilai pct
+  // hampiran berurutan; di-tune setelah MINICODE_DEBUG_STARTUP=1 diukur di repo besar.
+  "resume-session": { pct: 78, label: "loading.session" },
+  "resume-history": { pct: 82, label: "loading.session" },
+  "resume-projection": { pct: 84, label: "loading.session" },
+  "resume-select": { pct: 86, label: "loading.session" },
+  "resume-workspace": { pct: 88, label: "loading.session" },
   "tool-layer": { pct: 90, label: "loading.session" },
   "kernel-session": { pct: 98, label: "loading.session" },
 }

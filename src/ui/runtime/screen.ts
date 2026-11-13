@@ -214,7 +214,9 @@ export function openAltScreen(): AltScreen {
       if (cursor) {
         const row = Math.max(1, Math.floor(cursor.row))
         const col = Math.max(1, Math.floor(cursor.col))
-        out += `\x1b[?25l\x1b[${row};${col}H\x1b[?25h`
+        // DECSCUSR `6 q` = bar tegak stabil (tak berkedip): caret tak menutupi
+        // karakter di bawahnya (blok penuh), dan lebih tenang = clean & minimal.
+        out += `\x1b[?25l\x1b[${row};${col}H\x1b[6 q\x1b[?25h`
       }
       out += SYNC_END
       process.stdout.write(out)
@@ -226,7 +228,7 @@ export function openAltScreen(): AltScreen {
       // Sync block + reset atribut: kursor tak boleh mewarisi warna run
       // sebelumnya, dan perpindahan kursor tak perlu menyentuh satu sel pun.
       process.stdout.write(
-        `${SYNC_START}${RESET_ATTRS}\x1b[?25l\x1b[${r};${c}H\x1b[?25h${SYNC_END}`,
+        `${SYNC_START}${RESET_ATTRS}\x1b[?25l\x1b[${r};${c}H\x1b[6 q\x1b[?25h${SYNC_END}`,
       )
     },
     paintRegion(lines: string[], topRow: number): void {

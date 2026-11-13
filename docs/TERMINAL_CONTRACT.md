@@ -197,6 +197,10 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
   fail-closed di non-TTY/`TERM=dumb`. Siklus hidup region: render yang
   menyusut/bergeser membersihkan union lama+baru (tanpa baris hantu); tutup
   menghapus region sendiri sebelum pemilik repaint.
+- `screen.ts` juga pemilik bentuk kursor: DECSCUSR `6 q` (bar tegak stabil)
+  dipancarkan saat caret ditampilkan (`paint`/`moveCursor`) — caret tak
+  menutupi karakter di bawahnya dan lebih tenang (clean & minimal). Tetap
+  TTY-only: non-TTY = 0 cursor control.
 - Isi popup: kotak terpusat (`dialog.ts`: border, judul opsional dalam garis
   atas, TANPA bayangan) di atas konten redup; `dialogBox` untuk komposit,
   `dialogFrame` (backdrop `░` faint) hanya untuk layar yang memiliki buffer

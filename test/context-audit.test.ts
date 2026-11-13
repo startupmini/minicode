@@ -365,6 +365,24 @@ test("audit: environment menyebut shell per platform (anti tebak ls/pwd)", async
   }
 })
 
+test("audit: direktif bahasa chat ikut lang (id/en), reasoning dibiarkan bebas", async () => {
+  // Bahasa chat dikunci ikut locale deterministik; reasoning/thinking SENGAJA
+  // tidak diberi direktif penahan (model bebas memilih bahasa yang efektif).
+  const dir = tmpRoot()
+  try {
+    const idSys = await buildSystemPrompt({ cwd: dir, lang: "id" })
+    expect(idSys).toContain("Selalu balas dalam bahasa Indonesia")
+    const enSys = await buildSystemPrompt({ cwd: dir, lang: "en" })
+    expect(enSys).toContain("Respond in English")
+    // Tanpa lang (test/bench lama) = tanpa direktif → perilaku tak berubah.
+    const noneSys = await buildSystemPrompt({ cwd: dir })
+    expect(noneSys).not.toContain("Selalu balas dalam bahasa Indonesia")
+    expect(noneSys).not.toContain("Respond in English")
+  } finally {
+    await cleanup(dir)
+  }
+})
+
 test("audit: summary bertahan save/load (resume merekonstruksi sama)", async () => {
   const dir = tmpRoot()
   try {

@@ -13,7 +13,7 @@ import {
 } from "../src/app/session.ts"
 import { setupToolLayer } from "../src/app/tool-layer.ts"
 import type { MinicodeConfig } from "../src/config.ts"
-import { loadLastModel, localConfigNotice } from "../src/config.ts"
+import { loadLang, loadLastModel, localConfigNotice } from "../src/config.ts"
 import { LIMITS } from "../src/constants.ts"
 import { runRunHooks, shouldRunHooks } from "../src/hooks/run.ts"
 import { homeDir } from "../src/lib/db-path.ts"
@@ -963,7 +963,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
   })
   const sessionId = identity.sid
   const bootId = identity.bootId
-  startupWrite(`${c.dim(formatSessionIdentityLine(identity))}\n`)
+  // Identitas sesi murni internal (sid/boot) — derau untuk user biasa. Cukup
+  // tampil saat --verbose; resume/--session sudah punya baris "resumed session …"
+  // yang human-friendly. Keputusan: clean + minimalis (masukan user).
+  if (verbose) startupWrite(`${c.dim(formatSessionIdentityLine(identity))}\n`)
 
   // P2.2 — admission penulis tunggal. Lease = admission; pagar mutasi =
   // writer_epoch (CAS di transaksi tulis). Komposisi ini MEMEGANG lease
@@ -985,9 +988,12 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       )
     }
   }
-  startupWrite(
-    `${c.dim(`[writer] admitted sid=${sessionId} boot=${bootId} epoch=${expectedEpoch}${admission.admission.tookOver ? " (takeover)" : ""}${admission.admission.fresh ? " (fresh)" : ""}\n`)}`,
-  )
+  // Lease berhasil = kabar baik internal, bukan info aksi. Hanya --verbose;
+  // kegagalan (STALE/lease-lost) tetap tampil karena bisa ditindaklanjuti.
+  if (verbose)
+    startupWrite(
+      `${c.dim(`[writer] admitted sid=${sessionId} boot=${bootId} epoch=${expectedEpoch}${admission.admission.tookOver ? " (takeover)" : ""}${admission.admission.fresh ? " (fresh)" : ""}\n`)}`,
+    )
   // [P14] Adopsi eksplisit berjalan SETELAH admission target (token target
   // sudah sah) dan SEBELUM turn pertama. Gagal = lepas lease target lalu
   // lempar error terklasifikasi; jangan pernah meninggalkan target terkunci
@@ -1360,7 +1366,7 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
       `${c.dim(`[thread sid=${sessionId} tid=${defaultThread.thread_id} head=${defaultThread.head_seq}${backfilled > 0 ? ` backfilled=${backfilled}` : ""}]\n`)}`,
     )
     try {
-      const prev = loadSession(sessionId, cwd)
+      const prev = await startupPhase("resume-session", async () => loadSession(sessionId, cwd))
       if (prev) {
         resumeUsageSnapshot = loadSessionUsageSummary(sessionId, cwd)
       }
@@ -1402,14 +1408,14 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         // selector hanya membuang ke budget-tail bila pesan sendiri tak muat.
         const durableEvents = loadPresentationEvents(sessionId, cwd)
         const revision = countDurableCompactions(durableEvents as readonly { type: string }[])
-        const rowsForSelector = loadThreadHistoryWithSeq(sessionId, defaultThread.thread_id, cwd)
+        const rowsForSelector = await startupPhase("resume-history", async () =>
+          loadThreadHistoryWithSeq(sessionId, defaultThread.thread_id, cwd),
+        )
         // P3.4: proyeksi kanonik durable adalah sumber UTAMA untuk selector
         // (cakupan-valid: CURRENT atau STALE berjangkar utuh, P3.0 §8 D6),
         // sehingga `summary-plus-tail` menjadi perilaku produksi nyata.
-        const durableProjection = readConsumableSummaryProjection(
-          sessionId,
-          cwd,
-          defaultThread.thread_id,
+        const durableProjection = await startupPhase("resume-projection", async () =>
+          readConsumableSummaryProjection(sessionId, cwd, defaultThread.thread_id),
         )
         const projectionSummary = durableProjection
         const selectedWindow = getContextWindowTokens()
@@ -1425,15 +1431,17 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
           rows: rowsToCanonicalRefs(selectorRows),
           revision,
         })
-        const selection = selectContext({
-          sessionId,
-          threadId: defaultThread.thread_id,
-          rows: selectorRows,
-          revision,
-          ...(projectionSummary ? { projection: projectionSummary } : {}),
-          policy: { budgetTokens: messageBudget, estimator: minicodeEstimator },
-          canonicalFrontier,
-        })
+        const selection = await startupPhase("resume-select", async () =>
+          selectContext({
+            sessionId,
+            threadId: defaultThread.thread_id,
+            rows: selectorRows,
+            revision,
+            ...(projectionSummary ? { projection: projectionSummary } : {}),
+            policy: { budgetTokens: messageBudget, estimator: minicodeEstimator },
+            canonicalFrontier,
+          }),
+        )
         initialMessages = selection.messages as readonly Message[]
         // [Fase 4 / LOOP-13, LOOP-INV-16] Simpan snapshot state operasional
         // deterministik untuk dijadikan header di SYSTEM prompt (buffer kedua):
@@ -1471,7 +1479,9 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         // P3 — validasi resume: bukan replay buta. Bila workspace berubah
         // sejak checkpoint terakhir (edit manual / run lain), beri tahu —
         // /undo tersedia bila perlu kembali. Best-effort, tak menggagalkan resume.
-        const div = await validateResumeWorkspace(cwd ?? ".", sessionId).catch(() => null)
+        const div = await startupPhase("resume-workspace", async () =>
+          validateResumeWorkspace(cwd ?? ".", sessionId).catch(() => null),
+        )
         if (div && div.diverged > 0) {
           startupConsoleError(
             c.yellow(
@@ -1957,11 +1967,20 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
     const v = opts.writeConcurrency
     return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined
   })()
+  // Bahasa chat model mengikuti locale UI secara deterministik. `configLocale`
+  // (state.json `lang`) biasanya baru dimuat di cli/tui.ts SETELAH sesi terbangun;
+  // di sini dimuat LEBIH AWAL agar direktif bahasa di system prompt ikut pilihan
+  // user yang tersimpan — bukan hanya env/OS. Resolusi tetap currentLocale()
+  // (sesi > MINICODE_LANG > state.json.lang > OS) — satu sumber kebenaran.
+  const { currentLocale, setConfigLocale } = await import("../src/ui/i18n/locale.ts")
+  setConfigLocale((await loadLang().catch(() => undefined)) ?? null)
+  const sessionLang = currentLocale()
   const session = await startupPhase("kernel-session", () =>
     createMinicodeSession({
       provider: router,
       tools: sessionTools,
       cwd,
+      lang: sessionLang,
       permissionMode,
       restrictBash,
       allowLocalConfig,

@@ -115,10 +115,7 @@ import {
   runtimeMetadataFromSelection,
 } from "../src/session/context-adapter.ts"
 import { type ContextOnlyArtifact, stripContextOnly } from "../src/session/context-assembly.ts"
-import {
-  countDurableCompactions,
-  deriveFrontierFromDurable,
-} from "../src/session/context-identity.ts"
+import { deriveFrontierFromDurable } from "../src/session/context-identity.ts"
 import {
   produceSummaryProjection,
   readConsumableSummaryProjection,
@@ -148,6 +145,7 @@ import {
   appendPresentationEvents,
   backfillHistoryEventIds,
   completeRun,
+  countDurableCompactionEvents,
   createRun,
   DEFAULT_THREAD_ID,
   ensureDefaultThread,
@@ -1406,8 +1404,10 @@ export async function createCliSession(opts: CliSessionOptions): Promise<CliSess
         // Batasi histori resume ke batas model, tanpa mengarang overhead.
         // Kernel menghitung system+tools aktual dan memadatkan sebelum request;
         // selector hanya membuang ke budget-tail bila pesan sendiri tak muat.
-        const durableEvents = loadPresentationEvents(sessionId, cwd)
-        const revision = countDurableCompactions(durableEvents as readonly { type: string }[])
+        // Hitung revisi kompaksi langsung dari kolom `type` — tanpa memuat +
+        // decode seluruh presentation_events (dulu tarik ratusan ribu baris
+        // hanya untuk menghitung revisi; kini COUNT(*) SQL, lihat audit perf).
+        const revision = countDurableCompactionEvents(sessionId, cwd)
         const rowsForSelector = await startupPhase("resume-history", async () =>
           loadThreadHistoryWithSeq(sessionId, defaultThread.thread_id, cwd),
         )

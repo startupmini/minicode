@@ -891,6 +891,24 @@ export function loadPresentationEvents(id: string, cwd?: string): DomainEvent[] 
   return loadPresentationEventsWithStats(id, cwd).events
 }
 
+/** Hitung event kompaksi durable langsung lewat kolom `type` (tanpa muat+decode
+ * seluruh presentation_events). Resume dulu menarik SEMUA baris hanya untuk
+ * menghitung revisi kompaksi; `type` sudah jadi kolom di schema, jadi COUNT(*)
+ * terindeks session_id jauh lebih murah daripada decode tiap payload. */
+export function countDurableCompactionEvents(sessionId: string, cwd?: string): number {
+  const db = open(cwd)
+  try {
+    const row = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM presentation_events WHERE session_id = ? AND type = 'context.compacted'",
+      )
+      .get(sessionId) as { n: number } | null
+    return row?.n ?? 0
+  } finally {
+    db.close()
+  }
+}
+
 // P2.12 — baca rentang untuk replay konsumen. WAJIB ada: `loadPresentationEvents`
 // memuat SELURUH riwayat ke memori, dan konsumen yang attach dengan offset lama
 // akan menarik seluruh sesi (ratusan ribu baris) hanya untuk 200 event terakhir

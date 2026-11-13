@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.23.0] - 2026-11-13
+
+### Added
+- **Prompt caching (Fase 7).** `cache_control: ephemeral` di system prompt,
+  pesan stabil terakhir, dan tool terakhir (Anthropic); ekstraksi token cache-hit
+  dari OpenAI-compat & Responses (`cached_tokens`/`prompt_tokens_details`/
+  `input_tokens_details`); metrik hit-rate di `/status` dan ringkasan sesi;
+  kill-switch `MINICODE_PROMPT_CACHE=0`.
+- **Bahasa chat ikut locale UI** (`id`/`en`) di system prompt; reasoning sengaja
+  dibiarkan bebas (tidak dipaksa).
+
+### Changed
+- **Perf resume:** hitung revisi kompaksi via SQL `COUNT` (bukan muat+decode
+  seluruh `presentation_events`); baca histori resume SEKALI (hapus decode ganda
+  `loadSession` + `loadThreadHistoryWithSeq`).
+
+### Fixed
+- Activity turn (thinking/panel/tool) kini tampil **di atas** jawaban streaming —
+  jawaban jangkar stabil, tak lagi "lompat"/numpuk di bawah.
+- Panel aktivitas diwarnai berdasar status (gagal merah/ditolak kuning) + penanda
+  `+N` nama tool terpotong.
+- Caret memakai DECSCUSR bar tegak stabil (tak menutupi karakter di bawahnya).
+- Diagnostik `[session sid=…]`/`[writer] admitted` hanya tampil saat `--verbose`.
+
 ## [0.22.0] - 2026-11-12
 
 ### Added

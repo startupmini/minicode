@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 import { createEventBus } from "#minicore/core/events.ts"
 import type { ToolSchema } from "#minicore/core/tool.ts"
 import type { Message } from "#minicore/core/types.ts"
+import { applyMicrocompact } from "../src/policy/microcompact.ts"
 import { createUsageCollector } from "../src/policy/usage.ts"
 import { toAnthropicMessages, toAnthropicTools } from "../src/providers/anthropic.ts"
 
@@ -68,4 +69,42 @@ test("Fase 7: cache_control hanya di tool terakhir (bukan bagian volatil)", () =
   // Penanda hanya pada tool terakhir: batas blok stabil, bukan pada item yang
   // bisa berubah urutannya tiap turn.
   expect(out[2]!.cache_control).toEqual({ type: "ephemeral" })
+})
+
+test("Fase 7: microcompact mempertahankan struktur pesan (boundary cache tetap valid)", () => {
+  // microcompact memangkas ISI (bukan menghapus pesan). Invariant "tanpa membuang
+  // pesan" memastikan penanda cache_control di pesan kedua-terakhir selalu menunjuk
+  // ke pesan yang ADA — jadi microcompact hanya membuat cache miss sesaat (isi berubah),
+  // bukan menghilangkan titik cache permanen. Ini kunci agar cache re-establish di
+  // turn berikut dan hit tidak selalu 0.
+  const messages: Message[] = [
+    { role: "user", content: "mulai" },
+    {
+      role: "assistant",
+      content: "langkah 1",
+      toolCalls: [{ id: "c1", name: "read_file", args: { path: "a" } }],
+    },
+    { role: "tool", toolCallId: "c1", name: "read_file", content: "x".repeat(40_000) },
+    {
+      role: "assistant",
+      content: "langkah 2",
+      toolCalls: [{ id: "c2", name: "grep", args: { pattern: "a" } }],
+    },
+    { role: "tool", toolCallId: "c2", name: "grep", content: "y".repeat(40_000) },
+    { role: "user", content: "lanjut" },
+  ]
+  const r = applyMicrocompact(messages, {
+    estimateTokens: (s) => Math.ceil(s.length / 4),
+    budgetTokens: 100_000,
+    keepRecent: 1,
+    minSavingTokens: 100,
+    minToolShare: 0.1,
+  })
+  // Struktur & jumlah pesan dipertahankan (isi yang dipangkas, bukan pesannya).
+  expect(r.messages.length).toBe(messages.length)
+  // toAnthropicMessages tetap menghasilkan role valid → penanda cache tak pernah
+  // menunjuk ke pesan yang hilang.
+  const anthropic = toAnthropicMessages(r.messages) as Array<{ role: string }>
+  expect(anthropic.length).toBeGreaterThanOrEqual(2)
+  for (const m of anthropic) expect(["user", "assistant"].includes(m.role)).toBe(true)
 })

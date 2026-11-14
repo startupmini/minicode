@@ -26,7 +26,7 @@ import {
 import { appendWrapped, shaveWrapped } from "../render/composer-wrap.ts"
 import { formatError } from "../render/errors.ts"
 import { sanitizeAnsi, sanitizeAnsiLine, stripSgr } from "../render/sanitize.ts"
-import { c } from "../render/theme.ts"
+import { c, scrimMode, scrimSgr } from "../render/theme.ts"
 import { chunkByWidth, displayWidth, escapeLength, truncateToWidth } from "../render/width.ts"
 import { motionReduced } from "../runtime/motion.ts"
 import { type AltScreen, forceRestoreScreenForSignal, openAltScreen } from "../runtime/screen.ts"
@@ -1036,18 +1036,22 @@ export class TuiApp {
   }
 
   /**
-   * Bungkus baris dengan mode redup (\x1b[2m) untuk backdrop popup.
-   * Reset (\x1b[0m atau \x1b[22m) dan bold (\x1b[1m) di dalam teks dinetralkan
-   * agar peredupan tidak bocor di tengah baris yang diwarnai.
+   * Bungkus baris dengan scrim latar netral bila tersedia. Reset SGR dalam
+   * konten dipulihkan ke keadaan scrim agar warna teks tak mematikan backdrop.
    */
   static applyBackdropDim(ln: string): string {
     if (!ln) return ""
+    const mode = scrimMode()
+    if (mode === "none") return ln
     const esc = String.fromCharCode(27)
-    let s = ln.replaceAll(`${esc}[1m`, "")
-    s = s.replaceAll(`${esc}[22m`, `${esc}[2m`)
-    s = s.replaceAll(`${esc}[0m`, `${esc}[0m${esc}[2m`)
-    s = s.replaceAll(`${esc}[m`, `${esc}[0m${esc}[2m`)
-    return `${esc}[2m${s}${esc}[22m${esc}[0m`
+    const scrim = scrimSgr(mode)
+    // Bold DIPETAKAN ke scrim (bukan dibuang) dan `[22m` memulihkan scrim,
+    // bukan meninggalkan teks normal (AUD-003).
+    let s = ln.replaceAll(`${esc}[1m`, scrim)
+    s = s.replaceAll(`${esc}[22m`, `${esc}[22m${scrim}`)
+    s = s.replaceAll(`${esc}[0m`, `${esc}[0m${scrim}`)
+    s = s.replaceAll(`${esc}[m`, `${esc}[0m${scrim}`)
+    return `${scrim}${s}${esc}[22m${esc}[0m`
   }
 
   /** Layar redup sebagai backdrop popup: frame normal dibungkus faint. */

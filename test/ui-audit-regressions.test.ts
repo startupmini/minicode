@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { appendHistory, loadHistory } from "../src/ui/input/input.ts"
 import { countLogicalLines, cursorLineIndex } from "../src/ui/input/prompt-engine.ts"
 import { TuiApp } from "../src/ui/tui/app.ts"
+import { installFakeTty } from "./helpers/tui-harness.ts"
 
 describe("audit regresi UI/UX: input history & MINICODE_HOME", () => {
   let tempDir: string
@@ -68,14 +69,40 @@ describe("audit regresi UI/UX: wizard exit message handling", () => {
 })
 
 describe("audit regresi UI/UX: backdrop dimming & multi-line helpers", () => {
+  // scrimMode() bergantung pada TTY + level warna. Tanpa TTY palsu, scrim = none
+  // dan kedua test di bawah tak menguji apa pun (lulus semu). Fake TTY wajib.
+  let tty: ReturnType<typeof installFakeTty> | undefined
+  beforeEach(() => {
+    tty = installFakeTty({ columns: 80, rows: 24 })
+  })
+  afterEach(() => {
+    tty?.restore()
+    tty = undefined
+  })
+
   test("TuiApp.applyBackdropDim menetralisir reset ANSI dan bold", () => {
     const colored = "\x1b[1m\x1b[32mhello\x1b[0m world\x1b[22m"
     const dimmed = TuiApp.applyBackdropDim(colored)
+    // Bold DINETRALKAN (dipetakan ke atribut scrim), bukan dibuang: dibuang
+    // membuat teks bold-only kehilangan penekanan (AUD-003).
     expect(dimmed).not.toContain("\x1b[1m")
-    expect(dimmed).toContain("\x1b[0m\x1b[2m")
     expect(dimmed).toContain("hello")
     expect(dimmed).toContain("world")
     expect(TuiApp.applyBackdropDim("")).toBe("")
+  })
+
+  test("applyBackdropDim: `[22m` (kembali normal) TIDAK meninggalkan teks normal", () => {
+    // Regresi AUD-003: dulu `A[1m...[22mB` membuat B jadi normal di atas
+    // backdrop, membuka lubang terang. Sekarang setiap reset memulihkan scrim.
+    const dimmed = TuiApp.applyBackdropDim("A\x1b[1mB\x1b[22mC")
+    // C harus berada SESUDAH pemulihan scrim (bukan sekadar `[22m` telanjang).
+    // Lint menolak kontrol karakter di regex, jadi bandingkan potongan string:
+    // 12 karakter sebelum "C" harus berupa sekuens SGR scrim yang baru dibuka.
+    const i = dimmed.lastIndexOf("C")
+    const before = dimmed.slice(0, i)
+    expect(before.endsWith("m")).toBe(true)
+    expect(before.includes("\x1b[22m")).toBe(true)
+    expect(before.lastIndexOf("\x1b[22m")).toBeGreaterThan(before.lastIndexOf("\x1b[1m"))
   })
 
   test("countLogicalLines dan cursorLineIndex mengukur baris multi-line dengan benar", () => {

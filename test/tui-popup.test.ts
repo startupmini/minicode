@@ -2,7 +2,7 @@
 // terlihat (redup) — BUKAN layar hitam + kotak. Gagal-di-kode-lama: view
 // yang melukis frame penuh (paint + clear) menghapus transkrip di belakang.
 import { afterEach, describe, expect, test } from "bun:test"
-import { stripAnsi } from "../src/ui/render/theme.ts"
+import { stripAnsi, supportsUtf8 } from "../src/ui/render/theme.ts"
 import { runPicker } from "../src/ui/screens/picker.ts"
 import { TuiApp, type TuiHost } from "../src/ui/tui/app.ts"
 import { Transcript } from "../src/ui/tui/transcript.ts"
@@ -71,7 +71,9 @@ describe("popup komposit", () => {
     // KEDUANYA tampil dalam satu frame: isi transkrip + kotak popup.
     expect(frame).toContain("halo dunia")
     expect(frame).toContain("model-alpha")
-    expect(frame).toContain("┌")
+    // Sudut kotak: MELENGKUNG secara default (I20 v7.14), lancip hanya dengan
+    // MINICODE_BOX=square, ASCII dengan MINICODE_ASCII=1/MINICODE_BOX=ascii.
+    expect(frame).toContain(supportsUtf8() ? "╭" : "+")
     // Popup TIDAK me-clear layar (transkrip di belakang selamat).
     const afterSuspend = tty!.all().split("\x1b[2m").pop() ?? ""
     expect(afterSuspend).not.toContain("\x1b[2J")

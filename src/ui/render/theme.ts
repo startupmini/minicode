@@ -47,10 +47,35 @@ function colorLevel(): number {
   // Determinisme Unix: output ke pipe/redirect/file tidak boleh memuat ANSI,
   // apa pun TERM/COLORTERM di env (env sesi interaktif sering bocor ke proses
   // yang di-pipe). Warna hanya untuk stdout yang benar-benar terminal.
-  if (!process.stdout.isTTY) return 0
+  if (!process.stdout.isTTY || process.env.TERM?.toLowerCase() === "dumb") return 0
   if (hasTruecolorEnv()) return 3
   if (process.env.TERM?.includes("256color")) return 2
+  // Terminal/ConPTY sering tak mengisi TERM; env eksplisit di atas tetap menang.
+  try {
+    const depth = (
+      process.stdout as NodeJS.WriteStream & { getColorDepth?: () => number }
+    ).getColorDepth?.()
+    if (depth != null && depth >= 24) return 3
+    if (depth != null && depth >= 8) return 2
+  } catch {}
   return 1
+}
+
+export type ScrimMode = "bg" | "faint" | "none"
+
+/** Mode scrim (lazy); tak menambah byte di pipe. */
+export function scrimMode(): ScrimMode {
+  if (noColorEnv() || !process.stdout.isTTY || process.env.TERM?.toLowerCase() === "dumb")
+    return "none"
+  if (process.env.MINICODE_SCRIM === "none") return "faint"
+  return colorLevel() >= 2 ? "bg" : colorLevel() === 1 ? "faint" : "none"
+}
+
+/** SGR pembuka scrim; pemanggil menjaga efek tetap hidup melewati reset konten. */
+export function scrimSgr(mode: ScrimMode): string {
+  if (mode === "bg") return "\x1b[2;48;5;236m"
+  if (mode === "faint") return "\x1b[2m"
+  return ""
 }
 
 /**

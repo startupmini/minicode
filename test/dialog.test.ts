@@ -4,18 +4,31 @@
 import { expect, test } from "bun:test"
 import { stripAnsi, supportsUtf8 } from "../src/ui/render/theme.ts"
 import { displayWidth } from "../src/ui/render/width.ts"
-import { dialogBox, dialogFrame } from "../src/ui/screens/dialog.ts"
+import { dialogBox } from "../src/ui/screens/dialog.ts"
+
+// `dialogFrame` (backdrop selayar + kotak) dihapus sebagai kode mati (AUD-004);
+// produksi memakai `dialogBox` + `paintRegion`. Shorthand ini menjaga asersi
+// geometri test tetap terbaca.
+const frame = (spec: Parameters<typeof dialogBox>[0], cols: number, rows: number) =>
+  dialogBox(spec, cols, rows).lines
 
 const plain = (lines: string[]) => lines.map((l) => stripAnsi(l))
 const textOf = (out: string[]) => plain(out).join("\n")
 
 // Glyph bingkai mengikuti kapabilitas terminal (dialog.ts `boxChars()`):
-// Linux/CI & terminal UTF-8 → Unicode, konsol Windows legacy / MINICODE_ASCII=1
-// → ASCII. Test mengunci STRUKTUR (jumlah baris, geometri, marker truncate) dan
-// memilih glyph sesuai kapabilitas — hardcode Unicode dulu membuat test merah di
-// konsol Windows nyata tanpa ada regresi kode (asumsi lingkungan test).
+// Linux/CI & terminal UTF-8 → sudut MELENGKUNG (default ON, v7.14), kill-switch
+// `MINICODE_BOX=square|ascii` untuk kembali lancip/ASCII. Test mengunci
+// STRUKTUR (jumlah baris, geometri, marker truncate) dan memilih glyph sesuai
+// kapabilitas — hardcode Unicode dulu membuat test merah di konsol Windows nyata
+// tanpa ada regresi kode (asumsi lingkungan test).
 const U8 = supportsUtf8()
-const BOX = U8 ? { tl: "┌", bl: "└" } : { tl: "+", bl: "+" }
+const BOX_STYLE = (process.env.MINICODE_BOX ?? "").toLowerCase()
+const BOX =
+  !U8 || process.env.MINICODE_ASCII === "1" || BOX_STYLE === "ascii"
+    ? { tl: "+", bl: "+" }
+    : BOX_STYLE === "square"
+      ? { tl: "┌", bl: "└" }
+      : { tl: "╭", bl: "╰" }
 const SHADE = U8 ? "░" : "."
 
 // Baris border BAWAH = kemunculan TERAKHIR glyph sudut bawah. Di mode ASCII
@@ -24,27 +37,26 @@ const SHADE = U8 ? "░" : "."
 const lastIdx = (lines: string[], glyph: string) =>
   lines.map((l) => l.includes(glyph)).lastIndexOf(true)
 
-test("frame tepat rows baris, judul + isi + footer muat", () => {
-  const out = dialogFrame({ title: "Models", body: ["a", "b"], footer: "Esc close" }, 80, 24)
-  expect(out).toHaveLength(24)
-  const text = plain(out).join("\n")
+test("kotak memuat judul + isi + footer", () => {
+  const out = frame({ title: "Models", body: ["a", "b"], footer: "Esc close" }, 80, 24)
+  const text = textOf(out)
   expect(text).toContain("Models")
   expect(text).toContain("a")
   expect(text).toContain("Esc close")
-  for (const l of out) expect(displayWidth(stripAnsi(l))).toBeLessThanOrEqual(80)
 })
 
 test("konten CJK/emoji dipotong per kolom, SGR/surrogate utuh", () => {
-  const out = dialogFrame({ title: "T", body: ["字".repeat(100), "ok"] }, 40, 12)
-  expect(out).toHaveLength(12)
+  const out = frame({ title: "T", body: ["字".repeat(100), "ok"] }, 40, 12)
+  expect(out.length).toBeGreaterThan(0)
   for (const l of out) expect(displayWidth(stripAnsi(l))).toBeLessThanOrEqual(40)
   expect(plain(out).join("\n")).toContain("ok")
 })
 
 test("isi melebihi layar dipotong defensif + marker", () => {
   const body = Array.from({ length: 100 }, (_, i) => `baris-${i}`)
-  const out = dialogFrame({ title: "T", body, footer: "f" }, 60, 12)
-  expect(out).toHaveLength(12)
+  const out = frame({ title: "T", body, footer: "f" }, 60, 12)
+  // Tinggi kotak dibatasi `rows`, bukan dipaksa sama dengan `rows`.
+  expect(out.length).toBeLessThanOrEqual(12)
   // 100 isi vs jatah 12-4(chrome)-1(marker)=7 → 93 terpotong, marker tampil.
   // Border bawah tetap ada (regresi: dulu total r0+1 hingga border terbuang).
   expect(plain(out).join("\n")).toContain("93")
@@ -55,7 +67,7 @@ test("fallback ASCII tanpa MINICODE_ASCII tak ada glyph box", () => {
   const prev = process.env.MINICODE_ASCII
   process.env.MINICODE_ASCII = "1"
   try {
-    const out = dialogFrame({ title: "T", body: ["x"], footer: "f" }, 40, 10)
+    const out = frame({ title: "T", body: ["x"], footer: "f" }, 40, 10)
     const text = plain(out).join("\n")
     expect(text).not.toContain("┌")
     expect(text).not.toContain("─")
@@ -67,14 +79,14 @@ test("fallback ASCII tanpa MINICODE_ASCII tak ada glyph box", () => {
   }
 })
 
-test("terminal mini tak melempar, tetap rows baris", () => {
-  const out = dialogFrame({ title: "T".repeat(200), body: ["x".repeat(200)] }, 10, 5)
-  expect(out).toHaveLength(5)
+test("terminal mini tak melempar, kotak tetap utuh", () => {
+  const out = frame({ title: "T".repeat(200), body: ["x".repeat(200)] }, 10, 5)
+  expect(out.length).toBeGreaterThanOrEqual(2)
 })
 
 test("judul kosong = tanpa baris judul (chrome menyesuaikan)", () => {
-  const withTitle = dialogFrame({ title: "T", body: ["a", "b"] }, 40, 12)
-  const noTitle = dialogFrame({ title: "", body: ["a", "b"] }, 40, 12)
+  const withTitle = frame({ title: "T", body: ["a", "b"] }, 40, 12)
+  const noTitle = frame({ title: "", body: ["a", "b"] }, 40, 12)
   expect(textOf(withTitle)).toContain("T")
   expect(textOf(noTitle)).not.toContain("T")
   // Tinggi kotak = indeks border bawah − border atas + 1 (border ┌┘ tak
@@ -84,12 +96,11 @@ test("judul kosong = tanpa baris judul (chrome menyesuaikan)", () => {
     return lastIdx(p, BOX.bl) - p.findIndex((l) => l.includes(BOX.tl)) + 1
   }
   expect(boxH(noTitle)).toBe(boxH(withTitle) - 1)
-  expect(noTitle).toHaveLength(12)
 })
 
 test("maxWidth/maxHeight mengecilkan kotak (dialog mungil)", () => {
-  const out = dialogFrame({ title: "", body: ["a", "b", "c"], maxWidth: 30, maxHeight: 8 }, 100, 24)
-  expect(out).toHaveLength(24)
+  const out = frame({ title: "", body: ["a", "b", "c"], maxWidth: 30, maxHeight: 8 }, 100, 24)
+  expect(out.length).toBeLessThanOrEqual(8)
   const p = textOf(out).split("\n")
   const top = p.findIndex((l) => l.includes(BOX.tl))
   const bottom = lastIdx(p, BOX.bl)
@@ -115,15 +126,11 @@ test("dialogBox: kotak saja tanpa backdrop + tanpa bayangan (popup komposit)", (
   for (const l of box.lines) expect(displayWidth(stripAnsi(l))).toBeLessThanOrEqual(80)
 })
 
-test("dialogFrame: backdrop redup ░ bukan hitam polos", () => {
-  const out = dialogFrame({ title: "", body: ["x"], maxWidth: 20, maxHeight: 6 }, 40, 12)
-  expect(out).toHaveLength(12)
-  const p = textOf(out).split("\n")
-  // Baris backdrop (di luar kotak) berisi pola shade, bukan kosong.
-  const top = p.findIndex((l) => l.includes(BOX.tl))
-  expect(top).toBeGreaterThan(0)
-  expect(p[0]).toContain(SHADE)
-  expect(p[p.length - 1]).toContain(SHADE)
+test("dialogBox tanpa backdrop: tak ada baris di luar kotak", () => {
+  const box = dialogBox({ title: "", body: ["x"], maxWidth: 20, maxHeight: 6 }, 40, 12)
+  // Popup komposit melukis HANYA region kotak; latar = transkrip App.
+  expect(box.lines.length).toBeLessThan(12)
+  for (const l of box.lines) expect(l).not.toContain(SHADE)
 })
 
 test("minWidth: kotak tak pernah lebih sempit dari minimum (geometri stabil)", () => {

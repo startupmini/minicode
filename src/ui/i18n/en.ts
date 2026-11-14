@@ -25,6 +25,7 @@ export const en = {
   "appr.decAllow": "allow",
   "appr.decAlways": "always",
   "appr.decDeny": "deny",
+  "appr.keyHint": "↑↓ move · Enter pick · Esc cancel",
   "appr.askTitle": "Agent asks",
   "appr.a11y": "[approval required: {name}]",
   "appr.answerPrompt": "Your answer (empty = cancel): ",

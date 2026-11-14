@@ -14,7 +14,7 @@ import { cleanUntrusted, sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, glyphs, stripAnsi } from "../render/theme.ts"
 import { truncateToWidth } from "../render/width.ts"
 import { type AltScreen, openAltScreen } from "../runtime/screen.ts"
-import { boxLeftPad, dialogBox } from "./dialog.ts"
+import { boxLeftPad, dialogBox, popupBoxWidth } from "./dialog.ts"
 import { runForm, validateRequired, validateUrl } from "./form.ts"
 import { createIdleTimer } from "./lifecycle.ts"
 import { runPicker } from "./picker.ts"
@@ -23,10 +23,8 @@ import { withTimeout } from "./watchdog.ts"
 const dim = (s: string): string => c.dim(s)
 
 /** Lebar tetap popup provider setelah daftar diringkas ke nama provider. */
-/** Lebar kotak dialog /providers: TETAP 64 kolom — paritas picker/model/wizard
- * (audit B3: 52 terlalu sempit; nama provider/ID panjang + baris hint aksi
- * terpotong). Geometri tetap (min=max), tak pernah melompat mengikuti konten. */
-const PROVIDER_BOX_W = 64
+/** Lebar kotak /providers: `popupBoxWidth` — paritas picker/model/form (AUD-006). */
+const providerBoxWidth = (): number => popupBoxWidth(process.stdout.columns || 80)
 
 export interface ProviderRow {
   id: string
@@ -102,10 +100,9 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
       const fixed = 3 + (notice ? 1 : 0)
       return Math.max(1, Math.min(rows - fixed, 14))
     }
-    // Lebar konten = lebar kotak TETAP (min=max, paritas picker/model) —
-    // dikurangi chrome dialog (lihat picker.ts).
-    const width = () =>
-      Math.max(8, Math.min((process.stdout.columns || 80) - 2 - 4, PROVIDER_BOX_W - 4))
+    // Lebar konten = lebar kotak (dibekukan saat mount) dikurangi chrome
+    // dialog (lihat picker.ts).
+    const width = () => Math.max(8, providerBoxWidth() - 4)
 
     // Isi popup ringkas: nama provider dan hasil aksi sementara.
     const bodyLines = (): string[] => {
@@ -151,14 +148,13 @@ export async function runProviderManagerView(opts: ProviderManagerViewOptions): 
 
     const render = () => {
       // Popup komposit: HANYA region kotak (tanpa clear) di atas konten
-      // pemilik layar. Lebar TETAP 64 (min=max, paritas picker/model) —
-      // tak pernah melompat mengikuti konten.
+      // Lebar beku (min=max, paritas picker/model).
       const box = dialogBox(
         {
           title: "",
           body: bodyLines(),
-          minWidth: PROVIDER_BOX_W,
-          maxWidth: PROVIDER_BOX_W,
+          minWidth: providerBoxWidth(),
+          maxWidth: providerBoxWidth(),
         },
         screen.cols,
         screen.rows,

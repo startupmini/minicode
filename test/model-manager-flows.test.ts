@@ -13,9 +13,21 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { runModelManager } from "../cli/model-manager.ts"
-import { stripAnsi } from "../src/ui/render/theme.ts"
+import { stripAnsi, supportsUtf8 } from "../src/ui/render/theme.ts"
 import { displayWidth } from "../src/ui/render/width.ts"
+import { popupBoxWidth } from "../src/ui/screens/dialog.ts"
 import { type FakeTty, installFakeTty, KEY } from "./helpers/tui-harness.ts"
+
+// Sudut kotak mengikuti kapabilitas/kill-switch (dialog.ts boxChars()):
+// melengkung default, lancip dengan MINICODE_BOX=square, ASCII dengan
+// MINICODE_ASCII=1 / MINICODE_BOX=ascii.
+const BOX_STYLE = (process.env.MINICODE_BOX ?? "").toLowerCase()
+const BOX_TL =
+  !supportsUtf8() || process.env.MINICODE_ASCII === "1" || BOX_STYLE === "ascii"
+    ? "+"
+    : BOX_STYLE === "square"
+      ? "┌"
+      : "╭"
 
 const globalPath = join(homedir(), ".minicode", "config.json")
 const globalBak = `${globalPath}.bak-model-manager-test`
@@ -84,31 +96,34 @@ describe("model-manager: non-TTY", () => {
 })
 
 describe("model-manager: alur interactive", () => {
-  test("lebar kotak TETAP 64 saat navigasi/filter/effort (tak melompat)", async () => {
+  test("lebar kotak BEKU saat navigasi/filter/effort (tak melompat)", async () => {
+    // I20 v7.14: lebar diskalakan dari layar lewat popupBoxWidth dan dibekukan
+    // saat mount. Di 100 kolom nilainya 60 (dulu angka tetap 64).
     tty = installFakeTty({ columns: 100, rows: 24 })
     const p = runModelManager({ cwd: workspace, currentModel: "prov::m1" })
     await tty.ready()
+    const expected = popupBoxWidth(100)
     const boxW = () => {
-      const top = tty!.screen().find((l) => l.includes("┌")) ?? ""
+      const top = tty!.screen().find((l) => l.includes(BOX_TL)) ?? ""
       return displayWidth(top.trimStart())
     }
-    expect(boxW()).toBe(64)
+    expect(boxW()).toBe(expected)
     // Navigasi: seleksi pindah, geometri diam.
     await tty.send(KEY.down)
-    expect(boxW()).toBe(64)
+    expect(boxW()).toBe(expected)
     await tty.send(KEY.down) // cap::o3-mini
-    expect(boxW()).toBe(64)
+    expect(boxW()).toBe(expected)
     // Effort picker (kotak lain) dibuka via Tab lalu dibatalkan → kembali 64.
     await tty.send(KEY.tab, 30)
     await tty.waitForOutput((o) => o.includes("default"), 2000)
     await tty.send(KEY.esc, 80)
     await tty.waitForOutput((o) => o.includes("prov::m1"), 2000)
-    expect(boxW()).toBe(64)
+    expect(boxW()).toBe(expected)
     // Filter menyusutkan daftar → lebar tetap.
     await tty.send("cap")
-    expect(boxW()).toBe(64)
+    expect(boxW()).toBe(expected)
     await tty.send(KEY.esc, 80) // keluar filter
-    expect(boxW()).toBe(64)
+    expect(boxW()).toBe(expected)
     await tty.send(KEY.esc, 30) // tutup manager
     await p
   }, 8000)
@@ -120,7 +135,7 @@ describe("model-manager: alur interactive", () => {
     const p = runModelManager({ cwd: workspace, currentModel: "prov::m1" })
     await tty.ready()
     const frame = tty.screen()
-    const top0 = frame.findIndex((l) => l.includes("┌"))
+    const top0 = frame.findIndex((l) => l.includes(BOX_TL))
     const srow = frame[top0 + 1] ?? ""
     const m = /^ */.exec(srow)
     const leftPad = m ? m[0].length : 0

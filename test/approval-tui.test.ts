@@ -193,3 +193,88 @@ describe("approval sink TUI", () => {
     expect(cleared).toBe(1)
   })
 })
+
+describe("approval: navigasi daftar opsi (AUD-005, kontrak I25)", () => {
+  // I25 mewajibkan `↑↓`/home/end di SEMUA permukaan berdaftar. Sebelumnya tiga
+  // opsi approval hanya bisa DIKETIK (y/a/n) walau tampil sebagai daftar.
+  const setupSink = () => {
+    const paints: string[] = []
+    setApprovalSink({
+      pushBlock: () => {},
+      repaint: () => {},
+      suspend: () => {},
+      resume: () => {},
+      paintRegion: (lines) => paints.push(lines.join("\n")),
+      clearRegion: () => {},
+    })
+    return paints
+  }
+
+  test("↓ memilih Always, ↑ kembali ke Allow", async () => {
+    tty = installFakeTty({ columns: 100, rows: 24 })
+    const paints = setupSink()
+    const p = promptAsk({ name: "bash", args: { command: "ls" }, canAlways: true })
+    await tty.ready()
+    // Sorotan awal di opsi pertama (allow).
+    expect(stripAnsi(paints.at(-1) ?? "")).toContain("Allow once")
+    await tty.send(KEY.down)
+    await tty.send(KEY.enter)
+    expect(await p).toBe("always")
+  })
+
+  test("End memilih opsi terakhir (Deny) lalu Enter", async () => {
+    tty = installFakeTty({ columns: 100, rows: 24 })
+    setupSink()
+    const p = promptAsk({ name: "bash", args: { command: "ls" }, canAlways: true })
+    await tty.ready()
+    await tty.send(KEY.end)
+    await tty.send(KEY.enter)
+    expect(await p).toBe("deny")
+  })
+
+  test("tanpa canAlways daftar hanya dua opsi; End = deny, bukan always", async () => {
+    tty = installFakeTty({ columns: 100, rows: 24 })
+    const paints = setupSink()
+    const p = promptAsk({ name: "bash", args: { command: "ls" }, canAlways: false })
+    await tty.ready()
+    // Opsi Always tidak boleh muncul sama sekali.
+    expect(stripAnsi(paints.at(-1) ?? "")).not.toContain("Always")
+    await tty.send(KEY.end)
+    await tty.send(KEY.enter)
+    expect(await p).toBe("deny")
+  })
+
+  test("klik-cepat tetap bekerja: `a` langsung selalu-izinkan", async () => {
+    tty = installFakeTty({ columns: 100, rows: 24 })
+    setupSink()
+    const p = promptAsk({ name: "bash", args: { command: "ls" }, canAlways: true })
+    await tty.ready()
+    await tty.send("a")
+    expect(await p).toBe("always")
+  })
+
+  test("`s` (selalu) memilih Always, `t` (tidak) memilih Deny", async () => {
+    tty = installFakeTty({ columns: 100, rows: 24 })
+    setupSink()
+    const p1 = promptAsk({ name: "bash", args: { command: "ls" }, canAlways: true })
+    await tty.ready()
+    await tty.send("s")
+    expect(await p1).toBe("always")
+    tty.restore()
+    tty = installFakeTty({ columns: 100, rows: 24 })
+    setupSink()
+    const p2 = promptAsk({ name: "bash", args: { command: "ls" }, canAlways: true })
+    await tty.ready()
+    await tty.send("t")
+    expect(await p2).toBe("deny")
+  })
+
+  test("Esc = deny (batal hanya tool ini, bukan abort turn)", async () => {
+    tty = installFakeTty({ columns: 100, rows: 24 })
+    setupSink()
+    const p = promptAsk({ name: "bash", args: { command: "ls" }, canAlways: true })
+    await tty.ready()
+    await tty.send(KEY.esc)
+    expect(await p).toBe("deny")
+  })
+})

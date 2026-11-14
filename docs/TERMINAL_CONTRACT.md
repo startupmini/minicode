@@ -1,4 +1,35 @@
-# Kontrak Terminal MiniCode (TUI fullscreen — v7.13, 2026-11-13)
+# Kontrak Terminal MiniCode (TUI fullscreen — v7.14, 2026-11-14)
+
+Perubahan v7.14: **geometri & dekorasi popup diseragamkan** (audit Surface
+Popup, `AUD-001..AUD-011`). Empat perubahan tampak-pengguna:
+
+1. **Lebar kotak popup diskalakan, bukan angka tetap.** `popupBoxWidth(cols) =
+   min(max(40, min(88, floor(cols*0.6))), cols-4)` — dihitung saat *mount* lalu
+   **dibekukan** (min=max) agar geometri stabil, tetapi menyesuaikan terminal
+   tiap mount. I20 diperbarui. Margin 4 kolom **selalu menang** atas lantai
+   40 (AUD-011).
+2. **Sudut kotak MELENGKUNG (`╭ ╮ ╰ ╯`) default.** Kill-switch:
+   `MINICODE_BOX=square` (`┌┐└┘`), `MINICODE_BOX=ascii`/`MINICODE_ASCII=1`
+   (`+-|`). Dibaca lazy tiap render.
+3. **Backdrop popup = scrim tiga tingkat** (`scrimMode()`):
+   `bg` = dim **+ latar `48;5;236`** (≥256 warna), `faint` = `\x1b[2m` saja
+   (16 warna), `none` = nol byte (mono/non-TTY/`TERM=dumb`). Reset SGR
+   dalam konten **memulihkan** scrim; bold **dinetralkan** ke scrim.
+4. **Kotak approval memakai lebar popup seragam**, bukan selebar layar
+   (AUD-007). Opsinya **navigasi daftar**: `↑↓`/`Home`/`End` + `Enter`,
+   `Esc` = deny. Ketik-cepat `y`/`a`/`n` (+ sinonim `ya`/`selalu`/`s`/`tidak`/
+   `t`) tetap berfungsi — I25 menuntut navigasi daftar, bukan dua langkah wajib.
+
+`MINICODE_SCRIM=none` memaksa `faint` untuk diagnostik. Level warna juga
+memakai `process.stdout.getColorDepth()` sesudah env (`COLORTERM`/`TERM`) agar
+Windows Terminal/ConPTY yang tak mengisi `TERM` tetap dapat 256 warna/truecolor
+(AUD-002). Non-TTY **tidak berubah**: 0 warna, 0 scrim, 0 byte (I6).
+
+Peta proteksi baru: `test/surface-audit-regressions.test.ts` (AUD-007/008/010/011),
+`test/dialog.test.ts` (glyph melengkung + kill-switch + geometri skala),
+`test/tui-geometry.test.ts` (lebar beku per mount, bukan 64 tetap),
+`test/ui-audit-regressions.test.ts` (AUD-003: bold dinetralkan, `[22m`
+memulihkan scrim — diuji dengan TTY palsu agar `scrimMode() != none`).
 
 Perubahan v7.13: baris status kompaksi (`context:compacted`) kini **membedakan
 hasil** alih-alih mencetak `reason` mentah. Sebelumnya sesi yang konteksnya TIDAK
@@ -374,9 +405,18 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     berkas histori lama). `/copy [n]` menyalin 1–10 turn terakhir (default 1,
     oldest-to-newest) melalui OSC 52.
 19. Dropdown `/` inline berbingkai; Enter pada menu melengkapi + kirim.
-20. Lebar kotak popup TETAP per permukaan (model 64, picker 64, provider 64,
-    form 64 — min=max); nama/ID di depan label; seleksi murni warna; search
-    selalu tampil.
+20. Lebar kotak popup **diskalakan dari lebar layar dan DIBEKUKAN saat mount**:
+    `popupBoxWidth(cols) = min(max(40, min(88, floor(cols*0.6))), cols-4)`
+    (v7.14 — dulu angka tetap 64 untuk model/picker/provider/form). Semua
+    permukaan popup (picker, model, provider, form, wizard, **approval**) memakai
+    fungsi yang SAMA — tak ada permukaan yang memakai lebar layar penuh seperti
+    approval sebelum v7.14 (AUD-007). Nilai dihitung sekali per mount lalu
+    dikirim sebagai `minWidth == maxWidth` sehingga kotak tak "bernapas" selama
+    popup terbuka, tetapi tiap mount menyesuaikan terminal. Margin 4 kolom
+    SELALU menang atas lantai 40 (terminal < 44 kolom tidak overflow, AUD-011).
+    Sudut kotak MELENGKUNG `╭ ╮ ╰ ╯` secara default; `MINICODE_BOX=square`
+    mengembalikan lancip, `MINICODE_BOX=ascii`/`MINICODE_ASCII=1` ke ASCII.
+    Nama/ID di depan label; seleksi murni warna; search selalu tampil.
 21. Form dalam popup: semua input teks/pilihan di dalam kotak (text/secret/
      select/confirm + validasi inline + kursor diparkir); tak ada ketikan di
      luar kotak. Esc dua-tahap: tekan-1 KEMBALIKAN nilai bawaan field

@@ -11,6 +11,19 @@ import type { ApprovalEventHook, ApprovalHookEvent } from "../presentation/event
 
 export type AskTextFn = (question: string, options?: string[]) => Promise<string | null>
 
+/**
+ * Potong tanpa membelah pasangan surrogate: `slice` mentah menyisakan surrogate
+ * tinggi yatim → U+FFFD (AUD-010). Lapisan tool tak boleh impor src/ui.
+ */
+function sliceSafeChars(s: string, max: number): string {
+  if (s.length <= max) return s
+  let end = max
+  const code = s.charCodeAt(end - 1)
+  // Surrogate tinggi di posisi terakhir = pasangannya ikut terpotong; mundur 1.
+  if (code >= 0xd800 && code <= 0xdbff) end -= 1
+  return s.slice(0, Math.max(0, end))
+}
+
 let askTextFn: AskTextFn | undefined
 
 export function setAskTextFn(fn: AskTextFn | undefined): void {
@@ -61,7 +74,7 @@ export const askUserTool: Tool = {
       .slice(0, 2000)
     if (!q) throw new Error("question empty")
     const opts = Array.isArray(options)
-      ? (options as unknown[]).map((o) => String(o).slice(0, 200)).slice(0, 8)
+      ? (options as unknown[]).map((o) => sliceSafeChars(String(o), 200)).slice(0, 8)
       : undefined
     // Tanpa view ter-inject atau di luar TTY: tolak, jangan gantung.
     // Model harus melanjutkan dengan asumsi paling aman, bukan menunggu.

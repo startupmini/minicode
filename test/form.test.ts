@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { resetLocaleState, setSessionLocale } from "../src/ui/i18n/locale.ts"
 import { openAltScreen, resetAltScreenDepth } from "../src/ui/runtime/screen.ts"
+import { popupBoxWidth } from "../src/ui/screens/dialog.ts"
 import { runForm } from "../src/ui/screens/form.ts"
 import { installFakeTty, KEY } from "./helpers/tui-harness.ts"
 
@@ -151,17 +152,24 @@ describe("runForm", () => {
     s.close()
   })
   test("kursor CJK/emoji dihitung per kolom, bukan grapheme", async () => {
-    // Gagal-di-kode-lama: "あx" → kolom short 1 per glyph lebar. Kolom absolut
-    // = padding(3) + border+spasi(2) + prefix(5) + "あx"(3) + 1 = 14.
-    // Bandingkan CUP TERAKHIR (perantara "13" wajar saat "あ" saja).
+    // Gagal-di-kode-lama: "あx" → kolom short 1 per glyph lebar.
+    // Kolom absolut = centering-pad + border+spasi(2) + prefix(5) + "K: "(3)
+    //                  + "あx"(3) + 1. Padding dihitung dari popupBoxWidth agar
+    // test tak patah lagi saat lebar popup berubah (I20 v7.14).
+    // Bandingkan CUP TERAKHIR (perantara "24" wajar saat "あ" saja).
     const s = screen()
+    const pad = Math.floor((70 - popupBoxWidth(70)) / 2)
+    const colA = pad + 10 // "あ" saja
+    const colAB = pad + 11 // "あx"
     const p = runForm({ title: "W", fields: [{ id: "k", label: "K", kind: "text" }] }, s)
     await tty!.ready()
     await tty!.send("あ")
     await tty!.send("x")
     const all = tty!.all()
-    expect(all).toContain("\x1b[10;14H")
-    expect(all.lastIndexOf("\x1b[10;14H")).toBeGreaterThan(all.lastIndexOf("\x1b[10;13H"))
+    expect(all).toContain(`\x1b[10;${colAB}H`)
+    expect(all.lastIndexOf(`\x1b[10;${colAB}H`)).toBeGreaterThan(
+      all.lastIndexOf(`\x1b[10;${colA}H`),
+    )
     await tty!.send(KEY.esc, 90)
     await tty!.send(KEY.esc, 90)
     await p
@@ -177,8 +185,10 @@ describe("runForm", () => {
       s,
     )
     await tty!.ready()
-    // Box 64 di cols 70 → padding 3; contentW (termasuk border) 64 → 3+64+1.
-    expect(tty!.all()).toContain(";68H")
+    // Kursor parkir di ujung kanan border: centering-pad + lebar kotak + 1.
+    // Dihitung dari popupBoxWidth agar test tak patah saat lebar berubah (I20).
+    const pad = Math.floor((70 - popupBoxWidth(70)) / 2)
+    expect(tty!.all()).toContain(`;${pad + popupBoxWidth(70) + 1}H`)
     await tty!.send(KEY.esc, 90)
     await p
     s.close()

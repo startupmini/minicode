@@ -14,7 +14,7 @@ import { c, stripAnsi } from "../render/theme.ts"
 import { displayWidth, truncateToWidth } from "../render/width.ts"
 import { type AltScreen, openAltScreen } from "../runtime/screen.ts"
 import { beginInteractiveScreen } from "../runtime/statusline.ts"
-import { boxLeftPad, dialogBox } from "./dialog.ts"
+import { boxLeftPad, dialogBox, popupBoxWidth } from "./dialog.ts"
 import { createIdleTimer } from "./lifecycle.ts"
 
 export interface PickerItem {
@@ -32,9 +32,6 @@ export interface PickerOptions {
 }
 
 const dim = (s: string): string => c.dim(s)
-
-/** Lebar kotak popup picker TETAP (keputusan rasa: geometri stabil). */
-const PICKER_BOX_W = 64
 
 // Tandai substring query di label agar user tahu KENAPA item cocok.
 // Operasi pada teks plain (sebelum truncate) — SGR bold nol kolom.
@@ -72,6 +69,8 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
     let scroll = 0
     let filter = ""
     const isFilterable = opts.filterable ?? false
+    // Lebar dibekukan saat mount (AUD-006).
+    const boxWidth = popupBoxWidth(process.stdout.columns || 80)
 
     const filteredItems = (): PickerItem[] => {
       if (!isFilterable || !filter) return opts.items
@@ -95,11 +94,9 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
       const chrome = isFilterable ? 4 : 3
       return Math.max(1, Math.min(rows - chrome, 12))
     }
-    // Lebar konten = lebar kotak TETAP (min=max, keputusan rasa: geometri
-    // stabil, tak bernapas saat filter) dikurangi chrome dialog
+    // Lebar konten = lebar kotak (dibekukan saat mount) dikurangi chrome dialog
     // (border+padding = 4 kolom) agar dialogBox tak memotong ulang label.
-    const width = () =>
-      Math.max(8, Math.min((process.stdout.columns || 80) - 2 - 4, PICKER_BOX_W - 4))
+    const width = () => Math.max(8, boxWidth - 4)
 
     // Isi untuk dialog popup (tanpa judul; hint aksi satu baris di dasar).
     const bodyLines = (): string[] => {
@@ -152,13 +149,13 @@ export async function runPicker(opts: PickerOptions): Promise<void> {
     const render = () => {
       // Popup komposit: HANYA region kotak yang dilukis (tanpa clear) di atas
       // konten pemilik layar (transkrip App / alt-buffer wizard). Pemilik
-      // me-repaint penuh saat popup tutup. Lebar TETAP 64 (min=max).
+      // Lebar beku (min=max): geometri tak bernapas saat filter berubah.
       const box = dialogBox(
         {
           title: "",
           body: bodyLines(),
-          minWidth: PICKER_BOX_W,
-          maxWidth: PICKER_BOX_W,
+          minWidth: boxWidth,
+          maxWidth: boxWidth,
         },
         screen.cols,
         screen.rows,

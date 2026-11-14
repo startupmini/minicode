@@ -1,9 +1,7 @@
-// Bingkai dialog modal: backdrop + kotak terpusat (border, judul, bayangan).
-//
-// View membangun KONTEN (state + tombol, seperti sekarang); dialog.ts hanya
-// menata konten menjadi frame SELAYAR (`rows` baris tepat) untuk `screen.paint`.
-// Teks disanitasi satu-baris + potong per kolom di sini (defense-in-depth di
-// atas sanitasi view — idempoten, murah). Fallback ASCII bila MINICODE_ASCII=1.
+// Kotak dialog: border, judul, footer, terpusat. View membangun KONTEN; di
+// sini konten ditata jadi baris kotak (paintRegion melukis region-nya saja).
+// Teks disanitasi + dipotong per kolom (defense-in-depth, idempoten). ASCII
+// bila MINICODE_ASCII=1.
 
 import { t } from "../i18n/locale.ts"
 import { sanitizeAnsiLine } from "../render/sanitize.ts"
@@ -13,27 +11,17 @@ import { displayWidth, padToWidth, truncateToWidth } from "../render/width.ts"
 export interface DialogSpec {
   /** Judul baris atas. String kosong = tanpa baris judul (chrome menyesuaikan). */
   title: string
-  /** Baris konten polos (sudah di-clamp view; di sini dipotong defensif). */
+  /** Baris konten polos. */
   body: string[]
   /** Baris hint bawah (tombol). Kosong = tanpa footer. */
   footer?: string
-  /** Lebar kotak maksimum (inklusif border+padding). Default: selebar layar. */
+  /** Lebar maksimum (inklusif border+padding). Default: popup terhitung. */
   maxWidth?: number
-  /**
-   * Lebar kotak MINIMUM (inklusif border+padding): kotak tak pernah lebih
-   * sempit dari ini walau konten pendek — geometri stabil, tak melompat
-   * mengikuti data (keputusan rasa: presisi). Samakan dengan maxWidth untuk
-   * lebar TETAP.
-   */
+  /** Lebar MINIMUM (inklusif border+padding). Default: skala dari `cols`. */
   minWidth?: number
-  /** Tinggi kotak maksimum (inklusif border). Default: setinggi layar. */
+  /** Tinggi maksimum (inklusif border). Default: setinggi layar. */
   maxHeight?: number
-  /**
-   * Indeks body (0-based) yang WAJIB terlihat, mis. field aktif form. Bila
-   * body melebihi tinggi kotak, jendela digeser agar baris ini ikut tampil —
-   * tanpa ini user mengetik ke field yang tidak ada di layar (audit
-   * 2026-11-12, HIGH-2).
-   */
+  /** Indeks body yang WAJIB terlihat; jendela digeser agar tak mengetik buta (HIGH-2). */
   focusRow?: number
 }
 
@@ -46,14 +34,24 @@ interface BoxChars {
   v: string
 }
 
+/** Lebar kotak popup: skala dari layar; pemanggil membekukan saat mount. */
+export function popupBoxWidth(cols: number): number {
+  const safeCols = Math.max(10, cols)
+  const scaled = Math.floor(safeCols * 0.6)
+  // Margin 4 kolom menang atas lantai 40 (AUD-011: `max(40,…)` dulu
+  // membungkus clamp sehingga terminal sempit overflow).
+  const room = safeCols - 4
+  return Math.min(Math.max(40, Math.min(88, scaled)), room)
+}
+
 function boxChars(): BoxChars {
-  // supportsUtf8() dibaca TIAP paint (getter runtime, bukan cache module) —
-  // aturan yang sama dengan c/glyphs (theme.ts).
-  // Tanpa bayangan: kolom `▓` redup terlihat seperti strip berpasir di
-  // Windows Terminal (keluhan visual nyata) — kedalaman diganti backdrop
-  // redup + kotak terpusat saja.
-  if (!supportsUtf8()) return { tl: "+", tr: "+", bl: "+", br: "+", h: "-", v: "|" }
-  return { tl: "┌", tr: "┐", bl: "└", br: "┘", h: "─", v: "│" }
+  // Kapabilitas dan kill-switch dibaca tiap render agar perubahan env runtime
+  // (terutama test/aksesibilitas) langsung berlaku, bukan membeku saat import.
+  const style = process.env.MINICODE_BOX?.toLowerCase()
+  if (process.env.MINICODE_ASCII === "1" || style === "ascii" || !supportsUtf8())
+    return { tl: "+", tr: "+", bl: "+", br: "+", h: "-", v: "|" }
+  if (style === "square") return { tl: "┌", tr: "┐", bl: "└", br: "┘", h: "─", v: "│" }
+  return { tl: "╭", tr: "╮", bl: "╰", br: "╯", h: "─", v: "│" }
 }
 
 /** Kotak popup tanpa backdrop: untuk paintRegion di atas konten pemilik layar. */
@@ -87,11 +85,7 @@ export function boxLeftPad(strippedLine: string): number {
   return m ? m[0].length : 0
 }
 
-/**
- * Bangun KOTAK saja (tanpa backdrop): dipakai popup komposit App TUI lewat
- * paintRegion — transkrip di belakang tetap tampil. Lebar mengikuti konten
- * (clamp maxWidth); tinggi mengikuti body (clamp maxHeight).
- */
+/** Bangun KOTAK saja (tanpa backdrop); minWidth==maxWidth = lebar beku. */
 export function dialogBox(spec: DialogSpec, cols: number, rows: number): DialogBox {
   const c0 = Math.max(20, Math.floor(cols) || 80)
   const r0 = Math.max(5, Math.floor(rows) || 24)
@@ -99,19 +93,22 @@ export function dialogBox(spec: DialogSpec, cols: number, rows: number): DialogB
   const title = sanitizeAnsiLine(spec.title)
   const footer = spec.footer != null && spec.footer !== "" ? sanitizeAnsiLine(spec.footer) : null
 
-  // Lebar dalam = konten terlebar, clamp ke layar. Chrome total per baris:
-  // v(1) + sp(1) + innerW + sp(1) + v(1) = innerW + 4. View membangun baris
-  // selebar itu (width() modal-aware) sehingga tak ada potong ulang di sini.
-  // maxWidth opsional mengecilkan kotak (dialog mungil) — kurangi SEBELUM
-  // hitung isi. Judul kosong = tanpa baris judul (chrome vertikal menyesuaikan).
   const hasTitle = title !== ""
-  let innerMax = c0 - 2 - 4
-  if (spec.maxWidth != null && Number.isFinite(spec.maxWidth))
-    innerMax = Math.min(innerMax, Math.max(8, Math.floor(spec.maxWidth) - 4))
-  if (innerMax < 8) innerMax = 8
-  let innerMin = 8
-  if (spec.minWidth != null && Number.isFinite(spec.minWidth))
-    innerMin = Math.min(innerMax, Math.max(8, Math.floor(spec.minWidth) - 4))
+  const maxInner = Math.max(10, c0 - 6)
+  const def = Math.max(10, popupBoxWidth(c0) - 4)
+  const capInner = Math.min(
+    spec.maxWidth != null && Number.isFinite(spec.maxWidth)
+      ? Math.max(10, Math.floor(spec.maxWidth) - 4)
+      : def,
+    maxInner,
+  )
+  const floorInner = Math.min(
+    spec.minWidth != null && Number.isFinite(spec.minWidth)
+      ? Math.max(10, Math.floor(spec.minWidth) - 4)
+      : def,
+    capInner,
+  )
+
   let contentW = displayWidth(title)
   for (const ln of spec.body) {
     const w = displayWidth(sanitizeAnsiLine(ln))
@@ -121,21 +118,16 @@ export function dialogBox(spec: DialogSpec, cols: number, rows: number): DialogB
     const w = displayWidth(footer)
     if (w > contentW) contentW = w
   }
-  const innerW = Math.min(Math.max(innerMin, contentW), innerMax)
+  const innerW = Math.max(10, Math.min(Math.max(contentW, floorInner), capInner, maxInner))
   const cut = (s: string) => truncateToWidth(sanitizeAnsiLine(s), innerW)
-  // +2 border, +2 padding: "│ text │".
   const boxW = innerW + 4
-  const row = (left: string, mid: string, right: string) => left + mid + right
+  const row = (l: string, m: string, r: string) => l + m + r
 
   const bar = box.h.repeat(Math.max(0, boxW - 2))
   const boxed: string[] = []
   boxed.push(row(box.tl, bar, box.tr))
-  // Judul aksen (paritas visual dengan overlay inline); footer redup.
-  // Judul kosong = baris judul dilewati seluruhnya (bukan baris kosong).
   if (hasTitle) boxed.push(`${box.v} ${padToWidth(c.accent(c.bold(cut(title))), innerW)} ${box.v}`)
-  // Isi: chrome tetap = 2 border + (judul ? 1 : 0) + (footer ? 1 : 0); baris
-  // marker ("… N more") ikut dihitung BILA terpotong. maxHeight opsional
-  // membatasi tinggi KOTAK (bukan frame — padding backdrop menyerap sisa).
+
   const chromeFixed = 2 + (hasTitle ? 1 : 0) + (footer != null ? 1 : 0)
   const boxBudget =
     spec.maxHeight != null && Number.isFinite(spec.maxHeight)
@@ -144,10 +136,6 @@ export function dialogBox(spec: DialogSpec, cols: number, rows: number): DialogB
   const room = Math.max(0, boxBudget - chromeFixed)
   const clipped = spec.body.length > room
   const shown = clipped ? Math.max(0, room - 1) : spec.body.length
-  // Jendela body: default dari atas, tapi bila pemanggil menandai baris fokus
-  // (form: field aktif) jendela digeser agar baris itu terlihat. Tanpa ini
-  // `activeRow` menunjuk baris di luar yang dirender sehingga kursor parkir di
-  // marker/border dan ketikan user tak terlihat (audit 2026-11-12, HIGH-2).
   const focus = spec.focusRow
   const bodyStart =
     clipped && focus != null && shown > 0 && Number.isFinite(focus)
@@ -162,34 +150,10 @@ export function dialogBox(spec: DialogSpec, cols: number, rows: number): DialogB
   if (footer != null) boxed.push(`${box.v} ${padToWidth(c.dim(cut(footer)), innerW)} ${box.v}`)
   boxed.push(row(box.bl, bar, box.br))
 
-  // Pusatkan horizontal; vertikal via topRow (1-based) untuk paintRegion.
-  // displayWidth mengabaikan SGR (nol kolom) sehingga ANSI tak merusak hitungan.
   const topRow = Math.max(1, Math.floor((r0 - boxed.length) / 2) + 1)
   const lines = boxed.map((ln) => {
     const left = Math.max(0, Math.floor((c0 - displayWidth(ln)) / 2))
     return `${" ".repeat(left)}${ln}`
   })
   return { lines, topRow, height: boxed.length, bodyTop: 1 + (hasTitle ? 1 : 0), bodyStart }
-}
-
-/**
- * Bangun frame SELAYAR: tepat `rows` string (backdrop redup + kotak terpusat).
- * Tak pernah melempar; tak menulis IO (view yang paint via screen).
- * Dipakai layar yang memiliki buffer sendiri (wizard first-run); popup di
- * atas konten App memakai dialogBox + paintRegion (tanpa clear).
- */
-export function dialogFrame(spec: DialogSpec, cols: number, rows: number): string[] {
-  const c0 = Math.max(20, Math.floor(cols) || 80)
-  const r0 = Math.max(5, Math.floor(rows) || 24)
-  const box = dialogBox(spec, c0, r0)
-  // Backdrop REDUP (bukan hitam polos): pola ░ faint memenuhi layar sehingga
-  // kotak terbaca sebagai jendela di depan, bukan screen baru. Fallback ASCII
-  // "." bila glyph shade tak didukung.
-  const shade = supportsUtf8() ? "░".repeat(c0) : ".".repeat(c0)
-  const dim = c.faint(shade)
-  const out: string[] = []
-  for (let i = 1; i < box.topRow; i++) out.push(dim)
-  for (const ln of box.lines) out.push(ln)
-  while (out.length < r0) out.push(dim)
-  return out.slice(0, r0)
 }

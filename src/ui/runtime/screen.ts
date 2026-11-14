@@ -10,6 +10,7 @@
 // Refcount menutup modal nested (effort-picker di dalam manager): tulis
 // enter/exit fisik hanya di lapis terluar; handle dalam = no-op paint-through.
 import { type Cell, diffCellLine, parseCells } from "../render/cells.ts"
+import { truncateToWidth } from "../render/width.ts"
 import {
   __resetTransientForTest,
   beginInteractiveScreen,
@@ -252,7 +253,12 @@ export function openAltScreen(): AltScreen {
         const i = r - top
         // Baris diasumsi satu-baris-tersanitasi dari dialogBox (tanpa \n —
         // \n akan menggeser kursor dan merusak baris berikut; split defensif).
-        const row = i >= 0 && i < h ? ((lines[i] ?? "").split("\n")[0] ?? "") : ""
+        // Clamp ke lebar layar: baris lebih lebar memicu auto-wrap dan
+        // menggeser seluruh region (AUD-009).
+        const row = truncateToWidth(
+          i >= 0 && i < h ? ((lines[i] ?? "").split("\n")[0] ?? "") : "",
+          this.cols,
+        )
         out += `\x1b[${r};1H\x1b[2K${row}`
       }
       out += SYNC_END

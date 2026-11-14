@@ -13,7 +13,7 @@ import { cleanUntrusted, sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, glyphs, stripAnsi } from "../render/theme.ts"
 import { displayWidth, truncateToWidth } from "../render/width.ts"
 import { type AltScreen, openAltScreen } from "../runtime/screen.ts"
-import { boxLeftPad, dialogBox } from "./dialog.ts"
+import { boxLeftPad, dialogBox, popupBoxWidth } from "./dialog.ts"
 import { runForm } from "./form.ts"
 import { createIdleTimer } from "./lifecycle.ts"
 import { runPicker } from "./picker.ts"
@@ -59,10 +59,8 @@ export function filterModelRows(rows: ModelRow[], q: string): ModelRow[] {
   return rows.filter((r) => r.id.toLowerCase().includes(needle))
 }
 
-/** Lebar kotak dialog /model: TETAP 64 kolom (keputusan rasa: geometri stabil,
- * tak pernah melompat mengikuti konten). Satu sumber untuk width() dan
- * maxWidth dialogBox — keduanya HARUS sepakat agar label tak terpotong ulang. */
-const MODAL_BOX_W = 64
+/** Lebar kotak /model: `popupBoxWidth` (AUD-006, satu sumber width+maxWidth). */
+const modalBoxWidth = (): number => popupBoxWidth(process.stdout.columns || 80)
 
 export async function runModelManagerView(opts: ModelManagerViewOptions): Promise<void> {
   let rows = opts.initialRows // Mode cari: ketikan apa pun langsung jadi query. Hapus = tombol Del.
@@ -99,7 +97,7 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
     // tetap dikurangi chrome dialog (border+padding = 4) agar sepakat dengan
     // dialogBox (tanpa potong ulang). innerMax dialog = cols−6, jadi konten
     // = cols−6 juga (dulu cols−4 → potong-ganda 2 kolom di terminal sempit).
-    const width = () => Math.max(8, Math.min((process.stdout.columns || 80) - 6, MODAL_BOX_W - 4))
+    const width = () => Math.max(8, modalBoxWidth() - 4)
 
     // Isi MINIMAL dialog /model (tanpa judul/footer/hitungan/penanda —
     // seleksi murni warna). Search selalu tampil, daftar tanpa `›`.
@@ -150,14 +148,13 @@ export async function runModelManagerView(opts: ModelManagerViewOptions): Promis
     }
 
     const render = () => {
-      // Popup komposit: HANYA region kotak (tanpa clear) di atas transkrip
-      // App. Lebar TETAP 64 (min=max) — tak pernah melompat mengikuti konten.
+      // Region kotak di atas transkrip; lebar beku (min=max).
       const box = dialogBox(
         {
           title: "",
           body: bodyLinesModal(),
-          minWidth: MODAL_BOX_W,
-          maxWidth: MODAL_BOX_W,
+          minWidth: modalBoxWidth(),
+          maxWidth: modalBoxWidth(),
           maxHeight: 14,
         },
         screen.cols,

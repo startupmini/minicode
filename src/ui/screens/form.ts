@@ -22,7 +22,7 @@ import { sanitizeAnsiLine } from "../render/sanitize.ts"
 import { c, glyphs, stripAnsi } from "../render/theme.ts"
 import { displayWidth, truncateToWidth } from "../render/width.ts"
 import { type AltScreen, SYNC_UPDATE_END, SYNC_UPDATE_START } from "../runtime/screen.ts"
-import { boxLeftPad, dialogBox } from "./dialog.ts"
+import { boxLeftPad, dialogBox, popupBoxWidth } from "./dialog.ts"
 import { createIdleTimer } from "./lifecycle.ts"
 
 export interface FormField {
@@ -79,8 +79,8 @@ interface FieldState {
 
 const dim = (s: string): string => c.dim(s)
 
-/** Lebar kotak form TETAP (keputusan rasa: geometri stabil). */
-const FORM_BOX_W = 64
+/** Lebar kotak form: `popupBoxWidth` — paritas picker/model/provider (AUD-006). */
+const formBoxWidth = (cols: number): number => popupBoxWidth(cols)
 
 function toState(def: FormField): FieldState {
   if (def.kind === "select") {
@@ -176,9 +176,9 @@ export async function runForm(spec: FormSpec, screen: AltScreen): Promise<FormRe
       idle.reset()
     }
 
-    // Lebar konten = lebar kotak TETAP (64) dikurangi chrome (border+padding
-    // = 4) — sepakat dengan dialogBox min=max 64 (tanpa potong-ganda).
-    const width = () => Math.max(20, Math.min((screen.cols || 80) - 6, FORM_BOX_W))
+    // Lebar konten = lebar kotak minus chrome border+padding (4).
+    const boxW = formBoxWidth(screen.cols || 80)
+    const width = () => boxW
     const innerW = () => Math.max(8, width() - 4)
 
     // Baris nilai field aktif (indeks dalam body) untuk parkir kursor.
@@ -244,10 +244,10 @@ export async function runForm(spec: FormSpec, screen: AltScreen): Promise<FormRe
           footer: idleWarned
             ? c.error(t("form.idleWarning", { s: Math.ceil(IDLE_CANCEL_MS / 1000) }))
             : (spec.footer ?? t("form.footerDefault")),
-          // Lebar TETAP (paritas picker/manager — geometri stabil, tak
-          // bernapas saat error muncul/hilang).
-          minWidth: FORM_BOX_W,
-          maxWidth: FORM_BOX_W,
+          // Lebar beku (paritas picker/manager — tak bernapas saat error
+          // muncul/hilang).
+          minWidth: width(),
+          maxWidth: width(),
           // Field aktif WAJIB terlihat: dialog menggeser jendela body bila
           // muat-tidaknya terpaksa memotong (audit 2026-11-12, HIGH-2).
           focusRow: activeRow >= 0 ? activeRow : undefined,

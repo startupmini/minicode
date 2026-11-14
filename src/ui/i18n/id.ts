@@ -26,6 +26,7 @@ export const id: Record<MsgKey, string> = {
   "appr.decAllow": "izinkan",
   "appr.decAlways": "selalu",
   "appr.decDeny": "tolak",
+  "appr.keyHint": "↑↓ pindah · Enter pilih · Esc batal",
   "appr.askTitle": "Agen bertanya",
   "appr.a11y": "[butuh persetujuan: {name}]",
   "appr.answerPrompt": "Jawaban (kosong = batal): ",

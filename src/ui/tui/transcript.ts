@@ -54,6 +54,10 @@ export interface ApprovalSink {
   repaint(): void
   suspend(): void
   resume(): void
+  /** Lukis kotak modal di atas transkrip (popup komposit). Opsional: sink warisan (mock/test) boleh tanpa. */
+  paintRegion?(lines: string[], topRow: number): void
+  /** Hapus kotak modal sebelum resume. Opsional. */
+  clearRegion?(): void
 }
 
 let approvalSink: ApprovalSink | null = null

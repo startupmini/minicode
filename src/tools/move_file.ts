@@ -3,7 +3,7 @@ import { dirname } from "node:path"
 import type { Tool } from "#minicore"
 import { resolveSafePath } from "../lib/safe-open.ts"
 import { trashFile } from "../lib/trash.ts"
-import { requireToolCwd } from "./context.ts"
+import { contextUnrestricted, requireToolCwd } from "./context.ts"
 
 export const moveFileTool: Tool = {
   name: "move_file",
@@ -21,16 +21,17 @@ export const moveFileTool: Tool = {
   async execute({ from, to }, ctx) {
     ctx.signal.throwIfAborted()
     const root = requireToolCwd(ctx)
+    const relaxed = contextUnrestricted(ctx)
     const f = from as string
     const t = to as string
     // Verifikasi kedua ujung via pemilik tunggal (logis + target nyata) —
     // detail di safe-open.ts. Beda dengan tool satu-berkas hanya karena
     // move punya dua ujung; substring pesan ("outside workspace",
     // "blocked sensitive file") dipertahankan agar test regex tetap hijau.
-    const { abs: absFrom, real: realFrom } = await resolveSafePath(f, root)
+    const { abs: absFrom, real: realFrom } = await resolveSafePath(f, root, relaxed)
     const st = await stat(realFrom).catch(() => null)
     if (!st) throw new Error(`source not found: ${f}`)
-    const { abs: absTo } = await resolveSafePath(t, root)
+    const { abs: absTo } = await resolveSafePath(t, root, relaxed)
     await mkdir(dirname(absTo), { recursive: true, mode: 0o700 }).catch(() => {})
     // S3 — dest yang sudah ada dibackup ke trash dulu (jangan timpa diam-diam).
     // absTo sudah terverifikasi nyata oleh resolveSafePath, jadi tak perlu

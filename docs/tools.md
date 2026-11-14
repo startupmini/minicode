@@ -66,7 +66,8 @@ Batas `BASH_BACKGROUND_MAX_JOBS`; semua job mati saat CLI keluar.
 | `git_status` | `status --porcelain + diff --stat + log -10` | cwd jail |
 | `git_diff` | `diff` unstaged atau `--staged` | — |
 | `git_log` | `log --oneline -n` | — |
-| `git_commit` | Commit saja | **Di-gate** seperti `delegate_task` (TTY = minta sekali, non-TTY = tolak; `readonly/plan/allowlist` = tolak). Menolak sebelum staging jika config Git efektif memuat custom filter; tinjau filter terpercaya lalu lakukan commit manual. Sub-agent tidak mendapatkannya. Yang sengaja tidak ada: push/amend/reset/rebase/checkout/branch -D/stash drop. Pesan via `-m` tunggal agar `$()`/backtick tidak dieksekusi; `git add -- <paths>` agar file `-weird.txt` tidak jadi flag |
+| `git_commit` | Commit saja | **Di-gate** seperti `delegate_task` (TTY = minta sekali, non-TTY = tolak; `readonly/plan/allowlist` = tolak). Menolak sebelum staging jika config Git efektif memuat custom filter; tinjau filter terpercaya lalu lakukan commit manual. Sub-agent tidak mendapatkannya. Yang sengaja tidak ada: amend/reset/rebase/checkout/branch -D/stash drop. Pesan via `-m` tunggal agar `$()`/backtick tidak dieksekusi; `git add -- <paths>` agar file `-weird.txt` tidak jadi flag |
+| `git_push` | Push branch lokal ke remote | **Di-gate** seperti `git_commit`; butuh branch/remote eksplisit atau `setUpstream`. Hardening `GIT_SAFE_BASE` menetralkan hook pre-push + filter repo. Di mode `unrestricted`, kredensial git sempit (`GH_TOKEN`/`GITHUB_TOKEN`/`SSH_AUTH_SOCK`) diteruskan ke subprocess; di mode lain push hanya berhasil bila kredensial sudah tersedia di mesin (mis. credential helper OS). Sub-agent tidak mendapatkannya |
 
 ## Web
 

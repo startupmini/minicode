@@ -36,7 +36,7 @@ locale OS > en. `/lang` tanpa argumen = tampilkan aktif. Semua string lewat kamu
 
 Alias (jalan, tidak diiklankan di `/help`): `/models` → `/model`, `/providers` → `/provider`, `/usage` & `/cost` → `/status`, `/resume [id]` → `/sessions [id]`, `/compact`, `/thinking`, `/minimize`, `/quit`.
 
-Perintah tersembunyi (sengaja tak tampil di `/help`/dropdown, per-sesi): `/unrestric` — full akses tanpa jail/bash-guard/sandbox, gerbang = kepercayaan operator (toggle; indikator gembok terbuka 🔓 di footer). Detail di [Security Model](security-model.md).
+Perintah tersembunyi (sengaja tak tampil di `/help`/dropdown, per-sesi): `/unrestric` — jembatan jail luar workspace + bash-guard + allowlist dibuka, kredensial git sempit diteruskan, tetapi file sensitif/state minicode tetap ditolak; gerbang = kepercayaan operator (toggle; footer menampilkan `○` merah). Detail di [Security Model](security-model.md).
 
 Did-you-mean: typo `/sessoons` → `Did you mean /sessions?` (jarak ≤ 2).
 

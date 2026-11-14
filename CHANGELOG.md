@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.24.0] - 2026-11-14
+
+### Added
+- **Footer lebih lega + badge job background.** Label `Work Mode:`/`Permission Mode:`
+  dihapus (nilai saja); gembok emoji diganti titik monokrom `●`/`○` (kuning =
+  allow-list aktif, abu = normal, merah = unrestricted; fallback `[LOCK]`/`[OPEN]`).
+  Badge `◷ N` berputar selama ≥1 job bash background hidup — clock idle terpisah
+  dari turn, menghormati `MINICODE_MOTION=0`, nol byte di non-TTY. Job selesai
+  memicu satu auto-resume turn (default aktif; `MINICODE_AUTORESUME_BG=0`
+  mematikan).
+- **Mode `unrestricted` full-access.** `/unrestric` kini membuka jail path luar
+  workspace, bash-guard, dan allowlist/sandbox untuk semua tool (file, bash, git,
+  glob, grep, LSP); timeout bash default 30 menit; kredensial git sempit
+  (`GH_TOKEN`/`GITHUB_TOKEN`/`SSH_AUTH_SOCK`) diteruskan hanya di mode ini. File
+  sensitif (`.env`, `.ssh`) dan state `.minicode/` tetap ditolak.
+- **Tool `git_push` first-class.** Gated seperti `git_commit` (TTY minta sekali,
+  non-TTY tolak; sub-agent tidak mendapatkannya), hardening `GIT_SAFE_BASE`, dan
+  tercatat di mutation journal.
+
+### Changed
+- **Dialog approval & `ask_user` menjadi modal** di TUI: kotak `dialogBox` di atas
+  transkrip redup (`paintRegion`), input raw-mode dengan echo, Esc/Ctrl+C = batal
+  fail-closed. `ask_user` tidak lagi di-deny deterministik saat `unrestricted`.
+- `docs/choosing-mode.md`, `docs/security-model.md`, `docs/tools.md`, dan
+  `docs/repl.md` diselaraskan dengan semantik unrestricted + `git_push`.
+- Budget paket di-re-baseline ke 4.128 KiB (disetujui owner) untuk fitur di atas.
+
 ## [0.23.0] - 2026-11-13
 
 ### Added

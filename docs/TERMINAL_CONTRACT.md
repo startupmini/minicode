@@ -36,8 +36,10 @@ wrap (bukan truncate ellipsis). Tabel markdown tetap kotak ber-garis + wrap
 (v7.10). Thinking di renderer linear ikut di-indent 2 kolom, konsisten dengan TUI.
 
 Perubahan v7.10: pembatas bash allow-list (fallback "no-sandbox") ditampilkan
-sebagai **ikon gembok** `🔒` di ujung footer (setelah Permission Mode), terang
-saat aktif (mode Auto + restrictBash) dan redup saat nonaktif. Sumbu persetujuan
+sebagai **titik monokrom** `●` di ujung footer (setelah Permission Mode), kuning
+saat aktif (mode Auto + restrictBash) dan abu saat nonaktif. Saat mode
+`unrestricted` aktif, titik jadi `○` MERAH (terbuka) sebagai penanda satu-satunya.
+Fallback ASCII `[LOCK]`/`[OPEN]` untuk terminal tanpa UTF-8. Sumbu persetujuan
 tetap Auto/Ask; nilai Permission Mode untuk `--allow-all` sengaja ditampilkan
 sebagai `Auto` (auto ≈ allow-all: otonom penuh tanpa izin) — catatan desain,
 bukan bug. Angka konteks footer memakai `session.contextTokens` — estimasi
@@ -57,9 +59,11 @@ command tanpa slash, judul, deskripsi, atau baris tambahan. Picker provider,
 model, dan pilihan umum tidak memakai judul/footer; baris provider/model dibuat
 ringkas.
 
-Perubahan v7.7: footer memakai label title case `Work Mode: Build` di sisi kiri
-dan `Permission Mode: Auto` di sisi kanan dekat pemakaian konteks. Nilai kedua
-mode memakai warna berbeda; pada terminal sempit label dipadatkan sebelum nilai
+Perubahan v7.7 (diperbarui v0.24): footer menampilkan nilai Work Mode di sisi
+kiri dan nilai Permission Mode di sisi kanan dekat pemakaian konteks. Label
+`Work Mode:`/`Permission Mode:` dihapus agar footer satu baris lebih lega —
+pembeda sumbu tinggal warna (Work Mode semantik, Permission Mode cyan). Nilai
+kedua mode memakai title case; pada terminal sempit nilai dipadatkan sebelum
 mode atau konteks dihilangkan.
 
 Perubahan v7.6: sinkronisasi kontrak WorkMode ke mode produk 0.14.1 — label
@@ -295,19 +299,21 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     live dibatasi 1.000.000 karakter dan menampilkan marker truncasi; satu
     layout paint tidak boleh memproyeksikan transcript dua kali.
 
-13. Status bar: 1 baris dasar (`✦ 00.00.00 Work Mode: Discuss  model  cwd …
-     context  Permission Mode: Auto`) dari sumber yang sama dengan angka sesi.
+13. Status bar: 1 baris dasar (`✦ 00.00.00 Discuss  model  cwd … context  Auto`)
+     dari sumber yang sama dengan angka sesi.
      Nilai `context` (dan `metrics` window %) saat turn AKTIF memakai occupancy
      LIVE turn-store yang di-emit kernel per step (event `provider:extension`
      kind `context-window`, setelah `step:completed`); saat idle kembali ke
      `session.contextTokens` (committed store). Estimator tetap satu sumber —
      hanya store yang dibaca berganti antara turn-store (tumbuh) vs committed
      (beku), tak ada duplikasi angka sumber (v7.12).
-     Ikon gembok `🔒` mengikuti Permission Mode di ujung kanan: terang bila
-     bash allow-list aktif (restrictBash + mode `Auto`), redup bila tidak.
-     Work Mode berada di kiri; Permission Mode cyan berada di kanan dekat
-     konteks. Pada terminal sempit, label berubah menjadi `Work:`/`Permission:`
-     atau nilai saja sebelum salah satu nilai mode dihilangkan. `✦` tetap
+     Titik `●` mengikuti Permission Mode di ujung kanan: kuning bila bash
+     allow-list aktif (restrictBash + mode `Auto`), abu bila tidak; `○` merah
+     = mode `unrestricted` (fallback ASCII `[LOCK]`/`[OPEN]`). Work Mode berada
+     di kiri; Permission Mode cyan berada di kanan dekat konteks (label produk
+     `Work Mode:`/`Permission Mode:` dihapus pada v0.24 — nilai saja). Bila ada
+     job background hidup, badge `◷ N` (jam berputar pelan, `N` = jumlah job)
+     tampil di samping spark; fallback ASCII `[BG:N]`. `✦` tetap
      menjadi indikator proses hidup;
      timer `HH.MM.SS` berada tepat di sebelahnya. Idle=redup; saat aktif hanya
      detik putih, menit ikut terang setelah 60 dtk, dan jam setelah 1 jam.
@@ -526,22 +532,24 @@ Non-TTY (pipe/redirect/CI/file): **0 cursor control, 0 alternate screen,
     ditahan pada WorkMode `DISCUSS`/`PLAN` dan PermissionMode warisan
     `plan`/`readonly`; `Tab` mengubah WorkMode, sedangkan `Shift+Tab` mengubah
     PermissionMode AUTO/ASK.
-    **Footer:** Work Mode tampil di kiri dengan label produk `Work Mode: Build`,
-    `Work Mode: Plan`, atau `Work Mode: Discuss`; alias internal `EXECUTE` tidak
-    ditampilkan. Permission Mode tampil di kanan dekat token konteks sebagai
-    `Permission Mode: Auto` atau `Permission Mode: Ask`. Nilai Work Mode memakai
-    warna semantik; nilai Permission Mode memakai cyan agar kedua sumbu mudah
-    dibedakan. Pada terminal sempit label dipadatkan, tetapi kedua nilai mode
-    dipertahankan selama lebar memungkinkan.
+    **Footer:** Work Mode tampil di kiri (nilai `Build`/`Plan`/`Discuss`; alias
+    internal `EXECUTE` ditampilkan `Build`). Permission Mode tampil di kanan dekat
+    token konteks sebagai nilai `Auto`/`Ask`. Label produk `Work Mode:` dan
+    `Permission Mode:` dihapus v0.24 — nilai saja, lebih lega. Nilai Work Mode
+    memakai warna semantik; nilai Permission Mode memakai cyan agar kedua sumbu
+    mudah dibedakan. Titik `●` kuning = bash allow-list aktif, abu = nonaktif,
+    `○` merah = unrestricted. Bila ada job background hidup, badge `◷ N` tampil
+    di samping spark.
 
 ## Grammar (ringkas)
 
 prompt `minicode ›` tampil saat boot/idle dan hilang saat busy (dropdown `/`
 berbingkai di atasnya) ·
-status bar `✦ 00.00.00 Work Mode: Discuss  model  cwd … context  Permission Mode: Auto 🔒`
+status bar `✦ 00.00.00 Discuss  model  cwd … context  Auto ●`
 (timer redup idle; detik putih aktif, menit mulai terang di 60 dtk, jam di 1
 jam; tanpa bullet separator; permission rata kanan dekat token konteks; label
-dipadatkan pada terminal sempit; `🔒` terang = bash allow-list aktif, redup = tidak)
+`Work Mode:`/`Permission Mode:` dihapus; `●` kuning = bash allow-list aktif,
+abu = tidak, `○` merah = unrestricted; badge `◷ N` bila job background hidup)
 + satu spacer sebelum footer · ledger tool
 `  › name target` (hijau) / merah saat error · error `pesan` berwarna merah sekali per
 kegagalan · pesan error TUI = formatter kanonik (`formatError`,
@@ -659,7 +667,8 @@ panjang).
   pola mati dihapus, subset p15..p24 hadir di kedua job.
 
 - `test/tui-popup.test.ts` — I16 (komposit di atas transkrip, anti-bocor,
-  anti-hantu).
+  anti-hantu) + I13 (App.paintRegion/clearRegion mendelegasikan region modal ke
+  screen; clock badge memutar `◷` saat idle lalu berhenti saat quit).
 - `test/form.test.ts` — I21 (field, validasi, secret, select, confirm, batal;
   Esc-1 kembalikan prefill untuk text/secret DAN pilihan bawaan untuk
   select/confirm, Esc-2 batal; Tab+teks dalam satu chunk tidak menulis ke field
@@ -677,8 +686,13 @@ panjang).
   `sanitizeAnsiLine`; hook `?25h` loading-bar didaftarkan lazy agar modul yang
   sekadar di-import tidak menulis byte ke alt-screen.
 - `test/approval-tui.test.ts` — I23 (blok + keputusan tercatat, deny;
-  stdout-pipe tanpa sink = deny).
-- `test/footer-render.test.ts` — I13 (label title case, Work Mode kiri dan Permission Mode cyan rata kanan dekat konteks, posisi kolom stabil, fallback terminal sempit, ikon gembok 🔒 terang/redup).
+  stdout-pipe tanpa sink = deny) + modal v0.24 (kotak dilukis via
+  `paintRegion`, `clearRegion` dipanggil saat selesai, input raw-mode di-echo
+  ke kotak, Esc/Ctrl+C = batal fail-closed).
+- `test/background-job-badge.test.ts` — I13 (badge `◷ N` = jumlah job hidup,
+  fase berputar dari clock idle, `[BG:n]` fallback ASCII, nol byte saat 0) +
+  `onBackgroundJobFinished` emit TEPAT SEKALI per job (error+close tidak dobel).
+- `test/footer-render.test.ts` — I13 (nilai mode title case tanpa label produk, Work Mode kiri dan Permission Mode cyan rata kanan dekat konteks, posisi kolom stabil, fallback terminal sempit, titik `●` kuning/abu + `○` merah unrestricted, badge `◷ N`/`[BG:N]`).
 - `test/e2e.test.ts` — I13 v7.12 (kernel meng-emit `provider:extension`
   kind `context-window` berisi `usedTokens`/`windowTokens` setelah
   `step:completed` — sumber live-occupancy footer; nilai > 0 terbukti).

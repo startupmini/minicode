@@ -4,7 +4,7 @@ import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { safeOpenRead } from "../lib/safe-open.ts"
 import { scrubSecrets } from "../policy/scrub.ts"
-import { requireToolCwd } from "./context.ts"
+import { contextUnrestricted, requireToolCwd } from "./context.ts"
 
 // defense-in-depth: also jail inside tool (permission layer is primary)
 
@@ -168,13 +168,14 @@ export const readFileTool: Tool = {
     ctx.signal.throwIfAborted()
     const p = path as string
     const root = requireToolCwd(ctx)
+    const relaxed = contextUnrestricted(ctx)
     const abs = isAbsolute(p) ? resolve(p) : resolve(root, p)
     // Semua verifikasi path (jail + sensitif + O_NOFOLLOW) terjadi di SATU
     // titik saat open — detail di safe-open.ts. Tidak ada resolve/stat
     // terpisah: handle dipakai untuk stat (cap ukuran) lalu baca.
     let handle: Awaited<ReturnType<typeof safeOpenRead>>["handle"]
     try {
-      ;({ handle } = await safeOpenRead(abs, root))
+      ;({ handle } = await safeOpenRead(abs, root, relaxed))
     } catch (e) {
       // ENOENT → pesan seragam; sisanya (jail/sensitif/ELOOP/raw IO) apa adanya
       const msg = (e as Error).message ?? ""

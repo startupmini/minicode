@@ -14,14 +14,14 @@ afterEach(() => {
   tty = null
 })
 
-function setup() {
+function setup(footerExtra: Record<string, unknown> = {}) {
   tty = installFakeTty({ columns: 70, rows: 16 })
   const bus = createFakeBus()
   const transcript = new Transcript(bus as never)
   const host: TuiHost = {
     bus: bus as never,
     getStatus: () => ({
-      footer: { mode: "auto", model: "m", cwd: "/", context: "1k" },
+      footer: { mode: "auto", model: "m", cwd: "/", context: "1k", ...footerExtra } as never,
       busy: false,
     }),
     listCommands: () => [],
@@ -54,7 +54,7 @@ describe("popup komposit", () => {
     const dimmedFrame = tty!.screen()
     expect(dimmedFrame[dimmedFrame.length - 2]).toBe("")
     expect(dimmedFrame[dimmedFrame.length - 1]).toContain("Auto")
-    expect(dimmedFrame[dimmedFrame.length - 1]).toContain("Permission Mode:")
+    expect(dimmedFrame[dimmedFrame.length - 1]).not.toContain("Permission Mode:")
     let picked = ""
     let cancelled = false
     const p = runPicker({
@@ -157,6 +157,32 @@ describe("popup komposit", () => {
     await p
     app.resume()
     await tty!.send(KEY.backspace)
+    await tty!.send(KEY.ctrlD)
+    await runP
+  })
+
+  test("App.paintRegion/clearRegion mendelegasikan modal ke screen", async () => {
+    const { app } = setup()
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("00.00.00"))
+    app.suspend()
+    app.paintRegion(["kotak-uji"], 4)
+    expect(tty!.screen().join("\n")).toContain("kotak-uji")
+    app.clearRegion()
+    expect(tty!.screen().join("\n")).not.toContain("kotak-uji")
+    app.resume()
+    await tty!.send(KEY.ctrlD)
+    await runP
+  })
+
+  test("badge job background berputar saat idle, berhenti saat quit", async () => {
+    const { app } = setup({ backgroundJobs: 1 })
+    const runP = app.run()
+    await tty!.ready()
+    await tty!.waitForOutput((o) => o.includes("◷ 1"), 5000)
+    // Clock menunggu (400 ms) memutar frame — badge berubah tanpa turn baru.
+    await tty!.waitForOutput((o) => /[◶◵◴]/.test(o), 5000)
     await tty!.send(KEY.ctrlD)
     await runP
   })

@@ -3,7 +3,7 @@ import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { safeOpenRead } from "../lib/safe-open.ts"
 import { estimateImageTokens } from "../policy/context.ts"
-import { requireToolCwd } from "./context.ts"
+import { contextUnrestricted, requireToolCwd } from "./context.ts"
 
 // Batas b64 = batas truncate kernel yang sebenarnya: toolResultMaxTokens
 // (default 4096) × DEFAULT_CHARS_PER_TOKEN (4) = 16.384 chars, dengan margin
@@ -27,13 +27,14 @@ export const readImageTool: Tool = {
     ctx.signal.throwIfAborted()
     const p = path as string
     const root = requireToolCwd(ctx)
+    const relaxed = contextUnrestricted(ctx)
     const abs = isAbsolute(p) ? resolve(p) : resolve(root, p)
     // TOCTOU-safe: safeOpenRead = realpath(abs) → cek jail+sensitif di dalam
     // root → open(preReal, O_NOFOLLOW). Bukan open(abs) yang bisa di-swap jadi
     // symlink luar di antara cek dan open — semua verifikasi ada di titik ini.
     let handle: Awaited<ReturnType<typeof safeOpenRead>>["handle"]
     try {
-      ;({ handle } = await safeOpenRead(abs, root))
+      ;({ handle } = await safeOpenRead(abs, root, relaxed))
     } catch (e) {
       // ENOENT → pesan seragam; sisanya (jail/sensitif/ELOOP/raw IO) apa adanya
       const msg = (e as Error).message ?? ""

@@ -26,6 +26,7 @@ import {
 } from "../src/presentation/projection.ts"
 import { redoLastCheckpoint, undoLastCheckpoint } from "../src/session/checkpoint.ts"
 import { renderSkill } from "../src/skills/loader.ts"
+import { listBackgroundJobs, onBackgroundJobFinished } from "../src/tools/bash.ts"
 import {
   clipboardByteLength,
   MAX_CLIPBOARD_BYTES,
@@ -193,6 +194,9 @@ export async function runTui(ctx: CliSession): Promise<void> {
     ui.setMinimizeActivity(true)
   let warned80 = false
   let abort: AbortController | null = null
+  /** Job background hidup (badge footer). Dihitung dari registry tool bash. */
+  const countLiveBackgroundJobs = (): number =>
+    listBackgroundJobs().reduce((n, j) => (j.done ? n : n + 1), 0)
 
   // Fase 1 perf (butir 2b): `session.contextTokens` adalah getter O(history)
   // (estimateMessages mengiterasi SELURUH store + estimator per pesan). Footer
@@ -629,7 +633,7 @@ export async function runTui(ctx: CliSession): Promise<void> {
         // WorkMode EXECUTE (BUILD) agar ceiling DISCUSS/PLAN tak menahan tulis.
         workModeControl?.setWorkMode("EXECUTE")
         app.repaint()
-        transcript.pushInfo([c.warning(`${glyphs.unlock} ${t("tui.unrestrictedOn")}`)])
+        transcript.pushInfo([c.warning(`${c.red(glyphs.unlock)} ${t("tui.unrestrictedOn")}`)])
         return
       }
       mode = modeBeforeUnrestricted ?? "auto"
@@ -643,7 +647,7 @@ export async function runTui(ctx: CliSession): Promise<void> {
       modeBeforeUnrestricted = null
       workModeBeforeUnrestricted = null
       app.repaint()
-      transcript.pushInfo([c.muted(`${glyphs.unlock} ${t("tui.unrestrictedOff", { m: mode })}`)])
+      transcript.pushInfo([c.muted(`${glyphs.lock} ${t("tui.unrestrictedOff", { m: mode })}`)])
       return
     }
     if (name === "lang") {
@@ -812,6 +816,9 @@ export async function runTui(ctx: CliSession): Promise<void> {
           cwd: cwd ?? process.cwd(),
           context: fmtCtx(getContextTokens()),
           metrics: fmtUsageMetrics(ctx, getContextTokens()),
+          // Jumlah job background hidup — dihitung di sini karena badge footer
+          // adalah view murni (src/ui dilarang impor src/ non-UI).
+          backgroundJobs: countLiveBackgroundJobs(),
         },
         busy,
       }
@@ -853,12 +860,30 @@ export async function runTui(ctx: CliSession): Promise<void> {
   // Approval sebagai warga TUI: blok pertanyaan + keputusan tercatat di
   // transkrip dan terlihat sebelum menjawab (tanpa sink = tulis langsung).
   const { setApprovalSink } = await import("../src/ui/tui/transcript.ts")
+  // Auto-resume sekali per job background (scope "lanjutkan tanpa saya"),
+  // bounded: satu resume per id, tak menumpuk walau banyak job selesai.
+  const resumedJobs = new Set<string>()
+  const autoResumeEnabled = process.env.MINICODE_AUTORESUME_BG !== "0"
+  const unsubscribeJobFinished = onBackgroundJobFinished((id, code) => {
+    try {
+      if (resumedJobs.has(id)) return
+      resumedJobs.add(id)
+      app.repaint()
+      if (!autoResumeEnabled) return
+      // Abort-aware: jangan menyela turn berjalan atau memulai saat quitting.
+      transcript.pushInfo([c.muted(t("tui.bgFinished", { id, code: code ?? "?" }))])
+      if (abort !== null) return
+      void runTurn(t("tui.bgFinishedAuto", { id, code: code ?? "?" })).catch(() => {})
+    } catch {}
+  })
   try {
     setApprovalSink({
       pushBlock: (lines) => transcript.pushInfo(lines),
       repaint: () => app.repaint(),
       suspend: () => app.suspend(),
       resume: () => app.resume(),
+      paintRegion: (lines, topRow) => app.paintRegion(lines, topRow),
+      clearRegion: () => app.clearRegion(),
     })
     const res = await app.run()
     if (!res.started) {
@@ -874,6 +899,7 @@ export async function runTui(ctx: CliSession): Promise<void> {
     }
   } finally {
     setApprovalSink(null)
+    unsubscribeJobFinished()
     for (const unsub of liveContextUnsubs.splice(0)) {
       try {
         unsub()

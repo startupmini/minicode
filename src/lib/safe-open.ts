@@ -52,13 +52,15 @@ async function resolveRealOrAncestor(abs: string): Promise<string> {
 export async function resolveSafePath(
   p: string,
   root: string,
+  relaxed = false,
 ): Promise<{ abs: string; real: string }> {
-  if (isPathOutsideRoot(p, root)) throw new Error(`path outside workspace: ${p}`)
+  if (!relaxed && isPathOutsideRoot(p, root)) throw new Error(`path outside workspace: ${p}`)
   if (isSensitive(p)) throw new Error(`blocked sensitive file: ${p}`)
   const abs = isAbsolute(p) ? resolve(p) : resolve(root, p)
   const realRoot = await realpath(root).catch(() => root)
   const real = await resolveRealOrAncestor(abs)
-  if (isPathOutsideRoot(real, realRoot)) throw new Error(`symlink points outside workspace: ${p}`)
+  if (!relaxed && isPathOutsideRoot(real, realRoot))
+    throw new Error(`symlink points outside workspace: ${p}`)
   if (isSensitive(real)) throw new Error(`blocked sensitive file: ${p}`)
   return { abs, real }
 }
@@ -81,11 +83,12 @@ export async function resolveSafePath(
 export async function safeOpenRead(
   abs: string,
   root: string,
+  relaxed = false,
 ): Promise<{ handle: FileHandle; realPath: string }> {
   const realRoot = await realpath(root).catch(() => root)
   // Pre-check cepat (fail-fast tanpa open)
   const preReal = await realpath(abs).catch(() => abs)
-  if (isPathOutsideRoot(preReal, realRoot))
+  if (!relaxed && isPathOutsideRoot(preReal, realRoot))
     throw new Error(`symlink points outside workspace: ${abs}`)
   // Sensitif pada target nyata — symlink bernama jinak bisa menunjuk .env;
   // di sini agar semua pembaca via open (read_file/read_image/stat) mewarisinya.
@@ -96,7 +99,7 @@ export async function safeOpenRead(
   // keluar sesudah realpath pertama tetapi sebelum open.
   const expected = await statPath(preReal, { bigint: true })
   const checkedReal = await realpath(preReal)
-  if (isPathOutsideRoot(checkedReal, realRoot))
+  if (!relaxed && isPathOutsideRoot(checkedReal, realRoot))
     throw new Error(`symlink points outside workspace: ${abs}`)
   if (isSensitive(checkedReal)) throw new Error(`blocked sensitive file: ${abs}`)
   if (expected.ino === 0n)
@@ -137,8 +140,8 @@ export async function safeOpenRead(
   return { handle, realPath: checkedReal }
 }
 
-export async function safeReadFile(abs: string, root: string): Promise<string> {
-  const { handle } = await safeOpenRead(abs, root)
+export async function safeReadFile(abs: string, root: string, relaxed = false): Promise<string> {
+  const { handle } = await safeOpenRead(abs, root, relaxed)
   try {
     return await handle.readFile("utf8")
   } finally {
@@ -154,10 +157,11 @@ export async function safeReadFileCapped(
   abs: string,
   root: string,
   maxBytes: number,
+  relaxed = false,
 ): Promise<{ text: string; truncated: boolean }> {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
     throw new RangeError("maxBytes must be a positive safe integer")
-  const { handle } = await safeOpenRead(abs, root)
+  const { handle } = await safeOpenRead(abs, root, relaxed)
   try {
     const st = await handle.stat()
     if (!st.isFile()) throw new Error(`refusing to read non-regular file: ${abs}`)
@@ -178,8 +182,8 @@ export async function safeReadFileCapped(
   }
 }
 
-export async function safeStat(abs: string, root: string) {
-  const { handle } = await safeOpenRead(abs, root)
+export async function safeStat(abs: string, root: string, relaxed = false) {
+  const { handle } = await safeOpenRead(abs, root, relaxed)
   try {
     return await handle.stat()
   } finally {
@@ -201,17 +205,22 @@ export async function safeStat(abs: string, root: string) {
  * via isPathOutsideRoot(real) + isSensitive(real), dan cek realpath di
  * bawah menjaga parent-dir yang di-swap jadi symlink keluar.
  */
-export async function assertSafeWriteTarget(abs: string, root: string): Promise<string> {
+export async function assertSafeWriteTarget(
+  abs: string,
+  root: string,
+  relaxed = false,
+): Promise<string> {
   const realRoot = await realpath(root).catch(() => root)
   const dir = dirname(abs)
   const realDir = await resolveRealOrAncestor(dir)
-  if (isPathOutsideRoot(realDir, realRoot)) throw new Error(`parent outside workspace: ${abs}`)
+  if (!relaxed && isPathOutsideRoot(realDir, realRoot))
+    throw new Error(`parent outside workspace: ${abs}`)
   const fileReal = await realpath(abs).catch(() => null)
   // basename (bukan split "/"): path Windows memakai backslash — split "/"
   // mengembalikan seluruh path absolut sehingga resolve() mengabaikan realDir
   // dan verifikasi parent symlink gugur diam-diam di Windows.
   const realAbs = fileReal ?? resolve(realDir, basename(abs))
-  if (isPathOutsideRoot(realAbs, realRoot))
+  if (!relaxed && isPathOutsideRoot(realAbs, realRoot))
     throw new Error(`symlink points outside workspace: ${abs}`)
   return realAbs
 }

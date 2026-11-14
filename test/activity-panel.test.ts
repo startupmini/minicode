@@ -32,7 +32,7 @@ describe("activityGroup (klasifikasi keluarga)", () => {
     }
   })
   test("tool eksekusi masuk execute", () => {
-    for (const name of ["bash", "code_run", "mcp_call", "git_commit"]) {
+    for (const name of ["bash", "code_run", "mcp_call", "git_commit", "git_push"]) {
       expect(activityGroup(name)).toBe("execute")
     }
   })

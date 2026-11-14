@@ -72,7 +72,17 @@
 // `--verbose`). `unpackedSize` terukur 4.104 KiB (npm pack --dry-run, worktree
 // bersih); budget lama 4.096 KiB terlampaui ~8 KiB. Re-baseline ke 4.112 KiB
 // memberi ~8 KiB ruang. Tetap alarm regresi, bukan target ukuran.
-export const PACK_SIZE_BUDGET_KIB = 4112
+// [RE-BASELINE 4,031 MiB — disetujui owner 2026-11-14, rilis v0.24.0]
+// Pertumbuhan sah: footer lebih lega + badge job background (`◷ N`, clock idle,
+// auto-resume), mode `unrestricted` benar-benar full-access (jail path luar
+// workspace + bash-guard + allowlist dibuka; file sensitif/owned-state tetap
+// ditolak; passthrough kredensial git sempit), tool `git_push` first-class
+// (gated, GIT_SAFE_BASE), dan dialog approval/`ask_user` modal (dialogBox +
+// paintRegion + input raw-mode). `unpackedSize` terukur 4.222.458 B = 4123,5
+// KiB (npm pack --dry-run, worktree fitur); budget lama 4.112 KiB terlampaui
+// ~11,5 KiB. Re-baseline ke 4.128 KiB memberi ~4 KiB ruang. Tetap alarm
+// regresi, bukan target ukuran.
+export const PACK_SIZE_BUDGET_KIB = 4128
 
 /**
  * True bila ukuran paket (KiB) masih di dalam budget.

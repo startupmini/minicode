@@ -259,6 +259,9 @@ export const id: Record<MsgKey, string> = {
   "tui.workModeUnavailable": "work mode tidak tersedia di sesi ini",
   "tui.unrestrictedOn": "mode unrestricted aktif - akses penuh",
   "tui.unrestrictedOff": "unrestricted nonaktif — mode izin kembali ke {m}",
+  "tui.bgFinished": "job background {id} selesai (exit {code})",
+  "tui.bgFinishedAuto":
+    "job background {id} selesai dengan exit code {code}. Lanjutkan pekerjaan yang tadi tanpa menunggu saya: ambil output job lewat bash_output bila relevan, verifikasi hasilnya, lalu selesaikan tugas yang tersisa.",
   "tui.langLine": "lang: {v}",
   "tui.toolCall": "pemanggilan tool: {v}",
   "tui.modelSet": "model: {v}",

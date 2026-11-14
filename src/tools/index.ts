@@ -3,7 +3,7 @@ export { bashKillTool, bashOutputTool, bashTool } from "./bash.ts"
 export { codeRunTool } from "./code_run.ts"
 export { deleteFileTool } from "./delete_file.ts"
 export { editTool } from "./edit.ts"
-export { gitCommitTool, gitDiffTool, gitLogTool, gitStatusTool } from "./git.ts"
+export { gitCommitTool, gitDiffTool, gitLogTool, gitPushTool, gitStatusTool } from "./git.ts"
 export { globTool } from "./glob.ts"
 export { grepTool } from "./grep.ts"
 export {
@@ -32,7 +32,7 @@ import { bashKillTool, bashOutputTool, bashTool } from "./bash.ts"
 import { codeRunTool } from "./code_run.ts"
 import { deleteFileTool } from "./delete_file.ts"
 import { editTool } from "./edit.ts"
-import { gitCommitTool, gitDiffTool, gitLogTool, gitStatusTool } from "./git.ts"
+import { gitCommitTool, gitDiffTool, gitLogTool, gitPushTool, gitStatusTool } from "./git.ts"
 import { globTool } from "./glob.ts"
 import { grepTool } from "./grep.ts"
 import {
@@ -70,6 +70,7 @@ export const allTools: Tool[] = [
   gitDiffTool,
   gitLogTool,
   gitCommitTool,
+  gitPushTool,
   webFetchTool,
   webSearchTool,
   readMemoryTool,

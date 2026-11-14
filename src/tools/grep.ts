@@ -8,7 +8,7 @@ import { safeReadFile } from "../lib/safe-open.ts"
 import { resolveTrustedExecutable } from "../lib/trusted-exec.ts"
 import { isPathOutsideRoot, isSensitive } from "../policy/jail.ts"
 import { sanitizeSpawnEnv, scrubSecrets } from "../policy/scrub.ts"
-import { requireToolCwd } from "./context.ts"
+import { contextUnrestricted, requireToolCwd } from "./context.ts"
 
 async function walkGrep(
   dir: string,
@@ -19,6 +19,7 @@ async function walkGrep(
   signal: AbortSignal,
   includeRe?: RegExp | null,
   ignoreMatchers: ((rel: string) => boolean)[] = [],
+  relaxed = false,
 ) {
   if (signal.aborted) throw new Error("aborted")
   if (out.length >= limit) return
@@ -30,20 +31,25 @@ async function walkGrep(
     const rel = relative(root, full).replace(/\\/g, "/")
     if (isIgnored(rel, ignoreMatchers)) continue
     if (e.isDirectory()) {
-      await walkGrep(full, re, out, root, limit, signal, includeRe, ignoreMatchers)
+      await walkGrep(full, re, out, root, limit, signal, includeRe, ignoreMatchers, relaxed)
     } else {
       if (includeRe && !includeRe.test(rel) && !includeRe.test(e.name)) continue
       if (/\.(png|jpg|jpeg|gif|webp|pdf|zip|exe|dll|bin)$/i.test(e.name)) continue
       // symlink file escape check — resolve realpath and jail
       const real = await realpath(full).catch(() => full)
-      if (isPathOutsideRoot(real, resolve(root)) || isSensitive(real) || isSensitive(rel)) continue
+      if (
+        (!relaxed && isPathOutsideRoot(real, resolve(root))) ||
+        isSensitive(real) ||
+        isSensitive(rel)
+      )
+        continue
       // also skip if symlink points outside (already covered) or sensitive
       const st = await stat(real).catch(() => null)
       if (!st || st.size > LIMITS.GREP_FILE_MAX_BYTES) continue
       // Baca via safeReadFile (O_NOFOLLOW + verifikasi ulang target saat
       // open): swap symlink antara realpath di atas dan read di bawah tak
       // lagi bisa menyelundupkan konten luar/sensitif. Gagal = lewati berkas.
-      const text = (await safeReadFile(real, root).catch(() => null)) ?? ""
+      const text = (await safeReadFile(real, root, relaxed).catch(() => null)) ?? ""
       if (text.includes("\0")) continue
       const lines = text.split("\n")
       for (let i = 0; i < lines.length; i++) {
@@ -110,7 +116,7 @@ export function ripgrepAvailable(): boolean {
  * cap panjang. Return null bila baris harus dibuang (sensitif / tak terparse).
  * Diekspor untuk test.
  */
-export function normalizeRgLine(line: string, root: string): string | null {
+export function normalizeRgLine(line: string, root: string, relaxed = false): string | null {
   // path bisa memuat ':' di Windows (C:\...), jadi cari dua ':' terakhir yang
   // diikuti angka — bukan split(':') naif.
   const m = /^(.*?):(\d+):(\d+):([\s\S]*)$/.exec(line)
@@ -120,7 +126,7 @@ export function normalizeRgLine(line: string, root: string): string | null {
   if (!rel) return null
   // Defense-in-depth: rg sudah dibatasi ke cwd, tapi jail tetap diterapkan
   // supaya hasil identik dengan fallback (symlink/sensitive tetap dibuang).
-  if (isPathOutsideRoot(rel, resolve(root)) || isSensitive(rel)) return null
+  if ((!relaxed && isPathOutsideRoot(rel, resolve(root))) || isSensitive(rel)) return null
   const body = text ?? ""
   const cut = body.length > LIMITS.GREP_MATCH_MAX_CHARS
   return `${rel}:${lineNo}: ${scrubSecrets(cut ? `${body.slice(0, LIMITS.GREP_MATCH_MAX_CHARS)}…` : body)}`
@@ -132,6 +138,7 @@ function runRipgrep(
   limit: number,
   signal: AbortSignal,
   include?: string,
+  relaxed = false,
 ): Promise<string[]> {
   const args = [
     "--no-config", // config ripgrep dapat menjalankan --pre pada berkas workspace
@@ -198,7 +205,7 @@ function runRipgrep(
       while (idx >= 0) {
         const line = buf.slice(0, idx).replace(/\r$/, "")
         buf = buf.slice(idx + 1)
-        const norm = normalizeRgLine(line, root)
+        const norm = normalizeRgLine(line, root, relaxed)
         if (norm) out.push(norm)
         if (out.length >= limit) {
           p.kill("SIGTERM")
@@ -245,9 +252,11 @@ export const grepTool: Tool = {
   },
   async execute({ pattern, cwd, include, limit }, ctx) {
     const sessionRoot = requireToolCwd(ctx)
+    const relaxed = contextUnrestricted(ctx)
     const rawRoot = (cwd as string) ?? "."
     const root = resolve(sessionRoot, rawRoot)
-    if (isPathOutsideRoot(root, sessionRoot)) throw new Error(`cwd outside workspace: ${rawRoot}`)
+    if (!relaxed && isPathOutsideRoot(root, sessionRoot))
+      throw new Error(`cwd outside workspace: ${rawRoot}`)
     const rawLim = limit as number | undefined
     const lim = Number.isFinite(rawLim)
       ? Math.min(Math.max(Math.floor(rawLim!), 1), LIMITS.SEARCH_MAX_LIMIT)
@@ -270,7 +279,14 @@ export const grepTool: Tool = {
     const want = lim + 1
     if (process.env.MINICODE_GREP_ENGINE !== "js" && ripgrepAvailable()) {
       try {
-        const hits = await runRipgrep(pat, root, want, ctx.signal, include as string | undefined)
+        const hits = await runRipgrep(
+          pat,
+          root,
+          want,
+          ctx.signal,
+          include as string | undefined,
+          relaxed,
+        )
         if (hits.length === 0) return noMatch()
         // runRipgrep tandai timeout via suffix khusus di elemen terakhir (bila timedOut)
         return withCapMark(hits, lim)
@@ -286,7 +302,7 @@ export const grepTool: Tool = {
     const incRe = include ? includeToRegExp(include as string) : null
     const ignoreMatchers = await loadIgnoreMatchers(root)
     const out: string[] = []
-    await walkGrep(root, re, out, root, want, ctx.signal, incRe, ignoreMatchers)
+    await walkGrep(root, re, out, root, want, ctx.signal, incRe, ignoreMatchers, relaxed)
     return out.length === 0 ? noMatch() : withCapMark(out, lim)
   },
 }

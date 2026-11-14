@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises"
 import type { Tool } from "#minicore"
 import { resolveSafePath } from "../lib/safe-open.ts"
 import { trashFile } from "../lib/trash.ts"
-import { requireToolCwd } from "./context.ts"
+import { contextUnrestricted, requireToolCwd } from "./context.ts"
 
 export const deleteFileTool: Tool = {
   name: "delete_file",
@@ -20,8 +20,9 @@ export const deleteFileTool: Tool = {
     ctx.signal.throwIfAborted()
     const p = path as string
     const root = requireToolCwd(ctx)
+    const relaxed = contextUnrestricted(ctx)
     // Verifikasi path terpusat (logis + target nyata) — detail di safe-open.ts.
-    const { abs, real } = await resolveSafePath(p, root)
+    const { abs, real } = await resolveSafePath(p, root, relaxed)
     const st = await stat(real).catch(() => null)
     if (!st) throw new Error(`file not found: ${p}`)
     if (st.isDirectory()) throw new Error(`path is directory, use bash rm -r: ${p}`)

@@ -3,7 +3,7 @@ import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
 import { assertSafeWriteTarget, resolveSafePath, safeReadFile } from "../lib/safe-open.ts"
 import { appendLspDiagnostics } from "../policy/verifier.ts"
-import { requireToolCwd } from "./context.ts"
+import { contextUnrestricted, requireToolCwd } from "./context.ts"
 import { applyHashline } from "./hashline.ts"
 
 function normalizeLf(s: string): string {
@@ -147,11 +147,12 @@ export const editTool: Tool = {
     ctx.signal.throwIfAborted()
     const p = path as string
     const root = requireToolCwd(ctx)
+    const relaxed = contextUnrestricted(ctx)
     // Verifikasi path terpusat (logis + target nyata, induk symlink ikut
     // ter-resolusi) — symlink internal tetap bisa diedit, targetnya yang dicek.
-    const { abs, real: realAbs } = await resolveSafePath(p, root)
+    const { abs, real: realAbs } = await resolveSafePath(p, root, relaxed)
     // Tolak menimpa symlink final (swap antara cek dan tulis gagal tutup).
-    await assertSafeWriteTarget(abs, root)
+    await assertSafeWriteTarget(abs, root, relaxed)
     // Cek ukuran sebelum baca penuh — hindari OOM 1GB via safeReadFile.
     // Pakai byte length via stat pada realAbs (handle belum ada), fallback ke content length.
     const { stat } = await import("node:fs/promises")
@@ -159,7 +160,7 @@ export const editTool: Tool = {
     if (!st) throw new Error(`file not found: ${p}`)
     if (st.size > LIMITS.READ_FILE_MAX_BYTES) throw new Error(`file too large: ${p} (${st.size})`)
     // Baca via safeReadFile (O_NOFOLLOW) agar TOCTOU swap gagal ELOOP, bukan baca luar.
-    const content = await safeReadFile(abs, root).catch(() => {
+    const content = await safeReadFile(abs, root, relaxed).catch(() => {
       throw new Error(`file not found: ${p}`)
     })
     const oldS = oldString as string

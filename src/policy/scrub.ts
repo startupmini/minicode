@@ -142,9 +142,21 @@ export const SECRET_ENV_RE = new RegExp(
   "i",
 )
 
-export function stripSecretsEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+/** Kredensial git yang boleh lolos ke child HANYA di mode `unrestricted`
+ * (push/remote via token/SSH agent). Nama TETAP, bukan wildcard. */
+const GIT_CREDENTIAL_ALLOW_RE = /^(?:GITHUB_TOKEN|GH_TOKEN|SSH_AUTH_SOCK)$/i
+
+export function stripSecretsEnv(
+  env: NodeJS.ProcessEnv,
+  allowGitCredentials = false,
+): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {}
   for (const [k, v] of Object.entries(env)) {
+    // Passthrough sempit hanya saat unrestricted (push via token/SSH agent).
+    if (allowGitCredentials && GIT_CREDENTIAL_ALLOW_RE.test(k)) {
+      out[k] = v
+      continue
+    }
     if (SECRET_ENV_RE.test(k)) continue
     out[k] = v
   }
@@ -157,10 +169,11 @@ export function stripSecretsEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 export function sanitizeSpawnEnv(
   base: NodeJS.ProcessEnv,
   extra?: Record<string, string>,
+  allowGitCredentials = false,
 ): Record<string, string> {
   const merged: NodeJS.ProcessEnv = { ...base, ...(extra ?? {}) }
   const out: Record<string, string> = {}
-  for (const [k, v] of Object.entries(stripSecretsEnv(merged))) {
+  for (const [k, v] of Object.entries(stripSecretsEnv(merged, allowGitCredentials))) {
     if (v !== undefined) out[k] = v
   }
   return out

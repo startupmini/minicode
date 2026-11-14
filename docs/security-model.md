@@ -35,7 +35,7 @@ Pilihan yang terlihat oleh operator dipisah menjadi tiga sumbu:
 
 **Profil `allow-all` tetap terbatas.** Path jail, penolakan state milik runtime, bash-guard, dan validasi argumen tetap berlaku; profil ini tidak memberi akses host tanpa batas. Detail implementasi dan opsi CLI ada di [Policy & Sandbox](policy-sandbox.md).
 
-**Pengecualian eksplisit: `unrestricted`.** Satu-satunya mode yang melepas seluruh lapisan di atas — tanpa path jail, tanpa bash-guard, tanpa sandbox/allowlist. Diaktifkan eksplisit oleh operator lewat perintah TUI tersembunyi `/unrestric` (bukan flag CLI, sengaja tak muncul di `/help` maupun daftar `/`), berlaku **per-sesi saja** dan tak pernah persist. Gerbang keamanannya adalah kepercayaan operator kepada model — blast radius penuh (file apa pun di host, shell apa pun). Default tetap `DISCUSS`+`AUTO` dengan hard-deny aktif.
+**Pengecualian eksplisit: `unrestricted`.** Mode ini membuka jail path **di luar workspace**, bash-guard, dan gerbang sandbox/allowlist; file sensitif (`.env`, kunci SSH) dan state milik minicode (`.minicode/`) tetap ditolak di lapisan tool. Kredensial git sempit — hanya `GH_TOKEN`, `GITHUB_TOKEN`, `SSH_AUTH_SOCK` — diteruskan ke subprocess **hanya** di mode ini, supaya `git_push`/remote via token atau SSH agent bisa berfungsi. Diaktifkan eksplisit lewat perintah TUI tersembunyi `/unrestric` (bukan flag CLI, sengaja tak muncul di `/help`), berlaku **per-sesi** dan tak pernah persist. Gerbang keamanannya adalah kepercayaan operator: blast radius praktis selebar host untuk file non-sensitif dan shell apa pun. Default tetap `DISCUSS`+`AUTO` dengan hard-deny aktif.
 
 ## Trust Boundaries
 
@@ -55,11 +55,13 @@ Pilihan yang terlihat oleh operator dipisah menjadi tiga sumbu:
 
 Minicode **tidak menyediakan tool** untuk (terverifikasi di `src/tools/`):
 
-- `git push`, `fetch`, `pull`, `clone` — tak ada tool git jaringan sama sekali
+- `git fetch`, `pull`, `clone` — tak ada tool git jaringan pembaca
 - `git reset`, `amend`, `rebase`, `checkout`, `branch -D`, `stash drop`
 - Eksekusi remote / deploy bawaan
 
-Catatan jujur: operasi itu tetap BISA diketik lewat `bash` (tunduk pada bash-guard + jail, BUKAN larangan). `git` via bash menjalankan konfigurasi repo apa adanya (hook/filter/driver milik repo). Tool baca `git_*` dinetralkan; `git_commit` menolak sebelum staging bila filter Git terkonfigurasi. Di repo tak-terpercaya, utamakan tool baca dan tinjau konfigurasi sebelum memakai Git manual.
+Satu-satunya operasi jaringan git adalah `git_push` (di-gate seperti `git_commit`: TTY minta sekali, non-TTY tolak, `readonly/plan/allowlist` tolak, sub-agent tidak mendapatkannya). Tool ini memakai hardening `GIT_SAFE_BASE` dan di mode `unrestricted` mendapat kredensial git sempit (lihat §Mode dan akses).
+
+Catatan jujur: operasi lain tetap BISA diketik lewat `bash` (tunduk pada bash-guard + jail, BUKAN larangan). `git` via bash menjalankan konfigurasi repo apa adanya (hook/filter/driver milik repo). Tool baca `git_*` dinetralkan; `git_push` menetralkan hook/filter via `GIT_SAFE_BASE`; `git_commit` menolak sebelum staging bila filter Git terkonfigurasi. Di repo tak-terpercaya, utamakan tool baca dan tinjau konfigurasi sebelum memakai Git manual.
 
 ## Recovery
 

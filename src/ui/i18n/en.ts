@@ -256,6 +256,9 @@ export const en = {
   "tui.workModeUnavailable": "work mode is not available in this session",
   "tui.unrestrictedOn": "unrestricted mode enabled - full access",
   "tui.unrestrictedOff": "unrestricted disabled — permission mode restored to {m}",
+  "tui.bgFinished": "background job {id} finished (exit {code})",
+  "tui.bgFinishedAuto":
+    "background job {id} finished with exit code {code}. Continue the work you were doing before without waiting for me: collect the job output with bash_output if relevant, verify the result, then finish the remaining tasks.",
   "tui.langLine": "lang: {v}",
   "tui.toolCall": "tool call: {v}",
   "tui.modelSet": "model: {v}",

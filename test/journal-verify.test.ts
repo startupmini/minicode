@@ -181,7 +181,7 @@ test("verify: crash matrix A–K vs keputusan", () => {
 
 // ── F7 klasifikasi via eksekusi aktual (37 tool) ──
 
-test("verify: hanya 12 kelas mutasi yang menulis saat event aktual", async () => {
+test("verify: hanya 13 kelas mutasi yang menulis saat event aktual", async () => {
   const dir = tmpRoot()
   try {
     const bus = fakeBus()
@@ -198,7 +198,7 @@ test("verify: hanya 12 kelas mutasi yang menulis saat event aktual", async () =>
       const id = `k${i++}`
       bus.fire("execution:started", started(t.name, benign, id))
     }
-    const recs = await waitLines("cl1", dir, 11)
+    const recs = await waitLines("cl1", dir, 12)
     const tools = new Set(recs.map((r) => r.tool))
     expect([...tools].sort()).toEqual(
       [
@@ -209,6 +209,7 @@ test("verify: hanya 12 kelas mutasi yang menulis saat event aktual", async () =>
         "apply_patch",
         "forget_memory",
         "git_commit",
+        "git_push",
         "mcp_call",
         "move_file",
         "write_file",

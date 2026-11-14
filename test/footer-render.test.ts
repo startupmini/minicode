@@ -46,9 +46,9 @@ describe("footer render", () => {
     )
     const plain = stripAnsi(status!)
     expect(plain).toContain("✦")
-    expect(plain).toContain("Work Mode: Build")
-    expect(plain).toContain("Permission Mode: Auto")
-    expect(plain.indexOf("14.2k")).toBeLessThan(plain.indexOf("Permission Mode: Auto"))
+    expect(plain).toContain("Build")
+    expect(plain).toContain("Auto")
+    expect(plain.indexOf("14.2k")).toBeLessThan(plain.indexOf("Auto"))
     expect(plain).toContain("deepseek-v4-flash")
     expect(plain).toContain("C:\\Users\\dokument")
     expect(plain).toContain("14.2k")
@@ -68,8 +68,8 @@ describe("footer render", () => {
       90,
     )
     const plain = stripAnsi(status!)
-    expect(plain).toContain("Work Mode: Discuss")
-    expect(plain).toContain("Permission Mode: Auto")
+    expect(plain).toContain("Discuss")
+    expect(plain).toContain("Auto")
     expect(plain).toContain("m1")
     expect(plain).toContain("cwd")
     expect(plain).toContain("1k")
@@ -84,11 +84,11 @@ describe("footer render", () => {
       stripAnsi(renderFooter({ mode: "auto", model: "m1", cwd: "cwd", activity }, 90)[0]!),
     )
     const modelColumn = lines[0]!.indexOf("m1")
-    const modeColumn = lines[0]!.indexOf("Work Mode: Discuss")
+    const modeColumn = lines[0]!.indexOf("Discuss")
     for (const line of lines) {
       expect(line).toContain("m1")
       expect(line.indexOf("m1")).toBe(modelColumn)
-      expect(line.indexOf("Work Mode: Discuss")).toBe(modeColumn)
+      expect(line.indexOf("Discuss")).toBe(modeColumn)
       expect(line).not.toMatch(/Thinking|Working|Running|\d+s/)
       expect(displayWidth(line)).toBeLessThanOrEqual(89)
     }
@@ -99,12 +99,12 @@ describe("footer render", () => {
     const lines = ["Thinking 0s", "Working 10s"].map((activity) =>
       stripAnsi(renderFooter({ mode: "auto", model: "m1", cwd: "cwd", activity }, 46)[0]!),
     )
-    const modeColumn = lines[0]!.indexOf("Work: Discuss")
+    const modeColumn = lines[0]!.indexOf("Discuss")
     const modelColumn = lines[0]!.indexOf("m1")
     for (const line of lines) {
       expect(line).toContain("Discuss")
-      expect(line.indexOf("Work: Discuss")).toBe(modeColumn)
-      expect(line).toContain("Permission: Auto")
+      expect(line.indexOf("Discuss")).toBe(modeColumn)
+      expect(line).toContain("Auto")
       expect(line.indexOf("m1")).toBe(modelColumn)
       expect(line).not.toMatch(/Thinking|Working|Running|\d+s/)
       expect(displayWidth(line)).toBeLessThanOrEqual(45)
@@ -126,10 +126,10 @@ describe("footer render", () => {
     const seconds = render("00.00.42", true, "seconds")
     const minutes = render("00.01.02", true, "minutes")
     const hours = render("01.00.00", true, "hours")
-    expect(stripAnsi(idle)).toMatch(/✦ {2}00\.00\.00 {2}Work Mode: Discuss +m1 +cwd/)
-    expect(stripAnsi(seconds)).toMatch(/✦ {2}00\.00\.42 {2}Work Mode: Discuss +m1 +cwd/)
-    expect(stripAnsi(minutes)).toMatch(/✦ {2}00\.01\.02 {2}Work Mode: Discuss +m1 +cwd/)
-    expect(stripAnsi(hours)).toMatch(/✦ {2}01\.00\.00 {2}Work Mode: Discuss +m1 +cwd/)
+    expect(stripAnsi(idle)).toMatch(/✦ {2}00\.00\.00 {2}Discuss +m1 +cwd/)
+    expect(stripAnsi(seconds)).toMatch(/✦ {2}00\.00\.42 {2}Discuss +m1 +cwd/)
+    expect(stripAnsi(minutes)).toMatch(/✦ {2}00\.01\.02 {2}Discuss +m1 +cwd/)
+    expect(stripAnsi(hours)).toMatch(/✦ {2}01\.00\.00 {2}Discuss +m1 +cwd/)
     for (const line of [idle, seconds, minutes, hours]) expect(stripAnsi(line)).not.toContain("•")
     expect(idle).toContain("\x1b[90m00.00.00")
     expect(seconds).toContain("\x1b[37m42\x1b[39m")
@@ -144,9 +144,9 @@ describe("footer render", () => {
     const auto = withMode("auto")
     const ask = withMode("ask")
     expect(auto.indexOf("m1")).toBe(ask.indexOf("m1"))
-    expect(auto.indexOf("Work Mode: Build")).toBe(ask.indexOf("Work Mode: Build"))
-    expect(auto.indexOf("Permission Mode: Auto")).toBeGreaterThan(auto.indexOf("cwd"))
-    expect(ask.indexOf("Permission Mode: Ask")).toBeGreaterThan(ask.indexOf("cwd"))
+    expect(auto.indexOf("Build")).toBe(ask.indexOf("Build"))
+    expect(auto.indexOf("Auto")).toBeGreaterThan(auto.indexOf("cwd"))
+    expect(ask.indexOf("Ask")).toBeGreaterThan(ask.indexOf("cwd"))
     expect(auto).not.toContain("•")
   })
 
@@ -154,11 +154,10 @@ describe("footer render", () => {
     tty = installFakeTty({ columns: 90 })
     const [status] = renderFooter({ mode: "auto", model: "m1", cwd: "cwd", context: "14.2k" }, 90)
     const plain = stripAnsi(status!)
-    expect(plain.endsWith("🔒")).toBe(true)
-    expect(plain).toContain("Permission Mode: Auto")
-    expect(plain.indexOf("14.2k")).toBeLessThan(plain.indexOf("Permission Mode: Auto"))
+    expect(plain.endsWith("●")).toBe(true)
+    expect(plain).toContain("Auto")
+    expect(plain.indexOf("14.2k")).toBeLessThan(plain.indexOf("Auto"))
     expect(displayWidth(plain)).toBeLessThanOrEqual(89)
-    expect(plain).toContain("Permission Mode: Auto")
     expect(plain).toContain("m1")
     expect(plain).toContain("cwd")
   })
@@ -170,11 +169,11 @@ describe("footer render", () => {
     const plan = paintWorkMode("PLAN")
     const auto = paintPermissionMode("auto")
     const ask = paintPermissionMode("ask")
-    expect(stripAnsi(build).trimEnd()).toBe("Work Mode: Build")
-    expect(stripAnsi(discuss).trimEnd()).toBe("Work Mode: Discuss")
-    expect(stripAnsi(plan).trimEnd()).toBe("Work Mode: Plan")
-    expect(stripAnsi(auto)).toBe("Permission Mode: Auto")
-    expect(stripAnsi(ask)).toBe("Permission Mode: Ask")
+    expect(stripAnsi(build).trimEnd()).toBe("Build")
+    expect(stripAnsi(discuss).trimEnd()).toBe("Discuss")
+    expect(stripAnsi(plan).trimEnd()).toBe("Plan")
+    expect(stripAnsi(auto)).toBe("Auto")
+    expect(stripAnsi(ask)).toBe("Ask")
     expect(build).toContain(c.success("Build"))
     expect(discuss).toContain(c.warning("Discuss"))
     expect(auto).toContain(c.info("Auto"))
@@ -182,31 +181,31 @@ describe("footer render", () => {
     expect(c.success("Build")).not.toBe(c.info("Auto"))
   })
 
-  test("restrictBash: gembok selalu tampil (terang aktif, redup nonaktif)", () => {
+  test("badge bash: titik monokrom (kuning aktif, abu nonaktif, merah unrestricted)", () => {
     tty = installFakeTty({ columns: 80 })
-    expect(stripAnsi(paintBashStrict(true))).toBe("🔒")
-    expect(stripAnsi(paintBashStrict(false))).toBe("🔒")
-    expect(stripAnsi(paintBashStrict(undefined))).toBe("🔒")
+    expect(stripAnsi(paintBashStrict(true))).toBe("●")
+    expect(stripAnsi(paintBashStrict(false))).toBe("●")
+    expect(stripAnsi(paintBashStrict(undefined))).toBe("●")
     // aktif = kuning/terang, nonaktif = redup.
-    expect(paintBashStrict(true)).toContain(c.yellow("🔒"))
-    expect(paintBashStrict(false)).toContain(c.gray("🔒"))
+    expect(paintBashStrict(true)).toContain(c.yellow("●"))
+    expect(paintBashStrict(false)).toContain(c.gray("●"))
     const [strict] = renderFooter({ mode: "auto", strictBash: true, model: "m1", cwd: "cwd" }, 80)
     const [plain] = renderFooter({ mode: "auto", strictBash: false, model: "m1", cwd: "cwd" }, 80)
-    expect(stripAnsi(strict!)).toContain("🔒")
-    expect(stripAnsi(plain!)).toContain("🔒")
+    expect(stripAnsi(strict!)).toContain("●")
+    expect(stripAnsi(plain!)).toContain("●")
   })
 
-  test("unrestricted: hanya gembok terbuka (🔓) tanpa label permission", () => {
+  test("unrestricted: hanya titik terbuka (○ merah) tanpa label permission", () => {
     tty = installFakeTty({ columns: 80 })
-    // Gembok jadi 🔓 (terbuka) jelas saat unrestricted aktif.
-    expect(stripAnsi(paintBashStrict(false, true))).toBe("🔓")
-    expect(stripAnsi(paintBashStrict(true, true))).toBe("🔓")
-    expect(paintBashStrict(true, true)).toContain(c.info("🔓"))
-    // Label permission disembunyikan (cukup gembok terbuka).
+    // Titik jadi ○ (terbuka) merah saat unrestricted aktif.
+    expect(stripAnsi(paintBashStrict(false, true))).toBe("○")
+    expect(stripAnsi(paintBashStrict(true, true))).toBe("○")
+    expect(paintBashStrict(true, true)).toContain(c.red("○"))
+    // Label permission disembunyikan (cukup titik terbuka).
     expect(paintPermissionMode("unrestricted")).toBe("")
     const [line] = renderFooter({ mode: "unrestricted", model: "m1", cwd: "cwd" }, 80)
     expect(stripAnsi(line!)).not.toContain("Unrestricted")
-    expect(stripAnsi(line!)).toContain("🔓")
+    expect(stripAnsi(line!)).toContain("○")
   })
 
   test("terminal sempit: 1 baris visual, spark+mode kekal (cwd/model dibuang)", () => {
@@ -259,12 +258,59 @@ describe("footer render", () => {
     )
     expect(status!).not.toContain("\n")
     const plain = stripAnsi(status!)
-    expect(plain).toContain("Work Mode: Discuss")
-    expect(plain).toContain("Permission Mode: Au To")
+    expect(plain).toContain("Discuss")
+    expect(plain).toContain("Au To")
     expect(plain).toContain("m 1")
     expect(plain).toContain("a b")
     expect(plain).toContain("9 k")
     expect(displayWidth(plain)).toBeLessThanOrEqual(89)
+  })
+
+  test("badge job background: ◷ N hanya saat ada job hidup, frame memutar", () => {
+    tty = installFakeTty({ columns: 80 })
+    const idle = stripAnsi(renderFooter({ mode: "auto", model: "m1", cwd: "cwd" }, 80)[0]!)
+    expect(idle).not.toContain("◷")
+    const one = stripAnsi(
+      renderFooter({ mode: "auto", model: "m1", cwd: "cwd", backgroundJobs: 1 }, 80)[0]!,
+    )
+    expect(one).toContain("◷ 1")
+    const three = stripAnsi(
+      renderFooter({ mode: "auto", model: "m1", cwd: "cwd", backgroundJobs: 3 }, 80)[0]!,
+    )
+    expect(three).toContain("◷ 3")
+    // Frame menggeser glyph: penanda "masih hidup", bukan angka statis.
+    const f1 = stripAnsi(
+      renderFooter(
+        { mode: "auto", model: "m1", cwd: "cwd", backgroundJobs: 1, backgroundFrame: 1 },
+        80,
+      )[0]!,
+    )
+    const f2 = stripAnsi(
+      renderFooter(
+        { mode: "auto", model: "m1", cwd: "cwd", backgroundJobs: 1, backgroundFrame: 2 },
+        80,
+      )[0]!,
+    )
+    expect(f1).not.toBe(f2)
+    expect(f1).toContain("1")
+    // Badge tidak boleh menggeser kolom spark: lead tetap ✦ lalu badge.
+    expect(one.startsWith("✦")).toBe(true)
+  })
+
+  test("badge job background: fallback ASCII nol emoji di terminal non-UTF8", () => {
+    tty = installFakeTty({ columns: 80 })
+    process.env.MINICODE_ASCII = "1"
+    try {
+      const line = stripAnsi(
+        renderFooter({ mode: "auto", model: "m1", cwd: "cwd", backgroundJobs: 2 }, 80)[0]!,
+      )
+      expect(line).toContain("[BG:2]")
+      expect(line).not.toContain("◷")
+      // Glyph mode juga jatuh ke teks ASCII.
+      expect(line).toContain("[LOCK]")
+    } finally {
+      delete process.env.MINICODE_ASCII
+    }
   })
 
   test("shortenPath memperpendek segmen direktori", () => {

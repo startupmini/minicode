@@ -625,7 +625,9 @@ test("22 usage no double count + deepseek pricing", () => {
 
 // ── 23 EventBus ──────────────────────────────────────────────────────────────
 test("23 event handler crash does not break emit", () => {
-  const bus = createEventBus()
+  // Reporter khusus: uji isolasi handler tanpa mencetak stack error ke stderr
+  // (bisa dianggap kegagalan oleh runner meski exception tertangkap bus).
+  const bus = createEventBus({ onHandlerError: () => {} })
   let reached = false
   bus.on("turn:started", () => {
     throw new Error("boom")

@@ -189,6 +189,13 @@ export const TOOL_CAPABILITIES: readonly ToolClassification[] = [
     evidence:
       "VERIFIED: writes history and identity. The existing sub-agent layer strips it for the same reason (src/tools/task.ts:309-321).",
   },
+  {
+    name: "git_push",
+    capability: "PRIVILEGED",
+    autonomous: false,
+    evidence:
+      "VERIFIED: publishes local history to a remote - irreversible outside this machine and visible to others. Same class as git_commit; the sub-agent layer strips it too.",
+  },
 
   // ── memory (session state) ──
   {

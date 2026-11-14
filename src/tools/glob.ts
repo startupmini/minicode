@@ -4,7 +4,7 @@ import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { isIgnored, loadIgnoreMatchers } from "../lib/ignore.ts"
 import { isPathOutsideRoot, isSensitive } from "../policy/jail.ts"
-import { requireToolCwd } from "./context.ts"
+import { contextUnrestricted, requireToolCwd } from "./context.ts"
 
 async function walk(
   dir: string,
@@ -14,6 +14,7 @@ async function walk(
   limit: number,
   signal: AbortSignal,
   ignoreMatchers: ((rel: string) => boolean)[],
+  relaxed = false,
 ) {
   if (signal.aborted) throw new Error("aborted")
   if (out.length >= limit) return
@@ -26,10 +27,15 @@ async function walk(
     // Hormati .gitignore subset (bukan hard-coded saja).
     if (isIgnored(rel, ignoreMatchers)) continue
     if (e.isDirectory()) {
-      await walk(full, pattern, out, root, limit, signal, ignoreMatchers)
+      await walk(full, pattern, out, root, limit, signal, ignoreMatchers, relaxed)
     } else if (pattern.test(rel) || pattern.test(e.name)) {
       const real = await realpath(full).catch(() => full)
-      if (isPathOutsideRoot(real, resolve(root)) || isSensitive(real) || isSensitive(rel)) continue
+      if (
+        (!relaxed && isPathOutsideRoot(real, resolve(root))) ||
+        isSensitive(real) ||
+        isSensitive(rel)
+      )
+        continue
       out.push(rel)
     }
   }
@@ -80,9 +86,11 @@ export const globTool: Tool = {
   },
   async execute({ pattern, cwd, limit }, ctx) {
     const sessionRoot = requireToolCwd(ctx)
+    const relaxed = contextUnrestricted(ctx)
     const rawRoot = (cwd as string) ?? "."
     const root = resolve(sessionRoot, rawRoot)
-    if (isPathOutsideRoot(root, sessionRoot)) throw new Error(`cwd outside workspace: ${rawRoot}`)
+    if (!relaxed && isPathOutsideRoot(root, sessionRoot))
+      throw new Error(`cwd outside workspace: ${rawRoot}`)
     const rawLim = limit as number | undefined
     const lim = Number.isFinite(rawLim)
       ? Math.min(Math.max(Math.floor(rawLim!), 1), LIMITS.SEARCH_MAX_LIMIT)
@@ -90,7 +98,7 @@ export const globTool: Tool = {
     const re = globToRegExp(pattern as string)
     const ignoreMatchers = await loadIgnoreMatchers(root)
     const out: string[] = []
-    await walk(root, re, out, root, lim, ctx.signal, ignoreMatchers)
+    await walk(root, re, out, root, lim, ctx.signal, ignoreMatchers, relaxed)
     const st = await stat(root).catch(() => null)
     if (!st) return `cwd not found: ${rawRoot}`
     if (out.length === 0) return `no files match ${pattern} in ${rawRoot}`

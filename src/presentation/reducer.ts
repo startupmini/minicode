@@ -62,6 +62,7 @@ const MUTATION_TOOLS = new Set([
   "apply_patch",
   "delete_file",
   "git_commit",
+  "git_push",
 ])
 
 function isToolTerminal(status: ToolStatus): boolean {

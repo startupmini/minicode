@@ -164,4 +164,32 @@ describe("approval sink TUI", () => {
     expect(q).toContain("Diff:")
     expect(q).toContain("- secret.txt")
   })
+  test("modal: paintRegion melukis kotak (bukan tulis inline) + clearRegion saat selesai", async () => {
+    tty = installFakeTty({ columns: 80, rows: 24 })
+    let painted = 0
+    let cleared = 0
+    let paintedText = ""
+    setApprovalSink({
+      pushBlock: () => {},
+      repaint: () => {},
+      suspend: () => {},
+      resume: () => {},
+      paintRegion: (lines) => {
+        painted++
+        paintedText = lines.join("\n")
+      },
+      clearRegion: () => cleared++,
+    })
+    const p = promptAsk({ name: "bash", args: { command: "rm -rf /" } })
+    await tty.ready()
+    await tty.waitForOutput(() => painted >= 1)
+    // Kotak dialog ter-render (konten tool tampil), dan bukan tulis stdout polos.
+    expect(painted).toBeGreaterThanOrEqual(1)
+    expect(stripAnsi(paintedText)).toContain("bash")
+    expect(stripAnsi(paintedText)).toContain("rm -rf /")
+    await tty.send("n")
+    await tty.send(KEY.enter)
+    expect(await p).toBe("deny")
+    expect(cleared).toBe(1)
+  })
 })

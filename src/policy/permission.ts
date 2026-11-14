@@ -510,6 +510,11 @@ function buildDiffPreview(name: string, args: unknown): string | undefined {
         const m = line(str(a.message), 160)
         return m ? out(`commit ${m}`) : undefined
       }
+      case "git_push": {
+        const remote = str(a.remote) || "origin"
+        const branch = str(a.branch) ? ` ${str(a.branch)}` : ""
+        return out(`push ${remote}${branch}`)
+      }
       default: {
         // Generic: name + ringkasan key=value yang dibasuh — jangan JSON mentah
         // (struktur/token yang tak dikenal scrub bisa bocor).

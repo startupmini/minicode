@@ -33,6 +33,7 @@ const GROUP_BY_TOOL: Readonly<Record<string, ActivityGroupKind>> = {
   git_diff: "execute",
   git_log: "execute",
   git_commit: "execute",
+  git_push: "execute",
   mcp_list: "execute",
   mcp_call: "execute",
   mcp_read: "execute",

@@ -104,8 +104,8 @@ const completed = (name: string, args: unknown, id = "c1", isError = false) => (
 
 // ── 1. Closed-set classifier vs registry 37 tool ──
 
-test("journal: seluruh 37 tool terklasifikasi; unknown fail-loud di test", () => {
-  expect(allTools.map((t) => t.name).sort()).toHaveLength(37)
+test("journal: seluruh 38 tool terklasifikasi; unknown fail-loud di test", () => {
+  expect(allTools.map((t) => t.name).sort()).toHaveLength(38)
   for (const t of allTools) {
     const c = classifyTool(t.name)
     if (c === "unknown") throw new Error(`tool belum diklasifikasikan: ${t.name}`)
@@ -130,7 +130,7 @@ test("journal: unknown fail-closed → terjurnal sebagai mutasi (F-14)", () => {
   expect(isMutationTool("write_file")).toBe(true)
 })
 
-test("journal: daftar MUTATION persis 12 + dotted", () => {
+test("journal: daftar MUTATION persis 13 + dotted", () => {
   const names = allTools
     .map((t) => t.name)
     .filter((n) => isMutationTool(n))
@@ -145,6 +145,7 @@ test("journal: daftar MUTATION persis 12 + dotted", () => {
       "apply_patch",
       "forget_memory",
       "git_commit",
+      "git_push",
       "mcp_call",
       "move_file",
       "write_file",

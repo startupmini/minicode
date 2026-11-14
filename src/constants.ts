@@ -12,6 +12,9 @@ export const LIMITS = {
   /** Tool output truncation */
   BASH_OUTPUT_MAX_CHARS: 20_000,
   BASH_DEFAULT_TIMEOUT_MS: 30_000,
+  /** Timeout default bash di mode `unrestricted` (30 menit): kompilasi/instal/
+   * push jaringan tak boleh mati oleh timeout pendek; `timeoutMs` tetap menang. */
+  UNRESTRICTED_BASH_TIMEOUT_MS: 1_800_000,
   /** bash background: proses hidup melewati batas turn, dipanggil via bash_output */
   BASH_BACKGROUND_MAX_JOBS: 8,
   BASH_BACKGROUND_MAX_LIFETIME_MS: 3_600_000,

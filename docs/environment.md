@@ -91,6 +91,7 @@ Variabel yang paling menentukan perilaku (sisanya referensi di bawah):
 | `MINICODE_SHOW_THINKING` | reasoning model terlihat SECARA DEFAULT; `0` → minimized (hanya penanda), `1` → paksa terlihat |
 | `MINICODE_MINIMIZE_ACTIVITY` | ON secara default di TUI; `0` → transparan (baris per-tool). Lipat aktivitas tool per turn jadi satu ringkasan (detail via `/expand`) |
 | `MINICODE_ACTIVITY_PANEL` | `0` → matikan panel aktivitas (default AKTIF di TUI; `/fold` toggle); `1` → paksa aktif juga di jalur linear/one-shot |
+| `MINICODE_AUTORESUME_BG` | `0` → nonaktifkan auto-resume turn TUI saat job background selesai (default aktif; sekali per job, hanya bila tidak ada turn berjalan) |
 | `MINICORE_THINKING` | `off` → kirim `enable_thinking:false` ke OpenAI-compat (DeepSeek). Alias lama `MINICODE_THINKING` masih dihormati |
 | `NO_COLOR` | Set apa pun selain `0` → matikan seluruh warna |
 

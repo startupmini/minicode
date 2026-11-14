@@ -308,24 +308,29 @@ describe("5. hooks mengikuti WorkMode AKTIF, bukan snapshot", () => {
 })
 
 describe("6. footer mencerminkan kombinasi WorkMode + permission mode", () => {
-  test("EXECUTE → Build: label Work Mode memakai title case", () => {
-    expect(paintWorkMode("EXECUTE")).toContain("Work Mode: ")
-    expect(paintWorkMode("EXECUTE")).toContain("Build")
+  test("EXECUTE → Build: nilai title case tanpa label", () => {
+    // v0.24: label "Work Mode:"/"Permission Mode:" dihapus dari footer — lebar
+    // footer lebih lega dan pembeda sumbu tinggal warna (semantik vs cyan).
+    expect(stripAnsi(paintWorkMode("EXECUTE")).trimEnd()).toBe("Build")
+    expect(paintWorkMode("EXECUTE")).not.toContain("Work Mode:")
     expect(paintWorkMode("EXECUTE")).not.toContain("EXECUTE")
-    expect(paintPermissionMode("auto")).toContain("Permission Mode: Auto")
+    expect(stripAnsi(paintPermissionMode("auto"))).toBe("Auto")
+    expect(paintPermissionMode("auto")).not.toContain("Permission Mode:")
   })
-  test("Discuss/Plan dan Ask memakai title case", () => {
-    expect(paintWorkMode("DISCUSS")).toContain("Discuss")
-    expect(paintWorkMode("PLAN")).toContain("Plan")
-    expect(paintPermissionMode("ask")).toContain("Permission Mode: Ask")
+  test("Discuss/Plan dan Ask memakai title case tanpa label", () => {
+    expect(stripAnsi(paintWorkMode("DISCUSS")).trimEnd()).toBe("Discuss")
+    expect(stripAnsi(paintWorkMode("PLAN")).trimEnd()).toBe("Plan")
+    expect(stripAnsi(paintPermissionMode("ask"))).toBe("Ask")
   })
-  test("renderFooter menempatkan kedua label mode pada footer", () => {
+  test("renderFooter menempatkan kedua nilai mode pada footer", () => {
     const line = renderFooter({ mode: "auto", workMode: "PLAN", model: "m1", cwd: "cwd" }, 90)[0]!
-    expect(line).toContain("Work Mode: Plan")
-    expect(line).toContain("Permission Mode: Auto")
+    expect(line).toContain("Plan")
+    expect(line).toContain("Auto")
+    expect(line).not.toContain("Work Mode:")
+    expect(line).not.toContain("Permission Mode:")
     const plain = renderFooter({ mode: "auto", model: "m1", cwd: "cwd" }, 90)[0]!
-    expect(plain).toContain("Work Mode: Discuss")
-    expect(plain).toContain("Permission Mode: Auto")
+    expect(plain).toContain("Discuss")
+    expect(plain).toContain("Auto")
   })
 })
 
@@ -574,9 +579,9 @@ describe("7. command /work-mode (TUI end-to-end)", () => {
     await tty.waitForOutput((o) => o.includes("00.00.00"))
     await tty.send("/work-mode PLAN")
     await tty.send(KEY.enter)
-    await tty.waitForOutput(() => /Work(?: Mode)?: Plan/.test(stripAnsi(tty!.screen().join("\n"))))
+    await tty.waitForOutput(() => /Plan/.test(stripAnsi(tty!.screen().join("\n"))))
     expect(control.getWorkMode()).toBe("PLAN")
-    expect(stripAnsi(tty.screen().join("\n"))).toMatch(/Work(?: Mode)?: Plan/)
+    expect(stripAnsi(tty.screen().join("\n"))).toMatch(/Plan/)
     await tty.send("/exit")
     await tty.send(KEY.enter)
     await runP
@@ -590,11 +595,9 @@ describe("7. command /work-mode (TUI end-to-end)", () => {
     await tty.waitForOutput((o) => o.includes("00.00.00"))
     await tty.send("/work-mode DISCUSS")
     await tty.send(KEY.enter)
-    await tty.waitForOutput(() =>
-      /Work(?: Mode)?: Discuss/.test(stripAnsi(tty!.screen().join("\n"))),
-    )
+    await tty.waitForOutput(() => /Discuss/.test(stripAnsi(tty!.screen().join("\n"))))
     expect(control.getWorkMode()).toBe("DISCUSS")
-    expect(stripAnsi(tty.screen().join("\n"))).toMatch(/Work(?: Mode)?: Discuss/)
+    expect(stripAnsi(tty.screen().join("\n"))).toMatch(/Discuss/)
     // BUILD alias diterima → identitas internal EXECUTE, ditampil BUILD.
     await tty.send("/work-mode BUILD")
     await tty.send(KEY.enter)
@@ -644,9 +647,7 @@ describe("7. command /work-mode (TUI end-to-end)", () => {
     // /mode = permission mode (AUTO/ASK saja; nilai lain "unknown mode").
     await tty.send("/mode ask")
     await tty.send(KEY.enter)
-    await tty.waitForOutput(() =>
-      /Permission(?: Mode)?: Ask/.test(stripAnsi(tty!.screen().join("\n"))),
-    )
+    await tty.waitForOutput(() => /Ask/.test(stripAnsi(tty!.screen().join("\n"))))
     expect(control.getWorkMode()).toBe("PLAN")
     // Nilai legacy (readonly) tak lagi diterima sebagai permission mode.
     await tty.send("/mode readonly")

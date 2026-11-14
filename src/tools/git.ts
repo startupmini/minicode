@@ -20,13 +20,14 @@ import {
   isSensitive,
 } from "../policy/jail.ts"
 import { sanitizeSpawnEnv, scrubSecrets } from "../policy/scrub.ts"
-import { requireToolCwd } from "./context.ts"
+import { contextUnrestricted, requireToolCwd } from "./context.ts"
 
 function runGit(
   args: string[],
   cwd: string | undefined,
   signal: AbortSignal,
   envPatch?: Record<string, string>,
+  relaxed = false,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     // Audit #10 P0: SEMUA pemanggilan git lewat sini membawa netralisasi
@@ -36,10 +37,12 @@ function runGit(
     const p = spawn(resolveTrustedExecutable("git"), [...GIT_SAFE_BASE, ...args], {
       cwd,
       // Repo hooks (pre-commit/commit-msg/...) berjalan sebagai child dengan
-      // env ini — kredensial (API_KEY/TOKEN/...) di-strip agar hook nakal tak
+      // Secara default kredensial (API_KEY/TOKEN/...) di-strip agar hook nakal tak
       // bisa memanen secret dari env. Auth tetap via credential helper / agen
       // SSH (SSH_AUTH_SOCK bukan pola secret) — lihat policy/scrub.ts.
-      env: sanitizeSpawnEnv(process.env, envPatch),
+      // Unrestricted: kredensial git SEMPIT (GH_TOKEN/GITHUB_TOKEN/SSH_AUTH_SOCK)
+      // dilewatkan untuk `git push`/remote.
+      env: sanitizeSpawnEnv(process.env, envPatch, relaxed),
       // Timeout dari LIMITS, bukan hardcode: `git_commit` menjalankan beberapa
       // operasi berurutan (rev-parse → add → commit → log), dan di mesin yang
       // sibuk (mis. CI menjalankan test dengan coverage) spawn git bisa jauh
@@ -102,8 +105,8 @@ async function withGitCommitLock<T>(cwd: string, operation: () => Promise<T>): P
 }
 
 /** cwd tool harus di dalam workspace — sama seperti bash/glob/grep. */
-function assertCwd(cwd: string | undefined, sessionRoot: string): void {
-  if (!cwd) return
+function assertCwd(cwd: string | undefined, sessionRoot: string, relaxed = false): void {
+  if (!cwd || relaxed) return
   const abs = resolve(sessionRoot, cwd)
   if (isCwdOutsideRoot(abs, sessionRoot) || isPathOutsideRoot(abs, sessionRoot)) {
     throw new Error(`cwd outside workspace: ${cwd}`)
@@ -132,7 +135,7 @@ export const gitStatusTool: Tool = {
   async execute({ cwd }, ctx) {
     const c = cwd as string | undefined
     const sessionRoot = requireToolCwd(ctx)
-    assertCwd(c, sessionRoot)
+    assertCwd(c, sessionRoot, contextUnrestricted(ctx))
     const resolvedCwd = c ? resolve(sessionRoot, c) : sessionRoot
     if (!(await isGitRepo(resolvedCwd, ctx.signal))) return "not a git repository"
     // Audit #10 P0: `git diff` menjalankan clean filter pada berkas dirty
@@ -171,7 +174,7 @@ export const gitDiffTool: Tool = {
   },
   async execute({ cwd, staged }, ctx) {
     const sessionRoot = requireToolCwd(ctx)
-    assertCwd(cwd as string | undefined, sessionRoot)
+    assertCwd(cwd as string | undefined, sessionRoot, contextUnrestricted(ctx))
     const resolvedCwd = (cwd as string | undefined)
       ? resolve(sessionRoot, cwd as string)
       : sessionRoot
@@ -200,7 +203,7 @@ export const gitLogTool: Tool = {
   },
   async execute({ cwd, limit }, ctx) {
     const sessionRoot = requireToolCwd(ctx)
-    assertCwd(cwd as string | undefined, sessionRoot)
+    assertCwd(cwd as string | undefined, sessionRoot, contextUnrestricted(ctx))
     const resolvedCwd = (cwd as string | undefined)
       ? resolve(sessionRoot, cwd as string)
       : sessionRoot
@@ -223,14 +226,19 @@ export const gitLogTool: Tool = {
 // yang tidak bisa menilai konteksnya.
 
 /** Nama file di argumen `paths` harus di dalam workspace. */
-function assertPaths(paths: unknown, cwd: string | undefined, sessionRoot: string): string[] {
+function assertPaths(
+  paths: unknown,
+  cwd: string | undefined,
+  sessionRoot: string,
+  relaxed = false,
+): string[] {
   if (paths == null) return []
   if (!Array.isArray(paths)) throw new Error("paths must be an array of strings")
   const root = cwd ? resolve(sessionRoot, cwd) : sessionRoot
   const out: string[] = []
   for (const p of paths) {
     if (typeof p !== "string" || !p.trim()) continue
-    if (isPathOutsideRoot(p, root) || isRealPathOutsideRoot(p, root))
+    if (!relaxed && (isPathOutsideRoot(p, root) || isRealPathOutsideRoot(p, root)))
       throw new Error(`path outside workspace: ${p}`)
     const abs = resolve(root, p)
     if (isSensitive(p) || isSensitive(abs)) throw new Error(`blocked sensitive file: ${p}`)
@@ -267,13 +275,14 @@ export const gitCommitTool: Tool = {
     ctx.signal.throwIfAborted()
     const c = cwd as string | undefined
     const sessionRoot = requireToolCwd(ctx)
-    assertCwd(c, sessionRoot)
+    const relaxed = contextUnrestricted(ctx)
+    assertCwd(c, sessionRoot, relaxed)
     const resolvedCwd = c ? resolve(sessionRoot, c) : sessionRoot
     const msg = String(message ?? "").trim()
     if (!msg) throw new Error("message is required")
     if (msg.length > 4000) throw new Error("message terlalu panjang (max 4000 char)")
 
-    const files = assertPaths(paths, c, sessionRoot)
+    const files = assertPaths(paths, c, sessionRoot, relaxed)
     if (files.length === 0 && all !== true) {
       throw new Error(
         "provide `paths` (specific files) or `all: true` — an empty commit is useless",
@@ -389,5 +398,54 @@ export const gitCommitTool: Tool = {
         await rm(tempIndexDir, { recursive: true, force: true }).catch(() => {})
       }
     })
+  },
+}
+
+export const gitPushTool: Tool = {
+  name: "git_push",
+  description:
+    "Push a local branch to a remote (git push; hardened: repo hooks/filters neutralized). Gated like git_commit. In unrestricted mode git credentials (GH_TOKEN/GITHUB_TOKEN/SSH agent) are passed through.",
+  parameters: {
+    type: "object",
+    properties: {
+      remote: { type: "string", description: "remote name (default: git config)" },
+      branch: { type: "string", description: "branch to push (default: current upstream)" },
+      setUpstream: {
+        type: "boolean",
+        description: "set the pushed branch as the upstream tracking branch (-u)",
+      },
+      cwd: { type: "string" },
+    },
+    required: [],
+    additionalProperties: false,
+  },
+  async execute({ remote, branch, setUpstream, cwd }, ctx) {
+    ctx.signal.throwIfAborted()
+    const c = cwd as string | undefined
+    const sessionRoot = requireToolCwd(ctx)
+    const relaxed = contextUnrestricted(ctx)
+    assertCwd(c, sessionRoot, relaxed)
+    const resolvedCwd = c ? resolve(sessionRoot, c) : sessionRoot
+    // Tolak nilai berawalan "-" (mis. `--receive-pack=...`): argv diteruskan
+    // apa adanya ke git, jadi opsi dari argumen model = eksekusi di remote.
+    const refArg = (v: unknown, field: string): string | undefined => {
+      const s = typeof v === "string" ? v.trim() : ""
+      if (!s) return undefined
+      if (s.startsWith("-") || s.includes("\0")) throw new Error(`${field} must not start with '-'`)
+      return s
+    }
+    const remoteName = refArg(remote, "remote")
+    const branchName = refArg(branch, "branch")
+    if (!(await isGitRepo(resolvedCwd, ctx.signal))) return "not a git repository"
+    // Netralisasi hook: pre-push repo tak boleh dieksekusi. Kredensial hanya
+    // lewat saat unrestricted (relaxed).
+    const neutral = await gitFilterNeutralizers(resolvedCwd)
+    const args: string[] = [...neutral, "push"]
+    if (remoteName) args.push(remoteName)
+    if (branchName) args.push(branchName)
+    else if (setUpstream === true) throw new Error("branch is required when setUpstream:true")
+    if (setUpstream === true) args.push("--set-upstream")
+    const out = await runGit(args, resolvedCwd, ctx.signal, undefined, relaxed)
+    return out.trim() || "(push finished)"
   },
 }

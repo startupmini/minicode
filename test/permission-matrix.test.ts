@@ -1,4 +1,4 @@
-// Matriks Permission × Tool (37 tool × 6 mode).
+// Matriks Permission × Tool (38 tool × 6 mode).
 // Ekspektasi di-derive dari src/policy/permission.ts (bukan dokumentasi):
 // bila handler berubah, test ini yang harus ikut berubah secara sadar.
 // Hermetic: root tmp per test, tanpa eksekusi tool (hanya decision check).
@@ -48,6 +48,7 @@ const GATED = new Set([
   "mcp_read",
   "mcp_prompt",
   "git_commit",
+  "git_push",
   "ask_user",
 ])
 const NO_PROMPT = new Set(["todo_write", "submit_result", "bash_output", "bash_kill"])
@@ -70,6 +71,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   git_diff: {},
   git_log: {},
   git_commit: { message: "m" },
+  git_push: {},
   lsp_diagnostics: { file: "a.ts" },
   lsp_definition: { file: "a.ts" },
   lsp_references: { file: "a.ts" },
@@ -95,9 +97,9 @@ const ARGS: Record<string, Record<string, unknown>> = {
 
 const NAMES = Object.keys(ARGS).sort()
 
-test("registry allTools tepat 37 nama yang dicakup matriks", () => {
+test("registry allTools tepat 38 nama yang dicakup matriks", () => {
   expect(allTools.map((t) => t.name).sort()).toEqual(NAMES)
-  expect(NAMES).toHaveLength(37)
+  expect(NAMES).toHaveLength(38)
 })
 
 type Ask = (call: { name: string; args?: unknown }) => Promise<"allow" | "deny" | "always">

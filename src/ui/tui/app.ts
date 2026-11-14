@@ -79,6 +79,8 @@ const PROMPT_FIRST = "minicode › "
 const PROMPT_CONT = "  · "
 const TIMER_TEXT = "00.00.00"
 const DOT_INTERVAL_MS = 200
+/** Badge job background berputar lebih pelan dari dots (tidak berkedip). */
+const WAITING_INTERVAL_MS = 400
 const DOT_PHASES = ["...", "..", ".", ".."] as const
 const MOUSE_DRAG_ON = "\x1b[?1002h\x1b[?1006h"
 const MOUSE_WHEEL_ON = "\x1b[?1000h\x1b[?1006h"
@@ -241,6 +243,10 @@ export class TuiApp {
   private thinkingActive = false
   private turnStartedAt = 0
   private activityTimer: ReturnType<typeof setTimeout> | undefined
+  // Clock badge job background: TERPISAH dari activityTimer karena job hidup
+  // justru saat turn IDLE (activityTimer hanya jalan saat busy).
+  private waitingTimer: ReturnType<typeof setTimeout> | undefined
+  private waitingStartedAt = 0
   /** Timestamp abort terakhir (ms) — deteksi double-tap Esc = quit. */
   private lastAbortAt = 0
   /** Hint "tekan lagi untuk keluar" tampil sekali setelah abort pertama. */
@@ -527,6 +533,7 @@ export class TuiApp {
       this.repaintTimer = undefined
     }
     this.stopActivityClock()
+    this.stopWaitingClock()
     this.stopAutoScroll()
     for (const unsubscribe of this.busUnsubs.splice(0)) {
       try {
@@ -923,6 +930,7 @@ export class TuiApp {
       this.host.abort()
     } catch {}
     this.stopActivityClock()
+    this.stopWaitingClock()
     this.quitRequested = true
     this.finish?.()
   }
@@ -1221,6 +1229,46 @@ export class TuiApp {
     }
   }
 
+  // Clock badge job background: berjalan selama ada job hidup, termasuk saat
+  // turn idle (justru saat itulah job biasanya selesai).
+  private startWaitingClock(): void {
+    if (this.waitingTimer !== undefined || this.quitRequested) return
+    if (!this.waitingStartedAt) this.waitingStartedAt = Date.now()
+    const tick = () => {
+      this.waitingTimer = undefined
+      if (this.quitRequested) return
+      if (!this.hasBackgroundJobs()) {
+        this.waitingStartedAt = 0
+        return
+      }
+      if (this.suspended === 0 && !this.released) this.paintCurrent()
+      if (this.quitRequested) return
+      this.startWaitingClock()
+    }
+    this.waitingTimer = setTimeout(tick, WAITING_INTERVAL_MS)
+    try {
+      ;(this.waitingTimer as unknown as { unref?: () => void }).unref?.()
+    } catch {}
+  }
+
+  private stopWaitingClock(): void {
+    if (this.waitingTimer !== undefined) {
+      clearTimeout(this.waitingTimer)
+      this.waitingTimer = undefined
+    }
+    this.waitingStartedAt = 0
+  }
+
+  /** Jumlah job hidup dari snapshot host (0 bila host tak melaporkan). */
+  private hasBackgroundJobs(): boolean {
+    try {
+      const jobs = this.host.getStatus().footer.backgroundJobs ?? 0
+      return jobs >= 1
+    } catch {
+      return false
+    }
+  }
+
   private activityStatus(snap: TuiStatusSnapshot): string {
     const activity = snap.pinnedActivity
     if (!activity) return ""
@@ -1297,6 +1345,27 @@ export class TuiApp {
     // ini hanya ada di `requestPaint`, jadi API publik tak konsisten (audit
     // 2026-11-12, MEDIUM-9).
     if (!this.quitRequested && this.suspended === 0) this.paintCurrent()
+  }
+
+  // Titik masuk popup komposit (approval/ask_user): lukis kotak di atas
+  // transkrip yang sudah redup. Geometri milik currentScreen.
+  paintRegion(lines: string[], topRow: number): void {
+    if (!this.currentScreen || this.quitRequested) return
+    try {
+      this.currentScreen.paintRegion(lines, topRow)
+    } catch (error) {
+      this.stopAfterRuntimeError(error)
+    }
+  }
+
+  /** Hapus region popup (pasangan paintRegion); App akan repaint penuh saat resume. */
+  clearRegion(): void {
+    if (!this.currentScreen) return
+    try {
+      this.currentScreen.clearRegion()
+    } catch (error) {
+      this.stopAfterRuntimeError(error)
+    }
   }
 
   private viewportHeight(rows: number, cols: number): number {
@@ -1654,6 +1723,10 @@ export class TuiApp {
       this.thinkingActive = false
       this.turnStartedAt = 0
     }
+    // Badge hidup saat busy DAN idle; clock-nya terpisah dari activity.
+    const backgroundJobs = snap.footer.backgroundJobs ?? 0
+    if (backgroundJobs >= 1) this.startWaitingClock()
+    else this.stopWaitingClock()
     const newCount = this.scrollBack > 0 ? this.transcript.total() - this.scrollBase : 0
     // Baris indikator WAJIB dipotong ke lebar frame seperti baris lain: teks
     // locale id lebih panjang dari terminal sempit (51 kolom untuk abort hint),
@@ -1736,6 +1809,12 @@ export class TuiApp {
           timer,
           timerActive: busy,
           timerHighlight: timerHighlight(elapsed),
+          // Frame badge dihitung dari clock badge sendiri (waitingStartedAt),
+          // bukan dari turn: job background berputar juga saat idle.
+          backgroundFrame:
+            backgroundJobs >= 1 && !motionReduced()
+              ? Math.floor((now - (this.waitingStartedAt || now)) / WAITING_INTERVAL_MS)
+              : 0,
         },
         width,
       )[0] ?? ""

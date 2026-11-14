@@ -93,7 +93,7 @@ const setOf = (xs: readonly string[]) => new Set(xs)
 describe("TOOL-01/LOOP-INV-04 — registry kontrak tool = sumber tunggal", () => {
   const TIERS = ["PURE_READ", "WORKSPACE_MUTATION", "LOCAL_ENV_MUTATION", "EXTERNAL_IRREVERSIBLE"]
 
-  test("semua 37 tool terdaftar dengan tier valid, tanpa duplikat", () => {
+  test("semua 38 tool terdaftar dengan tier valid, tanpa duplikat", () => {
     expect(TOOL_CONTRACTS).toHaveLength(allTools.length)
     const names = TOOL_CONTRACTS.map((c) => c.name)
     expect(new Set(names).size).toBe(names.length)
@@ -120,11 +120,27 @@ describe("TOOL-01/LOOP-INV-04 — registry kontrak tool = sumber tunggal", () =>
     )
     // EXCLUSIVE_TOOLS = tanpa path tunggal → batch penuh sekuensial
     expect(setOf([...EXCLUSIVE_TOOLS])).toEqual(
-      new Set(["bash", "code_run", "git_commit", "write_memory", "forget_memory", "todo_write"]),
+      new Set([
+        "bash",
+        "code_run",
+        "git_commit",
+        "git_push",
+        "write_memory",
+        "forget_memory",
+        "todo_write",
+      ]),
     )
     // GATED_TOOLS = di-gate approval secara default
     expect(setOf([...GATED_TOOLS])).toEqual(
-      new Set(["delegate_task", "mcp_call", "mcp_read", "mcp_prompt", "git_commit", "ask_user"]),
+      new Set([
+        "delegate_task",
+        "mcp_call",
+        "mcp_read",
+        "mcp_prompt",
+        "git_commit",
+        "git_push",
+        "ask_user",
+      ]),
     )
     // EXPLORE_TOOL_NAMES = subset read-only sub-agen explore
     expect(setOf(EXPLORE_TOOL_NAMES)).toEqual(

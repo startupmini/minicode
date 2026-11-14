@@ -12,7 +12,7 @@ import {
 } from "../lsp/client.ts"
 import { isPathOutsideRoot, isRealPathOutsideRoot, isSensitive } from "../policy/jail.ts"
 import { scrubSecrets } from "../policy/scrub.ts"
-import { requireToolCwd } from "./context.ts"
+import { contextUnrestricted, requireToolCwd } from "./context.ts"
 
 const SEVERITY = ["Error", "Warn", "Info", "Hint"]
 
@@ -37,16 +37,21 @@ function toUri(abs: string): string {
   return pathToFileURL(abs).href
 }
 
-async function readTarget(file: string, cwd: string): Promise<{ abs: string; text: string }> {
-  if (isPathOutsideRoot(file, cwd)) throw new Error(`path outside workspace: ${file}`)
+async function readTarget(
+  file: string,
+  cwd: string,
+  relaxed = false,
+): Promise<{ abs: string; text: string }> {
+  if (!relaxed && isPathOutsideRoot(file, cwd)) throw new Error(`path outside workspace: ${file}`)
   if (isSensitive(file)) throw new Error(`blocked sensitive file: ${file}`)
   const abs = isAbsolute(file) ? resolvePath(file) : resolvePath(cwd, file)
-  if (isRealPathOutsideRoot(abs, cwd)) throw new Error(`path outside workspace: ${file}`)
+  if (!relaxed && isRealPathOutsideRoot(abs, cwd))
+    throw new Error(`path outside workspace: ${file}`)
   // Baca via safeReadFile (O_NOFOLLOW + verifikasi ulang target saat open):
   // readFile biasa membuka hasil realpath LAMA sehingga swap symlink di
   // antara cek dan baca lolos + membaca target sensitif. relevan ganda di
   // jalur MCP yang permission handler-nya minim (tanpa pre-check jail).
-  const text = await safeReadFile(abs, cwd)
+  const text = await safeReadFile(abs, cwd, relaxed)
   return { abs, text }
 }
 
@@ -74,10 +79,11 @@ interface PosArgs {
 async function resolvePosition(
   args: PosArgs,
   cwd: string,
+  relaxed = false,
 ): Promise<{ abs: string; text: string; position: { line: number; character: number } } | string> {
   if (getConfiguredExts().length === 0)
     return "(no LSP servers configured — add via minicode config lsp add)"
-  const { abs, text } = await readTarget(args.file, cwd)
+  const { abs, text } = await readTarget(args.file, cwd, relaxed)
   let position: { line: number; character: number } | null = null
   if (args.line != null) position = { line: args.line, character: args.character ?? 0 }
   else if (args.symbol) position = findSymbolPosition(text, args.symbol)
@@ -131,7 +137,7 @@ function posTool(
       ctx.signal.throwIfAborted()
       const cwd = requireToolCwd(ctx)
       try {
-        const resolved = await resolvePosition(args as PosArgs, cwd)
+        const resolved = await resolvePosition(args as PosArgs, cwd, contextUnrestricted(ctx))
         if (typeof resolved === "string") return resolved
         const { abs, text, position } = resolved
         const result = await raceAbort(
@@ -173,7 +179,7 @@ export const lspDiagnosticsTool: Tool = {
     ctx.signal.throwIfAborted()
     const cwd = requireToolCwd(ctx)
     try {
-      const { abs, text } = await readTarget(String(file), cwd)
+      const { abs, text } = await readTarget(String(file), cwd, contextUnrestricted(ctx))
       const { items } = await raceAbort(lspDiagnostics(abs, text, undefined, cwd), ctx.signal)
       if (!items.length) return "(no diagnostics)"
       return scrubSecrets(
@@ -230,7 +236,7 @@ export const lspSymbolsTool: Tool = {
     ctx.signal.throwIfAborted()
     const cwd = requireToolCwd(ctx)
     try {
-      const { abs, text } = await readTarget(String(file), cwd)
+      const { abs, text } = await readTarget(String(file), cwd, contextUnrestricted(ctx))
       const result = await raceAbort(
         lspCall(
           abs,

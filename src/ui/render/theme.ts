@@ -364,13 +364,14 @@ export const glyphs = {
     // Fallback * untuk terminal tanpa UTF-8.
     return supportsUtf8() ? "✦" : "*"
   },
-  // Gembok bash allow-list (footer): fallback teks agar status kapabilitas
-  // tetap terbaca di terminal tanpa emoji (MINICODE_ASCII/legacy Windows).
+  // Badge bash allow-list (footer): titik monokrom, bukan emoji gembok —
+  // emoji berwarna dan lebarnya beda antar-font (kolom footer bergeser).
+  // ●/○ satu kolom dan tetap terbaca saat diwarnai; fallback teks ASCII.
   get lock() {
-    return supportsUtf8() ? "🔒" : "[LOCK]"
+    return supportsUtf8() ? "●" : "[LOCK]"
   },
   get unlock() {
-    return supportsUtf8() ? "🔓" : "[OPEN]"
+    return supportsUtf8() ? "○" : "[OPEN]"
   },
 }
 

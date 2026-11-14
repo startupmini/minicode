@@ -423,6 +423,17 @@ export const TOOL_CONTRACTS: readonly ToolContractMetadata[] = [
     journalMutation: true,
   }),
   C({
+    name: "git_push",
+    sideEffectTier: "EXTERNAL_IRREVERSIBLE",
+    concurrencyClass: "exclusive",
+    gatedByDefault: true,
+    allowedInExplore: false,
+    allowedInAutonomous: false,
+    allowedInReadonly: false,
+    idempotent: false,
+    journalMutation: true,
+  }),
+  C({
     name: "delegate_task",
     sideEffectTier: "EXTERNAL_IRREVERSIBLE",
     concurrencyClass: "parallel-read",

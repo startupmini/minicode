@@ -8,7 +8,7 @@
 // dengan spasi dan warna, tanpa bullet separator. Work Mode ada di kiri;
 // Permission Mode berwarna cyan di sisi kanan, dekat penggunaan konteks.
 import { sanitizeAnsiLine } from "./render/sanitize.ts"
-import { c, glyphs, themeCapabilityKey } from "./render/theme.ts"
+import { c, glyphs, supportsUtf8, themeCapabilityKey } from "./render/theme.ts"
 import { displayWidth, truncateToWidth } from "./render/width.ts"
 
 export type TimerHighlight = "seconds" | "minutes" | "hours"
@@ -36,6 +36,11 @@ export interface FooterStatus {
    * memetakan frame → glyph berwarna.
    */
   sparkFrame?: number
+  /** Jumlah job bash background hidup (dihitung di cli — batas lapisan).
+   * >= 1 = badge `◷ N` berputar; 0/undefined = tanpa badge. */
+  backgroundJobs?: number
+  /** Frame animasi badge job (dinaikkan clock idle di app.ts, bukan turn). */
+  backgroundFrame?: number
   activity?: string
   timer?: string
   timerActive?: boolean
@@ -43,8 +48,6 @@ export interface FooterStatus {
 }
 
 /** Lebar tetap kolom agar perubahan WorkMode tidak menggeser model/CWD. */
-const WORK_MODE_WIDTH = 18
-const WORK_MODE_COMPACT_WIDTH = 13
 const WORK_MODE_VALUE_WIDTH = 7
 
 /** Buang prefix provider (`acme::deepseek-v4` → `deepseek-v4`). */
@@ -73,41 +76,30 @@ function workModeValue(workMode?: string): string {
 
 type ModeLabelStyle = "full" | "compact" | "value"
 
-/** Work Mode memakai warna semantik; label/nilai memakai title case. */
-export function paintWorkMode(workMode?: string, style: ModeLabelStyle = "full"): string {
+/** Work Mode memakai warna semantik; nilai title case tanpa label (v0.24:
+ * footer lebih lega — nilai saja, pembeda sumbu = warna). */
+export function paintWorkMode(workMode?: string, _style: ModeLabelStyle = "full"): string {
   const value = workModeValue(workMode)
   const normalized = sanitizeAnsiLine(workMode || "DISCUSS").toUpperCase()
-  const prefix = style === "full" ? "Work Mode: " : style === "compact" ? "Work: " : ""
-  const width =
-    style === "full"
-      ? WORK_MODE_WIDTH
-      : style === "compact"
-        ? WORK_MODE_COMPACT_WIDTH
-        : WORK_MODE_VALUE_WIDTH
-  const labelWidth = displayWidth(sanitizeAnsiLine(`${prefix}${value}`))
+  const labelWidth = displayWidth(sanitizeAnsiLine(value))
   const colorValue = normalized === "DISCUSS" || normalized === "PLAN" ? c.warning : c.success
-  return `${prefix ? c.gray(prefix) : ""}${colorValue(value)}${" ".repeat(
-    Math.max(0, width - labelWidth),
-  )}`
+  return `${colorValue(value)}${" ".repeat(Math.max(0, WORK_MODE_VALUE_WIDTH - labelWidth))}`
 }
 
-/** Permission Mode selalu cyan agar terpisah secara visual dari Work Mode.
- * `unrestricted` (full akses, /unrestric): label disembunyikan — cukup gembok
- * terbuka 🔓 sebagai indikator satu-satunya (lihat paintBashStrict). */
-export function paintPermissionMode(mode: string, style: ModeLabelStyle = "full"): string {
+/** Permission Mode selalu cyan agar terpisah dari Work Mode. `unrestricted`:
+ * label disembunyikan — cukup titik terbuka ○ (lihat paintBashStrict). */
+export function paintPermissionMode(mode: string, _style: ModeLabelStyle = "full"): string {
   if (mode === "unrestricted") return ""
   const value = titleCaseMode(mode, "Auto")
-  if (style === "value") return c.info(value)
-  const prefix = style === "full" ? "Permission Mode: " : "Permission: "
-  return `${c.gray(prefix)}${c.info(value)}`
+  return c.info(value)
 }
 
-/** Badge pembatas bash allow-list: gembok selalu tampil — terang saat aktif,
- * redup saat nonaktif (lapis kapabilitas, terpisah dari mode persetujuan).
- * Saat `unrestricted` aktif, gembok jadi TERBUKA (🔓) — satu-satunya penanda,
- * jadi dirender jelas (bukan redup). */
+/** Badge pembatas bash allow-list: titik selalu tampil — terang/kuning saat
+ * aktif, redup/abu saat nonaktif (lapis kapabilitas, terpisah dari mode
+ * persetujuan). Saat `unrestricted` aktif, titik jadi ○ MERAH — satu-satunya
+ * penanda mode itu, jadi dirender jelas (bukan redup). */
 export function paintBashStrict(strictBash?: boolean, unrestricted = false): string {
-  if (unrestricted) return c.info(glyphs.unlock)
+  if (unrestricted) return c.red(glyphs.unlock)
   return strictBash ? c.yellow(glyphs.lock) : c.gray(glyphs.lock)
 }
 
@@ -116,6 +108,20 @@ function sparkGlyph(frame: number): string {
   const g = glyphs.thinkingIcon
   if (frame <= 0) return c.faint(g)
   return frame % 2 === 0 ? c.white(g) : c.gray(g)
+}
+
+// Badge job background: jam flat berputar PELAN (fase beda dari spark),
+// monokrom; fallback ASCII `[BG:n]`.
+const WAITING_GLYPHS = ["◷", "◶", "◵", "◴"] as const
+const WAITING_ASCII = ["[BG:", "|", "/", "-"] as const
+
+/** Frame -> glyph badge tunggu. `count` = jumlah job hidup; 0 = string kosong. */
+export function waitingGlyph(count: number, frame = 0): string {
+  if (count <= 0) return ""
+  const n = Math.max(1, Math.floor(count))
+  if (!supportsUtf8()) return `${WAITING_ASCII[0]}${n}]`
+  const phase = Math.abs(Math.floor(frame)) % WAITING_GLYPHS.length
+  return `${WAITING_GLYPHS[phase]} ${n}`
 }
 
 function paintTimer(text: string, active: boolean, highlight: TimerHighlight = "seconds"): string {
@@ -168,6 +174,8 @@ function footerCacheKey(s: FooterStatus, cols: number): string {
     s.context ?? "",
     s.metrics ?? "",
     s.sparkFrame ?? 0,
+    s.backgroundJobs ?? 0,
+    s.backgroundFrame ?? 0,
     s.activity ?? "",
     s.timer ?? "",
     s.timerActive === true,
@@ -194,11 +202,15 @@ export function renderFooter(s: FooterStatus, columns: number): string[] {
 
 function buildFooterLine(s: FooterStatus, cols: number): string {
   const spark = sparkGlyph(s.sparkFrame ?? 0)
+  const badge =
+    s.backgroundJobs != null && s.backgroundJobs >= 1
+      ? `${c.muted(waitingGlyph(s.backgroundJobs, s.backgroundFrame ?? 0))}  `
+      : ""
   const timerText = s.timer ? sanitizeAnsiLine(s.timer) : ""
   const timer = timerText
     ? `${paintTimer(timerText, s.timerActive === true, s.timerHighlight)}  `
     : ""
-  const lead = `${spark}  ${timer}`
+  const lead = `${spark}  ${badge}${timer}`
   const fieldGap = "  "
   // Satu-baris: cwd/model bisa berisi newline (nama dir) — sanitizeAnsiLine
   // agar \n tak memecah frame lengket ke scrollback (displayWidth menghitung

@@ -6,3 +6,13 @@ export function requireToolCwd(context: unknown): string {
   }
   return cwd
 }
+
+/**
+ * True hanya di mode `unrestricted`. Sumber: `ToolContext.permissionMode`,
+ * di-resolve LIVE per-turn oleh kernel — `/unrestric` saat runtime langsung
+ * tercermin tanpa patch vendor. Fail-closed: selain string "unrestricted"
+ * (termasuk undefined pada pemanggil library/test) = false.
+ */
+export function contextUnrestricted(context: unknown): boolean {
+  return (context as { permissionMode?: unknown } | null)?.permissionMode === "unrestricted"
+}

@@ -4,7 +4,7 @@ import { resolve as resolvePath } from "node:path"
 import type { Tool, ToolContext } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { isCwdOutsideRoot, isPathOutsideRoot } from "../policy/jail.ts"
-import { requireToolCwd } from "./context.ts"
+import { contextUnrestricted, requireToolCwd } from "./context.ts"
 
 // re-export untuk backward compat (helper kini terpusat di policy/scrub)
 export { SECRET_ENV_RE, sanitizeSpawnEnv, stripSecretsEnv } from "../policy/scrub.ts"
@@ -87,6 +87,34 @@ interface BackgroundJob {
 }
 
 const jobs = new Map<string, BackgroundJob>()
+
+/**
+ * Pendengar selesainya job background: lapisan cli memakainya untuk repaint
+ * badge footer + satu auto-resume terbatas. Tool hanya mengumumkan fakta
+ * "job X selesai dengan exit N" — tak tahu apa pun soal UI/prompt. Set agar
+ * unsubscribe idempoten dan aman saat listener menghapus dirinya saat emit.
+ */
+const finishListeners = new Set<(id: string, code: number | null) => void>()
+
+/** Daftarkan pendengar selesai job. Return = fungsi unsubscribe (idempoten). */
+export function onBackgroundJobFinished(
+  listener: (id: string, code: number | null) => void,
+): () => void {
+  finishListeners.add(listener)
+  return () => {
+    finishListeners.delete(listener)
+  }
+}
+
+function emitBackgroundJobFinished(id: string, code: number | null): void {
+  // Satu listener yang melempar tak boleh menahan listener lain ATAU
+  // menggagalkan handler `close` proses anak.
+  for (const listener of [...finishListeners]) {
+    try {
+      listener(id, code)
+    } catch {}
+  }
+}
 
 // F-03 (P5 §C2): gerbang akses job. Hanya pemilik (sid sama, null==null untuk
 // jalur legacy) yang boleh inspect/cancel. Kegagalan karena kepemilikan
@@ -221,7 +249,12 @@ export function listBackgroundJobs(): { id: string; cmd: string; done: boolean }
   return [...jobs.values()].map((j) => ({ id: j.id, cmd: j.cmd, done: j.done }))
 }
 
-function startBackground(cmd: string, cwd: string | undefined, ownerSid: string | null): string {
+function startBackground(
+  cmd: string,
+  cwd: string | undefined,
+  ownerSid: string | null,
+  relaxed = false,
+): string {
   reapFinishedJobs()
   const live = [...jobs.values()].filter((j) => !j.done).length
   if (live >= LIMITS.BASH_BACKGROUND_MAX_JOBS) {
@@ -233,7 +266,7 @@ function startBackground(cmd: string, cwd: string | undefined, ownerSid: string 
   const proc = spawn(cmd, {
     shell: true,
     cwd,
-    env: sanitizeSpawnEnv(process.env),
+    env: sanitizeSpawnEnv(process.env, undefined, relaxed),
     stdio: ["ignore", "pipe", "pipe"],
     // detached agar shell jadi group leader → killTree bisa menutup SELURUH
     // grup (POSIX kill(-pid)). Tanpa ini yang bisa dibunuh cuma wrapper shell
@@ -260,13 +293,23 @@ function startBackground(cmd: string, cwd: string | undefined, ownerSid: string 
     const piece = job.buffer.append("err", d)
     if (piece) job.chunks.push(scrubSecrets(piece))
   })
+  // Emit sekali per job: `error` biasanya disusul `close` (emit ganda =
+  // dua auto-resume). Guard lokal cukup — kedua handler berbagi closure.
+  let emitted = false
+  const emitOnce = (code: number | null): void => {
+    if (emitted) return
+    emitted = true
+    emitBackgroundJobFinished(id, code)
+  }
   proc.on("error", (e) => {
     job.chunks.push(`[error] ${e.message}`)
     job.done = true
+    emitOnce(null)
   })
   proc.on("close", (code) => {
     job.exitCode = code
     job.done = true
+    emitOnce(code)
   })
   jobs.set(id, job)
   return id
@@ -300,8 +343,9 @@ function makeBashTool(ownerSid: string | null): Tool {
     },
     async execute({ cmd, cwd, timeoutMs, background }, ctx) {
       const sessionRoot = requireToolCwd(ctx)
+      const relaxed = contextUnrestricted(ctx)
       const c = cwd as string | undefined
-      if (c && (isCwdOutsideRoot(c, sessionRoot) || isPathOutsideRoot(c, sessionRoot)))
+      if (!relaxed && c && (isCwdOutsideRoot(c, sessionRoot) || isPathOutsideRoot(c, sessionRoot)))
         throw new Error(`cwd outside workspace: ${c}`)
       const resolvedCwd = c ? resolvePath(sessionRoot, c) : undefined
       const effectiveCwd = resolvedCwd ?? sessionRoot
@@ -313,7 +357,11 @@ function makeBashTool(ownerSid: string | null): Tool {
       // symlink — tak bisa ditutup murah dari sini (shell mengikuti symlink by
       // design; safe-open O_NOFOLLOW hanya untuk tool file). Mitigasi: --sandbox
       // untuk isolasi penuh; lihat permission.ts jail + safe-open.ts.
-      const timeout = timeoutMs ?? LIMITS.BASH_DEFAULT_TIMEOUT_MS
+      // Unrestricted: default timeout jauh lebih lega; timeoutMs eksplisit
+      // tetap menang.
+      const timeout =
+        timeoutMs ??
+        (relaxed ? LIMITS.UNRESTRICTED_BASH_TIMEOUT_MS : LIMITS.BASH_DEFAULT_TIMEOUT_MS)
 
       if (background === true) {
         // Sandbox tidak diterapkan di jalur background: container/namespace
@@ -324,7 +372,7 @@ function makeBashTool(ownerSid: string | null): Tool {
             "background:true is not supported while --sandbox is active (the process must outlive the turn)",
           )
         }
-        const id = startBackground(cmd as string, resolvedCwd, ownerSid)
+        const id = startBackground(cmd as string, resolvedCwd, ownerSid, relaxed)
         // F-07: echo perintah di-scrub seperti output foreground — command line
         // bisa membawa secret (`curl -H "Authorization: Bearer …"`), dan versi
         // lama menaruhnya mentah ke konteks model.
@@ -336,7 +384,7 @@ function makeBashTool(ownerSid: string | null): Tool {
         if (dockerAvailable()) {
           const res = await runInDocker(cmd as string, effectiveCwd, {
             timeoutMs: timeout,
-            env: sanitizeSpawnEnv(process.env) as Record<string, string>,
+            env: sanitizeSpawnEnv(process.env, undefined, relaxed) as Record<string, string>,
             signal: ctx.signal,
           })
           ctx.signal.throwIfAborted()
@@ -363,7 +411,7 @@ function makeBashTool(ownerSid: string | null): Tool {
         if (osSandboxAvailable()) {
           const res = await runInOsSandbox(cmd as string, effectiveCwd, {
             timeoutMs: timeout,
-            env: sanitizeSpawnEnv(process.env) as Record<string, string>,
+            env: sanitizeSpawnEnv(process.env, undefined, relaxed) as Record<string, string>,
           })
           const text = scrubSecrets(res.output)
           if (res.code !== 0 && res.code !== null)
@@ -394,7 +442,7 @@ function makeBashTool(ownerSid: string | null): Tool {
           // undefined (= inherit process.cwd()). Jail/permission dievaluasi
           // terhadap sessionRoot — eksekusi harus di direktori yang sama.
           cwd: effectiveCwd,
-          env: sanitizeSpawnEnv(process.env),
+          env: sanitizeSpawnEnv(process.env, undefined, relaxed),
           signal: ctx.signal,
           // detached agar shell jadi group leader → killTree bisa bunuh
           // seluruh grup (POSIX kill(-pid)). Tanpa ini cucu yatim menahan pipe.

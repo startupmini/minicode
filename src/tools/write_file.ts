@@ -5,7 +5,7 @@ import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
 import { assertSafeWriteTarget, resolveSafePath } from "../lib/safe-open.ts"
 import { appendLspDiagnostics } from "../policy/verifier.ts"
-import { requireToolCwd } from "./context.ts"
+import { contextUnrestricted, requireToolCwd } from "./context.ts"
 
 export const writeFileTool: Tool = {
   name: "write_file",
@@ -24,10 +24,11 @@ export const writeFileTool: Tool = {
     ctx.signal.throwIfAborted()
     const p = path as string
     const root = requireToolCwd(ctx)
+    const relaxed = contextUnrestricted(ctx)
     // Verifikasi path terpusat (logis + target nyata) — detail di safe-open.ts.
-    const { real: realAbs } = await resolveSafePath(p, root)
+    const { real: realAbs } = await resolveSafePath(p, root, relaxed)
     // Tolak menimpa symlink final (swap antara cek dan tulis gagal tutup).
-    await assertSafeWriteTarget(resolve(root, p), root)
+    await assertSafeWriteTarget(resolve(root, p), root, relaxed)
     // guard large write — chars vs bytes (emoji/CJK 4x)
     const c = content as string
     if (c.length > LIMITS.WRITE_FILE_MAX_CHARS)

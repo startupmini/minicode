@@ -3,7 +3,7 @@ import type { Tool } from "#minicore"
 import { LIMITS } from "../constants.ts"
 import { atomicWriteText } from "../lib/atomic-write.ts"
 import { assertSafeWriteTarget, resolveSafePath, safeReadFile } from "../lib/safe-open.ts"
-import { requireToolCwd } from "./context.ts"
+import { contextUnrestricted, requireToolCwd } from "./context.ts"
 import { flexibleMatch } from "./edit.ts"
 
 // Apply SEARCH/REPLACE block (a la Aider) ke file. Search block harus match
@@ -40,16 +40,17 @@ export const applyPatchTool: Tool = {
     ctx.signal.throwIfAborted()
     const p = path as string
     const root = requireToolCwd(ctx)
+    const relaxed = contextUnrestricted(ctx)
     // Verifikasi path terpusat (logis + target nyata) — detail di safe-open.ts.
-    const { abs, real: realAbs } = await resolveSafePath(p, root)
+    const { abs, real: realAbs } = await resolveSafePath(p, root, relaxed)
     // Tolak menimpa symlink final (swap antara cek dan tulis gagal tutup).
-    await assertSafeWriteTarget(abs, root)
+    await assertSafeWriteTarget(abs, root, relaxed)
     const st = await stat(realAbs).catch(() => null)
     if (!st) throw new Error(`file not found: ${p}`)
     if (st.size > LIMITS.READ_FILE_MAX_BYTES) throw new Error(`file too large: ${p} (${st.size})`)
 
     // Pakai safeReadFile (O_NOFOLLOW) agar swap symlink di antara cek dan baca gagal ELOOP.
-    let content = await safeReadFile(abs, root)
+    let content = await safeReadFile(abs, root, relaxed)
     const patchList = patches as { search: string; replace: string }[]
     if (patchList.length > 50) throw new Error(`too many patches: ${patchList.length} (max 50)`)
     const applied: string[] = []

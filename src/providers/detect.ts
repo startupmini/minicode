@@ -13,6 +13,8 @@ export interface DetectedModel {
   /** Batas output model (`max_output_tokens`) bila dilaporkan. Dipakai sebagai
    * reserve output proporsional, bukan angka tetap. */
   maxOutputTokens?: number
+  /** Dukungan cache yang dilaporkan endpoint (Fase 7.1); `undefined` = tak disebut. */
+  promptCaching?: boolean
 }
 
 export interface DetectResult {
@@ -81,6 +83,26 @@ const OUTPUT_FIELD_ALIASES = [
   "output_token_limit",
 ] as const
 
+/** Field penanda dukungan cache (boolean, atau objek = ya). */
+const CACHE_FIELD_ALIASES = [
+  "prompt_caching",
+  "prompt_cache",
+  "supports_prompt_caching",
+  "supports_cache",
+  "cache_control",
+] as const
+
+/** `undefined` (tak disebut) harus beda dari `false` (menolak) — tri-state. */
+function extractCacheSupport(obj: Record<string, unknown>): boolean | undefined {
+  for (const key of CACHE_FIELD_ALIASES) {
+    if (!(key in obj)) continue
+    const v = obj[key]
+    if (typeof v === "boolean") return v
+    return v !== null && v !== undefined && v !== "" && v !== 0
+  }
+  return undefined
+}
+
 function positiveInt(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined
   const n = Math.floor(value)
@@ -106,6 +128,7 @@ function pickField(obj: Record<string, unknown>, aliases: readonly string[]): nu
 export function extractModelCapacity(entry: unknown): {
   contextLength?: number
   maxOutputTokens?: number
+  promptCaching?: boolean
 } {
   if (!entry || typeof entry !== "object") return {}
   const obj = entry as Record<string, unknown>
@@ -122,9 +145,13 @@ export function extractModelCapacity(entry: unknown): {
   const maxOutputTokens =
     pickField(obj, OUTPUT_FIELD_ALIASES) ??
     (nested ? pickField(nested, OUTPUT_FIELD_ALIASES) : undefined)
+  // Level atas menang; `top_provider` hanya fallback.
+  const promptCaching =
+    extractCacheSupport(obj) ?? (nested ? extractCacheSupport(nested) : undefined)
   return {
     ...(contextLength !== undefined ? { contextLength } : {}),
     ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+    ...(promptCaching !== undefined ? { promptCaching } : {}),
   }
 }
 

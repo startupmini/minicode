@@ -108,3 +108,113 @@ test("Fase 7: microcompact mempertahankan struktur pesan (boundary cache tetap v
   expect(anthropic.length).toBeGreaterThanOrEqual(2)
   for (const m of anthropic) expect(["user", "assistant"].includes(m.role)).toBe(true)
 })
+
+// ── Fase 7.1: metadata endpoint benar-benar mengendalikan cache ─────────────
+// Menguji jalur NYATA: extractModelCapacity → mergeDiscoveredCapacity →
+// createAnthropicProvider. Tanpa ini, unit test di atas hanya membuktikan
+// fungsi pembaca, bukan bahwa nilai itu sampai ke request.
+test("Fase 7.1: metadata `prompt_caching:false` mematikan cache_control di request", async () => {
+  const { extractModelCapacity } = await import("../src/providers/detect.ts")
+  const { mergeDiscoveredCapacity } = await import("../src/providers/provision.ts")
+  const { createAnthropicProvider } = await import("../src/providers/anthropic.ts")
+
+  // Endpoint melaporkan TIDAK mendukung cache untuk semua modelnya.
+  const detected = {
+    models: ["m1", "m2"],
+    modelMetadata: {
+      m1: { id: "m1", ...extractModelCapacity({ prompt_caching: false }) },
+      m2: { id: "m2", ...extractModelCapacity({ prompt_caching: false }) },
+    },
+    providerHint: "anthropic" as const,
+    authFailed: false,
+  }
+  const merged = mergeDiscoveredCapacity(undefined, detected)
+  expect(merged.enablePromptCaching).toBe(false)
+
+  const provider = createAnthropicProvider({
+    baseUrl: "https://example.invalid",
+    apiKey: "test",
+    models: ["m1"],
+    enablePromptCaching: merged.enablePromptCaching,
+  })
+
+  const bodies: string[] = []
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async (_u: string, init: RequestInit) => {
+    bodies.push(String(init.body))
+    return new Response("event: message_stop\ndata: {}\n\n", {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    })
+  }) as unknown as typeof fetch
+  try {
+    const stream = provider.stream(
+      {
+        model: "m1",
+        system: "sys",
+        messages: [{ role: "user", content: "hi" }],
+        tools: [{ name: "t", description: "d", parameters: { type: "object" } }] as ToolSchema[],
+      },
+      new AbortController().signal,
+    )
+    for await (const _ of stream) {
+      /* drain */
+    }
+  } finally {
+    globalThis.fetch = realFetch
+  }
+  expect(bodies.length).toBeGreaterThan(0)
+  expect(bodies[0]).not.toContain("cache_control")
+})
+
+test("Fase 7.1: endpoint diam (tak menyebut cache) mempertahankan default AKTIF", async () => {
+  const { extractModelCapacity } = await import("../src/providers/detect.ts")
+  const { mergeDiscoveredCapacity } = await import("../src/providers/provision.ts")
+  const { createAnthropicProvider } = await import("../src/providers/anthropic.ts")
+
+  const merged = mergeDiscoveredCapacity(undefined, {
+    models: ["m1"],
+    modelMetadata: {
+      m1: { id: "m1", ...extractModelCapacity({ context_length: 200_000 }) },
+    },
+    providerHint: "anthropic" as const,
+    authFailed: false,
+  })
+  // Field tidak ditulis → provider memakai default (aktif).
+  expect("enablePromptCaching" in merged).toBe(false)
+
+  const provider = createAnthropicProvider({
+    baseUrl: "https://example.invalid",
+    apiKey: "test",
+    models: ["m1"],
+    enablePromptCaching: merged.enablePromptCaching,
+  })
+
+  const bodies: string[] = []
+  const realFetch = globalThis.fetch
+  globalThis.fetch = (async (_u: string, init: RequestInit) => {
+    bodies.push(String(init.body))
+    return new Response("event: message_stop\ndata: {}\n\n", {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    })
+  }) as unknown as typeof fetch
+  try {
+    const stream = provider.stream(
+      {
+        model: "m1",
+        system: "sys",
+        messages: [{ role: "user", content: "hi" }],
+        tools: [{ name: "t", description: "d", parameters: { type: "object" } }] as ToolSchema[],
+      },
+      new AbortController().signal,
+    )
+    for await (const _ of stream) {
+      /* drain */
+    }
+  } finally {
+    globalThis.fetch = realFetch
+  }
+  expect(bodies.length).toBeGreaterThan(0)
+  expect(bodies[0]).toContain("cache_control")
+})

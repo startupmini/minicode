@@ -505,9 +505,6 @@ const BY_NAME: ReadonlyMap<string, ToolContractMetadata> = new Map(
   TOOL_CONTRACTS.map((c) => [c.name, c]),
 )
 
-/** Nama tool yang dikenal registry ini (bukan tool MCP bertitik). */
-export const TOOL_CONTRACT_NAMES: readonly string[] = TOOL_CONTRACTS.map((c) => c.name)
-
 /**
  * Kontrak efektif untuk satu nama tool.
  *
@@ -605,10 +602,4 @@ export function classifyContractTool(name: string): "mutation" | "none" | "unkno
   const c = contractForTool(name)
   if (c === undefined) return "unknown"
   return c.journalMutation ? "mutation" : "none"
-}
-
-/** True bila tool mengubah apa pun (bukan PURE_READ). */
-export function isSideEffectingTool(name: string): boolean {
-  const c = contractForTool(name)
-  return c === undefined ? true : c.sideEffectTier !== "PURE_READ"
 }

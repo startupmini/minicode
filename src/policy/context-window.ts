@@ -22,39 +22,6 @@ export const DEFAULT_FALLBACK_CONTEXT_WINDOW_TOKENS = 131_072
 export const DEFAULT_ALIAS_CONTEXT_WINDOW_TOKENS = 131_072
 const ROUTER_ALIAS_RE = /^(auto|best|default|cheapest|router)([:_-]|$)/i
 
-/**
- * Batas output model (`max_output_tokens`) yang dilaporkan endpoint/config.
- * `undefined` = tak diketahui (pemanggil memakai reserve default).
- *
- * KENAPA terpisah dari jendela: reserve output yang tepat bergantung pada
- * batas output model, bukan pada jendela. Menyatukan keduanya membuat model
- * berbatas output kecil mendapat reserve kelebihan, dan model berjendela
- * raksasa mendapat reserve hampir nol.
- */
-export function resolveMaxOutputTokens(config: MinicodeConfig, model?: string): number | undefined {
-  let providerId: string | undefined
-  let modelId = model
-  let provider = undefined as MinicodeConfig["providers"][number] | undefined
-  if (model?.includes("::")) {
-    const sep = model.indexOf("::")
-    providerId = model.slice(0, sep)
-    modelId = model.slice(sep + 2)
-    provider = config.providers.find((entry) => entry.id === providerId)
-  } else if (model) {
-    provider = config.providers.find((entry) => entry.models?.includes(model))
-    providerId = provider?.id
-  } else {
-    provider = config.providers[0]
-    providerId = provider?.id
-    modelId = provider?.models?.[0]
-  }
-  const exact = modelId ? provider?.maxOutputTokens?.[modelId] : undefined
-  if (typeof exact === "number" && exact > 0) return exact
-  const providerDefault = provider?.maxOutputTokensDefault
-  if (typeof providerDefault === "number" && providerDefault > 0) return providerDefault
-  return undefined
-}
-
 export interface ContextWindowResolution {
   readonly tokens: number
   readonly source:

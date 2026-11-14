@@ -15,7 +15,7 @@ let currentConfig: MinicodeConfig | null = null
  * manusia ke stderr, `exec --json` menambah envelope mesin ke stdout.
  * Pesan = teks yang dulu dicetak langsung sebelum exit(1) — byte-identik. */
 export class NoProviderError extends Error {
-  readonly name = "NoProviderError"
+  override readonly name = "NoProviderError"
 }
 
 const NO_PROVIDER_MESSAGE =

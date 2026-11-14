@@ -88,8 +88,6 @@ function emitTaskTransition(
 /** Bounds so the JSON columns cannot grow without limit. */
 const MAX_DEPENDS_ON = 32
 const MAX_EVIDENCE = 32
-const MAX_ACCEPTANCE = 32
-const MAX_PARENT = 64
 
 /** Shape of the data, not of the table: this rises when column SEMANTICS
  *  change, not merely when a column is added. */
@@ -2923,5 +2921,3 @@ export function legacyDigest(raw: string): string {
   const { createHash } = require("node:crypto") as typeof import("node:crypto")
   return createHash("sha256").update(scrubSecrets(raw)).digest("hex").slice(0, 32)
 }
-
-export const __testing = { MAX_DEPENDS_ON, MAX_EVIDENCE, MAX_ACCEPTANCE, MAX_PARENT }

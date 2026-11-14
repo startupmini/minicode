@@ -212,7 +212,7 @@ export function analyseRelations(nodes: readonly GraphNode[]): RelationAnalysis 
  * what distinguishes "seen in this walk" (a cycle) from "seen in an earlier
  * walk" (already settled).
  *
- * Fan-out is intentionally unbounded: `MAX_PARENT` is declared in TaskStore but
+ * Fan-out is intentionally unbounded: `MAX_PARENT` used to be declared in TaskStore but
  * enforced nowhere, so the width of a containment forest is not bounded here
  * either (design lock S5).
  */

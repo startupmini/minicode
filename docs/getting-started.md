@@ -1,4 +1,6 @@
-# Instalasi
+# Instalasi & Quickstart
+
+Dari nol sampai prompt pertama yang ter-verify: pasang, setup provider, jalankan, verifikasi.
 
 Prasyarat tunggal: **`bun >= 1.1.13`** — runtime Minicode, bukan Node.js. `npm` hanya dipakai untuk distribusi, bukan untuk menjalankan. (Lantai versi: kode memakai `AbortSignal.any()` yang absen di Bun 1.0.x; `minicode` gagal cepat dengan pesan jelas bila versi lebih lama.)
 
@@ -50,6 +52,61 @@ bun test               # offline/hermetic; live & docker di-skip otomatis
 
 Setup wizard berjalan otomatis saat `minicode` pertama kali bila belum ada provider.
 
+## Prompt pertama
+
+Tujuan: dari nol sampai prompt pertama yang ter-verify, tanpa membaca seluruh manual.
+
+## 1. Jalan pertama (1 menit)
+
+```bash
+minicode
+```
+
+Bila belum ada provider, wizard setup muncul. Isi berurutan: pilih gateway → tempel API key (ter-masking) → auto-detect models. Wizard memakai picker (panah + filter), bukan `readline` nomor — mengetik di luar rentang tidak lagi diam-diam memilih `[0]`.
+
+Alternatif tanpa API key:
+
+```bash
+minicode auth login          # device-code: kode singkat + URL, setujui di browser
+minicode auth status         # lihat kredensial + kapan kedaluwarsa
+```
+
+## 2. Prompt pertama (2 menit)
+
+```bash
+minicode --work-mode BUILD "buat http server hello world di server.ts" --verbose
+```
+
+Yang terjadi: model menerima system prompt berisi `# Environment` (cwd + platform) + repo-map ringkas, lalu loop ReAct `Thought → Action → Observation` sampai jawaban final atau batas (`--max-steps` default 50, `--timeout` default 1 jam).
+
+Coba mode interaktif:
+
+```bash
+minicode --interactive
+# minicode › jelaskan isi src/tools/index.ts
+# /model   → picker provider::model, Enter = pilih + atur effort
+# /status  → token + biaya kumulatif sesi
+# /exit    → keluar (Esc ganda saat abort juga bisa)
+```
+
+## 3. Verify otomatis (2 menit)
+
+```bash
+minicode --work-mode BUILD --verify "fix bugs lalu typecheck"
+```
+
+Sebelum agen jalan, baseline diuji dulu. Bila baseline sudah merah, catatan Health-Check ditempel ke prompt awal agar agen memperbaiki dulu. Setelah run, verify dijalankan; bila gagal, agen self-heal maks 3 siklus. Output error dibungkus fence agar tidak jadi prompt injection. Custom command via `MINICODE_VERIFY_CMD` atau `verifyCommand` di config.
+
+## Contoh pola harian
+
+```bash
+minicode --ask "deploy script"          # human-in-loop confirmation card
+minicode --sandbox docker "task"        # bash di container ephemeral
+minicode --budget 0.50 "task besar"     # warn 80%; pagu lewat → prompt baru ditolak + turn berjalan digugurkan
+minicode exec "prompt" --json           # headless CI: JSONL stream + summary
+minicode "/review src/a.ts"             # skill slash-command
+```
+
 ## Matriks OS
 
 | OS | Sandbox otomatis | Default permission | Catatan |
@@ -100,5 +157,4 @@ Uninstall = `npm uninstall -g minicode-ai` (atau hapus clone + `bun unlink` bila
 
 ## Berikutnya
 
-- [Quickstart 5 menit](quickstart.md) — wizard → prompt pertama → verify.
 - [Troubleshooting](troubleshooting.md) — bila `doctor` merah atau sandbox tidak jalan.

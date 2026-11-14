@@ -40,7 +40,7 @@ export type NoProgressVerdict =
     }
 
 export class NoProgressError extends Error {
-  readonly name = "NoProgressError"
+  override readonly name = "NoProgressError"
   readonly kind: LoopGuardKind
   readonly reason: LoopGuardReason
 

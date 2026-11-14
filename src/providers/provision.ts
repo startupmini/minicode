@@ -123,7 +123,10 @@ export function deriveProviderId(baseUrl: string, existingIds: string[], id?: st
 export function mergeDiscoveredCapacity(
   previous: ProviderEntry | undefined,
   detected: DetectResult,
-): Pick<ProviderEntry, "contextWindows" | "contextWindowSources" | "maxOutputTokens"> {
+): Pick<
+  ProviderEntry,
+  "contextWindows" | "contextWindowSources" | "maxOutputTokens" | "enablePromptCaching"
+> {
   const metadata = detected.modelMetadata
   if (!metadata || Object.keys(metadata).length === 0) return {}
   const prevWindows = previous?.contextWindows ?? {}
@@ -160,10 +163,21 @@ export function mergeDiscoveredCapacity(
     if (live.size > 0 && !live.has(model)) continue
     if (maxOut[model] === undefined) maxOut[model] = tokens
   }
+  // Fase 7.1: satu model mendukung = provider mendukung; false bila semua menolak.
+  let caching: boolean | undefined
+  for (const meta of Object.values(metadata)) {
+    if (meta.promptCaching === true) {
+      caching = true
+      break
+    }
+    if (meta.promptCaching === false) caching ??= false
+  }
+
   return {
     ...(Object.keys(windows).length > 0 ? { contextWindows: windows } : {}),
     ...(Object.keys(sources).length > 0 ? { contextWindowSources: sources } : {}),
     ...(Object.keys(maxOut).length > 0 ? { maxOutputTokens: maxOut } : {}),
+    ...(caching !== undefined ? { enablePromptCaching: caching } : {}),
   }
 }
 

@@ -394,9 +394,6 @@ export function renderGridTable(table: GridTable, options: GridRenderOptions = {
   return [separator, header.join(" "), ...rows.map((row) => row.join(" "))].join("\n")
 }
 
-export const renderTableGrid = renderGridTable
-export const renderGrid = renderGridTable
-
 export function renderMarkdownTable(
   table: MarkdownTable,
   width = getTerminalWidth(),

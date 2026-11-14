@@ -91,11 +91,6 @@ export function newOwnerToken(): string {
   return `own-${Date.now().toString(36)}-${counter.toString(36)}-${rand}`
 }
 
-/** Test-only: make token generation reproducible. */
-export function resetOwnerTokenCounterForTests(): void {
-  counter = 0
-}
-
 /** The durable row. One per (session, incarnation). */
 export interface SessionAuthority {
   readonly sessionId: string

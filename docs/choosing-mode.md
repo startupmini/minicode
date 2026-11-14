@@ -37,7 +37,7 @@ Hard security (path jail luar workspace, sensitive-file, owned-state, bash-guard
 
 ## Lanjut
 
-- [Security Model](security-model.md) — apa yang ditegakkan tiap mode.
+- [Keamanan](security.md) — apa yang ditegakkan tiap mode.
 - [Policy & Sandbox](policy-sandbox.md) — tabel semantik presisi + bukti guard.
 - [Otomasi & CI](exec.md) — batasan headless.
 - [CLI](cli.md) — referensi flag WorkMode/PermissionMode.

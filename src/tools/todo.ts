@@ -416,7 +416,7 @@ export function renderTodos(todos: TodoItem[]): string {
  * kebenaran; kebijakan hanya berlaku di jalur tulis (`todo_write`) dan di
  * rekonsiliasi eksplisit (`reconcileCompletionEvidence`) yang menulis balik.
  */
-export async function loadTodos(sessionId: string, cwd = process.cwd()): Promise<TodoItem[]> {
+export async function loadTodos(sessionId: string, cwd: string): Promise<TodoItem[]> {
   // N2: try the canonical name first, then the legacy name. A file written by an
   // older process only exists at the legacy path, so without this fallback a
   // workspace that was upgraded but never ran `todo_write` again would lose its
@@ -479,11 +479,7 @@ export async function reconcileCompletionEvidence(
   }
 }
 
-export async function saveTodos(
-  sessionId: string,
-  todos: TodoItem[],
-  cwd = process.cwd(),
-): Promise<void> {
+export async function saveTodos(sessionId: string, todos: TodoItem[], cwd: string): Promise<void> {
   const p = todoPath(sessionId, cwd)
   await mkdir(resolve(cwd, ".minicode", "todos"), { recursive: true }).catch(() => {})
   await atomicWriteText(p, JSON.stringify({ sessionId, updatedAt: Date.now(), todos }, null, 2))
@@ -527,7 +523,7 @@ export function renderPlan(sessionId: string, todos: TodoItem[]): string {
 export async function savePlanSnapshot(
   sessionId: string,
   todos: TodoItem[],
-  cwd = process.cwd(),
+  cwd: string,
 ): Promise<string> {
   const p = planPath(sessionId, cwd)
   await mkdir(resolve(cwd, ".minicode", "plans"), { recursive: true }).catch(() => {})
@@ -535,7 +531,7 @@ export async function savePlanSnapshot(
   return p
 }
 
-export async function loadPlan(sessionId: string, cwd = process.cwd()): Promise<string | null> {
+export async function loadPlan(sessionId: string, cwd: string): Promise<string | null> {
   try {
     return await readFile(planPath(sessionId, cwd), "utf8")
   } catch {

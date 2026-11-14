@@ -5,7 +5,7 @@ MiniCode adalah coding agent terminal yang dibangun di atas kernel MiniCore. Jal
 ## Mulai
 
 1. Ikuti [instalasi](getting-started.md). Metadata paket dan batas runtime Bun tersedia di `package.json` pada root repository.
-2. Gunakan [quickstart](quickstart.md) untuk menyiapkan provider dan menjalankan prompt pertama.
+2. Gunakan [quickstart](getting-started.md) untuk menyiapkan provider dan menjalankan prompt pertama.
 3. Baca [memilih mode](choosing-mode.md) sebelum memberi agent akses tulis atau eksekusi.
 
 ## Batas yang perlu diketahui
@@ -16,7 +16,7 @@ MiniCode adalah coding agent terminal yang dibangun di atas kernel MiniCore. Jal
 
 ## Peta dokumentasi
 
-`SUMMARY.md` adalah daftar navigasi; dibaca build minilabs untuk membangun indeks halaman. Versi terbit tersedia di [minilabs.id/projects/minicode/docs](https://minilabs.id/projects/minicode/docs/). [Arsitektur](architecture.md) memuat peta struktur dan alur runtime.
+`SUMMARY.md` adalah daftar navigasi; dibaca build minilabs untuk membangun indeks halaman. Jumlah halaman dijaga kecil dan bebas duplikasi — satu topik, satu halaman. Versi terbit tersedia di [minilabs.id/projects/minicode/docs](https://minilabs.id/projects/minicode/docs/). [Arsitektur](architecture.md) memuat peta struktur dan alur runtime.
 
 ## Pengembangan
 

@@ -294,9 +294,6 @@ export function parseMarkdownTable(
   return parseMarkdownBlocks(source).find((block) => block.type === "table")?.table ?? null
 }
 
-export const parsePipeTable = parseMarkdownTable
-export const parseMarkdownPipeTable = parseMarkdownTable
-
 export function parseMarkdownTables(input: string): MarkdownTable[] {
   return parseMarkdownBlocks(input)
     .filter((block): block is Extract<MarkdownBlock, { type: "table" }> => block.type === "table")

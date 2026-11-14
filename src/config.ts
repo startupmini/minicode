@@ -67,6 +67,8 @@ export interface ProviderEntry {
   maxOutputTokens?: Record<string, number>
   /** Alias lama/global untuk batas output berlaku ke semua model provider. */
   maxOutputTokensDefault?: number
+  /** Cache dari metadata endpoint (Fase 7.1); `undefined` = default aktif. */
+  enablePromptCaching?: boolean
   providerHint?: string
   /** Knob generik reasoning effort — dipetakan per-wire (openai reasoning_effort, anthropic thinking, gemini). */
   reasoningEffort?: "low" | "medium" | "high"

@@ -84,8 +84,3 @@ export function renderLogoRows(): string[] {
   }
   return out
 }
-
-/** Jumlah baris hasil render (bukan tinggi grid logis). */
-export function renderLogoLineCount(): number {
-  return supportsUtf8() ? Math.ceil(LOGO_HEIGHT / 2) : LOGO_HEIGHT
-}

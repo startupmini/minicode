@@ -4,11 +4,9 @@
 
 ## Memulai
 
-* [Instalasi](getting-started.md)
-* [Quickstart 5 menit](quickstart.md)
-* [Konsep & Desain](concepts.md)
+* [Instalasi & Quickstart](getting-started.md)
+* [Konsep, Desain & Glosarium](concepts.md)
 * [Memilih Mode](choosing-mode.md)
-* [Glosarium](glossary.md)
 
 ## Menggunakan
 
@@ -18,7 +16,7 @@
 * [Skills & Hooks](skills.md)
 * [Pricing & Budget](pricing-budget.md)
 
-## Kemampuan (tools & integrasi)
+## Kemampuan
 
 * [Tools](tools.md)
 * [Sub-Agents & Tasks](agents.md)
@@ -26,8 +24,7 @@
 
 ## Konfigurasi
 
-* [Config — File & Lokasi Data](config.md)
-* [Config & Provider](config-providers.md)
+* [Config & Provider](config.md)
 * [Environment Variables](environment.md)
 
 ## State & Memori
@@ -37,28 +34,22 @@
 
 ## Keamanan
 
-* [Security Model](security-model.md) — ancaman & trust boundary
-* [Policy & Sandbox](policy-sandbox.md) — mode, guard, sandbox
-* [Keamanan](security.md) — mekanisme & bukti pengukuran
-
-## Bantuan
-
-* [Troubleshooting](troubleshooting.md)
+* [Keamanan — mode ancaman & bukti](security.md)
+* [Policy & Sandbox](policy-sandbox.md)
 
 ## Eksperimental
 
-* [Autonomous Scheduler](autonomous-scheduler.md)
-* [Open Work — Lintas Sesi](P14_OPEN_WORK.md)
+* [Autonomous Scheduler & Open Work](autonomous-scheduler.md)
 
 ## Kontributor & Arsitektur
 
 * [Arsitektur & Peta Repository](architecture.md)
-* [Kontrak Terminal (ringkas)](terminal.md)
 * [Contributing](contributing.md)
+* [Troubleshooting](troubleshooting.md)
 
 ## Spesifikasi internal (FROZEN — untuk kontributor)
 
-* [Terminal Contract - 35 invariant, v7.12](TERMINAL_CONTRACT.md)
+* [Terminal Contract](TERMINAL_CONTRACT.md)
 * [Output Event Model](OUTPUT_EVENT_MODEL.md)
 * [Output Protocol Spec](OUTPUT_PROTOCOL_SPEC.md)
 * [Output Rendering Spec](OUTPUT_RENDERING_SPEC.md)

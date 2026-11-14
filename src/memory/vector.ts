@@ -959,37 +959,6 @@ async function syncMemoryFileToSupersession(
   await files.appendMemory(`[supersession] fact ${oldId} → ${newId} (superseded)`, cwd)
 }
 
-export async function supersedeMemoryByIds(
-  oldIds: string[],
-  newId: string,
-  cwd?: string,
-): Promise<number> {
-  let n = 0
-  const db = open(cwd)
-  try {
-    await withBusyRetry(() => {
-      for (const oldId of oldIds) {
-        const oldRow = memoryEntryHeadId(db, oldId)
-        if (oldRow) {
-          // Tombstone SELURUH entri lama (semua chunk berbagi kepala), bukan
-          // hanya id chunk yang diberikan (D8: entri bisa diberikan lewat
-          // chunk mana pun).
-          db.prepare(`UPDATE memory SET superseded_by = ? WHERE id = ? OR parent = ?`).run(
-            newId,
-            oldRow.headId,
-            oldRow.headId,
-          )
-          n++
-        }
-      }
-      db.prepare(`UPDATE memory SET supersedes = ? WHERE id = ?`).run(oldIds.join(","), newId)
-    })
-  } finally {
-    db.close()
-  }
-  return n
-}
-
 /**
  * [Fase 8 / 8.1] Rekam pelajaran KANDIDAT (belum terverifikasi).
  * Pelajaran disimpan `provisional` sehingga retrieval default tidak akan

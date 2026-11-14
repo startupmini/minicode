@@ -7,7 +7,7 @@
 // pemotongan lebar tetap di sisi pemanggil.
 import type { UiToolStatus } from "../contract.ts"
 import { t } from "../i18n/locale.ts"
-import { c, glyphs } from "./theme.ts"
+import { c } from "./theme.ts"
 
 /** Kata status lokal ("completed"/"failed"/dst.) — fallback non-warna. */
 export function statusWord(status: UiToolStatus): string {
@@ -17,14 +17,6 @@ export function statusWord(status: UiToolStatus): string {
   if (status === "cancelled") return t("ts.statusCancelled")
   if (status === "interrupted") return t("ts.statusInterrupted")
   return t("ts.statusRunning")
-}
-
-/** Glyph status (ASCII-aman via `glyphs`). */
-export function statusGlyph(status: UiToolStatus): string {
-  if (status === "completed") return glyphs.check
-  if (status === "failed") return glyphs.cross
-  if (status === "denied") return glyphs.denied
-  return glyphs.circle
 }
 
 /** Warna baris ledger berdasar status terminal (sukses/error/denied/lain). */

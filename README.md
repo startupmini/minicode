@@ -39,9 +39,9 @@ WorkMode controls how the agent works (`DISCUSS`, `PLAN`, or `BUILD`); permissio
 The full manual lives in [`docs/`](docs/) and is rendered at [minilabs.id/projects/minicode/docs](https://minilabs.id/projects/minicode/docs/). Quick links:
 
 - [Documentation index](docs/README.md) and [full navigation](docs/SUMMARY.md)
-- [Installation](docs/getting-started.md) · [Quickstart](docs/quickstart.md) · [CLI](docs/cli.md) · [TUI](docs/repl.md)
+- [Installation](docs/getting-started.md) · [Quickstart](docs/getting-started.md) · [CLI](docs/cli.md) · [TUI](docs/repl.md)
 - [Configuration and providers](docs/config.md) · [Environment variables](docs/environment.md) · [Tools](docs/tools.md)
-- [Security model](docs/security-model.md) · [Policy and sandbox](docs/policy-sandbox.md)
+- [Security model](docs/security.md) · [Policy and sandbox](docs/policy-sandbox.md)
 - [Architecture and repository map](docs/architecture.md)
 - [Contributing](docs/contributing.md) · [Release history](https://github.com/minilabs-id/minicode/releases)
 

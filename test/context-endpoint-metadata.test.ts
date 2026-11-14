@@ -211,3 +211,84 @@ describe("resolveContextWindow: presedensi lapis + asal nilai", () => {
     expect(r.tokens).toBe(131_072)
   })
 })
+
+// ── Fase 7.1: dukungan prompt caching dari metadata endpoint ────────────────
+// KENAPA diuji ketat: `undefined` (endpoint diam) dan `false` (endpoint bilang
+// tidak) punya akibat BERBEDA — yang pertama mempertahankan cache yang sudah
+// jalan, yang kedua mematikannya. Menggabungkan keduanya = regresi senyap.
+describe("extractModelCapacity: dukungan prompt caching (Fase 7.1)", () => {
+  test("boolean eksplisit dibaca apa adanya", () => {
+    expect(extractModelCapacity({ id: "m", prompt_caching: true }).promptCaching).toBe(true)
+    expect(extractModelCapacity({ id: "m", prompt_caching: false }).promptCaching).toBe(false)
+  })
+
+  test("alias lain: supports_*, prompt_cache, cache_control", () => {
+    expect(extractModelCapacity({ supports_prompt_caching: true }).promptCaching).toBe(true)
+    expect(extractModelCapacity({ supports_cache: true }).promptCaching).toBe(true)
+    expect(extractModelCapacity({ prompt_cache: true }).promptCaching).toBe(true)
+    // Kehadiran objek (tanpa nilai true) tetap menandakan dukungan.
+    expect(extractModelCapacity({ cache_control: {} }).promptCaching).toBe(true)
+    expect(extractModelCapacity({ cache_control: { type: "ephemeral" } }).promptCaching).toBe(true)
+  })
+
+  test("field tidak ada = undefined, BUKAN false", () => {
+    const r = extractModelCapacity({ id: "m", context_length: 128_000 })
+    expect(r.promptCaching).toBeUndefined()
+    expect("promptCaching" in r).toBe(false)
+  })
+
+  test("nilai kosong/falsy eksplisit = false", () => {
+    expect(extractModelCapacity({ prompt_caching: "" }).promptCaching).toBe(false)
+    expect(extractModelCapacity({ prompt_caching: 0 }).promptCaching).toBe(false)
+    expect(extractModelCapacity({ prompt_caching: null }).promptCaching).toBe(false)
+  })
+
+  test("`top_provider` dipakai bila level atas tidak menyebut", () => {
+    expect(extractModelCapacity({ top_provider: { prompt_caching: true } }).promptCaching).toBe(
+      true,
+    )
+  })
+
+  test("level atas menang atas top_provider", () => {
+    const r = extractModelCapacity({
+      prompt_caching: false,
+      top_provider: { prompt_caching: true },
+    })
+    expect(r.promptCaching).toBe(false)
+  })
+})
+
+describe("mergeDiscoveredCapacity: agregasi caching per provider", () => {
+  const detect = (meta: Record<string, { promptCaching?: boolean }>) => ({
+    models: Object.keys(meta),
+    modelMetadata: Object.fromEntries(Object.entries(meta).map(([id, m]) => [id, { id, ...m }])),
+    providerHint: "anthropic" as const,
+    authFailed: false,
+  })
+
+  test("satu model mendukung = provider mendukung", () => {
+    const r = mergeDiscoveredCapacity(undefined, detect({ a: { promptCaching: true }, b: {} }))
+    expect(r.enablePromptCaching).toBe(true)
+  })
+
+  test("semua model menolak = provider dimatikan", () => {
+    const r = mergeDiscoveredCapacity(
+      undefined,
+      detect({ a: { promptCaching: false }, b: { promptCaching: false } }),
+    )
+    expect(r.enablePromptCaching).toBe(false)
+  })
+
+  test("tak ada model yang menyebut = field tidak ditulis (default lama berlaku)", () => {
+    const r = mergeDiscoveredCapacity(undefined, detect({ a: {}, b: {} }))
+    expect("enablePromptCaching" in r).toBe(false)
+  })
+
+  test("campuran true+false = true menang (satu model bisa di-cache)", () => {
+    const r = mergeDiscoveredCapacity(
+      undefined,
+      detect({ a: { promptCaching: false }, b: { promptCaching: true } }),
+    )
+    expect(r.enablePromptCaching).toBe(true)
+  })
+})
